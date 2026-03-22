@@ -10,7 +10,6 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
-	"os"
 	"strings"
 	"testing"
 	"time"
@@ -33,18 +32,10 @@ func TestE2EPairingAndEncryptedRelay(t *testing.T) {
 	runE2EPairingTest(t, wsBase)
 }
 
-// TestLiveE2EPairingAndEncryptedRelay runs the same E2E test against a
-// deployed relay. Set TERN_LIVE_URL to the relay's base URL to enable:
-//
-//	TERN_LIVE_URL=wss://tern.fly.dev go test -run TestLiveE2E -v
-//
-// Skipped when TERN_LIVE_URL is not set.
+// TestLiveE2EPairingAndEncryptedRelay runs the same E2E test against the
+// deployed relay at tern.fly.dev.
 func TestLiveE2EPairingAndEncryptedRelay(t *testing.T) {
-	liveURL := os.Getenv("TERN_LIVE_URL")
-	if liveURL == "" {
-		t.Skip("TERN_LIVE_URL not set; skipping live relay test")
-	}
-	runE2EPairingTest(t, liveURL)
+	runE2EPairingTest(t, "wss://tern.fly.dev")
 }
 
 // runE2EPairingTest exercises:
