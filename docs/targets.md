@@ -10,50 +10,29 @@ relay/pairing logic.
 
 ### 🎯T1.1 Crypto library migrated from jevon
 
-`crypto/` package with key exchange, symmetric encryption, confirmation
-code derivation, and all tests. No jevon-specific imports.
-
 Status: done
 
 ### 🎯T1.2 Pairing protocol spec migrated from jevon
-
-`protocol/pairing.yaml` lives here as the source of truth.
 
 Status: done
 
 ### 🎯T1.3 TLA+ formal model migrated from jevon
 
-`formal/PairingCeremony.tla`, configs, and `tlc` wrapper script.
-Ephemeral state files and trace files excluded.
-
 Status: done
 
 ### 🎯T1.4 Protocol state machine framework migrated from jevon
-
-`protocol/` package: declarative state machine framework with YAML
-parser, runtime executor, and code generators (Go, Swift, TLA+,
-PlantUML). `cmd/protogen/` generates all outputs from YAML spec.
 
 Status: done
 
 ### 🎯T1.5 QR helper migrated from jevon
 
-`qr/` package: terminal QR code rendering and LAN IP detection.
-Jevon-specific URL scheme removed.
-
 Status: done
 
 ### 🎯T1.6 Swift package (SPM)
 
-`Package.swift` at repo root, `Sources/TernCrypto/` with E2ECrypto.swift
-and generated PairingCeremonyMachine.swift. All types public. Tests pass.
-
 Status: done
 
 ### 🎯T1.7 E2E integration test
-
-Full-stack test exercising relay + ECDH pairing + confirmation codes +
-encrypted bidirectional messaging. Verifies relay only sees ciphertext.
 
 Status: done
 
@@ -61,6 +40,166 @@ Status: done
 
 Jevon's `internal/crypto/`, `internal/protocol/`, `internal/qr/`, and
 `cmd/protogen/` are replaced by imports from tern. iOS app imports
-TernCrypto SPM package. This validates the extraction is clean.
+TernCrypto SPM package.
 
 Status: not started (requires tern to be tagged and pushed)
+
+---
+
+## 🎯T2 Open-source ready
+
+Audit findings from 2026-03-22 addressed. Tern is a credible public
+project with correct code, proper licensing, documentation, and CI.
+
+### 🎯T2.1 Relay enforces single client per instance
+
+Multiple clients connecting to the same instance ID causes concurrent
+`inst.conn.Read()` — a data race. The relay rejects a second client
+while one is bridged (or closes the previous one).
+
+Status: not started
+Severity: Critical
+
+### 🎯T2.2 Swift E2EChannel.encrypt() is concurrency-safe
+
+Lock is released before encryption; concurrent callers can send
+out-of-order sequence numbers, causing the receiver to reject. Hold
+the lock for the full encrypt operation.
+
+Status: not started
+Severity: High
+
+### 🎯T2.3 NOTICES file exists with third-party attribution
+
+Apache 2.0 §4(d) requires attribution. All deps (coder/websocket ISC,
+skip2/go-qrcode MIT, gopkg.in/yaml.v3 MIT+Apache, golang.org/x/crypto
+BSD-3) are listed with copyright and licence.
+
+Status: not started
+Severity: High
+
+### 🎯T2.4 README.md exists
+
+Covers what the relay is, trust model, Go package API, Swift SPM
+import, deployment, and how to run tests.
+
+Status: not started
+Severity: High
+
+### 🎯T2.5 GitHub repo settings enforce squash-only merges
+
+`allow_merge_commit: false`, `allow_rebase_merge: false`,
+`squash_merge_commit_title: PR_TITLE`, `delete_branch_on_merge: true`.
+
+Status: not started
+Severity: High
+
+### 🎯T2.6 ExportGo emits ChannelBound and OneShot
+
+Generated `pairingceremony_gen.go` currently drops these fields,
+causing the Go representation to differ from the YAML spec. The
+generated TLA+ would produce unbounded channels if regenerated from
+the Go struct.
+
+Status: not started
+Severity: Medium
+
+### 🎯T2.7 ExportGo emits PropertyKind as named constant
+
+Currently emits raw `0`/`1` instead of `Invariant`/`Liveness`.
+
+Status: not started
+Severity: Medium
+
+### 🎯T2.8 Relay binary supports --version, --help, --help-agent
+
+Per CLI binary conventions. Includes build-time version injection.
+
+Status: not started
+Severity: Medium
+
+### 🎯T2.9 Generated files have SPDX headers
+
+`pairingceremony_gen.go` and `PairingCeremonyMachine.swift` include
+copyright and SPDX-License-Identifier lines.
+
+Status: not started
+Severity: Medium
+
+### 🎯T2.10 Test coverage for qr, YAML parser, and code generators
+
+`qr/`, `protocol/yaml.go`, `ExportGo`, `ExportSwift`, `ExportPlantUML`
+all at 0% coverage. Add basic tests.
+
+Status: not started
+Severity: Medium
+
+### 🎯T2.11 CORS wildcard documented as intentional
+
+Both `/register` and `/ws/{id}` use `OriginPatterns: ["*"]`. Document
+the design choice and note that deployers should restrict if needed.
+
+Status: not started
+Severity: Medium
+
+### 🎯T2.12 go-qrcode dependency evaluated
+
+`github.com/skip2/go-qrcode` last committed 2020, no tagged releases.
+Either vendor, replace with a maintained alternative, or accept and
+document.
+
+Status: not started
+Severity: Medium
+
+### 🎯T2.13 Private project name "jevon" removed from public files
+
+`pairing.yaml` trigger description says `jevon --init`; generated
+files and `docs/targets.md` reference jevon.
+
+Status: not started
+Severity: Low
+
+### 🎯T2.14 Health handler w.Write return value handled
+
+`main.go:74` ignores w.Write error.
+
+Status: not started
+Severity: Low
+
+### 🎯T2.15 Test for concurrent clients per instance
+
+Exercises the (now-rejected) second-client scenario to verify the
+fix from 🎯T2.1.
+
+Status: not started (depends on 🎯T2.1)
+Severity: Low
+
+### 🎯T2.16 formal/tlc uses portable shebang
+
+Change `#!/bin/bash` to `#!/usr/bin/env bash`.
+
+Status: not started
+Severity: Low
+
+### 🎯T2.17 Explicit WebSocket read limit
+
+Call `conn.SetReadLimit()` with a documented value rather than relying
+on the implicit 32 KB default.
+
+Status: not started
+Severity: Low
+
+### 🎯T2.18 Instance ID entropy documented
+
+32-bit IDs are adequate for current use but weak for a high-traffic
+public relay. Document the trade-off; consider 64-bit if usage grows.
+
+Status: not started
+Severity: Info
+
+### 🎯T2.19 go.mod uses minor version only
+
+Change `go 1.25.7` to `go 1.25`.
+
+Status: not started
+Severity: Info
