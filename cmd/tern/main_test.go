@@ -17,7 +17,7 @@ import (
 
 func startTestRelay(t *testing.T) *httptest.Server {
 	t.Helper()
-	r := newRelay()
+	r := newHub()
 	mux := http.NewServeMux()
 	registerRoutes(mux, r, "")
 	ts := httptest.NewServer(mux)
@@ -231,7 +231,7 @@ func TestSecondClientRejected(t *testing.T) {
 }
 
 func TestRegisterRequiresToken(t *testing.T) {
-	r := newRelay()
+	r := newHub()
 	mux := http.NewServeMux()
 	registerRoutes(mux, r, "secret-token")
 	ts := httptest.NewServer(mux)

@@ -16,7 +16,6 @@ import (
 	"bytes"
 	"context"
 	"crypto/rand"
-	_ "embed"
 	"flag"
 	"fmt"
 	"log/slog"
@@ -26,10 +25,8 @@ import (
 	"sync"
 
 	"github.com/coder/websocket"
+	"github.com/marcelocantos/tern"
 )
-
-//go:embed agents-guide.md
-var agentGuide string
 
 // version is set at build time via -ldflags "-X main.version=v0.1.0".
 var version = "dev"
@@ -48,31 +45,31 @@ type instance struct {
 	occupied bool // true when a client is connected; protected by mu
 }
 
-type relay struct {
+type hub struct {
 	mu        sync.RWMutex
 	instances map[string]*instance
 }
 
-func newRelay() *relay {
-	return &relay{instances: make(map[string]*instance)}
+func newHub() *hub {
+	return &hub{instances: make(map[string]*instance)}
 }
 
-func (r *relay) register(inst *instance) {
-	r.mu.Lock()
-	r.instances[inst.id] = inst
-	r.mu.Unlock()
+func (h *hub) register(inst *instance) {
+	h.mu.Lock()
+	h.instances[inst.id] = inst
+	h.mu.Unlock()
 }
 
-func (r *relay) unregister(id string) {
-	r.mu.Lock()
-	delete(r.instances, id)
-	r.mu.Unlock()
+func (h *hub) unregister(id string) {
+	h.mu.Lock()
+	delete(h.instances, id)
+	h.mu.Unlock()
 }
 
-func (r *relay) get(id string) *instance {
-	r.mu.RLock()
-	defer r.mu.RUnlock()
-	return r.instances[id]
+func (h *hub) get(id string) *instance {
+	h.mu.RLock()
+	defer h.mu.RUnlock()
+	return h.instances[id]
 }
 
 func generateID() string {
@@ -90,7 +87,7 @@ func generateID() string {
 
 // registerRoutes sets up HTTP and WebSocket handlers on mux.
 // If token is non-empty, /register requires a matching Bearer token.
-func registerRoutes(mux *http.ServeMux, r *relay, token string) {
+func registerRoutes(mux *http.ServeMux, h *hub, token string) {
 	mux.HandleFunc("GET /health", func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = w.Write([]byte(`{"status":"ok"}`))
@@ -129,8 +126,8 @@ func registerRoutes(mux *http.ServeMux, r *relay, token string) {
 		}
 
 		inst := &instance{id: id, conn: conn, ctx: ctx}
-		r.register(inst)
-		defer r.unregister(id)
+		h.register(inst)
+		defer h.unregister(id)
 
 		slog.Info("instance registered", "id", id)
 
@@ -143,7 +140,7 @@ func registerRoutes(mux *http.ServeMux, r *relay, token string) {
 	// Client connects here to reach a specific backend instance.
 	mux.HandleFunc("GET /ws/{id}", func(w http.ResponseWriter, req *http.Request) {
 		instanceID := req.PathValue("id")
-		inst := r.get(instanceID)
+		inst := h.get(instanceID)
 		if inst == nil {
 			http.Error(w, `{"error":"instance not found"}`, http.StatusNotFound)
 			return
@@ -231,7 +228,7 @@ func main() {
 		flag.CommandLine.SetOutput(&buf)
 		flag.Usage()
 		fmt.Print(buf.String())
-		fmt.Println(agentGuide)
+		fmt.Println(tern.AgentGuide)
 		os.Exit(0)
 	}
 
@@ -251,9 +248,9 @@ func main() {
 		Level: slog.LevelInfo,
 	})))
 
-	r := newRelay()
+	h := newHub()
 	mux := http.NewServeMux()
-	registerRoutes(mux, r, token)
+	registerRoutes(mux, h, token)
 
 	addr := ":" + listenPort
 	slog.Info("tern starting", "addr", addr, "version", version)

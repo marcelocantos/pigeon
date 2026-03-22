@@ -17,14 +17,14 @@ import (
 
 	"github.com/coder/websocket"
 
+	"github.com/marcelocantos/tern"
 	"github.com/marcelocantos/tern/crypto"
-	ternrelay "github.com/marcelocantos/tern/relay"
 )
 
 // TestE2EPairingAndEncryptedRelay exercises the full stack against a
 // local httptest relay.
 func TestE2EPairingAndEncryptedRelay(t *testing.T) {
-	r := newRelay()
+	r := newHub()
 	mux := http.NewServeMux()
 	registerRoutes(mux, r, "")
 	ts := httptest.NewServer(mux)
@@ -41,7 +41,7 @@ func TestLiveE2EPairingAndEncryptedRelay(t *testing.T) {
 	if token == "" {
 		t.Skip("TERN_TOKEN not set; skipping live relay test")
 	}
-	runE2EPairingTest(t, "wss://tern.fly.dev", ternrelay.WithToken(token))
+	runE2EPairingTest(t, "wss://tern.fly.dev", tern.WithToken(token))
 }
 
 // runE2EPairingTest exercises:
@@ -51,13 +51,13 @@ func TestLiveE2EPairingAndEncryptedRelay(t *testing.T) {
 //  4. Encrypted channel established
 //  5. Encrypted messages flow bidirectionally
 //  6. Relay sees only ciphertext
-func runE2EPairingTest(t *testing.T, wsBase string, opts ...ternrelay.Option) {
+func runE2EPairingTest(t *testing.T, wsBase string, opts ...tern.Option) {
 	t.Helper()
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
 
 	// Backend registers via relay package.
-	backend, err := ternrelay.Register(ctx, wsBase, opts...)
+	backend, err := tern.Register(ctx, wsBase, opts...)
 	if err != nil {
 		t.Fatalf("backend register: %v", err)
 	}
@@ -65,7 +65,7 @@ func runE2EPairingTest(t *testing.T, wsBase string, opts ...ternrelay.Option) {
 	t.Logf("Backend registered as %s", backend.InstanceID())
 
 	// Client connects via relay package.
-	client, err := ternrelay.Connect(ctx, wsBase, backend.InstanceID())
+	client, err := tern.Connect(ctx, wsBase, backend.InstanceID())
 	if err != nil {
 		t.Fatalf("client connect: %v", err)
 	}

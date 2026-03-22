@@ -1,19 +1,26 @@
 // Copyright 2026 Marcelo Cantos
 // SPDX-License-Identifier: Apache-2.0
 
-// Package relay provides client-side connectivity to a tern relay server.
+// Package tern provides client-side connectivity to a tern relay server.
 // Backends call Register to obtain an instance ID; clients call Connect
 // with a known instance ID. Both return a Conn for bidirectional
 // message exchange.
-package relay
+//
+// Sub-packages provide E2E encryption (crypto/), protocol state machines
+// (protocol/), and QR code rendering (qr/).
+package tern
 
 import (
 	"context"
+	_ "embed"
 	"fmt"
 	"net/http"
 
 	"github.com/coder/websocket"
 )
+
+//go:embed agents-guide.md
+var AgentGuide string
 
 // Conn wraps a WebSocket connection to the relay. It provides
 // send/receive for both backend and client sides.
@@ -26,9 +33,8 @@ type Conn struct {
 type Option func(*options)
 
 type options struct {
-	token      string
-	dialOpts   *websocket.DialOptions
-	httpHeader http.Header
+	token    string
+	dialOpts *websocket.DialOptions
 }
 
 // WithToken sets the bearer token for authentication on /register.
