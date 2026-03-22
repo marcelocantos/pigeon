@@ -206,3 +206,12 @@ Change `go 1.25.7` to `go 1.25`.
 
 Status: done
 
+---
+
+## 🎯T3 Fly.io deployment via CI
+
+Pushes to master auto-deploy to `tern.fly.dev`. Currently deployed
+manually with `fly deploy`.
+
+Status: not started
+
