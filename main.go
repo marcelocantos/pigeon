@@ -67,19 +67,8 @@ func generateID() string {
 	return strconv.FormatUint(uint64(n), 36)
 }
 
-func main() {
-	port := os.Getenv("PORT")
-	if port == "" {
-		port = "8080"
-	}
-
-	slog.SetDefault(slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{
-		Level: slog.LevelInfo,
-	})))
-
-	r := newRelay()
-	mux := http.NewServeMux()
-
+// registerRoutes sets up HTTP and WebSocket handlers on mux.
+func registerRoutes(mux *http.ServeMux, r *relay) {
 	mux.HandleFunc("GET /health", func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		w.Write([]byte(`{"status":"ok"}`))
@@ -171,6 +160,21 @@ func main() {
 			}
 		}
 	})
+}
+
+func main() {
+	port := os.Getenv("PORT")
+	if port == "" {
+		port = "8080"
+	}
+
+	slog.SetDefault(slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{
+		Level: slog.LevelInfo,
+	})))
+
+	r := newRelay()
+	mux := http.NewServeMux()
+	registerRoutes(mux, r)
 
 	addr := ":" + port
 	slog.Info("tern starting", "addr", addr)
