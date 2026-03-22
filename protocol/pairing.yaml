@@ -8,51 +8,51 @@ channel_bound: 3   # max messages per channel (1 real + adversary slack)
 messages:
   pair_begin:
     from: cli
-    to: jevond
+    to: server
     desc: POST /api/pair/begin
   token_response:
-    from: jevond
+    from: server
     to: cli
     desc: '{instance_id, pairing_token}'
   pair_hello:
     from: ios
-    to: jevond
+    to: server
     desc: ECDH pubkey + pairing token
   pair_hello_ack:
-    from: jevond
+    from: server
     to: ios
     desc: ECDH pubkey
   pair_confirm:
-    from: jevond
+    from: server
     to: ios
     desc: signal to compute and display code
   waiting_for_code:
-    from: jevond
+    from: server
     to: cli
     desc: prompt for code entry
   code_submit:
     from: cli
-    to: jevond
+    to: server
     desc: POST /api/pair/confirm
   pair_complete:
-    from: jevond
+    from: server
     to: ios
     desc: encrypted device secret
   pair_status:
-    from: jevond
+    from: server
     to: cli
     desc: 'status: paired'
   auth_request:
     from: ios
-    to: jevond
+    to: server
     desc: encrypted auth with nonce
   auth_ok:
-    from: jevond
+    from: server
     to: ios
     desc: session established
 
 actors:
-  jevond:
+  server:
     initial: Idle
     transitions:
       - from: Idle
@@ -180,7 +180,7 @@ actors:
         on: key pair generated
         do: send_pair_hello
         sends:
-          - to: jevond
+          - to: server
             msg: pair_hello
             fields:
               token: current_token
@@ -211,7 +211,7 @@ actors:
         to: SendAuth
         on: relay connected
         sends:
-          - to: jevond
+          - to: server
             msg: auth_request
             fields:
               device_id: '"device_1"'
@@ -235,7 +235,7 @@ actors:
         to: BeginPair
         on: key stored
         sends:
-          - to: jevond
+          - to: server
             msg: pair_begin
       - from: BeginPair
         to: ShowQR
@@ -247,7 +247,7 @@ actors:
         to: SubmitCode
         on: user enters code
         sends:
-          - to: jevond
+          - to: server
             msg: code_submit
             fields:
               code: ios_code
@@ -270,19 +270,19 @@ vars:
     desc: server ECDH public key
   received_client_pub:
     initial: '"none"'
-    desc: pubkey jevond received in pair_hello (may be adversary's)
+    desc: pubkey server received in pair_hello (may be adversary's)
   received_server_pub:
     initial: '"none"'
     desc: pubkey ios received in pair_hello_ack (may be adversary's)
   server_shared_key:
     initial: '<<"none">>'
-    desc: ECDH key derived by jevond (tuple to match DeriveKey output type)
+    desc: ECDH key derived by server (tuple to match DeriveKey output type)
   client_shared_key:
     initial: '<<"none">>'
     desc: ECDH key derived by ios (tuple to match DeriveKey output type)
   server_code:
     initial: '<<"none">>'
-    desc: code computed by jevond from its view of the pubkeys (tuple to match DeriveCode output type)
+    desc: code computed by server from its view of the pubkeys (tuple to match DeriveCode output type)
   ios_code:
     initial: '<<"none">>'
     desc: code computed by ios from its view of the pubkeys (tuple to match DeriveCode output type)
@@ -355,47 +355,47 @@ adversary:
   - name: MitM_pair_hello
     desc: intercept pair_hello and substitute adversary ECDH pubkey
     code: |
-      await Len(chan_ios_jevond) > 0 /\ Head(chan_ios_jevond).type = MSG_pair_hello;
-      adv_saved_client_pub := Head(chan_ios_jevond).pubkey;
-      chan_ios_jevond := <<[type |-> MSG_pair_hello, token |-> Head(chan_ios_jevond).token, pubkey |-> adv_ecdh_pub]>> \o Tail(chan_ios_jevond);
+      await Len(chan_ios_server) > 0 /\ Head(chan_ios_server).type = MSG_pair_hello;
+      adv_saved_client_pub := Head(chan_ios_server).pubkey;
+      chan_ios_server := <<[type |-> MSG_pair_hello, token |-> Head(chan_ios_server).token, pubkey |-> adv_ecdh_pub]>> \o Tail(chan_ios_server);
   - name: MitM_pair_hello_ack
     desc: intercept pair_hello_ack and substitute adversary ECDH pubkey, derive both shared secrets
     code: |
-      await Len(chan_jevond_ios) > 0 /\ Head(chan_jevond_ios).type = MSG_pair_hello_ack;
-      adv_saved_server_pub := Head(chan_jevond_ios).pubkey;
+      await Len(chan_server_ios) > 0 /\ Head(chan_server_ios).type = MSG_pair_hello_ack;
+      adv_saved_server_pub := Head(chan_server_ios).pubkey;
       adversary_keys := adversary_keys \union {DeriveKey(adv_ecdh_pub, adv_saved_server_pub), DeriveKey(adv_ecdh_pub, adv_saved_client_pub)};
-      chan_jevond_ios := <<[type |-> MSG_pair_hello_ack, pubkey |-> adv_ecdh_pub]>> \o Tail(chan_jevond_ios);
+      chan_server_ios := <<[type |-> MSG_pair_hello_ack, pubkey |-> adv_ecdh_pub]>> \o Tail(chan_server_ios);
   - name: MitM_reencrypt_secret
     desc: decrypt pair_complete with MitM key, learn device secret
     code: |
-      await Len(chan_jevond_ios) > 0 /\ Head(chan_jevond_ios).type = MSG_pair_complete /\ Head(chan_jevond_ios).key \in adversary_keys;
-      with msg = Head(chan_jevond_ios) do
+      await Len(chan_server_ios) > 0 /\ Head(chan_server_ios).type = MSG_pair_complete /\ Head(chan_server_ios).key \in adversary_keys;
+      with msg = Head(chan_server_ios) do
         adversary_knowledge := adversary_knowledge \union {[type |-> "plaintext_secret", secret |-> msg.secret]};
-        chan_jevond_ios := <<[type |-> MSG_pair_complete, key |-> DeriveKey(adv_ecdh_pub, adv_saved_client_pub), secret |-> msg.secret]>> \o Tail(chan_jevond_ios);
+        chan_server_ios := <<[type |-> MSG_pair_complete, key |-> DeriveKey(adv_ecdh_pub, adv_saved_client_pub), secret |-> msg.secret]>> \o Tail(chan_server_ios);
       end with;
   - name: concurrent_pair
     desc: race a forged pair_hello using shoulder-surfed token
     code: |
       await \E m \in adversary_knowledge : m = [type |-> "qr_token", token |-> current_token];
-      await Len(chan_ios_jevond) < 3;
-      chan_ios_jevond := Append(chan_ios_jevond, [type |-> MSG_pair_hello, token |-> current_token, pubkey |-> adv_ecdh_pub]);
+      await Len(chan_ios_server) < 3;
+      chan_ios_server := Append(chan_ios_server, [type |-> MSG_pair_hello, token |-> current_token, pubkey |-> adv_ecdh_pub]);
   - name: token_bruteforce
     desc: send pair_hello with fabricated token
     code: |
-      await Len(chan_ios_jevond) < 3;
-      chan_ios_jevond := Append(chan_ios_jevond, [type |-> MSG_pair_hello, token |-> "fake_token", pubkey |-> adv_ecdh_pub]);
+      await Len(chan_ios_server) < 3;
+      chan_ios_server := Append(chan_ios_server, [type |-> MSG_pair_hello, token |-> "fake_token", pubkey |-> adv_ecdh_pub]);
   - name: code_guess
     desc: submit fabricated confirmation code via CLI channel
     code: |
-      await Len(chan_cli_jevond) < 3;
-      chan_cli_jevond := Append(chan_cli_jevond, [type |-> MSG_code_submit, code |-> <<"guess", "000000">>]);
+      await Len(chan_cli_server) < 3;
+      chan_cli_server := Append(chan_cli_server, [type |-> MSG_code_submit, code |-> <<"guess", "000000">>]);
   - name: session_replay
     desc: replay captured auth_request with stale nonce
     code: |
-      await Len(chan_ios_jevond) < 3;
+      await Len(chan_ios_server) < 3;
       await \E m \in adversary_knowledge : m.type = MSG_auth_request;
       with msg \in {m \in adversary_knowledge : m.type = MSG_auth_request} do
-        chan_ios_jevond := Append(chan_ios_jevond, msg);
+        chan_ios_server := Append(chan_ios_server, msg);
       end with;
 
 properties:
@@ -409,19 +409,19 @@ properties:
     desc: If the current session's shared key is compromised and both sides computed codes, the codes differ
   - name: MitMPrevented
     kind: invariant
-    expr: 'server_shared_key \in adversary_keys => jevond_state \notin {jevond_StorePaired, jevond_Paired, jevond_AuthCheck, jevond_SessionActive}'
+    expr: 'server_shared_key \in adversary_keys => server_state \notin {server_StorePaired, server_Paired, server_AuthCheck, server_SessionActive}'
     desc: If the current session's key is compromised, pairing never completes
   - name: AuthRequiresCompletedPairing
     kind: invariant
-    expr: 'jevond_state = jevond_SessionActive => received_device_id \in paired_devices'
+    expr: 'server_state = server_SessionActive => received_device_id \in paired_devices'
     desc: A session is only active for a device that completed pairing
   - name: NoNonceReuse
     kind: invariant
-    expr: 'jevond_state = jevond_SessionActive => received_auth_nonce \notin (auth_nonces_used \ {received_auth_nonce})'
+    expr: 'server_state = server_SessionActive => received_auth_nonce \notin (auth_nonces_used \ {received_auth_nonce})'
     desc: Each auth nonce is accepted at most once
   - name: WrongCodeDoesNotPair
     kind: invariant
-    expr: '(jevond_state = jevond_StorePaired \/ jevond_state = jevond_Paired) => received_code = server_code \/ received_code = <<"none">>'
+    expr: '(server_state = server_StorePaired \/ server_state = server_Paired) => received_code = server_code \/ received_code = <<"none">>'
     desc: Pairing only completes with the correct confirmation code
   - name: DeviceSecretSecrecy
     kind: invariant

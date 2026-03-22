@@ -54,7 +54,7 @@ D_RegisterRelay -[#blue,dashed]-> C_BeginPair : token_response\n{token, instance
 D_DeriveSecret -[#green,dashed]-> A_WaitAck : pair_hello_ack\n{pubkey}
 D_SendAck -[#orange,dashed]-> A_E2EReady : pair_confirm
 D_SendAck -[#purple,dashed]-> C_ShowQR : waiting_for_code
-D_StorePaired -[#gray,dashed]-> A_WaitPairComplete : pair_complete\n{secret, key}
+D_StorePaired -[#gray,dashed]-> A_WaitPairComplete : pair_complete\n{key, secret}
 D_StorePaired -[#red,dashed]-> C_SubmitCode : pair_status\n{status}
 D_AuthCheck -[#blue,dashed]-> A_SendAuth : auth_ok
 A_GenKeyPair -[#green,dashed]-> D_WaitingForClient : pair_hello\n{token, pubkey}

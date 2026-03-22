@@ -25,7 +25,7 @@ func noopActions(m *Machine, ids ...ActionID) {
 func TestMachineHappyPath(t *testing.T) {
 	p := PairingCeremony()
 
-	m, err := NewMachine(p, "jevond")
+	m, err := NewMachine(p, "server")
 	if err != nil {
 		t.Fatalf("NewMachine: %v", err)
 	}
@@ -50,30 +50,30 @@ func TestMachineHappyPath(t *testing.T) {
 		}
 	}
 
-	assertState(JevondIdle)
+	assertState(ServerIdle)
 	mustHandle(t, m, MsgPairBegin)
-	assertState(JevondGenerateToken)
+	assertState(ServerGenerateToken)
 	mustStep(t, m) // -> RegisterRelay
 	mustStep(t, m) // -> WaitingForClient
 	mustHandle(t, m, MsgPairHello)
-	assertState(JevondDeriveSecret)
+	assertState(ServerDeriveSecret)
 	mustStep(t, m) // -> SendAck
 	mustStep(t, m) // -> WaitingForCode
 	mustHandle(t, m, MsgCodeSubmit)
-	assertState(JevondValidateCode)
+	assertState(ServerValidateCode)
 	mustStep(t, m) // -> StorePaired
 	mustStep(t, m) // -> Paired
-	assertState(JevondPaired)
+	assertState(ServerPaired)
 
 	// Reconnection.
 	mustHandle(t, m, MsgAuthRequest)
 	mustStep(t, m) // -> SessionActive
-	assertState(JevondSessionActive)
+	assertState(ServerSessionActive)
 }
 
 func TestMachineTokenRejection(t *testing.T) {
 	p := PairingCeremony()
-	m, err := NewMachine(p, "jevond")
+	m, err := NewMachine(p, "server")
 	if err != nil {
 		t.Fatalf("NewMachine: %v", err)
 	}
@@ -87,14 +87,14 @@ func TestMachineTokenRejection(t *testing.T) {
 	mustStep(t, m) // -> WaitingForClient
 	mustHandle(t, m, MsgPairHello)
 
-	if got := m.State(); got != JevondIdle {
+	if got := m.State(); got != ServerIdle {
 		t.Fatalf("expected Idle after invalid token, got %s", got)
 	}
 }
 
 func TestMachineCodeRejection(t *testing.T) {
 	p := PairingCeremony()
-	m, err := NewMachine(p, "jevond")
+	m, err := NewMachine(p, "server")
 	if err != nil {
 		t.Fatalf("NewMachine: %v", err)
 	}
@@ -114,14 +114,14 @@ func TestMachineCodeRejection(t *testing.T) {
 	mustHandle(t, m, MsgCodeSubmit)
 	mustStep(t, m) // -> Idle (wrong code)
 
-	if got := m.State(); got != JevondIdle {
+	if got := m.State(); got != ServerIdle {
 		t.Fatalf("expected Idle after wrong code, got %s", got)
 	}
 }
 
 func TestMachineRejectsInvalidMessage(t *testing.T) {
 	p := PairingCeremony()
-	m, err := NewMachine(p, "jevond")
+	m, err := NewMachine(p, "server")
 	if err != nil {
 		t.Fatalf("NewMachine: %v", err)
 	}
@@ -199,8 +199,8 @@ func TestExportTLA(t *testing.T) {
 		"structural": {
 			"MODULE PairingCeremony",
 			"EXTENDS Integers",
-			"jevond_state", "ios_state", "cli_state",
-			"chan_cli_jevond", "chan_jevond_ios",
+			"server_state", "ios_state", "cli_state",
+			"chan_cli_server", "chan_server_ios",
 			"adversary_knowledge", "process Adversary", "recv_msg",
 		},
 		"variables": {
@@ -225,8 +225,8 @@ func TestExportTLA(t *testing.T) {
 			`received_device_id \in paired_devices`,
 		},
 		"sends": {
-			"Append(chan_cli_jevond", "Append(chan_jevond_cli",
-			"Append(chan_jevond_ios", "Append(chan_ios_jevond",
+			"Append(chan_cli_server", "Append(chan_server_cli",
+			"Append(chan_server_ios", "Append(chan_ios_server",
 		},
 		"updates": {
 			`active_tokens := active_tokens \union`,

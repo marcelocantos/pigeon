@@ -20,7 +20,7 @@ public enum MessageType: String, Sendable {
     case authOk = "auth_ok"
 }
 
-public enum JevondState: String, Sendable {
+public enum ServerState: String, Sendable {
     case idle = "Idle"
     case generateToken = "GenerateToken"
     case registerRelay = "RegisterRelay"
@@ -35,15 +35,15 @@ public enum JevondState: String, Sendable {
     case sessionActive = "SessionActive"
 }
 
-public final class JevondMachine: @unchecked Sendable {
-    public private(set) var state: JevondState
+public final class ServerMachine: @unchecked Sendable {
+    public private(set) var state: ServerState
 
     public init() {
         self.state = .idle
     }
 
     /// Process a received message. Returns the new state, or nil if rejected.
-    public func handleMessage(_ msg: MessageType, guard check: (String) -> Bool = { _ in true }) -> JevondState? {
+    public func handleMessage(_ msg: MessageType, guard check: (String) -> Bool = { _ in true }) -> ServerState? {
         switch (state, msg) {
         case (.idle, .pairBegin):
             state = .generateToken
@@ -66,7 +66,7 @@ public final class JevondMachine: @unchecked Sendable {
     }
 
     /// Attempt an internal transition. Returns the new state, or nil if none available.
-    public func step(guard check: (String) -> Bool = { _ in true }) -> JevondState? {
+    public func step(guard check: (String) -> Bool = { _ in true }) -> ServerState? {
         switch state {
         case .generateToken:
             state = .registerRelay

@@ -20,7 +20,7 @@ func TestExportGoStructure(t *testing.T) {
 
 	checks := []string{
 		"package protocol",
-		"JevondIdle",
+		"ServerIdle",
 		"MsgPairBegin",
 		"GuardTokenValid",
 		"ActionGenerateToken",
@@ -49,7 +49,7 @@ func TestExportSwiftStructure(t *testing.T) {
 
 	checks := []string{
 		"MessageType",
-		"JevondState",
+		"ServerState",
 		"IosState",
 		"CliState",
 		"handleMessage",
@@ -76,7 +76,7 @@ func TestExportPlantUMLStructure(t *testing.T) {
 		"@startuml",
 		"@enduml",
 		"PairingCeremony",
-		"jevond",
+		"server",
 		"ios",
 		"cli",
 	}
