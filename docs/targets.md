@@ -60,8 +60,8 @@ Multiple clients connecting to the same instance ID causes concurrent
 `inst.conn.Read()` — a data race. The relay rejects a second client
 while one is bridged (or closes the previous one).
 
-Status: not started
-Severity: Critical
+Status: done
+
 
 ### 🎯T2.2 Swift E2EChannel.encrypt() is concurrency-safe
 
@@ -69,8 +69,8 @@ Lock is released before encryption; concurrent callers can send
 out-of-order sequence numbers, causing the receiver to reject. Hold
 the lock for the full encrypt operation.
 
-Status: not started
-Severity: High
+Status: done
+
 
 ### 🎯T2.3 NOTICES file exists with third-party attribution
 
@@ -78,24 +78,24 @@ Apache 2.0 §4(d) requires attribution. All deps (coder/websocket ISC,
 skip2/go-qrcode MIT, gopkg.in/yaml.v3 MIT+Apache, golang.org/x/crypto
 BSD-3) are listed with copyright and licence.
 
-Status: not started
-Severity: High
+Status: done
+
 
 ### 🎯T2.4 README.md exists
 
 Covers what the relay is, trust model, Go package API, Swift SPM
 import, deployment, and how to run tests.
 
-Status: not started
-Severity: High
+Status: done
+
 
 ### 🎯T2.5 GitHub repo settings enforce squash-only merges
 
 `allow_merge_commit: false`, `allow_rebase_merge: false`,
 `squash_merge_commit_title: PR_TITLE`, `delete_branch_on_merge: true`.
 
-Status: not started
-Severity: High
+Status: done
+
 
 ### 🎯T2.6 ExportGo emits ChannelBound and OneShot
 
@@ -104,46 +104,46 @@ causing the Go representation to differ from the YAML spec. The
 generated TLA+ would produce unbounded channels if regenerated from
 the Go struct.
 
-Status: not started
-Severity: Medium
+Status: done
+
 
 ### 🎯T2.7 ExportGo emits PropertyKind as named constant
 
 Currently emits raw `0`/`1` instead of `Invariant`/`Liveness`.
 
-Status: not started
-Severity: Medium
+Status: done
+
 
 ### 🎯T2.8 Relay binary supports --version, --help, --help-agent
 
 Per CLI binary conventions. Includes build-time version injection.
 
-Status: not started
-Severity: Medium
+Status: done
+
 
 ### 🎯T2.9 Generated files have SPDX headers
 
 `pairingceremony_gen.go` and `PairingCeremonyMachine.swift` include
 copyright and SPDX-License-Identifier lines.
 
-Status: not started
-Severity: Medium
+Status: done
+
 
 ### 🎯T2.10 Test coverage for qr, YAML parser, and code generators
 
 `qr/`, `protocol/yaml.go`, `ExportGo`, `ExportSwift`, `ExportPlantUML`
 all at 0% coverage. Add basic tests.
 
-Status: not started
-Severity: Medium
+Status: done
+
 
 ### 🎯T2.11 CORS wildcard documented as intentional
 
 Both `/register` and `/ws/{id}` use `OriginPatterns: ["*"]`. Document
 the design choice and note that deployers should restrict if needed.
 
-Status: not started
-Severity: Medium
+Status: done
+
 
 ### 🎯T2.12 go-qrcode dependency evaluated
 
@@ -151,58 +151,58 @@ Severity: Medium
 Either vendor, replace with a maintained alternative, or accept and
 document.
 
-Status: not started
-Severity: Medium
+Status: done
+
 
 ### 🎯T2.13 Private project name "jevon" removed from public files
 
 `pairing.yaml` trigger description says `jevon --init`; generated
 files and `docs/targets.md` reference jevon.
 
-Status: not started
-Severity: Low
+Status: done
+
 
 ### 🎯T2.14 Health handler w.Write return value handled
 
 `main.go:74` ignores w.Write error.
 
-Status: not started
-Severity: Low
+Status: done
+
 
 ### 🎯T2.15 Test for concurrent clients per instance
 
 Exercises the (now-rejected) second-client scenario to verify the
 fix from 🎯T2.1.
 
-Status: not started (depends on 🎯T2.1)
-Severity: Low
+Status: done
+
 
 ### 🎯T2.16 formal/tlc uses portable shebang
 
 Change `#!/bin/bash` to `#!/usr/bin/env bash`.
 
-Status: not started
-Severity: Low
+Status: done
+
 
 ### 🎯T2.17 Explicit WebSocket read limit
 
 Call `conn.SetReadLimit()` with a documented value rather than relying
 on the implicit 32 KB default.
 
-Status: not started
-Severity: Low
+Status: done
+
 
 ### 🎯T2.18 Instance ID entropy documented
 
 32-bit IDs are adequate for current use but weak for a high-traffic
 public relay. Document the trade-off; consider 64-bit if usage grows.
 
-Status: not started
-Severity: Info
+Status: done
+
 
 ### 🎯T2.19 go.mod uses minor version only
 
 Change `go 1.25.7` to `go 1.25`.
 
-Status: not started
-Severity: Info
+Status: done
+
