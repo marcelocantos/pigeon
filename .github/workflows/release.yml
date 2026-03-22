@@ -1,0 +1,94 @@
+# Copyright 2026 Marcelo Cantos
+# SPDX-License-Identifier: Apache-2.0
+#
+# Release workflow — triggered when a GitHub release is published.
+# Builds the tern relay binary for three platforms and uploads tarballs
+# to the existing release. Also triggers homebrew-releaser to update the
+# marcelocantos/homebrew-tap formula.
+#
+# NOTE: This workflow never creates tags or releases — those are created
+# locally via `gh release create`. This workflow only builds artifacts.
+
+name: release
+
+on:
+  release:
+    types: [published]
+
+jobs:
+  build:
+    name: Build ${{ matrix.os }}-${{ matrix.arch }}
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      matrix:
+        include:
+          - os: darwin
+            arch: arm64
+            runner: macos-latest
+            goarch: arm64
+            goos: darwin
+          - os: linux
+            arch: amd64
+            runner: ubuntu-latest
+            goarch: amd64
+            goos: linux
+          - os: linux
+            arch: arm64
+            runner: ubuntu-latest
+            goarch: arm64
+            goos: linux
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: Run tests
+        if: matrix.os == 'linux' && matrix.arch == 'amd64'
+        run: go test ./...
+
+      - name: Build binary
+        env:
+          GOOS: ${{ matrix.goos }}
+          GOARCH: ${{ matrix.goarch }}
+          CGO_ENABLED: "0"
+          VERSION: ${{ github.event.release.tag_name }}
+        run: |
+          go build -ldflags "-X main.version=${VERSION}" -o tern .
+
+      - name: Package tarball
+        env:
+          VERSION: ${{ github.event.release.tag_name }}
+        run: |
+          TARBALL="tern-${VERSION#v}-${{ matrix.os }}-${{ matrix.arch }}.tar.gz"
+          tar czf "${TARBALL}" tern
+          echo "TARBALL=${TARBALL}" >> "$GITHUB_ENV"
+
+      - name: Upload to release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ github.event.release.tag_name }}
+        run: |
+          gh release upload "${VERSION}" "${TARBALL}"
+
+  homebrew:
+    name: Update Homebrew tap
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: Justintime50/homebrew-releaser@v3
+        with:
+          homebrew_owner: marcelocantos
+          homebrew_tap: homebrew-tap
+          github_token: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+          formula_folder: Formula
+          version: ${{ github.event.release.tag_name }}
+          install: 'bin.install "tern" => "tern"'
+          target_darwin_arm64: true
+          target_linux_amd64: true
+          target_linux_arm64: true
+          test: 'system bin/"tern", "--version"'
+          skip_checksum: true
+          update_readme_table: true
