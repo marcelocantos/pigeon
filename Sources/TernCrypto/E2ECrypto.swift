@@ -80,9 +80,9 @@ public final class E2EChannel: @unchecked Sendable {
     /// Encrypt a plaintext message. Returns [8-byte seq][ciphertext+tag].
     public func encrypt(_ plaintext: Data) throws -> Data {
         lock.lock()
+        defer { lock.unlock() }
         let seq = sendSeq
         sendSeq += 1
-        lock.unlock()
 
         var seqBytes = Data(count: 8)
         seqBytes.withUnsafeMutableBytes { ptr in

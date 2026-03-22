@@ -209,6 +209,27 @@ func TestMultipleInstances(t *testing.T) {
 	}
 }
 
+func TestSecondClientRejected(t *testing.T) {
+	ts := startTestRelay(t)
+
+	_, id := registerBackend(t, ts)
+
+	// First client connects successfully.
+	client1 := dial(t, wsURL(ts, "/ws/"+id))
+	defer client1.CloseNow()
+
+	// Second client should be rejected with 409 Conflict.
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	_, resp, err := websocket.Dial(ctx, wsURL(ts, "/ws/"+id), nil)
+	if err == nil {
+		t.Fatal("second client dial should have failed")
+	}
+	if resp != nil && resp.StatusCode != http.StatusConflict {
+		t.Fatalf("second client status = %d, want %d", resp.StatusCode, http.StatusConflict)
+	}
+}
+
 func TestGenerateIDLength(t *testing.T) {
 	for range 100 {
 		id := generateID()

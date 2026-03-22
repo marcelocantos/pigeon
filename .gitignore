@@ -3,6 +3,7 @@
 sqlite_mcp_server.db
 .build/
 .swiftpm/
+.claude/worktrees/
 
 # TLC model checker artifacts
 formal/states/

@@ -230,7 +230,7 @@ actors:
     transitions:
       - from: Idle
         to: GetKey
-        on: jevon --init
+        on: cli --init
       - from: GetKey
         to: BeginPair
         on: key stored

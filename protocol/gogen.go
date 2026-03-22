@@ -15,6 +15,8 @@ import (
 func (p *Protocol) ExportGo(w io.Writer, pkgName, funcName string) error {
 	var b strings.Builder
 
+	b.WriteString("// Copyright 2026 Marcelo Cantos\n")
+	b.WriteString("// SPDX-License-Identifier: Apache-2.0\n\n")
 	b.WriteString("// Code generated from protocol/*.yaml. DO NOT EDIT.\n\n")
 	fmt.Fprintf(&b, "package %s\n\n", pkgName)
 
@@ -153,10 +155,17 @@ func (p *Protocol) ExportGo(w io.Writer, pkgName, funcName string) error {
 	// Properties
 	b.WriteString("\t\tProperties: []Property{\n")
 	for _, prop := range p.Properties {
-		fmt.Fprintf(&b, "\t\t\t{Name: %q, Kind: %d, Expr: %q, Desc: %q},\n",
-			prop.Name, prop.Kind, prop.Expr, prop.Desc)
+		kindStr := "Invariant"
+		if prop.Kind == Liveness {
+			kindStr = "Liveness"
+		}
+		fmt.Fprintf(&b, "\t\t\t{Name: %q, Kind: %s, Expr: %q, Desc: %q},\n",
+			prop.Name, kindStr, prop.Expr, prop.Desc)
 	}
 	b.WriteString("\t\t},\n")
+
+	fmt.Fprintf(&b, "\t\tChannelBound: %d,\n", p.ChannelBound)
+	fmt.Fprintf(&b, "\t\tOneShot: %v,\n", p.OneShot)
 
 	b.WriteString("\t}\n}\n")
 

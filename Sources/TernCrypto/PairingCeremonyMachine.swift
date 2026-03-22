@@ -1,3 +1,6 @@
+// Copyright 2026 Marcelo Cantos
+// SPDX-License-Identifier: Apache-2.0
+
 // Auto-generated from protocol definition. Do not edit.
 // Source of truth: protocol/*.yaml
 

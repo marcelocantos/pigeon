@@ -287,7 +287,7 @@ fair process cli = 3
 begin
   cli_loop:
     either
-      \* Idle -> GetKey (jevon --init)
+      \* Idle -> GetKey (cli --init)
       await cli_state = cli_Idle;
       cli_state := cli_GetKey;
     or

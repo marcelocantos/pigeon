@@ -1,6 +1,9 @@
 // Copyright 2026 Marcelo Cantos
 // SPDX-License-Identifier: Apache-2.0
 
+// NOTE: github.com/skip2/go-qrcode is unmaintained (last update 2020).
+// Consider replacing with a maintained alternative if issues arise.
+
 // Package qr renders QR codes to the terminal and detects LAN IP addresses.
 package qr
 

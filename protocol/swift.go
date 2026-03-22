@@ -15,6 +15,8 @@ import (
 func (p *Protocol) ExportSwift(w io.Writer) error {
 	var b strings.Builder
 
+	b.WriteString("// Copyright 2026 Marcelo Cantos\n")
+	b.WriteString("// SPDX-License-Identifier: Apache-2.0\n\n")
 	b.WriteString("// Auto-generated from protocol definition. Do not edit.\n")
 	b.WriteString("// Source of truth: protocol/*.yaml\n\n")
 	b.WriteString("import Foundation\n\n")

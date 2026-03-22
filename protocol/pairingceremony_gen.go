@@ -1,3 +1,6 @@
+// Copyright 2026 Marcelo Cantos
+// SPDX-License-Identifier: Apache-2.0
+
 // Code generated from protocol/*.yaml. DO NOT EDIT.
 
 package protocol
@@ -73,13 +76,13 @@ const (
 
 // Actions.
 const (
-	ActionStoreDevice ActionID = "store_device"
-	ActionVerifyDevice ActionID = "verify_device"
 	ActionSendPairHello ActionID = "send_pair_hello"
 	ActionStoreSecret ActionID = "store_secret"
 	ActionGenerateToken ActionID = "generate_token"
 	ActionRegisterRelay ActionID = "register_relay"
 	ActionDeriveSecret ActionID = "derive_secret"
+	ActionStoreDevice ActionID = "store_device"
+	ActionVerifyDevice ActionID = "verify_device"
 )
 
 func PairingCeremony() *Protocol {
@@ -118,7 +121,7 @@ func PairingCeremony() *Protocol {
 				{From: "SessionActive", To: "Paired", On: Internal("disconnect")},
 			}},
 			{Name: "cli", Initial: "Idle", Transitions: []Transition{
-				{From: "Idle", To: "GetKey", On: Internal("jevon --init")},
+				{From: "Idle", To: "GetKey", On: Internal("cli --init")},
 				{From: "GetKey", To: "BeginPair", On: Internal("key stored"), Sends: []Send{{To: "jevond", Msg: "pair_begin"}, }},
 				{From: "BeginPair", To: "ShowQR", On: Recv("token_response")},
 				{From: "ShowQR", To: "PromptCode", On: Recv("waiting_for_code")},
@@ -188,14 +191,16 @@ func PairingCeremony() *Protocol {
 			{Name: "session_replay", Desc: "replay captured auth_request with stale nonce", Code: "      await Len(chan_ios_jevond) < 3;\n      await \\E m \\in adversary_knowledge : m.type = MSG_auth_request;\n      with msg \\in {m \\in adversary_knowledge : m.type = MSG_auth_request} do\n        chan_ios_jevond := Append(chan_ios_jevond, msg);\n      end with;"},
 		},
 		Properties: []Property{
-			{Name: "NoTokenReuse", Kind: 0, Expr: "used_tokens \\intersect active_tokens = {}", Desc: "A revoked pairing token is never accepted again"},
-			{Name: "MitMDetectedByCodeMismatch", Kind: 0, Expr: "(server_shared_key \\in adversary_keys /\\ server_code /= <<\"none\">> /\\ ios_code /= <<\"none\">>) => server_code /= ios_code", Desc: "If the current session's shared key is compromised and both sides computed codes, the codes differ"},
-			{Name: "MitMPrevented", Kind: 0, Expr: "server_shared_key \\in adversary_keys => jevond_state \\notin {jevond_StorePaired, jevond_Paired, jevond_AuthCheck, jevond_SessionActive}", Desc: "If the current session's key is compromised, pairing never completes"},
-			{Name: "AuthRequiresCompletedPairing", Kind: 0, Expr: "jevond_state = jevond_SessionActive => received_device_id \\in paired_devices", Desc: "A session is only active for a device that completed pairing"},
-			{Name: "NoNonceReuse", Kind: 0, Expr: "jevond_state = jevond_SessionActive => received_auth_nonce \\notin (auth_nonces_used \\ {received_auth_nonce})", Desc: "Each auth nonce is accepted at most once"},
-			{Name: "WrongCodeDoesNotPair", Kind: 0, Expr: "(jevond_state = jevond_StorePaired \\/ jevond_state = jevond_Paired) => received_code = server_code \\/ received_code = <<\"none\">>", Desc: "Pairing only completes with the correct confirmation code"},
-			{Name: "DeviceSecretSecrecy", Kind: 0, Expr: "\\A m \\in adversary_knowledge : \"type\" \\in DOMAIN m => m.type /= \"plaintext_secret\"", Desc: "Adversary never learns the device secret in plaintext"},
-			{Name: "HonestPairingCompletes", Kind: 1, Expr: "cli_state = cli_Done /\\ ios_state = ios_Paired", Desc: "If all actors cooperate honestly (no MitM), pairing eventually completes"},
+			{Name: "NoTokenReuse", Kind: Invariant, Expr: "used_tokens \\intersect active_tokens = {}", Desc: "A revoked pairing token is never accepted again"},
+			{Name: "MitMDetectedByCodeMismatch", Kind: Invariant, Expr: "(server_shared_key \\in adversary_keys /\\ server_code /= <<\"none\">> /\\ ios_code /= <<\"none\">>) => server_code /= ios_code", Desc: "If the current session's shared key is compromised and both sides computed codes, the codes differ"},
+			{Name: "MitMPrevented", Kind: Invariant, Expr: "server_shared_key \\in adversary_keys => jevond_state \\notin {jevond_StorePaired, jevond_Paired, jevond_AuthCheck, jevond_SessionActive}", Desc: "If the current session's key is compromised, pairing never completes"},
+			{Name: "AuthRequiresCompletedPairing", Kind: Invariant, Expr: "jevond_state = jevond_SessionActive => received_device_id \\in paired_devices", Desc: "A session is only active for a device that completed pairing"},
+			{Name: "NoNonceReuse", Kind: Invariant, Expr: "jevond_state = jevond_SessionActive => received_auth_nonce \\notin (auth_nonces_used \\ {received_auth_nonce})", Desc: "Each auth nonce is accepted at most once"},
+			{Name: "WrongCodeDoesNotPair", Kind: Invariant, Expr: "(jevond_state = jevond_StorePaired \\/ jevond_state = jevond_Paired) => received_code = server_code \\/ received_code = <<\"none\">>", Desc: "Pairing only completes with the correct confirmation code"},
+			{Name: "DeviceSecretSecrecy", Kind: Invariant, Expr: "\\A m \\in adversary_knowledge : \"type\" \\in DOMAIN m => m.type /= \"plaintext_secret\"", Desc: "Adversary never learns the device secret in plaintext"},
+			{Name: "HonestPairingCompletes", Kind: Liveness, Expr: "cli_state = cli_Done /\\ ios_state = ios_Paired", Desc: "If all actors cooperate honestly (no MitM), pairing eventually completes"},
 		},
+		ChannelBound: 3,
+		OneShot: true,
 	}
 }

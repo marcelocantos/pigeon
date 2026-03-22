@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/usr/bin/env bash
 # Run TLC model checker on a TLA+ spec with PlusCal translation.
 # Usage: ./tlc PairingCeremony [extra TLC flags...]
 

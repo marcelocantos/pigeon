@@ -15,6 +15,8 @@ package main
 import (
 	"context"
 	"crypto/rand"
+	"flag"
+	"fmt"
 	"log/slog"
 	"net/http"
 	"os"
@@ -24,11 +26,21 @@ import (
 	"github.com/coder/websocket"
 )
 
+// version is set at build time via -ldflags "-X main.version=v0.1.0".
+var version = "dev"
+
+// maxMessageSize is the WebSocket read limit for both backend and client
+// connections. 1 MiB is generous for relay traffic (typically small JSON
+// messages or encrypted binary frames) while preventing a single frame
+// from consuming unbounded memory.
+const maxMessageSize = 1 << 20 // 1 MiB
+
 type instance struct {
-	id   string
-	conn *websocket.Conn
-	ctx  context.Context
-	mu   sync.Mutex
+	id       string
+	conn     *websocket.Conn
+	ctx      context.Context
+	mu       sync.Mutex
+	occupied bool // true when a client is connected; protected by mu
 }
 
 type relay struct {
@@ -61,6 +73,10 @@ func (r *relay) get(id string) *instance {
 func generateID() string {
 	// 4 bytes → base36 ≈ 6-7 chars. Plenty for session uniqueness
 	// (~4 billion possibilities) without being unwieldy in URLs.
+	// NOTE: 32-bit IDs are adequate for moderate-traffic relays where
+	// instances are short-lived and the chance of collision is low. For
+	// high-traffic public deployments, increase to 8 bytes (64-bit) to
+	// reduce collision probability.
 	b := make([]byte, 4)
 	rand.Read(b)
 	n := uint32(b[0])<<24 | uint32(b[1])<<16 | uint32(b[2])<<8 | uint32(b[3])
@@ -71,7 +87,7 @@ func generateID() string {
 func registerRoutes(mux *http.ServeMux, r *relay) {
 	mux.HandleFunc("GET /health", func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
-		w.Write([]byte(`{"status":"ok"}`))
+		_, _ = w.Write([]byte(`{"status":"ok"}`))
 	})
 
 	// Backend registers here. The relay assigns an instance ID and sends
@@ -79,6 +95,9 @@ func registerRoutes(mux *http.ServeMux, r *relay) {
 	// for bidirectional bridging with clients.
 	mux.HandleFunc("GET /register", func(w http.ResponseWriter, req *http.Request) {
 		conn, err := websocket.Accept(w, req, &websocket.AcceptOptions{
+			// CORS wildcard is intentional: the relay bridges arbitrary
+			// backends and clients that may run on any origin. Deployers
+			// who want tighter control should restrict this list.
 			OriginPatterns: []string{"*"},
 		})
 		if err != nil {
@@ -86,6 +105,7 @@ func registerRoutes(mux *http.ServeMux, r *relay) {
 			return
 		}
 		defer conn.CloseNow()
+		conn.SetReadLimit(maxMessageSize)
 
 		ctx := req.Context()
 		id := generateID()
@@ -116,7 +136,26 @@ func registerRoutes(mux *http.ServeMux, r *relay) {
 			return
 		}
 
+		// Enforce single client per instance to prevent concurrent reads
+		// on the backend connection (data race).
+		inst.mu.Lock()
+		if inst.occupied {
+			inst.mu.Unlock()
+			http.Error(w, `{"error":"instance already has a connected client"}`, http.StatusConflict)
+			return
+		}
+		inst.occupied = true
+		inst.mu.Unlock()
+		defer func() {
+			inst.mu.Lock()
+			inst.occupied = false
+			inst.mu.Unlock()
+		}()
+
 		clientConn, err := websocket.Accept(w, req, &websocket.AcceptOptions{
+			// CORS wildcard is intentional: the relay bridges arbitrary
+			// backends and clients that may run on any origin. Deployers
+			// who want tighter control should restrict this list.
 			OriginPatterns: []string{"*"},
 		})
 		if err != nil {
@@ -124,6 +163,7 @@ func registerRoutes(mux *http.ServeMux, r *relay) {
 			return
 		}
 		defer clientConn.CloseNow()
+		clientConn.SetReadLimit(maxMessageSize)
 
 		ctx := req.Context()
 		slog.Info("client connected", "instance", instanceID)
@@ -163,9 +203,28 @@ func registerRoutes(mux *http.ServeMux, r *relay) {
 }
 
 func main() {
-	port := os.Getenv("PORT")
-	if port == "" {
-		port = "8080"
+	showVersion := flag.Bool("version", false, "print version and exit")
+	helpAgent := flag.Bool("help-agent", false, "print help and agent guide")
+	port := flag.String("port", "", "listening port (overrides PORT env var)")
+	flag.Parse()
+
+	if *showVersion {
+		fmt.Println(version)
+		os.Exit(0)
+	}
+
+	if *helpAgent {
+		// TODO: embed agents-guide.md when one exists.
+		flag.Usage()
+		os.Exit(0)
+	}
+
+	listenPort := *port
+	if listenPort == "" {
+		listenPort = os.Getenv("PORT")
+	}
+	if listenPort == "" {
+		listenPort = "8080"
 	}
 
 	slog.SetDefault(slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{
@@ -176,8 +235,8 @@ func main() {
 	mux := http.NewServeMux()
 	registerRoutes(mux, r)
 
-	addr := ":" + port
-	slog.Info("tern starting", "addr", addr)
+	addr := ":" + listenPort
+	slog.Info("tern starting", "addr", addr, "version", version)
 	if err := http.ListenAndServe(addr, mux); err != nil {
 		slog.Error("tern failed", "err", err)
 		os.Exit(1)
