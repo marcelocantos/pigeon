@@ -1,6 +1,8 @@
 /tern
 .DS_Store
 sqlite_mcp_server.db
+.build/
+.swiftpm/
 
 # TLC model checker artifacts
 formal/states/

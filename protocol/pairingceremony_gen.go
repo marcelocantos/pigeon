@@ -73,13 +73,13 @@ const (
 
 // Actions.
 const (
-	ActionGenerateToken ActionID = "generate_token"
-	ActionRegisterRelay ActionID = "register_relay"
-	ActionDeriveSecret ActionID = "derive_secret"
 	ActionStoreDevice ActionID = "store_device"
 	ActionVerifyDevice ActionID = "verify_device"
 	ActionSendPairHello ActionID = "send_pair_hello"
 	ActionStoreSecret ActionID = "store_secret"
+	ActionGenerateToken ActionID = "generate_token"
+	ActionRegisterRelay ActionID = "register_relay"
+	ActionDeriveSecret ActionID = "derive_secret"
 )
 
 func PairingCeremony() *Protocol {

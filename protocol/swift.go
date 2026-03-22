@@ -20,7 +20,7 @@ func (p *Protocol) ExportSwift(w io.Writer) error {
 	b.WriteString("import Foundation\n\n")
 
 	// Message type enum.
-	b.WriteString("enum MessageType: String, Sendable {\n")
+	b.WriteString("public enum MessageType: String, Sendable {\n")
 	for _, m := range p.Messages {
 		fmt.Fprintf(&b, "    case %s = \"%s\"\n", swiftCase(string(m.Type)), m.Type)
 	}
@@ -32,22 +32,22 @@ func (p *Protocol) ExportSwift(w io.Writer) error {
 		states := collectStates(a)
 
 		// State enum.
-		fmt.Fprintf(&b, "enum %sState: String, Sendable {\n", typeName)
+		fmt.Fprintf(&b, "public enum %sState: String, Sendable {\n", typeName)
 		for _, s := range states {
 			fmt.Fprintf(&b, "    case %s = \"%s\"\n", swiftCase(string(s)), s)
 		}
 		b.WriteString("}\n\n")
 
 		// Machine class.
-		fmt.Fprintf(&b, "final class %sMachine: @unchecked Sendable {\n", typeName)
-		fmt.Fprintf(&b, "    private(set) var state: %sState\n\n", typeName)
-		fmt.Fprintf(&b, "    init() {\n")
+		fmt.Fprintf(&b, "public final class %sMachine: @unchecked Sendable {\n", typeName)
+		fmt.Fprintf(&b, "    public private(set) var state: %sState\n\n", typeName)
+		fmt.Fprintf(&b, "    public init() {\n")
 		fmt.Fprintf(&b, "        self.state = .%s\n", swiftCase(string(a.Initial)))
 		b.WriteString("    }\n\n")
 
 		// handleMessage
 		b.WriteString("    /// Process a received message. Returns the new state, or nil if rejected.\n")
-		fmt.Fprintf(&b, "    func handleMessage(_ msg: MessageType, guard check: (String) -> Bool = { _ in true }) -> %sState? {\n", typeName)
+		fmt.Fprintf(&b, "    public func handleMessage(_ msg: MessageType, guard check: (String) -> Bool = { _ in true }) -> %sState? {\n", typeName)
 		b.WriteString("        switch (state, msg) {\n")
 		for _, t := range a.Transitions {
 			if t.On.Kind != TriggerRecv {
@@ -71,7 +71,7 @@ func (p *Protocol) ExportSwift(w io.Writer) error {
 
 		// step
 		b.WriteString("    /// Attempt an internal transition. Returns the new state, or nil if none available.\n")
-		fmt.Fprintf(&b, "    func step(guard check: (String) -> Bool = { _ in true }) -> %sState? {\n", typeName)
+		fmt.Fprintf(&b, "    public func step(guard check: (String) -> Bool = { _ in true }) -> %sState? {\n", typeName)
 		b.WriteString("        switch state {\n")
 
 		// Group internal transitions by from-state.
