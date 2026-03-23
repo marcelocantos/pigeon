@@ -117,7 +117,7 @@ func (p *Protocol) ExportSwift(w io.Writer) error {
 }
 
 func swiftTypeName(name string) string {
-	// "jevond" -> "Jevond", "ios" -> "Ios", "cli" -> "Cli"
+	// "server" -> "Server", "ios" -> "Ios", "cli" -> "Cli"
 	if len(name) == 0 {
 		return name
 	}

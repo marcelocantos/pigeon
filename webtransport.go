@@ -161,6 +161,11 @@ func NewWebTransportServer(addr string, tlsConfig *tls.Config, token string) (*W
 func (s *WebTransportServer) handleRegister(w http.ResponseWriter, r *http.Request) {
 	if s.token != "" {
 		auth := r.Header.Get("Authorization")
+		if auth == "" {
+			if qtoken := r.URL.Query().Get("token"); qtoken != "" {
+				auth = "Bearer " + qtoken
+			}
+		}
 		if subtle.ConstantTimeCompare([]byte(auth), []byte("Bearer "+s.token)) != 1 {
 			http.Error(w, `{"error":"unauthorized"}`, http.StatusUnauthorized)
 			return

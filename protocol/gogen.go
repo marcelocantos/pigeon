@@ -174,7 +174,7 @@ func (p *Protocol) ExportGo(w io.Writer, pkgName, funcName string) error {
 }
 
 // goConstPrefix maps actor names to Go constant prefixes.
-// "jevond" -> "Jevond", "ios" -> "App", "cli" -> "CLI"
+// "server" -> "Server", "ios" -> "App", "cli" -> "CLI"
 func goConstPrefix(actor string) string {
 	switch actor {
 	case "ios":

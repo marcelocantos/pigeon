@@ -71,7 +71,9 @@ func (c *Conn) SendDatagram(data []byte) error
 func (c *Conn) RecvDatagram(ctx context.Context) ([]byte, error)
 func (c *Conn) SetChannel(ch *crypto.Channel)
 func (c *Conn) SetDatagramChannel(ch *crypto.Channel)
-func (c *Conn) CloseNow()
+func (c *Conn) Close() error
+func (c *Conn) CloseNow() error
+func (c *Conn) OpenStream() (*webtransport.Stream, error)
 
 // Connection options
 type Option func(*options)
@@ -85,8 +87,10 @@ func Connect(ctx context.Context, relayURL, instanceID string, opts ...Option) (
 // Server library
 type WebTransportServer struct { /* unexported fields */ }
 func NewWebTransportServer(addr string, tlsConfig *tls.Config, token string) (*WebTransportServer, error)
+func (s *WebTransportServer) ListenAndServe() error
 func (s *WebTransportServer) Serve(conn net.PacketConn) error
-func (s *WebTransportServer) Close()
+func (s *WebTransportServer) Close() error
+func (s *WebTransportServer) Addr() net.Addr
 ```
 
 *Stability: Stable.*
@@ -238,8 +242,8 @@ Needs Review — names depend on pairing.yaml actor names.*
 ## Gaps and Prerequisites for 1.0
 
 - **Actor names in pairing.yaml** (`ios`, `cli`) are app-specific. The generated
-  Swift classes `AppMachine` and `CLIMachine` are fine for jevon's use but may
-  not suit other applications. Consider making actor names configurable, or
+  Swift classes `AppMachine` and `CLIMachine` are fine for the reference
+  application but may not suit other applications. Consider making actor names configurable, or
   documenting that consumers should define their own protocol YAML.
 - **No confirmation code function in Swift** — `DeriveConfirmationCode` exists
   in Go but not in `TernCrypto`. iOS apps currently rely on the backend for

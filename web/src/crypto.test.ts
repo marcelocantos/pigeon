@@ -208,6 +208,19 @@ describe("deriveKeyFromSecret", () => {
 });
 
 describe("deriveConfirmationCode", () => {
+  it("cross-platform vector matches Go", async () => {
+    // Fixed 32-byte keys matching TestConfirmationCodeCrossplatformVector in Go.
+    const keyA = new Uint8Array(32).fill(0x01);
+    const keyB = new Uint8Array(32).fill(0x02);
+
+    const code = await deriveConfirmationCode(keyA, keyB);
+    assert.equal(code, "629624");
+
+    // Order-independence.
+    const codeBA = await deriveConfirmationCode(keyB, keyA);
+    assert.equal(codeBA, "629624");
+  });
+
   it("produces a 6-digit string", async () => {
     const alice = await E2EKeyPair.create();
     const bob = await E2EKeyPair.create();

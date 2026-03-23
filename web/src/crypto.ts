@@ -116,7 +116,7 @@ export class E2EKeyPair {
  *
  * - `"strict"` (default): sequence numbers must be contiguous with no gaps.
  *   Any out-of-order or replayed packet is rejected. Suitable for reliable
- *   transports (TCP / WebSocket).
+ *   transports (WebTransport streams).
  * - `"datagrams"`: gaps in the sequence number space are accepted, as expected
  *   on lossy transports (UDP, H.264 video). Packets with a sequence number
  *   less than the last accepted one are rejected to prevent replay attacks.

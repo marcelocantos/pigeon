@@ -5,6 +5,7 @@ package crypto
 
 import (
 	"bytes"
+	"crypto/ecdh"
 	"crypto/rand"
 	"fmt"
 	"testing"
@@ -403,6 +404,41 @@ func TestDatagramModeStress(t *testing.T) {
 	t.Logf("stress: %d/%d delivered (50%% systematic loss)", delivered, total)
 	if delivered != total/2 {
 		t.Fatalf("expected %d delivered, got %d", total/2, delivered)
+	}
+}
+
+func TestConfirmationCodeCrossplatformVector(t *testing.T) {
+	// Fixed X25519 public keys (any 32-byte value is a valid X25519 point).
+	keyA := bytes.Repeat([]byte{0x01}, 32)
+	keyB := bytes.Repeat([]byte{0x02}, 32)
+
+	pubA, err := ecdh.X25519().NewPublicKey(keyA)
+	if err != nil {
+		t.Fatal(err)
+	}
+	pubB, err := ecdh.X25519().NewPublicKey(keyB)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	code, err := DeriveConfirmationCode(pubA, pubB)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// This expected value must match the TypeScript test in web/src/crypto.test.ts.
+	const expected = "629624"
+	if code != expected {
+		t.Fatalf("got %q, want %q", code, expected)
+	}
+
+	// Verify order-independence with the same expected value.
+	codeBA, err := DeriveConfirmationCode(pubB, pubA)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if codeBA != expected {
+		t.Fatalf("reversed order: got %q, want %q", codeBA, expected)
 	}
 }
 

@@ -148,16 +148,40 @@ func connectPair(t *testing.T, env relayEnv) (*Conn, *Conn) {
 // setupEncryption creates matching E2E channels on both sides.
 func setupEncryption(t *testing.T, b, c *Conn) {
 	t.Helper()
-	bKP, _ := crypto.GenerateKeyPair()
-	cKP, _ := crypto.GenerateKeyPair()
+	bKP, err := crypto.GenerateKeyPair()
+	if err != nil {
+		t.Fatal(err)
+	}
+	cKP, err := crypto.GenerateKeyPair()
+	if err != nil {
+		t.Fatal(err)
+	}
 
-	bSendKey, _ := crypto.DeriveSessionKey(bKP.Private, cKP.Public, []byte("b-to-c"))
-	bRecvKey, _ := crypto.DeriveSessionKey(bKP.Private, cKP.Public, []byte("c-to-b"))
-	cSendKey, _ := crypto.DeriveSessionKey(cKP.Private, bKP.Public, []byte("c-to-b"))
-	cRecvKey, _ := crypto.DeriveSessionKey(cKP.Private, bKP.Public, []byte("b-to-c"))
+	bSendKey, err := crypto.DeriveSessionKey(bKP.Private, cKP.Public, []byte("b-to-c"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	bRecvKey, err := crypto.DeriveSessionKey(bKP.Private, cKP.Public, []byte("c-to-b"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	cSendKey, err := crypto.DeriveSessionKey(cKP.Private, bKP.Public, []byte("c-to-b"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	cRecvKey, err := crypto.DeriveSessionKey(cKP.Private, bKP.Public, []byte("b-to-c"))
+	if err != nil {
+		t.Fatal(err)
+	}
 
-	bCh, _ := crypto.NewChannel(bSendKey, bRecvKey)
-	cCh, _ := crypto.NewChannel(cSendKey, cRecvKey)
+	bCh, err := crypto.NewChannel(bSendKey, bRecvKey)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cCh, err := crypto.NewChannel(cSendKey, cRecvKey)
+	if err != nil {
+		t.Fatal(err)
+	}
 
 	b.SetChannel(bCh)
 	c.SetChannel(cCh)
@@ -166,16 +190,40 @@ func setupEncryption(t *testing.T, b, c *Conn) {
 // setupDatagramEncryption creates matching datagram channels on both sides.
 func setupDatagramEncryption(t *testing.T, b, c *Conn) {
 	t.Helper()
-	bKP, _ := crypto.GenerateKeyPair()
-	cKP, _ := crypto.GenerateKeyPair()
+	bKP, err := crypto.GenerateKeyPair()
+	if err != nil {
+		t.Fatal(err)
+	}
+	cKP, err := crypto.GenerateKeyPair()
+	if err != nil {
+		t.Fatal(err)
+	}
 
-	bSendKey, _ := crypto.DeriveSessionKey(bKP.Private, cKP.Public, []byte("dg-b-to-c"))
-	bRecvKey, _ := crypto.DeriveSessionKey(bKP.Private, cKP.Public, []byte("dg-c-to-b"))
-	cSendKey, _ := crypto.DeriveSessionKey(cKP.Private, bKP.Public, []byte("dg-c-to-b"))
-	cRecvKey, _ := crypto.DeriveSessionKey(cKP.Private, bKP.Public, []byte("dg-b-to-c"))
+	bSendKey, err := crypto.DeriveSessionKey(bKP.Private, cKP.Public, []byte("dg-b-to-c"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	bRecvKey, err := crypto.DeriveSessionKey(bKP.Private, cKP.Public, []byte("dg-c-to-b"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	cSendKey, err := crypto.DeriveSessionKey(cKP.Private, bKP.Public, []byte("dg-c-to-b"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	cRecvKey, err := crypto.DeriveSessionKey(cKP.Private, bKP.Public, []byte("dg-b-to-c"))
+	if err != nil {
+		t.Fatal(err)
+	}
 
-	bCh, _ := crypto.NewChannel(bSendKey, bRecvKey)
-	cCh, _ := crypto.NewChannel(cSendKey, cRecvKey)
+	bCh, err := crypto.NewChannel(bSendKey, bRecvKey)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cCh, err := crypto.NewChannel(cSendKey, cRecvKey)
+	if err != nil {
+		t.Fatal(err)
+	}
 
 	b.SetDatagramChannel(bCh)
 	c.SetDatagramChannel(cCh)

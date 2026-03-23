@@ -60,7 +60,7 @@ jobs:
           CGO_ENABLED: "0"
           VERSION: ${{ github.event.release.tag_name }}
         run: |
-          go build -ldflags "-X main.version=${VERSION}" -o tern .
+          go build -ldflags "-X main.version=${VERSION}" -o tern ./cmd/tern
 
       - name: Package tarball
         env:

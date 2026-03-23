@@ -38,9 +38,10 @@ async function writeMessage(
  * Returns the payload (without the 4-byte header).
  */
 async function readMessage(
+  conn: Conn,
   reader: ReadableStreamBYOBReader | ReadableStreamDefaultReader<Uint8Array>,
 ): Promise<Uint8Array> {
-  const hdr = await readExact(reader, 4);
+  const hdr = await readExact(conn, reader, 4);
   const length = new DataView(
     hdr.buffer,
     hdr.byteOffset,
@@ -49,19 +50,31 @@ async function readMessage(
   if (length > maxMessageSize) {
     throw new Error(`message too large: ${length} > ${maxMessageSize}`);
   }
-  return readExact(reader, length);
+  return readExact(conn, reader, length);
 }
 
 /**
  * Read exactly `n` bytes from a stream, assembling from multiple chunks
- * if necessary.
+ * if necessary. Leftover bytes from oversized chunks are preserved in
+ * `conn.remainder` for subsequent reads.
  */
 async function readExact(
+  conn: Conn,
   reader: ReadableStreamBYOBReader | ReadableStreamDefaultReader<Uint8Array>,
   n: number,
 ): Promise<Uint8Array> {
   const buf = new Uint8Array(n);
   let offset = 0;
+
+  // Consume any leftover bytes from a previous read.
+  if (conn["remainder"] !== null) {
+    const rem = conn["remainder"] as Uint8Array;
+    const take = Math.min(rem.length, n);
+    buf.set(rem.subarray(0, take), 0);
+    offset = take;
+    conn["remainder"] = take < rem.length ? rem.subarray(take) : null;
+  }
+
   while (offset < n) {
     const { value, done } = await reader.read() as ReadableStreamReadResult<Uint8Array>;
     if (done || !value) {
@@ -70,10 +83,9 @@ async function readExact(
     const take = Math.min(value.length, n - offset);
     buf.set(value.subarray(0, take), offset);
     offset += take;
-    // If the chunk was larger than needed, we lose the extra bytes.
-    // WebTransport streams deliver ordered bytes, so this is fine for
-    // length-prefixed framing as long as each readMessage call is
-    // sequential (which it is — recv() is awaited).
+    if (take < value.length) {
+      conn["remainder"] = value.subarray(take);
+    }
   }
   return buf;
 }
@@ -88,6 +100,9 @@ export class Conn {
   private transport: WebTransport;
   private writer: WritableStreamDefaultWriter<Uint8Array>;
   private reader: ReadableStreamDefaultReader<Uint8Array>;
+  private remainder: Uint8Array | null = null;
+  private datagramWriter: WritableStreamDefaultWriter<Uint8Array> | null = null;
+  private datagramReader: ReadableStreamDefaultReader<Uint8Array> | null = null;
   private closed = false;
 
   /** @internal Use register() or connect() instead. */
@@ -116,7 +131,7 @@ export class Conn {
     if (this.closed) {
       throw new Error("connection is closed");
     }
-    return readMessage(this.reader);
+    return readMessage(this, this.reader);
   }
 
   /** Send an unreliable datagram to the peer. */
@@ -124,8 +139,10 @@ export class Conn {
     if (this.closed) {
       throw new Error("connection is closed");
     }
-    const writer = this.transport.datagrams.writable.getWriter();
-    writer.write(data).finally(() => writer.releaseLock());
+    if (!this.datagramWriter) {
+      this.datagramWriter = this.transport.datagrams.writable.getWriter();
+    }
+    this.datagramWriter.write(data);
   }
 
   /** Receive the next unreliable datagram from the peer. */
@@ -133,16 +150,14 @@ export class Conn {
     if (this.closed) {
       throw new Error("connection is closed");
     }
-    const reader = this.transport.datagrams.readable.getReader();
-    try {
-      const { value, done } = await reader.read();
-      if (done || !value) {
-        throw new Error("datagram stream ended");
-      }
-      return value;
-    } finally {
-      reader.releaseLock();
+    if (!this.datagramReader) {
+      this.datagramReader = this.transport.datagrams.readable.getReader();
     }
+    const { value, done } = await this.datagramReader.read();
+    if (done || !value) {
+      throw new Error("datagram stream ended");
+    }
+    return value;
   }
 
   /** Close the connection. */
@@ -150,6 +165,9 @@ export class Conn {
     if (!this.closed) {
       this.closed = true;
       this.writer.close().catch(() => {});
+      if (this.datagramWriter) {
+        this.datagramWriter.close().catch(() => {});
+      }
       this.transport.close();
     }
   }
@@ -210,11 +228,14 @@ export async function register(
     opts,
   );
 
-  // Read the instance ID from the server.
-  const idBytes = await readMessage(reader);
+  // Create the Conn first so readMessage can use its remainder buffer.
+  const conn = new Conn(transport, writer, reader, "");
+  const idBytes = await readMessage(conn, reader);
   const instanceID = new TextDecoder().decode(idBytes);
 
-  return new Conn(transport, writer, reader, instanceID);
+  // Patch the instance ID onto the connection (bypass readonly for init).
+  (conn as unknown as { instanceID: string }).instanceID = instanceID;
+  return conn;
 }
 
 /**

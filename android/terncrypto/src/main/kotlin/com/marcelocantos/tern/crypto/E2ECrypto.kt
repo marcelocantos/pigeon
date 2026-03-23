@@ -13,7 +13,7 @@ import javax.crypto.spec.GCMParameterSpec
 import javax.crypto.spec.SecretKeySpec
 
 /**
- * End-to-end encryption for WebSocket traffic relayed through tern.
+ * End-to-end encryption for traffic relayed through tern.
  * Mirrors the Go crypto package and Swift TernCrypto.
  *
  * Key exchange: X25519 ECDH
@@ -74,7 +74,7 @@ enum class ChannelMode {
     /**
      * Strict (default): sequence numbers must be contiguous with no gaps.
      * Any out-of-order or replayed packet is rejected. Suitable for reliable
-     * transports (TCP / WebSocket).
+     * transports (reliable streams).
      */
     STRICT,
 
@@ -89,7 +89,7 @@ enum class ChannelMode {
 // ---- Encrypted channel ----
 
 /**
- * Provides symmetric encryption/decryption for a WebSocket connection.
+ * Provides symmetric encryption/decryption for a relay connection.
  * Uses AES-256-GCM with a monotonic counter nonce. Thread-safe.
  */
 class E2EChannel private constructor(
