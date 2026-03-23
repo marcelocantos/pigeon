@@ -316,3 +316,52 @@ privacy considerations (Bluetooth MAC address rotation).
 
 Status: not started
 
+---
+
+## 🎯T8 WebTransport relay
+
+Replace WebSocket with WebTransport (QUIC) on the relay path. Enables
+both reliable streams (control, pairing) and unreliable datagrams
+(H.264 video, real-time data).
+
+### 🎯T8.1 WebTransport relay server
+
+Serve WebTransport alongside (or instead of) WebSocket on the relay.
+Use `quic-go/webtransport-go`. Fly.io handles TLS. Same endpoints:
+/register, /ws/{id}, /health. Bridge bidirectional streams + datagrams.
+
+Status: not started
+
+### 🎯T8.2 Non-strict Channel.Decrypt for datagrams
+
+Add a windowed/skip mode to Channel.Decrypt that accepts any sequence
+number greater than the last seen, instead of requiring exactly the
+next one. Required for loss-tolerant datagram delivery (H.264 frames).
+The strict sequential mode remains the default for reliable streams.
+
+Status: not started
+
+### 🎯T8.3 Go WebTransport client
+
+WebTransport Conn transport in the root tern package. Register and
+Connect over WebTransport when available, with WebSocket fallback.
+
+Status: not started
+
+### 🎯T8.4 Web/TypeScript WebTransport client
+
+Browser-native WebTransport API in `web/`. Use reliable stream for
+control/pairing, datagrams for video. Falls back to WebSocket on
+browsers that don't support WebTransport.
+
+Status: not started
+
+### 🎯T8.5 LAN direct WebTransport with cert fingerprint
+
+Ephemeral self-signed cert for LAN listener. Include SHA-256 hash in
+the LAN offer control message. Browser peers use
+`serverCertificateHashes` to accept it (Chromium-only for now; others
+fall back to WebSocket LAN or relay).
+
+Status: not started
+
