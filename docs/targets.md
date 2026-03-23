@@ -269,7 +269,35 @@ Status: not started
 
 ---
 
-## 🎯T6 Investigate Bluetooth as proximity oracle
+## 🎯T6 Investigate STUN/NAT hole-punching as a transport
+
+STUN-based peer-to-peer connectivity as a middle tier between relay
+and LAN direct. Uses a STUN server to discover public IP/port
+mappings, then both peers attempt UDP hole-punching to establish a
+direct path without relaying traffic.
+
+Sits between relay and LAN in the transport priority:
+1. LAN (same network)
+2. STUN/P2P (different networks, direct via hole-punch)
+3. Relay (always works, fallback)
+
+Same cutover protocol as 🎯T5.3 applies — it's just another transport.
+
+Needs investigation:
+- STUN server requirements (run our own, or use public ones?)
+- UDP vs TCP hole-punching (UDP is standard but tern uses WebSocket/TCP)
+- Success rate across NAT types (symmetric NATs defeat STUN)
+- Whether to use ICE (the full WebRTC negotiation framework) or a
+  simpler STUN-only approach
+- TURN as the fallback when hole-punching fails (essentially our
+  existing relay, but standard protocol)
+- Go and Swift STUN/ICE libraries (pion/ice, libnice)
+
+Status: not started
+
+---
+
+## 🎯T7 Investigate Bluetooth as proximity oracle
 
 Bluetooth as a proximity signal rather than a data channel. Possible
 uses:
