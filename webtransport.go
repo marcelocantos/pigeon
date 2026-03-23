@@ -5,14 +5,15 @@ package tern
 
 import (
 	"crypto/rand"
+	"crypto/subtle"
 	"crypto/tls"
 	"encoding/binary"
+	"encoding/hex"
 	"fmt"
 	"io"
 	"log/slog"
 	"net"
 	"net/http"
-	"strconv"
 	"sync"
 
 	"github.com/quic-go/quic-go/http3"
@@ -60,12 +61,13 @@ func (h *wtHub) get(id string) *wtInstance {
 	return h.instances[id]
 }
 
-// generateID generates a random instance ID.
+// generateID generates a random 128-bit instance ID as a hex string.
 func generateID() string {
-	b := make([]byte, 4)
-	rand.Read(b)
-	n := uint32(b[0])<<24 | uint32(b[1])<<16 | uint32(b[2])<<8 | uint32(b[3])
-	return strconv.FormatUint(uint64(n), 36)
+	b := make([]byte, 16)
+	if _, err := rand.Read(b); err != nil {
+		panic("crypto/rand failed: " + err.Error())
+	}
+	return hex.EncodeToString(b)
 }
 
 // writeWTMessage writes a length-prefixed binary message to a stream.
@@ -159,7 +161,7 @@ func NewWebTransportServer(addr string, tlsConfig *tls.Config, token string) (*W
 func (s *WebTransportServer) handleRegister(w http.ResponseWriter, r *http.Request) {
 	if s.token != "" {
 		auth := r.Header.Get("Authorization")
-		if auth != "Bearer "+s.token {
+		if subtle.ConstantTimeCompare([]byte(auth), []byte("Bearer "+s.token)) != 1 {
 			http.Error(w, `{"error":"unauthorized"}`, http.StatusUnauthorized)
 			return
 		}
@@ -208,8 +210,8 @@ func (s *WebTransportServer) handleRegister(w http.ResponseWriter, r *http.Reque
 func (s *WebTransportServer) handleClient(w http.ResponseWriter, r *http.Request) {
 	// Extract instance ID from path: /ws/{id}
 	instanceID := r.URL.Path[len("/ws/"):]
-	if instanceID == "" {
-		http.Error(w, `{"error":"missing instance ID"}`, http.StatusBadRequest)
+	if len(instanceID) == 0 || len(instanceID) > 64 {
+		http.Error(w, `{"error":"invalid instance ID"}`, http.StatusBadRequest)
 		return
 	}
 

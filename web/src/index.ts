@@ -7,4 +7,4 @@ export {
   deriveKeyFromSecret,
   deriveConfirmationCode,
 } from "./crypto.js";
-export { register, connect, Conn } from "./relay.js";
+export { register, connect, Conn, type ConnectOptions } from "./relay.js";

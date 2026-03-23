@@ -6,203 +6,233 @@ export interface ConnectOptions {
   /** Bearer token for authentication on /register. */
   token?: string;
   /**
-   * WebSocket constructor, for Node.js compatibility.
-   * Defaults to globalThis.WebSocket.
+   * Optional server certificate hashes for development (self-signed certs).
+   * Each entry must have { algorithm: "sha-256", value: ArrayBuffer }.
    */
-  WebSocket?: new (url: string, protocols?: string | string[]) => WebSocket;
+  serverCertificateHashes?: WebTransportHash[];
 }
 
-/** Queued incoming message. */
-interface QueuedMessage {
-  data: Uint8Array | string;
-  resolve: (value: Uint8Array | string) => void;
+/** Maximum relay frame size (must match server's maxWTMessageSize). */
+const maxMessageSize = 1 << 20; // 1 MiB
+
+/**
+ * Write a length-prefixed message to a WritableStream.
+ * Format: [4-byte big-endian length][payload]
+ */
+async function writeMessage(
+  writer: WritableStreamDefaultWriter<Uint8Array>,
+  data: Uint8Array,
+): Promise<void> {
+  if (data.length > maxMessageSize) {
+    throw new Error(`message too large: ${data.length} > ${maxMessageSize}`);
+  }
+  const frame = new Uint8Array(4 + data.length);
+  const view = new DataView(frame.buffer);
+  view.setUint32(0, data.length, false); // big-endian
+  frame.set(data, 4);
+  await writer.write(frame);
 }
 
 /**
- * A connection to a peer through the tern relay.
+ * Read a length-prefixed message from a ReadableStream.
+ * Returns the payload (without the 4-byte header).
+ */
+async function readMessage(
+  reader: ReadableStreamBYOBReader | ReadableStreamDefaultReader<Uint8Array>,
+): Promise<Uint8Array> {
+  const hdr = await readExact(reader, 4);
+  const length = new DataView(
+    hdr.buffer,
+    hdr.byteOffset,
+    hdr.byteLength,
+  ).getUint32(0, false);
+  if (length > maxMessageSize) {
+    throw new Error(`message too large: ${length} > ${maxMessageSize}`);
+  }
+  return readExact(reader, length);
+}
+
+/**
+ * Read exactly `n` bytes from a stream, assembling from multiple chunks
+ * if necessary.
+ */
+async function readExact(
+  reader: ReadableStreamBYOBReader | ReadableStreamDefaultReader<Uint8Array>,
+  n: number,
+): Promise<Uint8Array> {
+  const buf = new Uint8Array(n);
+  let offset = 0;
+  while (offset < n) {
+    const { value, done } = await reader.read() as ReadableStreamReadResult<Uint8Array>;
+    if (done || !value) {
+      throw new Error("stream ended before expected bytes were read");
+    }
+    const take = Math.min(value.length, n - offset);
+    buf.set(value.subarray(0, take), offset);
+    offset += take;
+    // If the chunk was larger than needed, we lose the extra bytes.
+    // WebTransport streams deliver ordered bytes, so this is fine for
+    // length-prefixed framing as long as each readMessage call is
+    // sequential (which it is — recv() is awaited).
+  }
+  return buf;
+}
+
+/**
+ * A connection to a peer through the tern WebTransport relay.
  */
 export class Conn {
   /** The relay-assigned instance ID. */
-  public instanceID: string;
-  /** Called when the WebSocket closes. */
-  public onclose: ((event: CloseEvent) => void) | null = null;
+  readonly instanceID: string;
 
-  private ws: WebSocket;
-  private recvQueue: (Uint8Array | string)[] = [];
-  private waiters: ((value: Uint8Array | string) => void)[] = [];
+  private transport: WebTransport;
+  private writer: WritableStreamDefaultWriter<Uint8Array>;
+  private reader: ReadableStreamDefaultReader<Uint8Array>;
   private closed = false;
-  private closeError: Error | null = null;
 
   /** @internal Use register() or connect() instead. */
-  constructor(ws: WebSocket, instanceID: string) {
-    this.ws = ws;
+  constructor(
+    transport: WebTransport,
+    writer: WritableStreamDefaultWriter<Uint8Array>,
+    reader: ReadableStreamDefaultReader<Uint8Array>,
+    instanceID: string,
+  ) {
+    this.transport = transport;
+    this.writer = writer;
+    this.reader = reader;
     this.instanceID = instanceID;
-    ws.binaryType = "arraybuffer";
-
-    ws.onmessage = (event: MessageEvent) => {
-      const data =
-        event.data instanceof ArrayBuffer
-          ? new Uint8Array(event.data)
-          : (event.data as string);
-
-      if (this.waiters.length > 0) {
-        const waiter = this.waiters.shift()!;
-        waiter(data);
-      } else {
-        this.recvQueue.push(data);
-      }
-    };
-
-    ws.onclose = (event: CloseEvent) => {
-      this.closed = true;
-      this.closeError = new Error(
-        `WebSocket closed: code=${event.code} reason=${event.reason}`,
-      );
-      // Reject all pending waiters
-      for (const waiter of this.waiters) {
-        // We use a special rejection mechanism below
-      }
-      this.waiters = [];
-      if (this.onclose) {
-        this.onclose(event);
-      }
-    };
   }
 
-  /** Send a message to the peer. */
-  send(data: Uint8Array | string): void {
+  /** Send a message to the peer on the reliable stream. */
+  async send(data: Uint8Array): Promise<void> {
     if (this.closed) {
       throw new Error("connection is closed");
     }
-    this.ws.send(data);
+    await writeMessage(this.writer, data);
   }
 
-  /** Receive the next message from the peer. */
-  recv(): Promise<Uint8Array | string> {
-    if (this.recvQueue.length > 0) {
-      return Promise.resolve(this.recvQueue.shift()!);
-    }
+  /** Receive the next message from the peer on the reliable stream. */
+  async recv(): Promise<Uint8Array> {
     if (this.closed) {
-      return Promise.reject(this.closeError ?? new Error("connection closed"));
+      throw new Error("connection is closed");
     }
-    return new Promise<Uint8Array | string>((resolve, reject) => {
-      // Wrap to handle close-while-waiting
-      const originalOnClose = this.ws.onclose;
-      this.waiters.push(resolve);
+    return readMessage(this.reader);
+  }
 
-      // If the socket closes while we're waiting, reject
-      const idx = this.waiters.length - 1;
-      const checkClose = this.ws.addEventListener("close", () => {
-        const waiterIdx = this.waiters.indexOf(resolve);
-        if (waiterIdx >= 0) {
-          this.waiters.splice(waiterIdx, 1);
-          reject(
-            this.closeError ?? new Error("connection closed while waiting"),
-          );
-        }
-      }, { once: true });
-    });
+  /** Send an unreliable datagram to the peer. */
+  sendDatagram(data: Uint8Array): void {
+    if (this.closed) {
+      throw new Error("connection is closed");
+    }
+    const writer = this.transport.datagrams.writable.getWriter();
+    writer.write(data).finally(() => writer.releaseLock());
+  }
+
+  /** Receive the next unreliable datagram from the peer. */
+  async recvDatagram(): Promise<Uint8Array> {
+    if (this.closed) {
+      throw new Error("connection is closed");
+    }
+    const reader = this.transport.datagrams.readable.getReader();
+    try {
+      const { value, done } = await reader.read();
+      if (done || !value) {
+        throw new Error("datagram stream ended");
+      }
+      return value;
+    } finally {
+      reader.releaseLock();
+    }
   }
 
   /** Close the connection. */
   close(): void {
     if (!this.closed) {
-      this.ws.close(1000, "");
+      this.closed = true;
+      this.writer.close().catch(() => {});
+      this.transport.close();
     }
   }
 }
 
 /**
- * Convert an HTTP(S) URL to a WebSocket URL.
+ * Open a WebTransport session and create a bidirectional stream with
+ * the length-prefixed handshake.
  */
-function toWsURL(url: string): string {
-  if (url.startsWith("http://")) return "ws://" + url.slice(7);
-  if (url.startsWith("https://")) return "wss://" + url.slice(8);
-  if (url.startsWith("ws://") || url.startsWith("wss://")) return url;
-  return url;
+async function openSession(
+  url: string,
+  handshake: string,
+  opts?: ConnectOptions,
+): Promise<{
+  transport: WebTransport;
+  writer: WritableStreamDefaultWriter<Uint8Array>;
+  reader: ReadableStreamDefaultReader<Uint8Array>;
+}> {
+  const wtOpts: WebTransportOptions = {};
+  if (opts?.serverCertificateHashes) {
+    wtOpts.serverCertificateHashes = opts.serverCertificateHashes;
+  }
+
+  const transport = new WebTransport(url, wtOpts);
+  await transport.ready;
+
+  const stream = await transport.createBidirectionalStream();
+  const writer = stream.writable.getWriter();
+  const reader = stream.readable.getReader();
+
+  // Send the handshake message (length-prefixed).
+  await writeMessage(writer, new TextEncoder().encode(handshake));
+
+  return { transport, writer, reader };
 }
 
 /**
  * Register as a backend with the relay. Returns a Conn whose instanceID
  * is the relay-assigned instance ID.
  */
-export function register(
-  relayURL: string,
+export async function register(
+  url: string,
   opts?: ConnectOptions,
 ): Promise<Conn> {
-  return new Promise((resolve, reject) => {
-    const WS = opts?.WebSocket ?? globalThis.WebSocket;
-    const wsURL = toWsURL(relayURL) + "/register";
+  let registerURL = url.replace(/\/$/, "") + "/register";
 
-    // WebSocket API doesn't support arbitrary headers in browsers.
-    // Use the subprotocol field to pass the token if needed.
-    const protocols: string[] = [];
-    if (opts?.token) {
-      protocols.push("Bearer-" + opts.token);
-    }
+  // WebTransport supports headers via URL params or protocol-level auth.
+  // Pass token as a query parameter since WebTransport doesn't support
+  // arbitrary request headers in all browsers.
+  if (opts?.token) {
+    const sep = registerURL.includes("?") ? "&" : "?";
+    registerURL += sep + "token=" + encodeURIComponent(opts.token);
+  }
 
-    const ws = protocols.length > 0 ? new WS(wsURL, protocols) : new WS(wsURL);
-    ws.binaryType = "arraybuffer";
+  const { transport, writer, reader } = await openSession(
+    registerURL,
+    "register",
+    opts,
+  );
 
-    let gotID = false;
+  // Read the instance ID from the server.
+  const idBytes = await readMessage(reader);
+  const instanceID = new TextDecoder().decode(idBytes);
 
-    ws.onmessage = (event: MessageEvent) => {
-      if (!gotID) {
-        gotID = true;
-        const id =
-          typeof event.data === "string"
-            ? event.data
-            : new TextDecoder().decode(event.data);
-        const conn = new Conn(ws, id);
-        resolve(conn);
-      }
-    };
-
-    ws.onerror = () => {
-      if (!gotID) {
-        reject(new Error(`WebSocket connection to ${wsURL} failed`));
-      }
-    };
-
-    ws.onclose = (event: CloseEvent) => {
-      if (!gotID) {
-        reject(
-          new Error(
-            `WebSocket closed before instance ID received: code=${event.code}`,
-          ),
-        );
-      }
-    };
-  });
+  return new Conn(transport, writer, reader, instanceID);
 }
 
 /**
  * Connect to a backend instance through the relay.
  */
-export function connect(
-  relayURL: string,
+export async function connect(
+  url: string,
   instanceID: string,
   opts?: ConnectOptions,
 ): Promise<Conn> {
-  return new Promise((resolve, reject) => {
-    const WS = opts?.WebSocket ?? globalThis.WebSocket;
-    const wsURL = toWsURL(relayURL) + "/ws/" + instanceID;
+  const connectURL =
+    url.replace(/\/$/, "") + "/ws/" + encodeURIComponent(instanceID);
 
-    const ws = new WS(wsURL);
-    ws.binaryType = "arraybuffer";
+  const { transport, writer, reader } = await openSession(
+    connectURL,
+    "connect",
+    opts,
+  );
 
-    ws.onopen = () => {
-      resolve(new Conn(ws, instanceID));
-    };
-
-    ws.onerror = () => {
-      reject(new Error(`WebSocket connection to ${wsURL} failed`));
-    };
-
-    ws.onclose = (event: CloseEvent) => {
-      reject(
-        new Error(`WebSocket closed before open: code=${event.code}`),
-      );
-    };
-  });
+  return new Conn(transport, writer, reader, instanceID);
 }

@@ -1,7 +1,7 @@
 {
   "name": "@marcelocantos/tern",
-  "version": "0.1.0",
-  "description": "TypeScript/Web client for tern WebSocket relay with E2E encryption",
+  "version": "0.2.0",
+  "description": "TypeScript/Web client for tern WebTransport relay with E2E encryption",
   "type": "module",
   "exports": "./src/index.ts",
   "main": "./src/index.ts",

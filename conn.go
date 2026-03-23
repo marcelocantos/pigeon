@@ -170,9 +170,14 @@ func (c *Conn) OpenStream() (*webtransport.Stream, error) {
 	return c.session.OpenStream()
 }
 
-// Close gracefully closes the WebTransport session.
+// Close gracefully closes the WebTransport session. It closes the primary
+// bidirectional stream first (allowing buffered data to flush) before
+// closing the session.
 func (c *Conn) Close() error {
 	c.cancel()
+	if c.stream != nil {
+		c.stream.Close()
+	}
 	return c.session.CloseWithError(0, "")
 }
 
