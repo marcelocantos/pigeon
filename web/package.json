@@ -1,0 +1,16 @@
+{
+  "name": "@marcelocantos/tern",
+  "version": "0.1.0",
+  "description": "TypeScript/Web client for tern WebSocket relay with E2E encryption",
+  "type": "module",
+  "exports": "./src/index.ts",
+  "main": "./src/index.ts",
+  "scripts": {
+    "test": "npx tsx --test src/crypto.test.ts"
+  },
+  "devDependencies": {
+    "tsx": "^4.19.0",
+    "typescript": "^5.5.0"
+  },
+  "license": "Apache-2.0"
+}
