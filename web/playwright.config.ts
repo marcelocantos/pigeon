@@ -18,9 +18,11 @@ export default defineConfig({
       use: {
         browserName: "chromium",
         launchOptions: {
-          // Chromium treats localhost as a secure context, so no cert
-          // flags are needed for the test page. WebTransport to
-          // tern.fly.dev uses a real Let's Encrypt cert.
+          args: [
+            // Playwright's bundled Chromium may not trust system CAs.
+            // Allow connections to tern.fly.dev with any cert.
+            "--ignore-certificate-errors",
+          ],
         },
       },
     },
