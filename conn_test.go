@@ -103,10 +103,17 @@ func liveRelay(t *testing.T) relayEnv {
 	if token == "" {
 		t.Skip("TERN_TOKEN not set; skipping live test")
 	}
+	// Use TERN_RELAY_URL if set, otherwise default to tern.fly.dev.
+	relayURL := os.Getenv("TERN_RELAY_URL")
+	if relayURL == "" {
+		relayURL = "https://tern.fly.dev:443"
+	}
+
 	env := relayEnv{
-		url: "https://tern.fly.dev:443",
+		url: relayURL,
 		opts: []Option{
 			WithToken(token),
+			// InsecureSkipVerify because the relay generates a self-signed cert.
 			WithTLS(&tls.Config{InsecureSkipVerify: true}),
 		},
 	}
