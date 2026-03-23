@@ -39,7 +39,7 @@ class TernConnLiveE2ETest {
     }
 
     private fun connectToRelay(): KwikQuicTransport {
-        return KwikQuicTransport.connect(host, quicPort, trustAllCerts = false)
+        return KwikQuicTransport.connect(host, quicPort)
     }
 
     @Test
