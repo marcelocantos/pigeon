@@ -6,9 +6,11 @@
   "exports": "./src/index.ts",
   "main": "./src/index.ts",
   "scripts": {
-    "test": "npx tsx --test src/crypto.test.ts"
+    "test": "npx tsx --test src/crypto.test.ts",
+    "test:e2e": "npx playwright test"
   },
   "devDependencies": {
+    "@playwright/test": "^1.58.2",
     "tsx": "^4.19.0",
     "typescript": "^5.5.0"
   },

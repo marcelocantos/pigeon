@@ -10,6 +10,8 @@ sqlite_mcp_server.db
 # Node.js
 web/node_modules/
 web/dist/
+web/test-results/
+web/playwright-report/
 
 # Gradle/Android build artifacts
 android/.gradle/
