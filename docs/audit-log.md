@@ -10,3 +10,12 @@ maintenance activities. Append-only — newest entries at the bottom.
 - **Deferred**:
   - Protocol framework `Example_test.go` (Priority 4)
   - Swift confirmation code documentation (Priority 4 — depends on Swift getting DeriveConfirmationCode)
+
+## 2026-03-23 — /release v0.3.0
+
+- **Commit**: `91426ec`
+- **Outcome**: Released v0.3.0. Major changes: WebSocket replaced with WebTransport (QUIC/HTTP3), datagram support, Let's Encrypt via certmagic, TypeScript client + codegen, DeriveConfirmationCode on all 4 platforms, CI on push/PR, benchmarks, stress tests. Five audit passes (48 findings total, all resolved). Deployed to tern.fly.dev with dedicated IPv4 + Let's Encrypt.
+- **Deferred**:
+  - Protocol framework `Example_test.go`
+  - LAN upgrade re-implementation on WebTransport (🎯T5)
+  - TLA+ model for cutover protocol (🎯T9)
