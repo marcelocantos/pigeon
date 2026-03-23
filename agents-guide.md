@@ -2,9 +2,9 @@
 
 ## What Is Tern?
 
-Tern is a Go + Swift library for opaque authenticated WebSocket relay. It provides:
+Tern is a Go + Swift library for opaque authenticated WebTransport relay. It provides:
 
-- A relay server that bridges WebSocket connections without seeing plaintext
+- A relay server that bridges WebTransport sessions without seeing plaintext
 - E2E encryption (X25519 ECDH + AES-256-GCM) with a pairing ceremony and MitM detection
 - A declarative protocol state machine framework with code generation (Go, Swift, TLA+, PlantUML)
 - A Swift package (`TernCrypto`) for iOS 16+/macOS 13+
@@ -56,13 +56,41 @@ qr.Print(os.Stdout, url) // render QR to terminal (Unicode half-blocks)
 ip := qr.LanIP()         // "192.168.1.5" or "localhost" on error
 ```
 
+### Root package (relay client)
+
+```go
+// Register as a backend — returns a Conn with an assigned instance ID.
+conn, err := tern.Register(ctx, "https://relay.example.com",
+    tern.WithToken("bearer-token"),
+    tern.WithTLS(&tls.Config{RootCAs: pool}))
+defer conn.Close()
+id := conn.InstanceID()
+
+// Connect as a client to a specific backend instance.
+conn, err := tern.Connect(ctx, "https://relay.example.com", instanceID,
+    tern.WithTLS(&tls.Config{RootCAs: pool}))
+defer conn.Close()
+
+// Stream messages (reliable, ordered).
+conn.Send(ctx, []byte("hello"))
+data, err := conn.Recv(ctx)
+
+// Datagrams (unreliable, unordered — for real-time data).
+conn.SendDatagram([]byte("frame"))
+data, err := conn.RecvDatagram(ctx)
+
+// E2E encryption — set after key exchange.
+conn.SetChannel(ch)            // encrypts/decrypts stream messages
+conn.SetDatagramChannel(dgCh)  // encrypts/decrypts datagrams
+```
+
 ## Relay Endpoints
 
 | Route | Description |
 |-------|-------------|
-| `GET /health` | Returns `{"status":"ok"}` |
-| `GET /register` | Backend registers (WebSocket); receives assigned instance ID as first text message |
-| `GET /ws/{id}` | Client connects by instance ID (WebSocket); bridged bidirectionally to backend |
+| `GET /health` | Returns `{"status":"ok"}` (HTTP/3) |
+| `GET /register` | Backend registers (WebTransport session); receives assigned instance ID |
+| `GET /ws/{id}` | Client connects by instance ID (WebTransport session); bridged bidirectionally to backend |
 
 One client per instance. A second client connection returns HTTP 409.
 
@@ -123,14 +151,17 @@ swift test                                # Swift tests
 go build -o tern .                        # build relay binary
 go run ./cmd/protogen protocol/pairing.yaml   # regenerate state machine code
 ./formal/tlc PairingCeremony              # run TLA+ model checker
-PORT=8080 ./tern                          # run relay server
+PORT=443 ./tern                           # run relay server (self-signed cert)
+./tern --cert cert.pem --key key.pem      # run with real TLS certificate
 ```
 
 ## Configuration
 
 | Flag/Env | Default | Description |
 |----------|---------|-------------|
-| `--port` / `PORT` | `8080` | Relay listening port |
+| `--port` / `PORT` | `443` | Relay listening port (UDP) |
+| `--cert` | — | TLS certificate file (PEM); if omitted, generates self-signed |
+| `--key` | — | TLS private key file (PEM) |
 | `--version` | — | Print version and exit |
 | `--help-agent` | — | Print this guide |
 

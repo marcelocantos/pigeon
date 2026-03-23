@@ -1,8 +1,8 @@
 // Copyright 2026 Marcelo Cantos
 // SPDX-License-Identifier: Apache-2.0
 
-// Package crypto provides end-to-end encryption for WebSocket traffic
-// relayed through tern. The relay sees only ciphertext.
+// Package crypto provides end-to-end encryption for traffic relayed
+// through tern. The relay sees only ciphertext.
 //
 // Key exchange uses ECDH (X25519). Symmetric encryption uses AES-256-GCM
 // with a monotonic counter nonce. Session keys are derived via HKDF-SHA256.
@@ -107,7 +107,7 @@ type ChannelMode int
 const (
 	// ModeStrict (default) requires sequence numbers to be strictly
 	// monotonic with no gaps. Any out-of-order or replayed packet is
-	// rejected. Suitable for reliable transports (TCP/WebSocket).
+	// rejected. Suitable for reliable transports (streams).
 	ModeStrict ChannelMode = iota
 
 	// ModeDatagrams allows gaps in the sequence number space, which
@@ -119,7 +119,7 @@ const (
 	ModeDatagrams
 )
 
-// Channel provides symmetric encryption/decryption for a WebSocket
+// Channel provides symmetric encryption/decryption for a transport
 // connection. Uses AES-256-GCM with a monotonic counter nonce to
 // prevent nonce reuse.
 type Channel struct {

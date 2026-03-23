@@ -12,17 +12,17 @@ The pre-1.0 period (currently v0.x.x) exists to get the interaction surface righ
 
 *Snapshot as of v0.1.0.*
 
-### Relay HTTP API (the binary's external interface)
+### Relay API (the binary's external interface)
 
 | Route | Protocol | Response |
 |-------|----------|----------|
-| `GET /health` | HTTP | `{"status":"ok"}` |
-| `GET /register` | WebSocket | First text message is the assigned instance ID |
-| `GET /ws/{id}` | WebSocket | Bridged bidirectionally to registered backend |
+| `GET /health` | HTTP/3 | `{"status":"ok"}` |
+| `GET /register` | WebTransport | First stream message is the assigned instance ID |
+| `GET /ws/{id}` | WebTransport | Bridged bidirectionally (streams + datagrams) to registered backend |
 
 Constraints: one client per instance; second client returns HTTP 409.
-Max frame size: 1 MiB.
-CORS: `OriginPatterns: ["*"]` (intentional default).
+Max message frame size: 1 MiB.
+CORS: origin check disabled (intentional default).
 
 *Stability: Stable.*
 
@@ -31,10 +31,12 @@ CORS: `OriginPatterns: ["*"]` (intentional default).
 | Flag | Type | Default | Description |
 |------|------|---------|-------------|
 | `--port` | string | `""` | Listening port (overrides `PORT` env var) |
+| `--cert` | string | `""` | TLS certificate file (PEM); generates self-signed if omitted |
+| `--key` | string | `""` | TLS private key file (PEM) |
 | `--version` | bool | `false` | Print version and exit |
 | `--help-agent` | bool | `false` | Print usage + agents-guide.md and exit |
 
-Environment variables: `PORT` (default `8080`).
+Environment variables: `PORT` (default `443`).
 
 Build-time version injection: `-ldflags "-X main.version=<version>"`.
 

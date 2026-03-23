@@ -4,11 +4,11 @@
 // Package tern provides client-side connectivity to a tern relay server.
 // Backends call Register to obtain an instance ID; clients call Connect
 // with a known instance ID. Both return a Conn for bidirectional
-// message exchange.
+// message exchange over WebTransport (QUIC).
 //
 // After establishing an encrypted channel (via crypto.Channel), call
-// Conn.SetChannel to enable automatic encryption, LAN discovery, and
-// transparent transport upgrade.
+// Conn.SetChannel to enable automatic encryption on the primary stream,
+// and Conn.SetDatagramChannel for encrypted datagrams.
 //
 // Sub-packages provide E2E encryption (crypto/), protocol state machines
 // (protocol/), and QR code rendering (qr/).
@@ -21,7 +21,7 @@ import (
 	"fmt"
 	"net/http"
 
-	"github.com/coder/websocket"
+	"github.com/quic-go/webtransport-go"
 )
 
 //go:embed agents-guide.md
@@ -31,12 +31,8 @@ var AgentGuide string
 type Option func(*options)
 
 type options struct {
-	token    string
-	dialOpts *websocket.DialOptions
-
-	// WebTransport options.
-	useWebTransport bool
-	wtTLSConfig     *tls.Config
+	token     string
+	tlsConfig *tls.Config
 }
 
 // WithToken sets the bearer token for authentication on /register.
@@ -44,9 +40,10 @@ func WithToken(token string) Option {
 	return func(o *options) { o.token = token }
 }
 
-// WithDialOptions sets custom WebSocket dial options.
-func WithDialOptions(opts *websocket.DialOptions) Option {
-	return func(o *options) { o.dialOpts = opts }
+// WithTLS sets the TLS config for the QUIC connection. Use this to
+// trust self-signed certificates (set RootCAs or InsecureSkipVerify).
+func WithTLS(tlsConfig *tls.Config) Option {
+	return func(o *options) { o.tlsConfig = tlsConfig }
 }
 
 func buildOptions(opts []Option) options {
@@ -57,52 +54,85 @@ func buildOptions(opts []Option) options {
 	return o
 }
 
-func buildDialOpts(o options) *websocket.DialOptions {
-	d := o.dialOpts
-	if d == nil {
-		d = &websocket.DialOptions{}
-	}
-	if o.token != "" {
-		if d.HTTPHeader == nil {
-			d.HTTPHeader = http.Header{}
-		}
-		d.HTTPHeader.Set("Authorization", "Bearer "+o.token)
-	}
-	return d
-}
-
-// Register connects to the relay's /register endpoint as a backend.
-// The relay assigns an instance ID, returned via InstanceID().
-// The caller is responsible for closing the connection.
+// Register connects to the relay's /register endpoint as a backend
+// over WebTransport. The relay assigns an instance ID, returned via
+// InstanceID(). The caller is responsible for closing the connection.
 func Register(ctx context.Context, relayURL string, opts ...Option) (*Conn, error) {
 	o := buildOptions(opts)
-	d := buildDialOpts(o)
 
-	ws, _, err := websocket.Dial(ctx, relayURL+"/register", d)
+	tlsConfig := o.tlsConfig
+	if tlsConfig == nil {
+		tlsConfig = &tls.Config{}
+	}
+
+	d := webtransport.Dialer{
+		TLSClientConfig: tlsConfig,
+	}
+
+	hdr := http.Header{}
+	if o.token != "" {
+		hdr.Set("Authorization", "Bearer "+o.token)
+	}
+
+	_, session, err := d.Dial(ctx, relayURL+"/register", hdr)
 	if err != nil {
 		return nil, fmt.Errorf("register: %w", err)
 	}
 
-	// The relay sends the instance ID as the first text message.
-	_, idBytes, err := ws.Read(ctx)
+	// Open the bidirectional stream for message relay.
+	stream, err := session.OpenStream()
 	if err != nil {
-		ws.CloseNow()
-		return nil, fmt.Errorf("read instance ID: %w", err)
+		session.CloseWithError(0, "failed to open stream")
+		return nil, fmt.Errorf("register: open stream: %w", err)
 	}
 
-	return newConn(ws, string(idBytes), relayURL), nil
+	// Send a handshake to trigger the stream header.
+	if err := writeWTMessage(stream, []byte("register")); err != nil {
+		session.CloseWithError(0, "failed to send handshake")
+		return nil, fmt.Errorf("register: handshake: %w", err)
+	}
+
+	// Read the instance ID.
+	idBytes, err := readWTMessage(stream)
+	if err != nil {
+		session.CloseWithError(0, "failed to read ID")
+		return nil, fmt.Errorf("register: read ID: %w", err)
+	}
+
+	return newConn(session, stream, string(idBytes)), nil
 }
 
-// Connect connects to a relay as a client, targeting a specific
-// backend instance ID.
+// Connect connects to a relay as a client over WebTransport, targeting
+// a specific backend instance ID.
 func Connect(ctx context.Context, relayURL, instanceID string, opts ...Option) (*Conn, error) {
 	o := buildOptions(opts)
-	d := o.dialOpts // no auth needed for client connections
 
-	ws, _, err := websocket.Dial(ctx, relayURL+"/ws/"+instanceID, d)
+	tlsConfig := o.tlsConfig
+	if tlsConfig == nil {
+		tlsConfig = &tls.Config{}
+	}
+
+	d := webtransport.Dialer{
+		TLSClientConfig: tlsConfig,
+	}
+
+	_, session, err := d.Dial(ctx, relayURL+"/ws/"+instanceID, nil)
 	if err != nil {
 		return nil, fmt.Errorf("connect to %s: %w", instanceID, err)
 	}
 
-	return newConn(ws, instanceID, relayURL), nil
+	// Open the bidirectional stream for message relay.
+	stream, err := session.OpenStream()
+	if err != nil {
+		session.CloseWithError(0, "failed to open stream")
+		return nil, fmt.Errorf("connect: open stream: %w", err)
+	}
+
+	// Send a handshake to trigger the stream header.
+	if err := writeWTMessage(stream, []byte("connect")); err != nil {
+		session.CloseWithError(0, "failed to send handshake")
+		return nil, fmt.Errorf("connect: handshake: %w", err)
+	}
+
+	return newConn(session, stream, instanceID), nil
 }

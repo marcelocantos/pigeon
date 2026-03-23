@@ -4,11 +4,10 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project
 
-Tern is a WebSocket relay library and server (Go + Swift) that enables
+Tern is a WebTransport relay library and server (Go + Swift) that enables
 connections between devices where the backend is on a private network
-with no ingress. It establishes a virtual WebSocket connection over an
-actual WebSocket connection such that the relay itself cannot inspect
-the traffic.
+with no ingress. It establishes a virtual WebTransport session over QUIC
+such that the relay itself cannot inspect the traffic.
 
 Applications import tern's packages rather than implementing
 relay/pairing/crypto logic themselves.
@@ -26,12 +25,26 @@ go run ./cmd/protogen protocol/pairing.yaml  # regenerate from YAML spec
 
 ## Package Structure
 
-### Relay Server (`main.go`)
+### Relay Server (`cmd/tern/main.go`)
 
-Bidirectional WebSocket forwarder. Backends register and get an instance
-ID; clients connect by ID and traffic is bridged opaquely.
+WebTransport relay server over QUIC/HTTP3. Backends register and get an
+instance ID; clients connect by ID and traffic is bridged opaquely
+(both streams and datagrams). Generates a self-signed TLS certificate
+at startup for development; use --cert/--key for production certificates.
 
-**Endpoints:** `GET /health`, `GET /register`, `GET /ws/{id}`
+**Endpoints (HTTP/3):** `GET /health`, `GET /register`, `GET /ws/{id}`
+
+### Root Package (`tern.go`, `conn.go`, `webtransport.go`)
+
+Client-side connectivity and server library. Backends call
+`tern.Register()` to get an instance ID; clients call
+`tern.Connect()` with the ID. Both return a `*Conn` wrapping a
+WebTransport session with `Send`/`Recv` (reliable stream) and
+`SendDatagram`/`RecvDatagram` (unreliable). Supports bearer token
+auth via `tern.WithToken()` and custom TLS via `tern.WithTLS()`.
+
+The `WebTransportServer` type provides the relay server library used
+by `cmd/tern`.
 
 ### E2E Crypto (`crypto/`)
 
@@ -54,13 +67,6 @@ Declarative state machine framework. Protocols are defined in YAML
 ### Code Generator (`cmd/protogen/`)
 
 Reads YAML, validates, and generates Go/Swift/TLA+/PlantUML outputs.
-
-### Relay Client (`relay/`)
-
-Client-side connectivity to a tern relay server. Backends call
-`relay.Register()` to get an instance ID; clients call
-`relay.Connect()` with the ID. Both return a `Conn` with `Send`/`Recv`.
-Supports bearer token auth via `relay.WithToken()`.
 
 ### QR Helper (`qr/`)
 
@@ -90,8 +96,8 @@ Requires JDK 17+ / Android API 33+ (for X25519 support).
 ## Deployment
 
 Fly.io config in `fly.toml`. Multi-stage Dockerfile (`golang:1.25-alpine`
-→ `alpine:3.21`). Shared-cpu-1x, 256MB, auto-start/stop with zero
-minimum machines.
+-> `alpine:3.21`). WebTransport over QUIC on UDP port 443. Shared-cpu-1x,
+256MB.
 
 ## Delivery
 

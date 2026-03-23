@@ -1,9 +1,9 @@
 # Tern
 
-Tern is a WebSocket relay library and server (Go + Swift) that enables
+Tern is a WebTransport relay library and server (Go + Swift) that enables
 connections between devices where the backend sits on a private network
-with no ingress. The relay forwards opaque ciphertext — it never sees
-plaintext traffic. Applications import tern's packages rather than
+with no ingress. The relay forwards opaque ciphertext over QUIC — it never
+sees plaintext traffic. Applications import tern's packages rather than
 implementing relay, pairing, or crypto logic themselves.
 
 ## Trust Model
@@ -22,10 +22,11 @@ The relay server handles only ciphertext and has no access to session keys.
 
 ## How It Works
 
-1. A **backend** connects to `GET /register` via WebSocket. The relay
+1. A **backend** connects to `GET /register` via WebTransport. The relay
    assigns a unique instance ID and sends it back as the first message.
 2. A **client** connects to `GET /ws/<instance-id>`. The relay bridges
-   all traffic bidirectionally between the two WebSocket connections.
+   all traffic bidirectionally between the two WebTransport sessions —
+   both reliable streams and unreliable datagrams.
 3. Pairing and encryption happen above the relay layer, in the
    application, using tern's crypto and protocol packages.
 
@@ -37,7 +38,7 @@ go get github.com/marcelocantos/tern
 
 ```go
 import (
-    "github.com/marcelocantos/tern/relay"
+    "github.com/marcelocantos/tern"
     "github.com/marcelocantos/tern/crypto"
     "github.com/marcelocantos/tern/protocol"
     "github.com/marcelocantos/tern/qr"
@@ -46,7 +47,7 @@ import (
 
 | Package    | Purpose                                                     |
 |------------|-------------------------------------------------------------|
-| `relay/`   | Client-side relay connectivity (register, connect, send/recv)|
+| root       | Client-side relay connectivity (register, connect, send/recv)|
 | `crypto/`  | X25519 key exchange, AES-256-GCM channel, confirmation code |
 | `protocol/`| Declarative state machine framework and pairing ceremony     |
 | `qr/`      | Terminal QR code rendering and LAN IP detection              |
@@ -55,16 +56,22 @@ import (
 
 ```go
 // Backend registers with the relay.
-backend, _ := relay.Register(ctx, "wss://tern.fly.dev",
-    relay.WithToken(os.Getenv("TERN_TOKEN")))
+backend, _ := tern.Register(ctx, "https://tern.fly.dev",
+    tern.WithToken(os.Getenv("TERN_TOKEN")),
+    tern.WithTLS(tlsConfig))
 fmt.Println("Instance ID:", backend.InstanceID()) // share via QR code
 
 // Client connects by instance ID (obtained from QR scan).
-client, _ := relay.Connect(ctx, "wss://tern.fly.dev", instanceID)
+client, _ := tern.Connect(ctx, "https://tern.fly.dev", instanceID,
+    tern.WithTLS(tlsConfig))
 
-// Send/receive through the relay (plaintext or encrypted).
-client.Send(ctx, websocket.MessageBinary, ciphertext)
-mt, data, _ := backend.Recv(ctx)
+// Send/receive through the relay (reliable stream).
+client.Send(ctx, ciphertext)
+data, _ := backend.Recv(ctx)
+
+// Unreliable datagrams (for latency-sensitive data like video frames).
+client.SendDatagram(data)
+data, _ = backend.RecvDatagram(ctx)
 ```
 
 **Encrypted channel:**
@@ -168,34 +175,34 @@ The full ceremony involves three actors — **server** (backend daemon),
 
 ```bash
 go build -o tern .
-PORT=8080 ./tern
+PORT=443 ./tern                           # self-signed cert (development)
+./tern --cert cert.pem --key key.pem      # production TLS certificate
 ```
 
 The server is also deployable via Fly.io (`fly.toml` and `Dockerfile`
 are included).
 
-**Endpoints:**
+**Endpoints (HTTP/3 over WebTransport):**
 
-| Route              | Description                          |
-|--------------------|--------------------------------------|
-| `GET /health`      | Health check (returns `{"status":"ok"}`) |
-| `GET /register`    | Backend registers (WebSocket upgrade)|
-| `GET /ws/{id}`     | Client connects by instance ID       |
+| Route              | Description                               |
+|--------------------|-------------------------------------------|
+| `GET /health`      | Health check (returns `{"status":"ok"}`)  |
+| `GET /register`    | Backend registers (WebTransport session)  |
+| `GET /ws/{id}`     | Client connects by instance ID            |
 
 ## Configuration
 
 | Flag / Env var | Default | Description |
 |----------------|---------|-------------|
-| `--port` / `PORT` | `8080` | Listening port |
+| `--port` / `PORT` | `443` | Listening port (UDP) |
+| `--cert` | — | TLS certificate file (PEM); generates self-signed if omitted |
+| `--key` | — | TLS private key file (PEM) |
 | `--version` | — | Print version and exit |
 | `--help-agent` | — | Print usage + agent guide |
 
 Build-time version injection: `go build -ldflags "-X main.version=v1.0.0" .`
 
-Max WebSocket frame size: 1 MiB (constant `maxMessageSize` in `main.go`).
-
-CORS origin pattern is `*` by default — the relay bridges arbitrary
-origins. Restrict `OriginPatterns` in `registerRoutes` if needed for your deployment.
+Max message frame size: 1 MiB (constant `maxWTMessageSize`).
 
 ## Running Tests
 

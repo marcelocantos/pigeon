@@ -2,8 +2,6 @@ module github.com/marcelocantos/tern
 
 go 1.25.0
 
-require github.com/coder/websocket v1.8.14
-
 require (
 	github.com/quic-go/quic-go v0.59.0
 	github.com/quic-go/webtransport-go v0.10.0

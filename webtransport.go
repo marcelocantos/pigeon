@@ -4,11 +4,9 @@
 package tern
 
 import (
-	"context"
 	"crypto/rand"
 	"crypto/tls"
 	"encoding/binary"
-	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -22,11 +20,10 @@ import (
 )
 
 // maxWTMessageSize is the maximum message size for WebTransport relay
-// frames. Matches the WebSocket relay limit.
+// frames.
 const maxWTMessageSize = 1 << 20 // 1 MiB
 
-// wtHub manages WebTransport backend instances, mirroring the WebSocket
-// relay hub in cmd/tern but using WebTransport sessions and streams.
+// wtHub manages WebTransport backend instances.
 type wtHub struct {
 	mu        sync.RWMutex
 	instances map[string]*wtInstance
@@ -63,8 +60,8 @@ func (h *wtHub) get(id string) *wtInstance {
 	return h.instances[id]
 }
 
-// wtGenerateID generates a random instance ID for WebTransport sessions.
-func wtGenerateID() string {
+// generateID generates a random instance ID.
+func generateID() string {
 	b := make([]byte, 4)
 	rand.Read(b)
 	n := uint32(b[0])<<24 | uint32(b[1])<<16 | uint32(b[2])<<8 | uint32(b[3])
@@ -103,9 +100,9 @@ func readWTMessage(stream io.Reader) ([]byte, error) {
 	return buf, nil
 }
 
-// WebTransportServer provides a WebTransport relay alongside the existing
-// WebSocket relay. Backends register via /register; clients connect via
-// /ws/{id}. Traffic is bridged bidirectionally, including datagrams.
+// WebTransportServer provides a WebTransport relay. Backends register via
+// /register; clients connect via /ws/{id}. Traffic is bridged
+// bidirectionally, including datagrams.
 type WebTransportServer struct {
 	wtServer *webtransport.Server
 	hub      *wtHub
@@ -168,29 +165,29 @@ func (s *WebTransportServer) handleRegister(w http.ResponseWriter, r *http.Reque
 
 	session, err := s.wtServer.Upgrade(w, r)
 	if err != nil {
-		slog.Error("wt register: upgrade failed", "err", err)
+		slog.Error("register: upgrade failed", "err", err)
 		return
 	}
 	// Accept the bidirectional stream opened by the backend client.
 	stream, err := session.AcceptStream(session.Context())
 	if err != nil {
-		slog.Error("wt register: accept stream failed", "err", err)
+		slog.Error("register: accept stream failed", "err", err)
 		session.CloseWithError(0, "failed to accept stream")
 		return
 	}
 
 	// Read and discard the handshake message.
 	if _, err := readWTMessage(stream); err != nil {
-		slog.Error("wt register: read handshake failed", "err", err)
+		slog.Error("register: read handshake failed", "err", err)
 		session.CloseWithError(0, "failed to read handshake")
 		return
 	}
 
-	id := wtGenerateID()
+	id := generateID()
 
 	// Send the instance ID to the backend.
 	if err := writeWTMessage(stream, []byte(id)); err != nil {
-		slog.Error("wt register: write ID failed", "err", err)
+		slog.Error("register: write ID failed", "err", err)
 		session.CloseWithError(0, "failed to write ID")
 		return
 	}
@@ -199,11 +196,11 @@ func (s *WebTransportServer) handleRegister(w http.ResponseWriter, r *http.Reque
 	s.hub.register(inst)
 	defer s.hub.unregister(id)
 
-	slog.Info("wt instance registered", "id", id)
+	slog.Info("instance registered", "id", id)
 
 	// Keep alive until backend disconnects.
 	<-session.Context().Done()
-	slog.Info("wt instance disconnected", "id", id)
+	slog.Info("instance disconnected", "id", id)
 }
 
 func (s *WebTransportServer) handleClient(w http.ResponseWriter, r *http.Request) {
@@ -237,7 +234,7 @@ func (s *WebTransportServer) handleClient(w http.ResponseWriter, r *http.Request
 
 	session, err := s.wtServer.Upgrade(w, r)
 	if err != nil {
-		slog.Error("wt client: upgrade failed", "err", err)
+		slog.Error("client: upgrade failed", "err", err)
 		return
 	}
 	defer session.CloseWithError(0, "")
@@ -245,18 +242,18 @@ func (s *WebTransportServer) handleClient(w http.ResponseWriter, r *http.Request
 	// Accept the bidirectional stream opened by the client.
 	clientStream, err := session.AcceptStream(session.Context())
 	if err != nil {
-		slog.Error("wt client: accept stream failed", "err", err)
+		slog.Error("client: accept stream failed", "err", err)
 		return
 	}
 
 	// Read and discard the handshake message.
 	if _, err := readWTMessage(clientStream); err != nil {
-		slog.Error("wt client: read handshake failed", "err", err)
+		slog.Error("client: read handshake failed", "err", err)
 		return
 	}
 
 	ctx := session.Context()
-	slog.Info("wt client connected", "instance", instanceID)
+	slog.Info("client connected", "instance", instanceID)
 
 	errCh := make(chan error, 3)
 
@@ -298,7 +295,6 @@ func (s *WebTransportServer) handleClient(w http.ResponseWriter, r *http.Request
 		for {
 			data, err := inst.session.ReceiveDatagram(ctx)
 			if err != nil {
-				// Session closed or context cancelled — not necessarily an error.
 				return
 			}
 			if err := session.SendDatagram(data); err != nil {
@@ -323,11 +319,11 @@ func (s *WebTransportServer) handleClient(w http.ResponseWriter, r *http.Request
 	// Wait for stream relay to end or session to close.
 	select {
 	case err := <-errCh:
-		slog.Info("wt client disconnected", "instance", instanceID, "reason", err)
+		slog.Info("client disconnected", "instance", instanceID, "reason", err)
 	case <-ctx.Done():
-		slog.Info("wt client session ended", "instance", instanceID)
+		slog.Info("client session ended", "instance", instanceID)
 	case <-inst.session.Context().Done():
-		slog.Info("wt backend session ended", "instance", instanceID)
+		slog.Info("backend session ended", "instance", instanceID)
 	}
 }
 
@@ -366,173 +362,4 @@ func (s *WebTransportServer) Addr() net.Addr {
 		return s.conn.LocalAddr()
 	}
 	return nil
-}
-
-// --- Client-side WebTransport support ---
-
-// WithWebTransport configures the connection to use WebTransport instead
-// of WebSocket. The provided TLS config is used for the QUIC connection.
-// For self-signed certificates, set InsecureSkipVerify or provide the
-// CA certificate.
-func WithWebTransport(tlsConfig *tls.Config) Option {
-	return func(o *options) {
-		o.useWebTransport = true
-		o.wtTLSConfig = tlsConfig
-	}
-}
-
-// wtConn adapts a WebTransport session+stream to the same interface that
-// Conn uses internally for WebSocket transports.
-type wtConn struct {
-	session *webtransport.Session
-	stream  *webtransport.Stream
-}
-
-// RegisterWT connects to a WebTransport relay's /register endpoint as a
-// backend. Returns a Conn for bidirectional message exchange.
-func RegisterWT(ctx context.Context, relayURL string, opts ...Option) (*Conn, error) {
-	o := buildOptions(opts)
-
-	tlsConfig := o.wtTLSConfig
-	if tlsConfig == nil {
-		tlsConfig = &tls.Config{}
-	}
-
-	d := webtransport.Dialer{
-		TLSClientConfig: tlsConfig,
-	}
-
-	hdr := http.Header{}
-	if o.token != "" {
-		hdr.Set("Authorization", "Bearer "+o.token)
-	}
-
-	_, session, err := d.Dial(ctx, relayURL+"/register", hdr)
-	if err != nil {
-		return nil, fmt.Errorf("wt register: %w", err)
-	}
-
-	// Open the bidirectional stream for message relay. The first write
-	// triggers the WebTransport stream header, making the server aware
-	// of the stream via AcceptStream.
-	stream, err := session.OpenStream()
-	if err != nil {
-		session.CloseWithError(0, "failed to open stream")
-		return nil, fmt.Errorf("wt register: open stream: %w", err)
-	}
-
-	// Send a handshake to trigger the stream header.
-	if err := writeWTMessage(stream, []byte("register")); err != nil {
-		session.CloseWithError(0, "failed to send handshake")
-		return nil, fmt.Errorf("wt register: handshake: %w", err)
-	}
-
-	// Read the instance ID.
-	idBytes, err := readWTMessage(stream)
-	if err != nil {
-		session.CloseWithError(0, "failed to read ID")
-		return nil, fmt.Errorf("wt register: read ID: %w", err)
-	}
-
-	return newWTConn(session, stream, string(idBytes), relayURL), nil
-}
-
-// ConnectWT connects to a WebTransport relay as a client, targeting a
-// specific backend instance ID.
-func ConnectWT(ctx context.Context, relayURL, instanceID string, opts ...Option) (*Conn, error) {
-	o := buildOptions(opts)
-
-	tlsConfig := o.wtTLSConfig
-	if tlsConfig == nil {
-		tlsConfig = &tls.Config{}
-	}
-
-	d := webtransport.Dialer{
-		TLSClientConfig: tlsConfig,
-	}
-
-	_, session, err := d.Dial(ctx, relayURL+"/ws/"+instanceID, nil)
-	if err != nil {
-		return nil, fmt.Errorf("wt connect to %s: %w", instanceID, err)
-	}
-
-	// Open the bidirectional stream for message relay. The first write
-	// triggers the WebTransport stream header.
-	stream, err := session.OpenStream()
-	if err != nil {
-		session.CloseWithError(0, "failed to open stream")
-		return nil, fmt.Errorf("wt connect: open stream: %w", err)
-	}
-
-	// Send a handshake to trigger the stream header.
-	if err := writeWTMessage(stream, []byte("connect")); err != nil {
-		session.CloseWithError(0, "failed to send handshake")
-		return nil, fmt.Errorf("wt connect: handshake: %w", err)
-	}
-
-	return newWTConn(session, stream, instanceID, relayURL), nil
-}
-
-// newWTConn creates a Conn backed by a WebTransport session and stream.
-func newWTConn(session *webtransport.Session, stream *webtransport.Stream, instanceID, relayURL string) *Conn {
-	ctx, cancel := context.WithCancel(context.Background())
-	c := &Conn{
-		instanceID:  instanceID,
-		relayURL:    relayURL,
-		incoming:    make(chan incomingMsg, 16),
-		ctx:         ctx,
-		cancel:      cancel,
-		reorderBuf:  make(map[uint64]reorderEntry),
-		wtSession:   session,
-		wtStream:    stream,
-		isWT:        true,
-	}
-	go c.wtReadLoop()
-	return c
-}
-
-// wtReadLoop reads length-prefixed messages from the WebTransport stream
-// and feeds them into the incoming channel, matching the WebSocket readLoop.
-func (c *Conn) wtReadLoop() {
-	for {
-		data, err := readWTMessage(c.wtStream)
-		if err != nil {
-			select {
-			case c.incoming <- incomingMsg{transportIdx: 0, data: nil, err: err}:
-			case <-c.ctx.Done():
-			}
-			return
-		}
-		select {
-		case c.incoming <- incomingMsg{transportIdx: 0, data: data}:
-		case <-c.ctx.Done():
-			return
-		}
-	}
-}
-
-// SendDatagram sends an unreliable datagram to the peer. Only works on
-// WebTransport connections; returns an error on WebSocket connections.
-func (c *Conn) SendDatagram(data []byte) error {
-	c.mu.Lock()
-	session := c.wtSession
-	c.mu.Unlock()
-
-	if session == nil {
-		return errors.New("datagrams only supported on WebTransport connections")
-	}
-	return session.SendDatagram(data)
-}
-
-// RecvDatagram receives the next datagram from the peer. Only works on
-// WebTransport connections; returns an error on WebSocket connections.
-func (c *Conn) RecvDatagram(ctx context.Context) ([]byte, error) {
-	c.mu.Lock()
-	session := c.wtSession
-	c.mu.Unlock()
-
-	if session == nil {
-		return nil, errors.New("datagrams only supported on WebTransport connections")
-	}
-	return session.ReceiveDatagram(ctx)
 }

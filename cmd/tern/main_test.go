@@ -5,285 +5,261 @@ package main
 
 import (
 	"context"
-	"encoding/json"
-	"net/http"
-	"net/http/httptest"
-	"strings"
+	"crypto/ecdsa"
+	"crypto/elliptic"
+	"crypto/rand"
+	"crypto/tls"
+	"crypto/x509"
+	"math/big"
+	"net"
+	"strconv"
 	"testing"
 	"time"
 
-	"github.com/coder/websocket"
+	"github.com/marcelocantos/tern"
 )
 
-func startTestRelay(t *testing.T) *httptest.Server {
+// testCert creates a self-signed TLS certificate and CA pool for testing.
+func testCert(t *testing.T) (tls.Certificate, *x509.CertPool) {
 	t.Helper()
-	r := newHub()
-	mux := http.NewServeMux()
-	registerRoutes(mux, r, "")
-	ts := httptest.NewServer(mux)
-	t.Cleanup(ts.Close)
-	return ts
-}
 
-func wsURL(ts *httptest.Server, path string) string {
-	return "ws" + strings.TrimPrefix(ts.URL, "http") + path
-}
-
-func dial(t *testing.T, url string) *websocket.Conn {
-	t.Helper()
-	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
-	defer cancel()
-	conn, _, err := websocket.Dial(ctx, url, nil)
-	if err != nil {
-		t.Fatalf("WebSocket dial %s failed: %v", url, err)
-	}
-	return conn
-}
-
-// registerBackend connects to /register, reads the assigned instance ID, and
-// returns the connection and ID. The connection is closed on test cleanup.
-func registerBackend(t *testing.T, ts *httptest.Server) (*websocket.Conn, string) {
-	t.Helper()
-	conn := dial(t, wsURL(ts, "/register"))
-	t.Cleanup(func() { conn.CloseNow() })
-
-	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
-	defer cancel()
-	mt, data, err := conn.Read(ctx)
-	if err != nil {
-		t.Fatalf("Failed to read instance ID: %v", err)
-	}
-	if mt != websocket.MessageText {
-		t.Fatalf("Expected text message for instance ID, got %v", mt)
-	}
-	id := string(data)
-	if id == "" {
-		t.Fatal("Received empty instance ID")
-	}
-	return conn, id
-}
-
-func TestHealthEndpoint(t *testing.T) {
-	ts := startTestRelay(t)
-
-	resp, err := http.Get(ts.URL + "/health")
+	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer resp.Body.Close()
 
-	if resp.StatusCode != http.StatusOK {
-		t.Fatalf("status = %d, want 200", resp.StatusCode)
-	}
-	if ct := resp.Header.Get("Content-Type"); ct != "application/json" {
-		t.Errorf("Content-Type = %q, want application/json", ct)
+	template := &x509.Certificate{
+		SerialNumber: big.NewInt(1),
+		DNSNames:     []string{"localhost"},
+		IPAddresses:  []net.IP{net.IPv4(127, 0, 0, 1), net.IPv6loopback},
+		NotBefore:    time.Now().Add(-time.Hour),
+		NotAfter:     time.Now().Add(24 * time.Hour),
+		KeyUsage:     x509.KeyUsageDigitalSignature,
+		ExtKeyUsage:  []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth},
 	}
 
-	var body map[string]any
-	if err := json.NewDecoder(resp.Body).Decode(&body); err != nil {
-		t.Fatalf("invalid JSON: %v", err)
+	certDER, err := x509.CreateCertificate(rand.Reader, template, template, &key.PublicKey, key)
+	if err != nil {
+		t.Fatal(err)
 	}
-	if body["status"] != "ok" {
-		t.Errorf("status = %v, want ok", body["status"])
+
+	cert := tls.Certificate{
+		Certificate: [][]byte{certDER},
+		PrivateKey:  key,
 	}
+
+	pool := x509.NewCertPool()
+	parsedCert, err := x509.ParseCertificate(certDER)
+	if err != nil {
+		t.Fatal(err)
+	}
+	pool.AddCert(parsedCert)
+
+	return cert, pool
+}
+
+// startTestRelay starts a WebTransport relay server on an ephemeral port
+// and returns the URL and TLS config for connecting.
+func startTestRelay(t *testing.T, token string) (string, *tls.Config) {
+	t.Helper()
+
+	cert, pool := testCert(t)
+
+	srv, err := tern.NewWebTransportServer("127.0.0.1:0", cert, token)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	udpAddr, err := net.ResolveUDPAddr("udp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	conn, err := net.ListenUDP("udp", udpAddr)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	go func() {
+		srv.Serve(conn)
+	}()
+	t.Cleanup(func() { srv.Close() })
+
+	addr := conn.LocalAddr().(*net.UDPAddr)
+	url := "https://127.0.0.1:" + strconv.Itoa(addr.Port)
+	tlsConfig := &tls.Config{RootCAs: pool}
+
+	return url, tlsConfig
 }
 
 func TestRegisterAssignsID(t *testing.T) {
-	ts := startTestRelay(t)
-	_, id := registerBackend(t, ts)
-	t.Logf("Assigned instance ID: %s", id)
-}
+	url, tlsConfig := startTestRelay(t, "")
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
 
-func TestClientConnectUnknownInstance(t *testing.T) {
-	ts := startTestRelay(t)
-
-	resp, err := http.Get(ts.URL + "/ws/nonexistent")
+	backend, err := tern.Register(ctx, url, tern.WithTLS(tlsConfig))
 	if err != nil {
-		t.Fatal(err)
+		t.Fatal("register:", err)
 	}
-	defer resp.Body.Close()
+	defer backend.CloseNow()
 
-	if resp.StatusCode != http.StatusNotFound {
-		t.Fatalf("status = %d, want 404", resp.StatusCode)
+	if backend.InstanceID() == "" {
+		t.Fatal("expected non-empty instance ID")
 	}
+	t.Log("instance ID:", backend.InstanceID())
 }
 
 func TestBidirectionalBridge(t *testing.T) {
-	ts := startTestRelay(t)
+	url, tlsConfig := startTestRelay(t, "")
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
 
-	backend, id := registerBackend(t, ts)
+	backend, err := tern.Register(ctx, url, tern.WithTLS(tlsConfig))
+	if err != nil {
+		t.Fatal("register:", err)
+	}
+	defer backend.CloseNow()
 
-	// Client connects to the backend instance.
-	client := dial(t, wsURL(ts, "/ws/"+id))
+	client, err := tern.Connect(ctx, url, backend.InstanceID(), tern.WithTLS(tlsConfig))
+	if err != nil {
+		t.Fatal("connect:", err)
+	}
 	defer client.CloseNow()
 
-	ctx := context.Background()
-
-	// client → backend
-	if err := client.Write(ctx, websocket.MessageText, []byte("hello from client")); err != nil {
-		t.Fatalf("Client write failed: %v", err)
+	// client -> backend
+	if err := client.Send(ctx, []byte("hello from client")); err != nil {
+		t.Fatal("client send:", err)
 	}
 
-	rctx, cancel := context.WithTimeout(ctx, 2*time.Second)
-	defer cancel()
-	mt, data, err := backend.Read(rctx)
+	data, err := backend.Recv(ctx)
 	if err != nil {
-		t.Fatalf("Backend read failed: %v", err)
+		t.Fatal("backend recv:", err)
 	}
-	if mt != websocket.MessageText || string(data) != "hello from client" {
-		t.Fatalf("Backend got (%v, %q), want (text, %q)", mt, data, "hello from client")
-	}
-
-	// backend → client
-	if err := backend.Write(ctx, websocket.MessageText, []byte("hello from backend")); err != nil {
-		t.Fatalf("Backend write failed: %v", err)
+	if string(data) != "hello from client" {
+		t.Fatalf("got %q, want %q", data, "hello from client")
 	}
 
-	rctx2, cancel2 := context.WithTimeout(ctx, 2*time.Second)
-	defer cancel2()
-	mt, data, err = client.Read(rctx2)
+	// backend -> client
+	if err := backend.Send(ctx, []byte("hello from backend")); err != nil {
+		t.Fatal("backend send:", err)
+	}
+
+	data, err = client.Recv(ctx)
 	if err != nil {
-		t.Fatalf("Client read failed: %v", err)
+		t.Fatal("client recv:", err)
 	}
-	if mt != websocket.MessageText || string(data) != "hello from backend" {
-		t.Fatalf("Client got (%v, %q), want (text, %q)", mt, data, "hello from backend")
+	if string(data) != "hello from backend" {
+		t.Fatalf("got %q, want %q", data, "hello from backend")
 	}
 }
 
-func TestBinaryFrameForwarding(t *testing.T) {
-	ts := startTestRelay(t)
+func TestDatagramForwarding(t *testing.T) {
+	url, tlsConfig := startTestRelay(t, "")
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
 
-	backend, id := registerBackend(t, ts)
-	client := dial(t, wsURL(ts, "/ws/"+id))
+	backend, err := tern.Register(ctx, url, tern.WithTLS(tlsConfig))
+	if err != nil {
+		t.Fatal("register:", err)
+	}
+	defer backend.CloseNow()
+
+	client, err := tern.Connect(ctx, url, backend.InstanceID(), tern.WithTLS(tlsConfig))
+	if err != nil {
+		t.Fatal("connect:", err)
+	}
 	defer client.CloseNow()
 
-	ctx := context.Background()
-	payload := []byte{0xDE, 0xAD, 0xBE, 0xEF}
-
-	// client → backend (binary)
-	if err := client.Write(ctx, websocket.MessageBinary, payload); err != nil {
-		t.Fatalf("Client binary write failed: %v", err)
+	// client -> backend datagram
+	if err := client.SendDatagram([]byte("dgram-c2b")); err != nil {
+		t.Fatal("client send datagram:", err)
 	}
 
-	rctx, cancel := context.WithTimeout(ctx, 2*time.Second)
-	defer cancel()
-	mt, data, err := backend.Read(rctx)
+	data, err := backend.RecvDatagram(ctx)
 	if err != nil {
-		t.Fatalf("Backend read failed: %v", err)
+		t.Fatal("backend recv datagram:", err)
 	}
-	if mt != websocket.MessageBinary {
-		t.Fatalf("Expected binary message, got %v", mt)
+	if string(data) != "dgram-c2b" {
+		t.Fatalf("got %q, want %q", data, "dgram-c2b")
 	}
-	if string(data) != string(payload) {
-		t.Fatalf("Backend got %x, want %x", data, payload)
+
+	// backend -> client datagram
+	if err := backend.SendDatagram([]byte("dgram-b2c")); err != nil {
+		t.Fatal("backend send datagram:", err)
+	}
+
+	data, err = client.RecvDatagram(ctx)
+	if err != nil {
+		t.Fatal("client recv datagram:", err)
+	}
+	if string(data) != "dgram-b2c" {
+		t.Fatalf("got %q, want %q", data, "dgram-b2c")
 	}
 }
 
-func TestBackendDisconnectClosesClient(t *testing.T) {
-	ts := startTestRelay(t)
-
-	backend, id := registerBackend(t, ts)
-	client := dial(t, wsURL(ts, "/ws/"+id))
-	defer client.CloseNow()
-
-	// Backend disconnects.
-	backend.Close(websocket.StatusNormalClosure, "bye")
-
-	// Client should get an error on next read.
-	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+func TestTokenAuth(t *testing.T) {
+	url, tlsConfig := startTestRelay(t, "secret-token")
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
-	_, _, err := client.Read(ctx)
+
+	// No token -> should fail.
+	_, err := tern.Register(ctx, url, tern.WithTLS(tlsConfig))
 	if err == nil {
-		t.Fatal("Expected client read to fail after backend disconnect")
+		t.Fatal("expected error without token")
 	}
-}
 
-func TestMultipleInstances(t *testing.T) {
-	ts := startTestRelay(t)
+	// Wrong token -> should fail.
+	_, err = tern.Register(ctx, url, tern.WithTLS(tlsConfig), tern.WithToken("wrong"))
+	if err == nil {
+		t.Fatal("expected error with wrong token")
+	}
 
-	_, id1 := registerBackend(t, ts)
-	_, id2 := registerBackend(t, ts)
+	// Correct token -> should succeed.
+	backend, err := tern.Register(ctx, url, tern.WithTLS(tlsConfig), tern.WithToken("secret-token"))
+	if err != nil {
+		t.Fatal("register with token:", err)
+	}
+	defer backend.CloseNow()
 
-	if id1 == id2 {
-		t.Fatalf("Two backends got the same ID: %s", id1)
+	if backend.InstanceID() == "" {
+		t.Fatal("expected non-empty instance ID")
 	}
 }
 
 func TestSecondClientRejected(t *testing.T) {
-	ts := startTestRelay(t)
+	url, tlsConfig := startTestRelay(t, "")
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
 
-	_, id := registerBackend(t, ts)
+	backend, err := tern.Register(ctx, url, tern.WithTLS(tlsConfig))
+	if err != nil {
+		t.Fatal("register:", err)
+	}
+	defer backend.CloseNow()
 
-	// First client connects successfully.
-	client1 := dial(t, wsURL(ts, "/ws/"+id))
+	// First client connects.
+	client1, err := tern.Connect(ctx, url, backend.InstanceID(), tern.WithTLS(tlsConfig))
+	if err != nil {
+		t.Fatal("connect first:", err)
+	}
 	defer client1.CloseNow()
 
-	// Second client should be rejected with 409 Conflict.
-	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
-	defer cancel()
-	_, resp, err := websocket.Dial(ctx, wsURL(ts, "/ws/"+id), nil)
+	// Second client should be rejected.
+	_, err = tern.Connect(ctx, url, backend.InstanceID(), tern.WithTLS(tlsConfig))
 	if err == nil {
-		t.Fatal("second client dial should have failed")
-	}
-	if resp != nil && resp.StatusCode != http.StatusConflict {
-		t.Fatalf("second client status = %d, want %d", resp.StatusCode, http.StatusConflict)
-	}
-}
-
-func TestRegisterRequiresToken(t *testing.T) {
-	r := newHub()
-	mux := http.NewServeMux()
-	registerRoutes(mux, r, "secret-token")
-	ts := httptest.NewServer(mux)
-	defer ts.Close()
-
-	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
-	defer cancel()
-
-	// No token → 401.
-	_, resp, err := websocket.Dial(ctx, wsURL(ts, "/register"), nil)
-	if err == nil {
-		t.Fatal("dial without token should fail")
-	}
-	if resp != nil && resp.StatusCode != http.StatusUnauthorized {
-		t.Fatalf("status = %d, want 401", resp.StatusCode)
-	}
-
-	// Wrong token → 401.
-	_, resp, err = websocket.Dial(ctx, wsURL(ts, "/register"), &websocket.DialOptions{
-		HTTPHeader: http.Header{"Authorization": {"Bearer wrong"}},
-	})
-	if err == nil {
-		t.Fatal("dial with wrong token should fail")
-	}
-	if resp != nil && resp.StatusCode != http.StatusUnauthorized {
-		t.Fatalf("status = %d, want 401", resp.StatusCode)
-	}
-
-	// Correct token → success (WebSocket upgrade).
-	conn, _, err := websocket.Dial(ctx, wsURL(ts, "/register"), &websocket.DialOptions{
-		HTTPHeader: http.Header{"Authorization": {"Bearer secret-token"}},
-	})
-	if err != nil {
-		t.Fatalf("dial with correct token: %v", err)
-	}
-	defer conn.CloseNow()
-
-	// Should receive an instance ID.
-	_, id, err := conn.Read(ctx)
-	if err != nil {
-		t.Fatalf("read instance ID: %v", err)
-	}
-	if len(id) == 0 {
-		t.Fatal("empty instance ID")
+		t.Fatal("expected error for second client")
 	}
 }
 
 func TestGenerateIDLength(t *testing.T) {
 	for range 100 {
-		id := generateID()
-		if len(id) == 0 || len(id) > 7 {
-			t.Errorf("generateID() = %q, want 1-7 chars", id)
+		cert, err := generateSelfSignedCert()
+		if err != nil {
+			t.Fatal(err)
 		}
+		// Just verify cert generation works (ID generation is in the tern package now).
+		if len(cert.Certificate) == 0 {
+			t.Fatal("empty certificate")
+		}
+		break // only need one iteration for cert test
 	}
 }

@@ -74,9 +74,10 @@ Status: done
 
 ### 🎯T2.3 NOTICES file exists with third-party attribution
 
-Apache 2.0 §4(d) requires attribution. All deps (coder/websocket ISC,
-skip2/go-qrcode MIT, gopkg.in/yaml.v3 MIT+Apache, golang.org/x/crypto
-BSD-3) are listed with copyright and licence.
+Apache 2.0 §4(d) requires attribution. All deps (quic-go/quic-go MIT,
+quic-go/webtransport-go MIT, skip2/go-qrcode MIT, gopkg.in/yaml.v3
+MIT+Apache, golang.org/x/crypto BSD-3, dunglas/httpsfv BSD-3) are
+listed with copyright and licence.
 
 Status: done
 
@@ -244,8 +245,8 @@ Status: not started
 ### 🎯T5.2 LAN discovery via relay
 
 After the encrypted channel is established, both sides exchange their
-local IP addresses through the relay. Each attempts a direct WebSocket
-to the peer's local address.
+local IP addresses through the relay. Each attempts a direct WebTransport
+connection to the peer's local address using a self-signed certificate.
 
 Status: not started
 
@@ -285,7 +286,7 @@ Same cutover protocol as 🎯T5.3 applies — it's just another transport.
 
 Needs investigation:
 - STUN server requirements (run our own, or use public ones?)
-- UDP vs TCP hole-punching (UDP is standard but tern uses WebSocket/TCP)
+- UDP vs TCP hole-punching (tern already uses QUIC/UDP via WebTransport)
 - Success rate across NAT types (symmetric NATs defeat STUN)
 - Whether to use ICE (the full WebRTC negotiation framework) or a
   simpler STUN-only approach
@@ -320,15 +321,16 @@ Status: not started
 
 ## 🎯T8 WebTransport relay
 
-Replace WebSocket with WebTransport (QUIC) on the relay path. Enables
+WebTransport (QUIC) is the sole transport for the relay path. Enables
 both reliable streams (control, pairing) and unreliable datagrams
-(H.264 video, real-time data).
+(H.264 video, real-time data). WebSocket support has been removed.
 
 ### 🎯T8.1 WebTransport relay server
 
-Serve WebTransport alongside (or instead of) WebSocket on the relay.
-Use `quic-go/webtransport-go`. Fly.io handles TLS. Same endpoints:
-/register, /ws/{id}, /health. Bridge bidirectional streams + datagrams.
+WebTransport-only relay server using `quic-go/webtransport-go`.
+Self-signed TLS certificate generated at startup for development;
+production uses --cert/--key flags. Same endpoints: /register, /ws/{id},
+/health. Bridges bidirectional streams + datagrams.
 
 Status: done
 
@@ -343,16 +345,15 @@ Status: not started
 
 ### 🎯T8.3 Go WebTransport client
 
-WebTransport Conn transport in the root tern package. Register and
-Connect over WebTransport when available, with WebSocket fallback.
+WebTransport-only Conn in the root tern package. Register and
+Connect use WebTransport directly; no WebSocket fallback.
 
 Status: done
 
 ### 🎯T8.4 Web/TypeScript WebTransport client
 
 Browser-native WebTransport API in `web/`. Use reliable stream for
-control/pairing, datagrams for video. Falls back to WebSocket on
-browsers that don't support WebTransport.
+control/pairing, datagrams for video.
 
 Status: not started
 
@@ -361,7 +362,7 @@ Status: not started
 Ephemeral self-signed cert for LAN listener. Include SHA-256 hash in
 the LAN offer control message. Browser peers use
 `serverCertificateHashes` to accept it (Chromium-only for now; others
-fall back to WebSocket LAN or relay).
+fall back to relay-only).
 
 Status: not started
 

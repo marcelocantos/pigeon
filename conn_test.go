@@ -5,113 +5,134 @@ package tern
 
 import (
 	"context"
-	"net/http"
-	"net/http/httptest"
-	"os"
-	"strings"
+	"crypto/ecdsa"
+	"crypto/elliptic"
+	"crypto/rand"
+	"crypto/tls"
+	"crypto/x509"
+	"math/big"
+	"net"
+	"strconv"
 	"testing"
 	"time"
-
-	"github.com/coder/websocket"
 
 	"github.com/marcelocantos/tern/crypto"
 )
 
-// startTestRelay starts a minimal relay server for testing.
-func startTestRelay(t *testing.T) string {
+// generateTestCert creates a self-signed TLS certificate for testing.
+func generateTestCert(t *testing.T) (tls.Certificate, *x509.CertPool) {
 	t.Helper()
 
-	type inst struct {
-		conn *websocket.Conn
-		ctx  context.Context
+	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		t.Fatal(err)
 	}
-	var backend *inst
 
-	mux := http.NewServeMux()
-	mux.HandleFunc("GET /register", func(w http.ResponseWriter, r *http.Request) {
-		conn, err := websocket.Accept(w, r, nil)
-		if err != nil {
-			return
-		}
-		defer conn.CloseNow()
-		conn.Write(r.Context(), websocket.MessageText, []byte("test-id"))
-		backend = &inst{conn: conn, ctx: r.Context()}
-		<-r.Context().Done()
-	})
-	mux.HandleFunc("GET /ws/{id}", func(w http.ResponseWriter, r *http.Request) {
-		clientConn, err := websocket.Accept(w, r, nil)
-		if err != nil {
-			return
-		}
-		defer clientConn.CloseNow()
-		if backend == nil {
-			return
-		}
-		go func() {
-			for {
-				mt, data, err := backend.conn.Read(backend.ctx)
-				if err != nil {
-					return
-				}
-				clientConn.Write(r.Context(), mt, data)
-			}
-		}()
-		for {
-			mt, data, err := clientConn.Read(r.Context())
-			if err != nil {
-				return
-			}
-			backend.conn.Write(backend.ctx, mt, data)
-		}
-	})
+	template := &x509.Certificate{
+		SerialNumber: big.NewInt(1),
+		DNSNames:     []string{"localhost"},
+		IPAddresses:  []net.IP{net.IPv4(127, 0, 0, 1), net.IPv6loopback},
+		NotBefore:    time.Now().Add(-time.Hour),
+		NotAfter:     time.Now().Add(24 * time.Hour),
+		KeyUsage:     x509.KeyUsageDigitalSignature,
+		ExtKeyUsage:  []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth},
+	}
 
-	ts := httptest.NewServer(mux)
-	t.Cleanup(ts.Close)
-	return "ws" + strings.TrimPrefix(ts.URL, "http")
+	certDER, err := x509.CreateCertificate(rand.Reader, template, template, &key.PublicKey, key)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	cert := tls.Certificate{
+		Certificate: [][]byte{certDER},
+		PrivateKey:  key,
+	}
+
+	pool := x509.NewCertPool()
+	parsedCert, err := x509.ParseCertificate(certDER)
+	if err != nil {
+		t.Fatal(err)
+	}
+	pool.AddCert(parsedCert)
+
+	return cert, pool
+}
+
+// startTestRelay starts a WebTransport relay server on an ephemeral port
+// and returns the URL (https://...) and TLS config for connecting.
+func startTestRelay(t *testing.T) (string, *tls.Config) {
+	t.Helper()
+
+	cert, pool := generateTestCert(t)
+
+	srv, err := NewWebTransportServer("127.0.0.1:0", cert, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	udpAddr, err := net.ResolveUDPAddr("udp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	conn, err := net.ListenUDP("udp", udpAddr)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	go func() {
+		srv.Serve(conn)
+	}()
+	t.Cleanup(func() { srv.Close() })
+
+	addr := conn.LocalAddr().(*net.UDPAddr)
+	url := "https://127.0.0.1:" + strconv.Itoa(addr.Port)
+	tlsConfig := &tls.Config{RootCAs: pool}
+
+	return url, tlsConfig
 }
 
 func TestRawModeRoundTrip(t *testing.T) {
-	wsBase := startTestRelay(t)
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	url, tlsConfig := startTestRelay(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
-	b, err := Register(ctx, wsBase)
+	b, err := Register(ctx, url, WithTLS(tlsConfig))
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer b.CloseNow()
 
-	c, err := Connect(ctx, wsBase, b.InstanceID())
+	c, err := Connect(ctx, url, b.InstanceID(), WithTLS(tlsConfig))
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer c.CloseNow()
 
-	// Client → backend (raw mode).
-	if err := c.Send(ctx, websocket.MessageText, []byte("hello")); err != nil {
+	// Client -> backend (raw mode).
+	if err := c.Send(ctx, []byte("hello")); err != nil {
 		t.Fatal(err)
 	}
-	mt, data, err := b.Recv(ctx)
+	data, err := b.Recv(ctx)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if mt != websocket.MessageText || string(data) != "hello" {
-		t.Fatalf("got (%v, %q), want (text, hello)", mt, data)
+	if string(data) != "hello" {
+		t.Fatalf("got %q, want hello", data)
 	}
 }
 
 func TestEncryptedModeRoundTrip(t *testing.T) {
-	wsBase := startTestRelay(t)
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	url, tlsConfig := startTestRelay(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
-	b, err := Register(ctx, wsBase)
+	b, err := Register(ctx, url, WithTLS(tlsConfig))
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer b.CloseNow()
 
-	c, err := Connect(ctx, wsBase, b.InstanceID())
+	c, err := Connect(ctx, url, b.InstanceID(), WithTLS(tlsConfig))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -132,32 +153,25 @@ func TestEncryptedModeRoundTrip(t *testing.T) {
 	b.SetChannel(bCh)
 	c.SetChannel(cCh)
 
-	// Give LAN discovery a moment to run. On localhost, the LAN upgrade
-	// may succeed — that's fine, messages flow transparently either way.
-	time.Sleep(100 * time.Millisecond)
-
-	// Client → backend (encrypted mode — caller sends plaintext).
-	if err := c.Send(ctx, websocket.MessageBinary, []byte("secret")); err != nil {
+	// Client -> backend (encrypted mode — caller sends plaintext).
+	if err := c.Send(ctx, []byte("secret")); err != nil {
 		t.Fatal(err)
 	}
 
-	mt, data, err := b.Recv(ctx)
+	data, err := b.Recv(ctx)
 	if err != nil {
 		t.Fatalf("recv: %v", err)
 	}
 	if string(data) != "secret" {
 		t.Fatalf("got %q, want secret", data)
 	}
-	if mt != websocket.MessageBinary {
-		t.Fatalf("got mt=%v, want binary", mt)
-	}
 
-	// Backend → client.
-	if err := b.Send(ctx, websocket.MessageBinary, []byte("reply")); err != nil {
+	// Backend -> client.
+	if err := b.Send(ctx, []byte("reply")); err != nil {
 		t.Fatal(err)
 	}
 
-	mt, data, err = c.Recv(ctx)
+	data, err = c.Recv(ctx)
 	if err != nil {
 		t.Fatalf("recv: %v", err)
 	}
@@ -166,175 +180,129 @@ func TestEncryptedModeRoundTrip(t *testing.T) {
 	}
 }
 
-func TestLANUpgrade(t *testing.T) {
-	wsBase := startTestRelay(t)
-	runLANUpgradeTest(t, wsBase)
-}
-
-func TestLiveLANUpgrade(t *testing.T) {
-	token := os.Getenv("TERN_TOKEN")
-	if token == "" {
-		t.Skip("TERN_TOKEN not set; skipping live LAN upgrade test")
-	}
-	runLANUpgradeTest(t, "wss://tern.fly.dev", WithToken(token))
-}
-
-func runLANUpgradeTest(t *testing.T, wsBase string, opts ...Option) {
-	t.Helper()
-	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+func TestDatagramRoundTrip(t *testing.T) {
+	url, tlsConfig := startTestRelay(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
-	b, err := Register(ctx, wsBase, opts...)
+	b, err := Register(ctx, url, WithTLS(tlsConfig))
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer b.CloseNow()
 
-	c, err := Connect(ctx, wsBase, b.InstanceID())
+	c, err := Connect(ctx, url, b.InstanceID(), WithTLS(tlsConfig))
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer c.CloseNow()
 
-	// Set up matching encrypted channels.
+	// Client -> Backend datagram.
+	if err := c.SendDatagram([]byte("dgram-c2b")); err != nil {
+		t.Fatal("client send datagram:", err)
+	}
+
+	data, err := b.RecvDatagram(ctx)
+	if err != nil {
+		t.Fatal("backend recv datagram:", err)
+	}
+	if string(data) != "dgram-c2b" {
+		t.Fatalf("got %q, want %q", data, "dgram-c2b")
+	}
+
+	// Backend -> Client datagram.
+	if err := b.SendDatagram([]byte("dgram-b2c")); err != nil {
+		t.Fatal("backend send datagram:", err)
+	}
+
+	data, err = c.RecvDatagram(ctx)
+	if err != nil {
+		t.Fatal("client recv datagram:", err)
+	}
+	if string(data) != "dgram-b2c" {
+		t.Fatalf("got %q, want %q", data, "dgram-b2c")
+	}
+}
+
+func TestEncryptedDatagramRoundTrip(t *testing.T) {
+	url, tlsConfig := startTestRelay(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	b, err := Register(ctx, url, WithTLS(tlsConfig))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer b.CloseNow()
+
+	c, err := Connect(ctx, url, b.InstanceID(), WithTLS(tlsConfig))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer c.CloseNow()
+
+	// Set up matching encrypted datagram channels.
 	bKP, _ := crypto.GenerateKeyPair()
 	cKP, _ := crypto.GenerateKeyPair()
 
-	bSendKey, _ := crypto.DeriveSessionKey(bKP.Private, cKP.Public, []byte("b-to-c"))
-	bRecvKey, _ := crypto.DeriveSessionKey(bKP.Private, cKP.Public, []byte("c-to-b"))
-	cSendKey, _ := crypto.DeriveSessionKey(cKP.Private, bKP.Public, []byte("c-to-b"))
-	cRecvKey, _ := crypto.DeriveSessionKey(cKP.Private, bKP.Public, []byte("b-to-c"))
+	bSendKey, _ := crypto.DeriveSessionKey(bKP.Private, cKP.Public, []byte("dg-b-to-c"))
+	bRecvKey, _ := crypto.DeriveSessionKey(bKP.Private, cKP.Public, []byte("dg-c-to-b"))
+	cSendKey, _ := crypto.DeriveSessionKey(cKP.Private, bKP.Public, []byte("dg-c-to-b"))
+	cRecvKey, _ := crypto.DeriveSessionKey(cKP.Private, bKP.Public, []byte("dg-b-to-c"))
 
 	bCh, _ := crypto.NewChannel(bSendKey, bRecvKey)
 	cCh, _ := crypto.NewChannel(cSendKey, cRecvKey)
 
-	// Both sides start on the relay.
-	if got := b.PreferredTransport(); got != "relay" {
-		t.Fatalf("backend initial transport: got %q, want relay", got)
-	}
-	if got := c.PreferredTransport(); got != "relay" {
-		t.Fatalf("client initial transport: got %q, want relay", got)
+	b.SetDatagramChannel(bCh)
+	c.SetDatagramChannel(cCh)
+
+	// Client -> Backend encrypted datagram.
+	if err := c.SendDatagram([]byte("encrypted-dgram")); err != nil {
+		t.Fatal("client send datagram:", err)
 	}
 
-	// Enable encryption. This triggers LAN discovery automatically:
-	// both sides start listeners, exchange offers, and connect directly.
-	b.SetChannel(bCh)
-	c.SetChannel(cCh)
+	data, err := b.RecvDatagram(ctx)
+	if err != nil {
+		t.Fatal("backend recv datagram:", err)
+	}
+	if string(data) != "encrypted-dgram" {
+		t.Fatalf("got %q, want %q", data, "encrypted-dgram")
+	}
+}
 
-	// Wait for LAN upgrade to complete.
-	deadline := time.After(10 * time.Second)
-	tick := time.NewTicker(50 * time.Millisecond)
-	defer tick.Stop()
-	for {
-		select {
-		case <-deadline:
-			t.Fatalf("LAN upgrade did not complete: backend=%q, client=%q",
-				b.PreferredTransport(), c.PreferredTransport())
-		case <-tick.C:
-			if b.PreferredTransport() == "lan" && c.PreferredTransport() == "lan" {
-				goto upgraded
-			}
+func TestMultipleMessages(t *testing.T) {
+	url, tlsConfig := startTestRelay(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	backend, err := Register(ctx, url, WithTLS(tlsConfig))
+	if err != nil {
+		t.Fatal("register:", err)
+	}
+	defer backend.CloseNow()
+
+	client, err := Connect(ctx, url, backend.InstanceID(), WithTLS(tlsConfig))
+	if err != nil {
+		t.Fatal("connect:", err)
+	}
+	defer client.CloseNow()
+
+	const n = 10
+	for i := range n {
+		msg := []byte("msg-" + strconv.Itoa(i))
+		if err := client.Send(ctx, msg); err != nil {
+			t.Fatalf("send %d: %v", i, err)
 		}
 	}
-upgraded:
-	t.Logf("LAN upgrade complete: backend=%q, client=%q",
-		b.PreferredTransport(), c.PreferredTransport())
 
-	// Send messages — they flow through the LAN transport.
-	if err := c.Send(ctx, websocket.MessageBinary, []byte("via LAN")); err != nil {
-		t.Fatal(err)
-	}
-	mt, data, err := b.Recv(ctx)
-	if err != nil {
-		t.Fatalf("recv: %v", err)
-	}
-	if string(data) != "via LAN" {
-		t.Fatalf("got %q, want 'via LAN'", data)
-	}
-	if mt != websocket.MessageBinary {
-		t.Fatalf("got mt=%v, want binary", mt)
-	}
-
-	// Reverse direction.
-	if err := b.Send(ctx, websocket.MessageBinary, []byte("reply via LAN")); err != nil {
-		t.Fatal(err)
-	}
-	_, data, err = c.Recv(ctx)
-	if err != nil {
-		t.Fatalf("recv: %v", err)
-	}
-	if string(data) != "reply via LAN" {
-		t.Fatalf("got %q, want 'reply via LAN'", data)
-	}
-
-	// Verify both sides are using LAN.
-	if got := b.PreferredTransport(); got != "lan" {
-		t.Fatalf("backend transport after messaging: got %q, want lan", got)
-	}
-	if got := c.PreferredTransport(); got != "lan" {
-		t.Fatalf("client transport after messaging: got %q, want lan", got)
-	}
-}
-
-func TestEncryptedModeFiltersControlMessages(t *testing.T) {
-	wsBase := startTestRelay(t)
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
-
-	b, err := Register(ctx, wsBase)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer b.CloseNow()
-
-	c, err := Connect(ctx, wsBase, b.InstanceID())
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer c.CloseNow()
-
-	// Set up encrypted channels.
-	bKP, _ := crypto.GenerateKeyPair()
-	cKP, _ := crypto.GenerateKeyPair()
-
-	bSendKey, _ := crypto.DeriveSessionKey(bKP.Private, cKP.Public, []byte("b-to-c"))
-	bRecvKey, _ := crypto.DeriveSessionKey(bKP.Private, cKP.Public, []byte("c-to-b"))
-	cSendKey, _ := crypto.DeriveSessionKey(cKP.Private, bKP.Public, []byte("c-to-b"))
-	cRecvKey, _ := crypto.DeriveSessionKey(cKP.Private, bKP.Public, []byte("b-to-c"))
-
-	bCh, _ := crypto.NewChannel(bSendKey, bRecvKey)
-	cCh, _ := crypto.NewChannel(cSendKey, cRecvKey)
-
-	// Don't call SetChannel yet — we want to control the sequence manually.
-	// Instead, we'll encrypt and send a LAN offer control message directly,
-	// then an application message, and verify that Recv only returns the
-	// application message.
-
-	// Manually encrypt a LAN offer control message.
-	lanOffer := append([]byte{msgLANOffer}, []byte(`{"addrs":["10.0.0.1"],"port":"9999"}`)...)
-	encOffer := cCh.Encrypt(lanOffer)
-
-	// Then an application message.
-	appMsg := append([]byte{msgApp}, []byte("the real message")...)
-	encApp := cCh.Encrypt(appMsg)
-
-	// Send both through the relay (raw, since we're encrypting manually).
-	if err := c.Send(ctx, websocket.MessageBinary, encOffer); err != nil {
-		t.Fatal(err)
-	}
-	if err := c.Send(ctx, websocket.MessageBinary, encApp); err != nil {
-		t.Fatal(err)
-	}
-
-	// Set channel on receiver. The LAN offer should be consumed internally;
-	// only the application message should be delivered.
-	b.SetChannel(bCh)
-
-	_, data, err := b.Recv(ctx)
-	if err != nil {
-		t.Fatalf("recv: %v", err)
-	}
-	if string(data) != "the real message" {
-		t.Fatalf("got %q, want 'the real message'", data)
+	for i := range n {
+		expected := "msg-" + strconv.Itoa(i)
+		data, err := backend.Recv(ctx)
+		if err != nil {
+			t.Fatalf("recv %d: %v", i, err)
+		}
+		if string(data) != expected {
+			t.Fatalf("msg %d: got %q, want %q", i, data, expected)
+		}
 	}
 }
