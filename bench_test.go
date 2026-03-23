@@ -16,7 +16,7 @@ func BenchmarkStreamLatency(b *testing.B) {
 	for _, env := range benchRelays(b) {
 		b.Run(env.name, func(b *testing.B) {
 			ctx := context.Background()
-			backend, client := benchPair(b, env.relayEnv)
+			backend, client := benchPair(b, env.setup(b))
 
 			// Backend echo loop.
 			go func() {
@@ -44,7 +44,7 @@ func BenchmarkDatagramLatency(b *testing.B) {
 	for _, env := range benchRelays(b) {
 		b.Run(env.name, func(b *testing.B) {
 			ctx := context.Background()
-			backend, client := benchPair(b, env.relayEnv)
+			backend, client := benchPair(b, env.setup(b))
 
 			// Backend echo loop.
 			go func() {
@@ -74,7 +74,7 @@ func BenchmarkStreamThroughput(b *testing.B) {
 			name := fmt.Sprintf("%s/%dB", env.name, size)
 			b.Run(name, func(b *testing.B) {
 				ctx := context.Background()
-				backend, client := benchPair(b, env.relayEnv)
+				backend, client := benchPair(b, env.setup(b))
 
 				// Backend drain loop.
 				go func() {
@@ -103,7 +103,7 @@ func BenchmarkDatagramThroughput(b *testing.B) {
 			name := fmt.Sprintf("%s/%dB", env.name, size)
 			b.Run(name, func(b *testing.B) {
 				ctx := context.Background()
-				backend, client := benchPair(b, env.relayEnv)
+				backend, client := benchPair(b, env.setup(b))
 
 				// Backend drain loop.
 				go func() {
@@ -128,25 +128,38 @@ func BenchmarkDatagramThroughput(b *testing.B) {
 // --- helpers ---
 
 type benchRelay struct {
-	name string
-	relayEnv
+	name  string
+	setup func(b *testing.B) relayEnv
 }
 
+// benchRelays returns relay environments for benchmarking. Each entry's
+// setup is deferred until the sub-benchmark actually runs, so
+// `-bench=/live` doesn't start a local server and vice versa.
 func benchRelays(b *testing.B) []benchRelay {
 	b.Helper()
-	relays := []benchRelay{{name: "local", relayEnv: localRelayB(b)}}
+	relays := []benchRelay{{
+		name: "local",
+		setup: func(b *testing.B) relayEnv {
+			return localRelayB(b)
+		},
+	}}
 
 	token, url := liveRelayEnv()
 	if token != "" {
-		env := relayEnv{url: url, opts: []Option{WithToken(token)}}
-		// Probe connectivity.
-		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-		defer cancel()
-		probe, err := Register(ctx, env.url, env.opts...)
-		if err == nil {
-			probe.CloseNow()
-			relays = append(relays, benchRelay{name: "live", relayEnv: env})
-		}
+		relays = append(relays, benchRelay{
+			name: "live",
+			setup: func(b *testing.B) relayEnv {
+				env := relayEnv{url: url, opts: []Option{WithToken(token)}}
+				ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+				defer cancel()
+				probe, err := Register(ctx, env.url, env.opts...)
+				if err != nil {
+					b.Skipf("live relay not reachable: %v", err)
+				}
+				probe.CloseNow()
+				return env
+			},
+		})
 	}
 
 	return relays
