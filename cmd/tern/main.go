@@ -181,9 +181,18 @@ func main() {
 	// for ACME TLS-ALPN-01 challenges and HTTPS health checks.
 	if *domain != "" {
 		healthMux := http.NewServeMux()
-		healthMux.HandleFunc("/health", func(w http.ResponseWriter, _ *http.Request) {
-			w.Header().Set("Content-Type", "application/json")
-			_, _ = w.Write([]byte(`{"status":"ok"}`))
+		healthMux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+			// Alt-Svc header tells browsers that HTTP/3 (and thus WebTransport)
+			// is available on the same port. Without this, browsers won't attempt
+			// QUIC and WebTransport handshakes will fail.
+			w.Header().Set("Alt-Svc", `h3=":443"; ma=86400`)
+
+			if r.URL.Path == "/health" {
+				w.Header().Set("Content-Type", "application/json")
+				_, _ = w.Write([]byte(`{"status":"ok"}`))
+				return
+			}
+			http.NotFound(w, r)
 		})
 
 		tcpTLS := tlsConfig.Clone()

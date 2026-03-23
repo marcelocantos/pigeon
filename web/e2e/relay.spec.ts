@@ -19,7 +19,7 @@ function startLocalServer(): Promise<{ server: Server; port: number }> {
       res.writeHead(200, { "Content-Type": "text/html" });
       res.end("<html><body></body></html>");
     });
-    server.listen(0, "127.0.0.1", () => {
+    server.listen(0, "localhost", () => {
       const addr = server.address();
       const port = typeof addr === "object" && addr ? addr.port : 0;
       resolve({ server, port });
@@ -86,7 +86,7 @@ test.describe("WebTransport relay E2E", () => {
   test.beforeAll(async () => {
     const local = await startLocalServer();
     server = local.server;
-    pageUrl = "http://127.0.0.1:" + local.port;
+    pageUrl = "http://localhost:" + local.port;
   });
 
   test.afterAll(async () => {
@@ -111,8 +111,9 @@ test.describe("WebTransport relay E2E", () => {
           "transport.close();",
           "return id;",
         ].join("\n");
-        const fn = new Function("relayUrl", "token", body);
-        return fn(relayUrl, token);
+        const AsyncFunction = Object.getPrototypeOf(async function(){}).constructor;
+        const fn = new AsyncFunction("relayUrl", "token", body);
+        return await fn(relayUrl, token);
       },
       [RELAY_URL, TOKEN, RELAY_HELPERS],
     );
@@ -154,8 +155,9 @@ test.describe("WebTransport relay E2E", () => {
           "",
           "return { received: dec.decode(received), reply: dec.decode(reply) };",
         ].join("\n");
-        const fn = new Function("relayUrl", "token", body);
-        return fn(relayUrl, token);
+        const AsyncFunction = Object.getPrototypeOf(async function(){}).constructor;
+        const fn = new AsyncFunction("relayUrl", "token", body);
+        return await fn(relayUrl, token);
       },
       [RELAY_URL, TOKEN, RELAY_HELPERS],
     );
@@ -199,8 +201,9 @@ test.describe("WebTransport relay E2E", () => {
           "",
           "return { received: dec.decode(dg), reply: dec.decode(dgReply) };",
         ].join("\n");
-        const fn = new Function("relayUrl", "token", body);
-        return fn(relayUrl, token);
+        const AsyncFunction = Object.getPrototypeOf(async function(){}).constructor;
+        const fn = new AsyncFunction("relayUrl", "token", body);
+        return await fn(relayUrl, token);
       },
       [RELAY_URL, TOKEN, RELAY_HELPERS],
     );
@@ -297,8 +300,9 @@ test.describe("WebTransport relay E2E", () => {
           "  reply: dec.decode(receivedReplyPt),",
           "};",
         ].join("\n");
-        const fn = new Function("relayUrl", "token", body);
-        return fn(relayUrl, token);
+        const AsyncFunction = Object.getPrototypeOf(async function(){}).constructor;
+        const fn = new AsyncFunction("relayUrl", "token", body);
+        return await fn(relayUrl, token);
       },
       [RELAY_URL, TOKEN, RELAY_HELPERS],
     );
