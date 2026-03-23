@@ -199,31 +199,39 @@ public final class TernConn: @unchecked Sendable {
         let queue = DispatchQueue(label: "com.tern.relay.\(host):\(port)")
         let conn = NWConnection(to: endpoint, using: params)
 
-        try await withCheckedThrowingContinuation { (cont: CheckedContinuation<Void, Error>) in
-            // Use a class box to avoid the Sendable closure capture warning
-            // on mutable state. The NWConnection handler is always called
-            // serially on its queue, so no data race is possible.
-            final class ResumeGuard: @unchecked Sendable {
-                var resumed = false
-            }
-            let guard_ = ResumeGuard()
-            conn.stateUpdateHandler = { state in
-                guard !guard_.resumed else { return }
-                switch state {
-                case .ready:
-                    guard_.resumed = true
-                    cont.resume()
-                case .failed(let error):
-                    guard_.resumed = true
-                    cont.resume(throwing: TernRelayError.connectionFailed(error.localizedDescription))
-                case .cancelled:
-                    guard_.resumed = true
-                    cont.resume(throwing: TernRelayError.connectionFailed("cancelled"))
-                default:
-                    break
+        try await withThrowingTaskGroup(of: Void.self) { group in
+            group.addTask {
+                try await withCheckedThrowingContinuation { (cont: CheckedContinuation<Void, Error>) in
+                    final class ResumeGuard: @unchecked Sendable {
+                        var resumed = false
+                    }
+                    let guard_ = ResumeGuard()
+                    conn.stateUpdateHandler = { state in
+                        guard !guard_.resumed else { return }
+                        switch state {
+                        case .ready:
+                            guard_.resumed = true
+                            cont.resume()
+                        case .failed(let error):
+                            guard_.resumed = true
+                            cont.resume(throwing: TernRelayError.connectionFailed(error.localizedDescription))
+                        case .cancelled:
+                            guard_.resumed = true
+                            cont.resume(throwing: TernRelayError.connectionFailed("cancelled"))
+                        default:
+                            break
+                        }
+                    }
+                    conn.start(queue: queue)
                 }
             }
-            conn.start(queue: queue)
+            group.addTask {
+                try await Task.sleep(nanoseconds: 10_000_000_000) // 10 second timeout
+                throw TernRelayError.connectionFailed("timeout after 10 seconds")
+            }
+            // First to complete wins; cancel the other.
+            try await group.next()!
+            group.cancelAll()
         }
 
         return (conn, queue)
