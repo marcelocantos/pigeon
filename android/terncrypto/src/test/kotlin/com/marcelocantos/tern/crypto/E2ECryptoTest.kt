@@ -127,6 +127,20 @@ class E2ECryptoTest {
         assertContentEquals(msg, serverCh.decrypt(clientCh.encrypt(msg)))
     }
 
+    @Test
+    fun `confirmation code crossplatform vector`() {
+        // Fixed X25519 public keys (any 32-byte value works for derivation).
+        val keyA = ByteArray(32) { 0x01 }
+        val keyB = ByteArray(32) { 0x02 }
+
+        // This expected value must match Go, TypeScript, and Swift tests.
+        val expected = "629624"
+        assertEquals(expected, deriveConfirmationCode(keyA, keyB))
+
+        // Verify order-independence.
+        assertEquals(expected, deriveConfirmationCode(keyB, keyA))
+    }
+
     private fun assertContentEquals(expected: ByteArray, actual: ByteArray) {
         assertEquals(expected.toList(), actual.toList())
     }

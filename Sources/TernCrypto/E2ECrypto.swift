@@ -49,6 +49,28 @@ public func deriveKeyFromSecret(_ secret: Data, info: Data) -> SymmetricKey {
     )
 }
 
+// MARK: - Confirmation code
+
+/// Derive a 6-digit confirmation code from two X25519 public keys.
+/// The code is order-independent and deterministic: swapping the keys
+/// produces the same result. Both sides of a key exchange compute this
+/// independently; a mismatch indicates a MitM attack.
+public func deriveConfirmationCode(_ pubA: Data, _ pubB: Data) -> String {
+    // Sort lexicographically for order-independence.
+    let (a, b) = pubA.lexicographicallyPrecedes(pubB) ? (pubA, pubB) : (pubB, pubA)
+    let ikm = a + b
+    let key = HKDF<SHA256>.deriveKey(
+        inputKeyMaterial: SymmetricKey(data: ikm),
+        salt: Data(),
+        info: Data("pairing-confirmation".utf8),
+        outputByteCount: 4
+    )
+    let bytes = key.withUnsafeBytes { Array($0) }
+    let value = UInt32(bytes[0]) << 24 | UInt32(bytes[1]) << 16 | UInt32(bytes[2]) << 8 | UInt32(bytes[3])
+    let code = value % 1_000_000
+    return String(format: "%06d", code)
+}
+
 // MARK: - Channel mode
 
 /// Controls how `E2EChannel.decrypt` handles sequence numbers.
@@ -130,10 +152,11 @@ public final class E2EChannel: @unchecked Sendable {
         let payload = data.dropFirst(8)
 
         lock.lock()
+        defer { lock.unlock() }
+
         switch mode {
         case .strict:
             guard seq == recvSeq else {
-                lock.unlock()
                 throw E2EError.unexpectedSequence
             }
             recvSeq += 1
@@ -141,12 +164,10 @@ public final class E2EChannel: @unchecked Sendable {
             // recvSeq holds highest-accepted-seq + 1 (0 if none yet).
             // Accept seq >= recvSeq (gaps allowed); reject seq < recvSeq (replay).
             guard seq >= recvSeq else {
-                lock.unlock()
                 throw E2EError.sequenceReplayed
             }
             recvSeq = seq + 1
         }
-        lock.unlock()
 
         let tagStart = payload.count - 16
         let ciphertext = payload.prefix(tagStart)

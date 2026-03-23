@@ -65,6 +65,29 @@ class E2EKeyPair {
 fun deriveKeyFromSecret(secret: ByteArray, info: ByteArray): ByteArray =
     Hkdf.derive(secret, info)
 
+// ---- Confirmation code ----
+
+/**
+ * Derive a 6-digit confirmation code from two X25519 public keys.
+ * The code is order-independent and deterministic: swapping the keys
+ * produces the same result. Both sides of a key exchange compute this
+ * independently; a mismatch indicates a MitM attack.
+ */
+fun deriveConfirmationCode(pubA: ByteArray, pubB: ByteArray): String {
+    // Sort lexicographically for order-independence.
+    val cmp = pubA.zip(pubB).map { (x, y) -> (x.toInt() and 0xFF) - (y.toInt() and 0xFF) }
+        .firstOrNull { it != 0 } ?: 0
+    val (a, b) = if (cmp <= 0) pubA to pubB else pubB to pubA
+    val ikm = a + b
+    val derived = Hkdf.derive(ikm, "pairing-confirmation".toByteArray(), length = 4)
+    val value = ((derived[0].toLong() and 0xFF) shl 24) or
+                ((derived[1].toLong() and 0xFF) shl 16) or
+                ((derived[2].toLong() and 0xFF) shl 8) or
+                (derived[3].toLong() and 0xFF)
+    val code = value % 1_000_000
+    return String.format("%06d", code)
+}
+
 // ---- Channel mode ----
 
 /**
@@ -96,6 +119,9 @@ class E2EChannel private constructor(
     private val sendKey: ByteArray,
     private val recvKey: ByteArray,
 ) {
+    // Note: Kotlin Long is signed 64-bit. Overflow at Long.MAX_VALUE wraps
+    // to Long.MIN_VALUE, which differs from Go/Swift unsigned uint64.
+    // This only matters after 2^63 messages (~9.2 quintillion) — theoretical.
     private var sendSeq: Long = 0
     private var recvSeq: Long = 0
     private val lock = Any()
@@ -151,7 +177,7 @@ class E2EChannel private constructor(
         val seq = leToLong(seqBytes)
         val payload = data.copyOfRange(8, data.size)
 
-        synchronized(lock) {
+        return synchronized(lock) {
             when (mode) {
                 ChannelMode.STRICT -> {
                     if (seq != recvSeq) throw E2EException("Unexpected sequence number")
@@ -165,13 +191,13 @@ class E2EChannel private constructor(
                     recvSeq = seq + 1
                 }
             }
-        }
 
-        val nonce = makeNonce(seq)
-        val cipher = Cipher.getInstance("AES/GCM/NoPadding")
-        cipher.init(Cipher.DECRYPT_MODE, SecretKeySpec(recvKey, "AES"), GCMParameterSpec(128, nonce))
-        cipher.updateAAD(seqBytes)
-        return cipher.doFinal(payload)
+            val nonce = makeNonce(seq)
+            val cipher = Cipher.getInstance("AES/GCM/NoPadding")
+            cipher.init(Cipher.DECRYPT_MODE, SecretKeySpec(recvKey, "AES"), GCMParameterSpec(128, nonce))
+            cipher.updateAAD(seqBytes)
+            cipher.doFinal(payload)
+        }
     }
 
     private fun makeNonce(seq: Long): ByteArray {

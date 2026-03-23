@@ -92,4 +92,17 @@ final class E2ECryptoTests: XCTestCase {
 
         XCTAssertThrowsError(try ch.decrypt(Data([1, 2, 3])))
     }
+
+    func testConfirmationCodeCrossplatformVector() {
+        // Fixed X25519 public keys (any 32-byte value works for derivation).
+        let keyA = Data(repeating: 0x01, count: 32)
+        let keyB = Data(repeating: 0x02, count: 32)
+
+        // This expected value must match Go, TypeScript, and Kotlin tests.
+        let expected = "629624"
+        XCTAssertEqual(deriveConfirmationCode(keyA, keyB), expected)
+
+        // Verify order-independence.
+        XCTAssertEqual(deriveConfirmationCode(keyB, keyA), expected)
+    }
 }

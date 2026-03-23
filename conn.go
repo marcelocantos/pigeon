@@ -5,7 +5,9 @@ package tern
 
 import (
 	"context"
+	"log/slog"
 	"sync"
+	"time"
 
 	"github.com/quic-go/webtransport-go"
 
@@ -80,7 +82,16 @@ func (c *Conn) SetDatagramChannel(ch *crypto.Channel) {
 // Send writes a message on the primary bidirectional stream. In raw mode,
 // data is sent as-is with length-prefix framing. In encrypted mode, data
 // is treated as plaintext and encrypted before sending.
+//
+// If ctx carries a deadline, it is applied to the underlying stream write
+// via SetWriteDeadline. Cancellation without a deadline is not supported
+// (the underlying stream write is not interruptible).
 func (c *Conn) Send(ctx context.Context, data []byte) error {
+	if deadline, ok := ctx.Deadline(); ok {
+		c.stream.SetWriteDeadline(deadline)
+		defer c.stream.SetWriteDeadline(time.Time{})
+	}
+
 	c.mu.Lock()
 	ch := c.channel
 	c.mu.Unlock()
@@ -97,34 +108,51 @@ func (c *Conn) Send(ctx context.Context, data []byte) error {
 
 // Recv reads the next message from the primary bidirectional stream.
 // In raw mode, returns the raw bytes. In encrypted mode, decrypts and
-// returns the application payload.
+// returns the application payload, silently discarding control messages.
+//
+// If ctx carries a deadline, it is applied to the underlying stream read
+// via SetReadDeadline. Cancellation without a deadline is not supported
+// (the underlying stream read is not interruptible).
 func (c *Conn) Recv(ctx context.Context) ([]byte, error) {
-	c.mu.Lock()
-	ch := c.channel
-	c.mu.Unlock()
-
-	data, err := readWTMessage(c.stream)
-	if err != nil {
-		return nil, err
+	if deadline, ok := ctx.Deadline(); ok {
+		c.stream.SetReadDeadline(deadline)
+		defer c.stream.SetReadDeadline(time.Time{})
 	}
 
-	if ch == nil {
-		return data, nil
-	}
+	for {
+		c.mu.Lock()
+		ch := c.channel
+		c.mu.Unlock()
 
-	plaintext, err := ch.Decrypt(data)
-	if err != nil {
-		return nil, err
-	}
+		data, err := readWTMessage(c.stream)
+		if err != nil {
+			return nil, err
+		}
 
-	if len(plaintext) == 0 {
-		return nil, nil
-	}
+		if ch == nil {
+			return data, nil
+		}
 
-	// Strip the internal message type byte. For now, only application
-	// messages are delivered; control message types are reserved for
-	// future LAN upgrade over WebTransport.
-	return plaintext[1:], nil
+		plaintext, err := ch.Decrypt(data)
+		if err != nil {
+			return nil, err
+		}
+
+		if len(plaintext) == 0 {
+			return nil, nil
+		}
+
+		switch plaintext[0] {
+		case msgApp:
+			return plaintext[1:], nil
+		case msgLANOffer, msgCutover:
+			slog.Debug("discarding control message", "type", plaintext[0])
+			continue
+		default:
+			slog.Warn("discarding unknown message type", "type", plaintext[0])
+			continue
+		}
+	}
 }
 
 // SendDatagram sends an unreliable datagram to the peer via the
