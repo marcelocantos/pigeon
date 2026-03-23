@@ -431,3 +431,26 @@ to LAN transport.
 
 Status: not started
 
+---
+
+## 🎯T11 Swift relay client (Network.framework QUIC)
+
+Swift `TernRelay` library using Apple's Network.framework for raw QUIC
+connections (ALPN "tern"). Mirrors the Go client's `Register`/`Connect`
+API. Available on iOS 16+ / macOS 13+.
+
+### 🎯T11.1 Core TernConn with register/connect/send/recv
+
+`TernConn` with static `register` and `connect` factory methods,
+length-prefixed `send`/`recv` on a bidirectional QUIC stream, and
+`sendDatagram`/`recvDatagram` for unreliable datagrams.
+
+Status: done
+
+### 🎯T11.2 Integration tests against live QUIC server
+
+End-to-end test connecting the Swift client to a running tern QUIC
+server, verifying register, connect, and bidirectional message exchange.
+
+Status: not started
+
