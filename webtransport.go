@@ -112,9 +112,10 @@ type WebTransportServer struct {
 }
 
 // NewWebTransportServer creates a WebTransport relay server listening on addr.
-// The provided TLS certificate is used for the QUIC/HTTP3 connection.
+// The provided TLS config is used for the QUIC/HTTP3 connection (it may use
+// static certificates or a dynamic GetCertificate callback such as certmagic).
 // If token is non-empty, /register requires a matching Bearer token.
-func NewWebTransportServer(addr string, tlsCert tls.Certificate, token string) (*WebTransportServer, error) {
+func NewWebTransportServer(addr string, tlsConfig *tls.Config, token string) (*WebTransportServer, error) {
 	hub := newWTHub()
 
 	mux := http.NewServeMux()
@@ -124,14 +125,15 @@ func NewWebTransportServer(addr string, tlsCert tls.Certificate, token string) (
 		addr:  addr,
 	}
 
+	// Clone to avoid mutating the caller's config.
+	serverTLS := tlsConfig.Clone()
+	serverTLS.NextProtos = []string{http3.NextProtoH3}
+
 	wtServer := &webtransport.Server{
 		H3: &http3.Server{
-			Addr:    addr,
-			Handler: mux,
-			TLSConfig: &tls.Config{
-				Certificates: []tls.Certificate{tlsCert},
-				NextProtos:   []string{http3.NextProtoH3},
-			},
+			Addr:      addr,
+			Handler:   mux,
+			TLSConfig: serverTLS,
 		},
 		CheckOrigin: func(r *http.Request) bool { return true },
 	}

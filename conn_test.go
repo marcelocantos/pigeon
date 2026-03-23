@@ -71,7 +71,9 @@ func localRelay(t *testing.T) relayEnv {
 
 	cert, pool := generateTestCert(t)
 
-	srv, err := NewWebTransportServer("127.0.0.1:0", cert, "")
+	srv, err := NewWebTransportServer("127.0.0.1:0", &tls.Config{
+		Certificates: []tls.Certificate{cert},
+	}, "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -96,26 +98,18 @@ func localRelay(t *testing.T) relayEnv {
 }
 
 // liveRelay returns a relayEnv for tern.fly.dev if TERN_TOKEN is set.
-// Skips the test otherwise.
+// Skips the test otherwise. The relay uses Let's Encrypt certificates,
+// so no custom TLS config is needed — system roots are sufficient.
 func liveRelay(t *testing.T) relayEnv {
 	t.Helper()
 	token := os.Getenv("TERN_TOKEN")
 	if token == "" {
 		t.Skip("TERN_TOKEN not set; skipping live test")
 	}
-	// Use TERN_RELAY_URL if set, otherwise default to tern.fly.dev.
-	relayURL := os.Getenv("TERN_RELAY_URL")
-	if relayURL == "" {
-		relayURL = "https://tern.fly.dev:443"
-	}
 
 	env := relayEnv{
-		url: relayURL,
-		opts: []Option{
-			WithToken(token),
-			// InsecureSkipVerify because the relay generates a self-signed cert.
-			WithTLS(&tls.Config{InsecureSkipVerify: true}),
-		},
+		url:  "https://tern.fly.dev:443",
+		opts: []Option{WithToken(token)},
 	}
 
 	// Probe connectivity — skip if the relay isn't reachable over QUIC/UDP.

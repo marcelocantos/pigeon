@@ -8,6 +8,7 @@ COPY cmd/tern/ cmd/tern/
 RUN CGO_ENABLED=0 go build -o /tern ./cmd/tern
 
 FROM alpine:3.21
+RUN apk add --no-cache ca-certificates && mkdir -p /data/certmagic
 COPY --from=build /tern /tern
-EXPOSE 443/udp
+EXPOSE 443/udp 443/tcp
 CMD ["/tern"]

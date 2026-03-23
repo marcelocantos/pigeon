@@ -65,7 +65,9 @@ func startTestRelay(t *testing.T, token string) (string, *tls.Config) {
 
 	cert, pool := testCert(t)
 
-	srv, err := tern.NewWebTransportServer("127.0.0.1:0", cert, token)
+	srv, err := tern.NewWebTransportServer("127.0.0.1:0", &tls.Config{
+		Certificates: []tls.Certificate{cert},
+	}, token)
 	if err != nil {
 		t.Fatal(err)
 	}

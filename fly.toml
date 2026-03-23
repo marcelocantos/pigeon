@@ -4,9 +4,22 @@ primary_region = "syd"
 [build]
   dockerfile = "Dockerfile"
 
+[env]
+  XDG_DATA_HOME = "/data/certmagic"
+
+[processes]
+  app = "/tern --domain tern.fly.dev --acme-email marcelo@cantos.id.au"
+
 [[services]]
   internal_port = 443
   protocol = "udp"
+
+  [[services.ports]]
+    port = 443
+
+[[services]]
+  internal_port = 443
+  protocol = "tcp"
 
   [[services.ports]]
     port = 443
