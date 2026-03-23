@@ -131,10 +131,9 @@ func TestEncryptedModeRoundTrip(t *testing.T) {
 	b.SetChannel(bCh)
 	c.SetChannel(cCh)
 
-	// Give LAN offer goroutines a moment to run (they'll fail silently
-	// since there's no LAN listener, but we don't want them racing
-	// with our test messages).
-	time.Sleep(50 * time.Millisecond)
+	// Give LAN discovery a moment to run. On localhost, the LAN upgrade
+	// may succeed — that's fine, messages flow transparently either way.
+	time.Sleep(100 * time.Millisecond)
 
 	// Client → backend (encrypted mode — caller sends plaintext).
 	if err := c.Send(ctx, websocket.MessageBinary, []byte("secret")); err != nil {
@@ -163,6 +162,102 @@ func TestEncryptedModeRoundTrip(t *testing.T) {
 	}
 	if string(data) != "reply" {
 		t.Fatalf("got %q, want reply", data)
+	}
+}
+
+func TestLANUpgrade(t *testing.T) {
+	wsBase := startTestRelay(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	b, err := Register(ctx, wsBase)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer b.CloseNow()
+
+	c, err := Connect(ctx, wsBase, b.InstanceID())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer c.CloseNow()
+
+	// Set up matching encrypted channels.
+	bKP, _ := crypto.GenerateKeyPair()
+	cKP, _ := crypto.GenerateKeyPair()
+
+	bSendKey, _ := crypto.DeriveSessionKey(bKP.Private, cKP.Public, []byte("b-to-c"))
+	bRecvKey, _ := crypto.DeriveSessionKey(bKP.Private, cKP.Public, []byte("c-to-b"))
+	cSendKey, _ := crypto.DeriveSessionKey(cKP.Private, bKP.Public, []byte("c-to-b"))
+	cRecvKey, _ := crypto.DeriveSessionKey(cKP.Private, bKP.Public, []byte("b-to-c"))
+
+	bCh, _ := crypto.NewChannel(bSendKey, bRecvKey)
+	cCh, _ := crypto.NewChannel(cSendKey, cRecvKey)
+
+	// Both sides start on the relay.
+	if got := b.PreferredTransport(); got != "relay" {
+		t.Fatalf("backend initial transport: got %q, want relay", got)
+	}
+	if got := c.PreferredTransport(); got != "relay" {
+		t.Fatalf("client initial transport: got %q, want relay", got)
+	}
+
+	// Enable encryption. This triggers LAN discovery automatically:
+	// both sides start listeners, exchange offers, and connect directly.
+	b.SetChannel(bCh)
+	c.SetChannel(cCh)
+
+	// Wait for LAN upgrade to complete. Both sides need to discover
+	// each other's addresses, connect, and cut over.
+	deadline := time.After(5 * time.Second)
+	tick := time.NewTicker(50 * time.Millisecond)
+	defer tick.Stop()
+	for {
+		select {
+		case <-deadline:
+			t.Fatalf("LAN upgrade did not complete: backend=%q, client=%q",
+				b.PreferredTransport(), c.PreferredTransport())
+		case <-tick.C:
+			if b.PreferredTransport() == "lan" && c.PreferredTransport() == "lan" {
+				goto upgraded
+			}
+		}
+	}
+upgraded:
+
+	// Now send messages — they should flow through the LAN transport.
+	if err := c.Send(ctx, websocket.MessageBinary, []byte("via LAN")); err != nil {
+		t.Fatal(err)
+	}
+	mt, data, err := b.Recv(ctx)
+	if err != nil {
+		t.Fatalf("recv: %v", err)
+	}
+	if string(data) != "via LAN" {
+		t.Fatalf("got %q, want 'via LAN'", data)
+	}
+	if mt != websocket.MessageBinary {
+		t.Fatalf("got mt=%v, want binary", mt)
+	}
+
+	// Reverse direction.
+	if err := b.Send(ctx, websocket.MessageBinary, []byte("reply via LAN")); err != nil {
+		t.Fatal(err)
+	}
+	_, data, err = c.Recv(ctx)
+	if err != nil {
+		t.Fatalf("recv: %v", err)
+	}
+	if string(data) != "reply via LAN" {
+		t.Fatalf("got %q, want 'reply via LAN'", data)
+	}
+
+	// Verify both sides are using LAN.
+	if got := b.PreferredTransport(); got != "lan" {
+		t.Fatalf("backend transport after messaging: got %q, want lan", got)
+	}
+	if got := c.PreferredTransport(); got != "lan" {
+		t.Fatalf("client transport after messaging: got %q, want lan", got)
 	}
 }
 
