@@ -6,6 +6,7 @@ package crypto
 import (
 	"bytes"
 	"crypto/rand"
+	"fmt"
 	"testing"
 )
 
@@ -318,6 +319,90 @@ func TestNewDatagramChannel(t *testing.T) {
 	}
 	if ch.mode != ModeDatagrams {
 		t.Fatal("NewDatagramChannel should create a channel in ModeDatagrams")
+	}
+}
+
+func TestDatagramModeSimulatedPacketLoss(t *testing.T) {
+	clientCh, serverCh := newTestDatagramChannel(t)
+
+	const total = 1000
+	lossRates := []float64{0.05, 0.10, 0.20, 0.50}
+
+	for _, lossRate := range lossRates {
+		t.Run(fmt.Sprintf("loss_%.0f%%", lossRate*100), func(t *testing.T) {
+			// Reset channels for each sub-test.
+			clientCh, serverCh = newTestDatagramChannel(t)
+
+			// Encrypt all messages.
+			ciphertexts := make([][]byte, total)
+			for i := range total {
+				ciphertexts[i] = clientCh.Encrypt([]byte(fmt.Sprintf("msg-%d", i)))
+			}
+
+			// Simulate loss: drop packets deterministically based on index.
+			// Use a simple hash to distribute drops evenly.
+			delivered := 0
+			dropped := 0
+			var lastDelivered int
+			for i, ct := range ciphertexts {
+				// Deterministic "random" drop based on index.
+				drop := float64((i*7+13)%100) / 100.0 < lossRate
+				if drop {
+					dropped++
+					continue
+				}
+
+				plaintext, err := serverCh.Decrypt(ct)
+				if err != nil {
+					t.Fatalf("seq %d: decrypt failed after %d delivered, %d dropped: %v",
+						i, delivered, dropped, err)
+				}
+
+				expected := fmt.Sprintf("msg-%d", i)
+				if string(plaintext) != expected {
+					t.Fatalf("seq %d: got %q, want %q", i, plaintext, expected)
+				}
+				delivered++
+				lastDelivered = i
+			}
+
+			t.Logf("%.0f%% loss: %d/%d delivered, %d dropped, last seq=%d",
+				lossRate*100, delivered, total, dropped, lastDelivered)
+
+			if delivered == 0 {
+				t.Fatal("no messages delivered")
+			}
+			if delivered+dropped != total {
+				t.Fatalf("delivered(%d) + dropped(%d) != total(%d)", delivered, dropped, total)
+			}
+		})
+	}
+}
+
+func TestDatagramModeStress(t *testing.T) {
+	clientCh, serverCh := newTestDatagramChannel(t)
+
+	// Rapid-fire 10,000 messages with random gaps.
+	const total = 10000
+	ciphertexts := make([][]byte, total)
+	for i := range total {
+		payload := make([]byte, 64)
+		rand.Read(payload)
+		ciphertexts[i] = clientCh.Encrypt(payload)
+	}
+
+	// Deliver only even-numbered packets (50% loss, every other packet).
+	delivered := 0
+	for i := 0; i < total; i += 2 {
+		if _, err := serverCh.Decrypt(ciphertexts[i]); err != nil {
+			t.Fatalf("seq %d: %v (after %d delivered)", i, err, delivered)
+		}
+		delivered++
+	}
+
+	t.Logf("stress: %d/%d delivered (50%% systematic loss)", delivered, total)
+	if delivered != total/2 {
+		t.Fatalf("expected %d delivered, got %d", total/2, delivered)
 	}
 }
 
