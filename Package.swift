@@ -13,6 +13,6 @@ let package = Package(
         .target(name: "TernCrypto"),
         .target(name: "TernRelay"),
         .testTarget(name: "TernCryptoTests", dependencies: ["TernCrypto"]),
-        .testTarget(name: "TernRelayTests", dependencies: ["TernRelay"]),
+        .testTarget(name: "TernRelayTests", dependencies: ["TernRelay", "TernCrypto"]),
     ]
 )
