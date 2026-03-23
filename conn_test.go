@@ -181,6 +181,68 @@ func setupDatagramEncryption(t *testing.T, b, c *Conn) {
 	c.SetDatagramChannel(cCh)
 }
 
+// liveRelayEnv returns the token and URL for the live relay, or empty
+// strings if TERN_TOKEN is not set.
+func liveRelayEnv() (token, url string) {
+	token = os.Getenv("TERN_TOKEN")
+	if token == "" {
+		return "", ""
+	}
+	return token, "https://tern.fly.dev:443"
+}
+
+// localRelayB is localRelay for benchmarks.
+func localRelayB(b *testing.B) relayEnv {
+	b.Helper()
+
+	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		b.Fatal(err)
+	}
+
+	template := &x509.Certificate{
+		SerialNumber: big.NewInt(1),
+		DNSNames:     []string{"localhost"},
+		IPAddresses:  []net.IP{net.IPv4(127, 0, 0, 1), net.IPv6loopback},
+		NotBefore:    time.Now().Add(-time.Hour),
+		NotAfter:     time.Now().Add(24 * time.Hour),
+		KeyUsage:     x509.KeyUsageDigitalSignature,
+		ExtKeyUsage:  []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth},
+	}
+
+	certDER, err := x509.CreateCertificate(rand.Reader, template, template, &key.PublicKey, key)
+	if err != nil {
+		b.Fatal(err)
+	}
+
+	cert := tls.Certificate{Certificate: [][]byte{certDER}, PrivateKey: key}
+	pool := x509.NewCertPool()
+	parsedCert, _ := x509.ParseCertificate(certDER)
+	pool.AddCert(parsedCert)
+
+	srv, err := NewWebTransportServer("127.0.0.1:0", &tls.Config{
+		Certificates: []tls.Certificate{cert},
+	}, "")
+	if err != nil {
+		b.Fatal(err)
+	}
+
+	udpAddr, _ := net.ResolveUDPAddr("udp", "127.0.0.1:0")
+	conn, err := net.ListenUDP("udp", udpAddr)
+	if err != nil {
+		b.Fatal(err)
+	}
+
+	go srv.Serve(conn)
+	b.Cleanup(func() { srv.Close() })
+
+	addr := conn.LocalAddr().(*net.UDPAddr)
+	return relayEnv{
+		url:  "https://127.0.0.1:" + strconv.Itoa(addr.Port),
+		opts: []Option{WithTLS(&tls.Config{RootCAs: pool})},
+	}
+}
+
 // forEachRelay runs a subtest against both the local and live relay.
 func forEachRelay(t *testing.T, fn func(t *testing.T, env relayEnv)) {
 	t.Run("local", func(t *testing.T) { fn(t, localRelay(t)) })
