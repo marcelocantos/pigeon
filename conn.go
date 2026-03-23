@@ -5,11 +5,10 @@ package tern
 
 import (
 	"context"
+	"io"
 	"log/slog"
 	"sync"
 	"time"
-
-	"github.com/quic-go/webtransport-go"
 
 	"github.com/marcelocantos/tern/crypto"
 )
@@ -23,9 +22,22 @@ const (
 	msgCutover  byte = 0x02 // transport cutover marker (reserved)
 )
 
-// Conn manages communication with a peer through a WebTransport session.
-// The primary bidirectional stream is used for reliable ordered messages.
-// Datagrams provide an unreliable channel for latency-sensitive data.
+// datagrammer provides unreliable datagram send/receive.
+type datagrammer interface {
+	SendDatagram([]byte) error
+	ReceiveDatagram(context.Context) ([]byte, error)
+}
+
+// deadliner can set read/write deadlines on a stream.
+type deadliner interface {
+	SetReadDeadline(time.Time) error
+	SetWriteDeadline(time.Time) error
+}
+
+// Conn manages communication with a peer through a QUIC-based session
+// (either raw QUIC or WebTransport). The primary bidirectional stream
+// is used for reliable ordered messages. Datagrams provide an unreliable
+// channel for latency-sensitive data.
 //
 // In raw mode (before SetChannel), messages pass through unmodified.
 // In encrypted mode (after SetChannel), Send/Recv automatically encrypt
@@ -35,8 +47,9 @@ type Conn struct {
 	writeMu sync.Mutex // serialises writes to the primary stream
 	instanceID string
 
-	session *webtransport.Session
-	stream  *webtransport.Stream // primary bidirectional stream
+	stream io.ReadWriteCloser // primary bidirectional stream (quic.Stream or webtransport.Stream)
+	dg     datagrammer        // datagram interface (quic.Connection or webtransport.Session)
+	closer io.Closer          // the session/connection itself
 
 	// Encryption for the primary stream. Nil means raw mode.
 	channel *crypto.Channel
@@ -48,12 +61,13 @@ type Conn struct {
 	cancel context.CancelFunc // cancels background goroutines
 }
 
-func newConn(session *webtransport.Session, stream *webtransport.Stream, instanceID string) *Conn {
+func newConn(stream io.ReadWriteCloser, dg datagrammer, closer io.Closer, instanceID string) *Conn {
 	ctx, cancel := context.WithCancel(context.Background())
 	return &Conn{
 		instanceID: instanceID,
-		session:    session,
 		stream:     stream,
+		dg:         dg,
+		closer:     closer,
 		ctx:        ctx,
 		cancel:     cancel,
 	}
@@ -91,8 +105,10 @@ func (c *Conn) SetDatagramChannel(ch *crypto.Channel) {
 // (the underlying stream write is not interruptible).
 func (c *Conn) Send(ctx context.Context, data []byte) error {
 	if deadline, ok := ctx.Deadline(); ok {
-		c.stream.SetWriteDeadline(deadline)
-		defer c.stream.SetWriteDeadline(time.Time{})
+		if dl, ok := c.stream.(deadliner); ok {
+			dl.SetWriteDeadline(deadline)
+			defer dl.SetWriteDeadline(time.Time{})
+		}
 	}
 
 	c.mu.Lock()
@@ -107,11 +123,11 @@ func (c *Conn) Send(ctx context.Context, data []byte) error {
 		payload = ch.Encrypt(framed)
 	}
 
-	// Serialise writes: writeWTMessage performs two Write calls
+	// Serialise writes: writeMessage performs two Write calls
 	// (length header + payload) which must not interleave.
 	c.writeMu.Lock()
 	defer c.writeMu.Unlock()
-	return writeWTMessage(c.stream, payload)
+	return writeMessage(c.stream, payload)
 }
 
 // Recv reads the next message from the primary bidirectional stream.
@@ -123,8 +139,10 @@ func (c *Conn) Send(ctx context.Context, data []byte) error {
 // (the underlying stream read is not interruptible).
 func (c *Conn) Recv(ctx context.Context) ([]byte, error) {
 	if deadline, ok := ctx.Deadline(); ok {
-		c.stream.SetReadDeadline(deadline)
-		defer c.stream.SetReadDeadline(time.Time{})
+		if dl, ok := c.stream.(deadliner); ok {
+			dl.SetReadDeadline(deadline)
+			defer dl.SetReadDeadline(time.Time{})
+		}
 	}
 
 	for {
@@ -132,7 +150,7 @@ func (c *Conn) Recv(ctx context.Context) ([]byte, error) {
 		ch := c.channel
 		c.mu.Unlock()
 
-		data, err := readWTMessage(c.stream)
+		data, err := readMessage(c.stream)
 		if err != nil {
 			return nil, err
 		}
@@ -164,7 +182,7 @@ func (c *Conn) Recv(ctx context.Context) ([]byte, error) {
 }
 
 // SendDatagram sends an unreliable datagram to the peer via the
-// WebTransport session. In raw mode, data is sent as-is. In encrypted
+// QUIC session. In raw mode, data is sent as-is. In encrypted
 // mode (after SetDatagramChannel), data is encrypted before sending.
 func (c *Conn) SendDatagram(data []byte) error {
 	c.mu.Lock()
@@ -175,14 +193,14 @@ func (c *Conn) SendDatagram(data []byte) error {
 	if ch != nil {
 		payload = ch.Encrypt(data)
 	}
-	return c.session.SendDatagram(payload)
+	return c.dg.SendDatagram(payload)
 }
 
 // RecvDatagram receives the next datagram from the peer. In raw mode,
 // returns the raw bytes. In encrypted mode (after SetDatagramChannel),
 // decrypts the datagram before returning.
 func (c *Conn) RecvDatagram(ctx context.Context) ([]byte, error) {
-	data, err := c.session.ReceiveDatagram(ctx)
+	data, err := c.dg.ReceiveDatagram(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -198,15 +216,7 @@ func (c *Conn) RecvDatagram(ctx context.Context) ([]byte, error) {
 	return ch.Decrypt(data)
 }
 
-// OpenStream opens an additional bidirectional stream on the session.
-// Each stream can carry its own message flow independently of the
-// primary stream. Use writeWTMessage/readWTMessage for length-prefixed
-// framing on the returned stream.
-func (c *Conn) OpenStream() (*webtransport.Stream, error) {
-	return c.session.OpenStream()
-}
-
-// Close gracefully closes the WebTransport session. It closes the primary
+// Close gracefully closes the session. It closes the primary
 // bidirectional stream first (allowing buffered data to flush) before
 // closing the session.
 func (c *Conn) Close() error {
@@ -214,11 +224,11 @@ func (c *Conn) Close() error {
 	if c.stream != nil {
 		c.stream.Close()
 	}
-	return c.session.CloseWithError(0, "")
+	return c.closer.Close()
 }
 
-// CloseNow immediately closes the WebTransport session.
+// CloseNow immediately closes the session.
 func (c *Conn) CloseNow() error {
 	c.cancel()
-	return c.session.CloseWithError(0, "")
+	return c.closer.Close()
 }

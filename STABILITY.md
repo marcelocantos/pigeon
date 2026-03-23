@@ -73,24 +73,34 @@ func (c *Conn) SetChannel(ch *crypto.Channel)
 func (c *Conn) SetDatagramChannel(ch *crypto.Channel)
 func (c *Conn) Close() error
 func (c *Conn) CloseNow() error
-func (c *Conn) OpenStream() (*webtransport.Stream, error)
-
 // Connection options
 type Option func(*options)
 func WithToken(token string) Option
 func WithTLS(tlsConfig *tls.Config) Option
+func WithWebTransport() Option
+func WithQUICPort(port string) Option
 
 // Client-side connectivity
 func Register(ctx context.Context, relayURL string, opts ...Option) (*Conn, error)
 func Connect(ctx context.Context, relayURL, instanceID string, opts ...Option) (*Conn, error)
 
-// Server library
+// Server library — WebTransport (browsers)
 type WebTransportServer struct { /* unexported fields */ }
 func NewWebTransportServer(addr string, tlsConfig *tls.Config, token string) (*WebTransportServer, error)
+func NewWebTransportServerWithHub(addr string, tlsConfig *tls.Config, token string, h *hub) (*WebTransportServer, error)
 func (s *WebTransportServer) ListenAndServe() error
 func (s *WebTransportServer) Serve(conn net.PacketConn) error
 func (s *WebTransportServer) Close() error
 func (s *WebTransportServer) Addr() net.Addr
+func (s *WebTransportServer) Hub() *hub
+
+// Server library — raw QUIC (native clients)
+type QUICServer struct { /* unexported fields */ }
+func NewQUICServer(addr string, tlsConfig *tls.Config, token string, h *hub) *QUICServer
+func (s *QUICServer) ListenAndServe(tlsConfig *tls.Config) error
+func (s *QUICServer) ServeWithTLS(conn net.PacketConn, tlsConfig *tls.Config) error
+func (s *QUICServer) Close() error
+func (s *QUICServer) Addr() net.Addr
 ```
 
 *Stability: Stable.*

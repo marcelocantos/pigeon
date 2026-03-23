@@ -1,15 +1,21 @@
 // Copyright 2026 Marcelo Cantos
 // SPDX-License-Identifier: Apache-2.0
 
-// Command tern is a WebTransport relay server. Backend instances
+// Command tern is a relay server supporting both WebTransport (for
+// browsers) and raw QUIC (for native clients). Backend instances
 // register and receive a unique instance ID. Clients connect by ID
 // and all traffic is forwarded bidirectionally (streams and datagrams).
 //
-// Endpoints (served over HTTP/3):
+// Endpoints (WebTransport, HTTP/3):
 //
 //	GET /health             — health check
 //	GET /register           — backend connects here (WebTransport session)
 //	GET /ws/<instance-id>   — client connects here (WebTransport session)
+//
+// Raw QUIC (ALPN "tern"):
+//
+//	Handshake "register" or "register:<token>" — backend registration
+//	Handshake "connect:<instance-id>"          — client connection
 package main
 
 import (
@@ -68,7 +74,8 @@ func generateSelfSignedCert() (tls.Certificate, error) {
 func main() {
 	showVersion := flag.Bool("version", false, "print version and exit")
 	helpAgent := flag.Bool("help-agent", false, "print help and agent guide")
-	port := flag.String("port", "", "listening port (overrides PORT env var)")
+	port := flag.String("port", "", "WebTransport listening port (overrides PORT env var)")
+	quicPort := flag.String("quic-port", "", "raw QUIC listening port (overrides QUIC_PORT env var)")
 	certFile := flag.String("cert", "", "TLS certificate file (PEM)")
 	keyFile := flag.String("key", "", "TLS private key file (PEM)")
 	domain := flag.String("domain", "", "domain for automatic Let's Encrypt TLS (e.g. tern.fly.dev)")
@@ -95,6 +102,14 @@ func main() {
 	}
 	if listenPort == "" {
 		listenPort = "443"
+	}
+
+	listenQUICPort := *quicPort
+	if listenQUICPort == "" {
+		listenQUICPort = os.Getenv("QUIC_PORT")
+	}
+	if listenQUICPort == "" {
+		listenQUICPort = "4433"
 	}
 
 	// TERN_TOKEN restricts /register to authorized backends.
@@ -151,12 +166,16 @@ func main() {
 		slog.Info("generated self-signed TLS certificate (development mode)")
 	}
 
-	addr := ":" + listenPort
-	srv, err := tern.NewWebTransportServer(addr, tlsConfig, token)
+	wtAddr := ":" + listenPort
+	srv, err := tern.NewWebTransportServer(wtAddr, tlsConfig, token)
 	if err != nil {
-		slog.Error("failed to create server", "err", err)
+		slog.Error("failed to create WebTransport server", "err", err)
 		os.Exit(1)
 	}
+
+	// Start the raw QUIC server sharing the same hub.
+	qAddr := ":" + listenQUICPort
+	qsrv := tern.NewQUICServer(qAddr, tlsConfig, token, srv.Hub())
 
 	// When using certmagic, start a TCP/TLS listener on the same port
 	// for ACME TLS-ALPN-01 challenges and HTTPS health checks.
@@ -170,20 +189,32 @@ func main() {
 		tcpTLS := tlsConfig.Clone()
 		tcpTLS.NextProtos = []string{"h2", "http/1.1", "acme-tls/1"}
 
-		tcpListener, err := tls.Listen("tcp", addr, tcpTLS)
+		tcpListener, err := tls.Listen("tcp", wtAddr, tcpTLS)
 		if err != nil {
 			slog.Error("failed to start TCP/TLS listener", "err", err)
 			os.Exit(1)
 		}
 		go func() {
-			slog.Info("HTTPS listener started", "addr", addr)
+			slog.Info("HTTPS listener started", "addr", wtAddr)
 			if err := http.Serve(tcpListener, healthMux); err != nil {
 				slog.Error("HTTPS listener failed", "err", err)
 			}
 		}()
 	}
 
-	slog.Info("tern starting", "addr", addr, "version", version, "transport", "webtransport")
+	// Start raw QUIC server in background.
+	go func() {
+		slog.Info("raw QUIC server starting", "addr", qAddr)
+		if err := qsrv.ListenAndServe(tlsConfig); err != nil {
+			slog.Error("raw QUIC server failed", "err", err)
+		}
+	}()
+
+	slog.Info("tern starting",
+		"wt-addr", wtAddr,
+		"quic-addr", qAddr,
+		"version", version,
+	)
 	if err := srv.ListenAndServe(); err != nil {
 		slog.Error("tern failed", "err", err)
 		os.Exit(1)

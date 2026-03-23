@@ -21,7 +21,7 @@ import (
 )
 
 // generateTestCert creates a self-signed TLS certificate for testing.
-func generateTestCert(t *testing.T) (tls.Certificate, *x509.CertPool) {
+func generateTestCert(t testing.TB) (tls.Certificate, *x509.CertPool) {
 	t.Helper()
 
 	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
@@ -65,15 +65,64 @@ type relayEnv struct {
 	opts []Option
 }
 
-// localRelay starts a test WebTransport relay and returns a relayEnv.
+// localRelay starts a test relay (WebTransport + raw QUIC) and returns
+// a relayEnv configured for raw QUIC connections.
 func localRelay(t *testing.T) relayEnv {
+	t.Helper()
+	return localRelayTB(t)
+}
+
+// localRelayTB is the shared implementation for tests and benchmarks.
+func localRelayTB(t testing.TB) relayEnv {
 	t.Helper()
 
 	cert, pool := generateTestCert(t)
+	tlsCfg := &tls.Config{Certificates: []tls.Certificate{cert}}
 
-	srv, err := NewWebTransportServer("127.0.0.1:0", &tls.Config{
-		Certificates: []tls.Certificate{cert},
-	}, "")
+	srv, err := NewWebTransportServer("127.0.0.1:0", tlsCfg, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Start WebTransport server.
+	wtUDP, err := net.ListenUDP("udp", &net.UDPAddr{IP: net.IPv4(127, 0, 0, 1)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	go srv.Serve(wtUDP)
+	t.Cleanup(func() { srv.Close() })
+
+	// Start raw QUIC server sharing the same hub.
+	qsrv := NewQUICServer("127.0.0.1:0", tlsCfg, "", srv.Hub())
+	qUDP, err := net.ListenUDP("udp", &net.UDPAddr{IP: net.IPv4(127, 0, 0, 1)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	go qsrv.ServeWithTLS(qUDP, tlsCfg)
+	t.Cleanup(func() { qsrv.Close() })
+
+	wtPort := wtUDP.LocalAddr().(*net.UDPAddr).Port
+	qPort := qUDP.LocalAddr().(*net.UDPAddr).Port
+
+	// Default: raw QUIC. The URL host is used by both WT and QUIC paths.
+	return relayEnv{
+		url: "https://127.0.0.1:" + strconv.Itoa(wtPort),
+		opts: []Option{
+			WithTLS(&tls.Config{RootCAs: pool}),
+			WithQUICPort(strconv.Itoa(qPort)),
+		},
+	}
+}
+
+// localRelayWT starts a test relay and returns a relayEnv configured
+// for WebTransport connections (backward compat / browser path).
+func localRelayWT(t *testing.T) relayEnv {
+	t.Helper()
+
+	cert, pool := generateTestCert(t)
+	tlsCfg := &tls.Config{Certificates: []tls.Certificate{cert}}
+
+	srv, err := NewWebTransportServer("127.0.0.1:0", tlsCfg, "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -92,14 +141,17 @@ func localRelay(t *testing.T) relayEnv {
 
 	addr := conn.LocalAddr().(*net.UDPAddr)
 	return relayEnv{
-		url:  "https://127.0.0.1:" + strconv.Itoa(addr.Port),
-		opts: []Option{WithTLS(&tls.Config{RootCAs: pool})},
+		url: "https://127.0.0.1:" + strconv.Itoa(addr.Port),
+		opts: []Option{
+			WithTLS(&tls.Config{RootCAs: pool}),
+			WithWebTransport(),
+		},
 	}
 }
 
 // liveRelay returns a relayEnv for tern.fly.dev if TERN_TOKEN is set.
-// Skips the test otherwise. The relay uses Let's Encrypt certificates,
-// so no custom TLS config is needed — system roots are sufficient.
+// Skips the test otherwise. Uses WebTransport since the live relay may
+// not yet have a raw QUIC port.
 func liveRelay(t *testing.T) relayEnv {
 	t.Helper()
 	token := os.Getenv("TERN_TOKEN")
@@ -108,8 +160,11 @@ func liveRelay(t *testing.T) relayEnv {
 	}
 
 	env := relayEnv{
-		url:  "https://tern.fly.dev:443",
-		opts: []Option{WithToken(token)},
+		url: "https://tern.fly.dev:443",
+		opts: []Option{
+			WithToken(token),
+			WithWebTransport(),
+		},
 	}
 
 	// Probe connectivity — skip if the relay isn't reachable over QUIC/UDP.
@@ -242,58 +297,14 @@ func liveRelayEnv() (token, url string) {
 // localRelayB is localRelay for benchmarks.
 func localRelayB(b *testing.B) relayEnv {
 	b.Helper()
-
-	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
-	if err != nil {
-		b.Fatal(err)
-	}
-
-	template := &x509.Certificate{
-		SerialNumber: big.NewInt(1),
-		DNSNames:     []string{"localhost"},
-		IPAddresses:  []net.IP{net.IPv4(127, 0, 0, 1), net.IPv6loopback},
-		NotBefore:    time.Now().Add(-time.Hour),
-		NotAfter:     time.Now().Add(24 * time.Hour),
-		KeyUsage:     x509.KeyUsageDigitalSignature,
-		ExtKeyUsage:  []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth},
-	}
-
-	certDER, err := x509.CreateCertificate(rand.Reader, template, template, &key.PublicKey, key)
-	if err != nil {
-		b.Fatal(err)
-	}
-
-	cert := tls.Certificate{Certificate: [][]byte{certDER}, PrivateKey: key}
-	pool := x509.NewCertPool()
-	parsedCert, _ := x509.ParseCertificate(certDER)
-	pool.AddCert(parsedCert)
-
-	srv, err := NewWebTransportServer("127.0.0.1:0", &tls.Config{
-		Certificates: []tls.Certificate{cert},
-	}, "")
-	if err != nil {
-		b.Fatal(err)
-	}
-
-	udpAddr, _ := net.ResolveUDPAddr("udp", "127.0.0.1:0")
-	conn, err := net.ListenUDP("udp", udpAddr)
-	if err != nil {
-		b.Fatal(err)
-	}
-
-	go srv.Serve(conn)
-	b.Cleanup(func() { srv.Close() })
-
-	addr := conn.LocalAddr().(*net.UDPAddr)
-	return relayEnv{
-		url:  "https://127.0.0.1:" + strconv.Itoa(addr.Port),
-		opts: []Option{WithTLS(&tls.Config{RootCAs: pool})},
-	}
+	return localRelayTB(b)
 }
 
-// forEachRelay runs a subtest against both the local and live relay.
+// forEachRelay runs a subtest against local (QUIC), local (WebTransport),
+// and live relay environments.
 func forEachRelay(t *testing.T, fn func(t *testing.T, env relayEnv)) {
-	t.Run("local", func(t *testing.T) { fn(t, localRelay(t)) })
+	t.Run("local/quic", func(t *testing.T) { fn(t, localRelay(t)) })
+	t.Run("local/webtransport", func(t *testing.T) { fn(t, localRelayWT(t)) })
 	t.Run("live", func(t *testing.T) { fn(t, liveRelay(t)) })
 }
 

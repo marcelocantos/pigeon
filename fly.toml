@@ -6,10 +6,12 @@ primary_region = "syd"
 
 [env]
   XDG_DATA_HOME = "/data/certmagic"
+  QUIC_PORT = "4433"
 
 [processes]
   app = "/tern --domain tern.fly.dev --acme-email marcelo@cantos.id.au"
 
+# WebTransport (browsers) on port 443
 [[services]]
   internal_port = 443
   protocol = "udp"
@@ -25,6 +27,15 @@ primary_region = "syd"
 
   [[services.ports]]
     port = 443
+
+# Raw QUIC (native clients) on port 4433
+[[services]]
+  internal_port = 4433
+  protocol = "udp"
+  processes = ["app"]
+
+  [[services.ports]]
+    port = 4433
 
 [[vm]]
   size = "shared-cpu-1x"

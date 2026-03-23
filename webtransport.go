@@ -4,6 +4,7 @@
 package tern
 
 import (
+	"context"
 	"crypto/rand"
 	"crypto/subtle"
 	"crypto/tls"
@@ -20,45 +21,40 @@ import (
 	"github.com/quic-go/webtransport-go"
 )
 
-// maxWTMessageSize is the maximum message size for WebTransport relay
-// frames.
-const maxWTMessageSize = 1 << 20 // 1 MiB
+// maxMessageSize is the maximum message size for relay frames.
+const maxMessageSize = 1 << 20 // 1 MiB
 
-// wtHub manages WebTransport backend instances.
-type wtHub struct {
-	mu        sync.RWMutex
-	instances map[string]*wtInstance
-}
-
-type wtInstance struct {
-	id      string
+// wtSession wraps a WebTransport session to implement relaySession.
+type wtSession struct {
 	session *webtransport.Session
-	stream  *webtransport.Stream // primary bidirectional stream
-
-	mu       sync.Mutex
-	occupied bool // true when a client is connected
+	stream  *webtransport.Stream
+	writeMu sync.Mutex // serialises writes to the stream
 }
 
-func newWTHub() *wtHub {
-	return &wtHub{instances: make(map[string]*wtInstance)}
+func (s *wtSession) ReadMessage() ([]byte, error) {
+	return readMessage(s.stream)
 }
 
-func (h *wtHub) register(inst *wtInstance) {
-	h.mu.Lock()
-	h.instances[inst.id] = inst
-	h.mu.Unlock()
+func (s *wtSession) WriteMessage(data []byte) error {
+	s.writeMu.Lock()
+	defer s.writeMu.Unlock()
+	return writeMessage(s.stream, data)
 }
 
-func (h *wtHub) unregister(id string) {
-	h.mu.Lock()
-	delete(h.instances, id)
-	h.mu.Unlock()
+func (s *wtSession) SendDatagram(data []byte) error {
+	return s.session.SendDatagram(data)
 }
 
-func (h *wtHub) get(id string) *wtInstance {
-	h.mu.RLock()
-	defer h.mu.RUnlock()
-	return h.instances[id]
+func (s *wtSession) ReceiveDatagram(ctx context.Context) ([]byte, error) {
+	return s.session.ReceiveDatagram(ctx)
+}
+
+func (s *wtSession) Context() context.Context {
+	return s.session.Context()
+}
+
+func (s *wtSession) Close() error {
+	return s.session.CloseWithError(0, "")
 }
 
 // generateID generates a random 128-bit instance ID as a hex string.
@@ -70,11 +66,11 @@ func generateID() string {
 	return hex.EncodeToString(b)
 }
 
-// writeWTMessage writes a length-prefixed binary message to a stream.
+// writeMessage writes a length-prefixed binary message to a stream.
 // Format: [4-byte big-endian length][payload]
-func writeWTMessage(stream io.Writer, data []byte) error {
-	if len(data) > maxWTMessageSize {
-		return fmt.Errorf("message too large: %d > %d", len(data), maxWTMessageSize)
+func writeMessage(stream io.Writer, data []byte) error {
+	if len(data) > maxMessageSize {
+		return fmt.Errorf("message too large: %d > %d", len(data), maxMessageSize)
 	}
 	var hdr [4]byte
 	binary.BigEndian.PutUint32(hdr[:], uint32(len(data)))
@@ -85,15 +81,15 @@ func writeWTMessage(stream io.Writer, data []byte) error {
 	return err
 }
 
-// readWTMessage reads a length-prefixed binary message from a stream.
-func readWTMessage(stream io.Reader) ([]byte, error) {
+// readMessage reads a length-prefixed binary message from a stream.
+func readMessage(stream io.Reader) ([]byte, error) {
 	var hdr [4]byte
 	if _, err := io.ReadFull(stream, hdr[:]); err != nil {
 		return nil, err
 	}
 	length := binary.BigEndian.Uint32(hdr[:])
-	if length > maxWTMessageSize {
-		return nil, fmt.Errorf("message too large: %d > %d", length, maxWTMessageSize)
+	if length > maxMessageSize {
+		return nil, fmt.Errorf("message too large: %d > %d", length, maxMessageSize)
 	}
 	buf := make([]byte, length)
 	if _, err := io.ReadFull(stream, buf); err != nil {
@@ -107,7 +103,7 @@ func readWTMessage(stream io.Reader) ([]byte, error) {
 // bidirectionally, including datagrams.
 type WebTransportServer struct {
 	wtServer *webtransport.Server
-	hub      *wtHub
+	hub      *hub
 	token    string // bearer token for /register auth; empty = open
 	addr     string
 	conn     net.PacketConn
@@ -118,11 +114,15 @@ type WebTransportServer struct {
 // static certificates or a dynamic GetCertificate callback such as certmagic).
 // If token is non-empty, /register requires a matching Bearer token.
 func NewWebTransportServer(addr string, tlsConfig *tls.Config, token string) (*WebTransportServer, error) {
-	hub := newWTHub()
+	return NewWebTransportServerWithHub(addr, tlsConfig, token, newHub())
+}
 
+// NewWebTransportServerWithHub creates a WebTransport relay server that
+// shares the provided hub with other server types (e.g. raw QUIC).
+func NewWebTransportServerWithHub(addr string, tlsConfig *tls.Config, token string, h *hub) (*WebTransportServer, error) {
 	mux := http.NewServeMux()
 	s := &WebTransportServer{
-		hub:   hub,
+		hub:   h,
 		token: token,
 		addr:  addr,
 	}
@@ -186,7 +186,7 @@ func (s *WebTransportServer) handleRegister(w http.ResponseWriter, r *http.Reque
 	}
 
 	// Read and discard the handshake message.
-	if _, err := readWTMessage(stream); err != nil {
+	if _, err := readMessage(stream); err != nil {
 		slog.Error("register: read handshake failed", "err", err)
 		session.CloseWithError(0, "failed to read handshake")
 		return
@@ -195,17 +195,18 @@ func (s *WebTransportServer) handleRegister(w http.ResponseWriter, r *http.Reque
 	id := generateID()
 
 	// Send the instance ID to the backend.
-	if err := writeWTMessage(stream, []byte(id)); err != nil {
+	if err := writeMessage(stream, []byte(id)); err != nil {
 		slog.Error("register: write ID failed", "err", err)
 		session.CloseWithError(0, "failed to write ID")
 		return
 	}
 
-	inst := &wtInstance{id: id, session: session, stream: stream}
+	sess := &wtSession{session: session, stream: stream}
+	inst := &instance{id: id, session: sess}
 	s.hub.register(inst)
 	defer s.hub.unregister(id)
 
-	slog.Info("instance registered", "id", id)
+	slog.Info("instance registered", "id", id, "transport", "webtransport")
 
 	// Keep alive until backend disconnects.
 	<-session.Context().Done()
@@ -256,84 +257,20 @@ func (s *WebTransportServer) handleClient(w http.ResponseWriter, r *http.Request
 	}
 
 	// Read and discard the handshake message.
-	if _, err := readWTMessage(clientStream); err != nil {
+	if _, err := readMessage(clientStream); err != nil {
 		slog.Error("client: read handshake failed", "err", err)
 		return
 	}
 
-	ctx := session.Context()
-	slog.Info("client connected", "instance", instanceID)
+	slog.Info("client connected", "instance", instanceID, "transport", "webtransport")
 
-	errCh := make(chan error, 3)
+	clientSess := &wtSession{session: session, stream: clientStream}
+	bridgeClient(inst, clientSess)
+}
 
-	// backend stream -> client stream
-	go func() {
-		for {
-			msg, err := readWTMessage(inst.stream)
-			if err != nil {
-				errCh <- fmt.Errorf("read backend: %w", err)
-				return
-			}
-			if err := writeWTMessage(clientStream, msg); err != nil {
-				errCh <- fmt.Errorf("write client: %w", err)
-				return
-			}
-		}
-	}()
-
-	// client stream -> backend stream
-	go func() {
-		for {
-			msg, err := readWTMessage(clientStream)
-			if err != nil {
-				errCh <- fmt.Errorf("read client: %w", err)
-				return
-			}
-			inst.mu.Lock()
-			err = writeWTMessage(inst.stream, msg)
-			inst.mu.Unlock()
-			if err != nil {
-				errCh <- fmt.Errorf("write backend: %w", err)
-				return
-			}
-		}
-	}()
-
-	// backend datagrams -> client datagrams
-	go func() {
-		for {
-			data, err := inst.session.ReceiveDatagram(ctx)
-			if err != nil {
-				return
-			}
-			if err := session.SendDatagram(data); err != nil {
-				return
-			}
-		}
-	}()
-
-	// client datagrams -> backend datagrams
-	go func() {
-		for {
-			data, err := session.ReceiveDatagram(ctx)
-			if err != nil {
-				return
-			}
-			if err := inst.session.SendDatagram(data); err != nil {
-				return
-			}
-		}
-	}()
-
-	// Wait for stream relay to end or session to close.
-	select {
-	case err := <-errCh:
-		slog.Info("client disconnected", "instance", instanceID, "reason", err)
-	case <-ctx.Done():
-		slog.Info("client session ended", "instance", instanceID)
-	case <-inst.session.Context().Done():
-		slog.Info("backend session ended", "instance", instanceID)
-	}
+// Hub returns the shared hub for use by other server types.
+func (s *WebTransportServer) Hub() *hub {
+	return s.hub
 }
 
 // Serve starts the WebTransport server using the provided PacketConn.

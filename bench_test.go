@@ -149,7 +149,13 @@ func benchRelays(b *testing.B) []benchRelay {
 		relays = append(relays, benchRelay{
 			name: "live",
 			setup: func(b *testing.B) relayEnv {
-				env := relayEnv{url: url, opts: []Option{WithToken(token)}}
+				env := relayEnv{
+					url: url,
+					opts: []Option{
+						WithToken(token),
+						WithWebTransport(),
+					},
+				}
 				ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 				defer cancel()
 				probe, err := Register(ctx, env.url, env.opts...)

@@ -205,7 +205,7 @@ are included).
 
 Build-time version injection: `go build -ldflags "-X main.version=v1.0.0" ./cmd/tern`
 
-Max message frame size: 1 MiB (constant `maxWTMessageSize`).
+Max message frame size: 1 MiB (constant `maxMessageSize`).
 
 ## Running Tests
 

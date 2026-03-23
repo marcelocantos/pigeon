@@ -368,7 +368,52 @@ Status: not started
 
 ---
 
-## 🎯T9 TLA+ model for cutover protocol
+## 🎯T9 Raw QUIC protocol for native clients
+
+Native clients (Go, Swift, Kotlin) use raw QUIC (ALPN "tern") instead
+of WebTransport. Browser clients continue using WebTransport. The relay
+bridges between them transparently via a `relaySession` interface.
+
+### 🎯T9.1 relaySession interface and shared hub
+
+Server-side abstraction: both WebTransport and raw QUIC sessions
+implement `relaySession`. Hub stores sessions by interface, not
+concrete type. Bridging logic works against the interface.
+
+Status: in progress
+
+### 🎯T9.2 Raw QUIC server listener
+
+Separate QUIC listener (port 4433) accepting raw QUIC connections
+with ALPN "tern". Handshake: client sends "register" or
+"connect:<id>" on a bidi stream. Routes to shared hub.
+
+Status: in progress
+
+### 🎯T9.3 Go client uses raw QUIC
+
+`Register`/`Connect` dial raw QUIC by default. `Conn` wraps
+`io.ReadWriteCloser` + datagrammer interface instead of concrete
+WebTransport types.
+
+Status: in progress
+
+### 🎯T9.4 Deployment supports both ports
+
+Fly.io exposes both 443 (WebTransport/browsers) and 4433 (raw QUIC/
+native). Dockerfile exposes both. `cmd/tern` starts both servers.
+
+Status: in progress
+
+### 🎯T9.5 Tests pass against raw QUIC
+
+All existing tests work with raw QUIC client + server path.
+
+Status: in progress
+
+---
+
+## 🎯T10 TLA+ model for cutover protocol
 
 Model the transport cutover protocol in TLA+ to verify liveness and
 correctness properties:

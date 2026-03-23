@@ -15,11 +15,68 @@ import (
 	"github.com/marcelocantos/tern/crypto"
 )
 
-// TestE2EPairingAndEncryptedRelay exercises the full stack against a
-// local WebTransport relay.
-func TestE2EPairingAndEncryptedRelay(t *testing.T) {
+// TestE2EPairingAndEncryptedRelay_WT exercises the full stack via WebTransport.
+func TestE2EPairingAndEncryptedRelay_WT(t *testing.T) {
 	url, tlsConfig := startTestRelay(t, "")
-	runE2EPairingTest(t, url, tern.WithTLS(tlsConfig))
+	runE2EPairingTest(t, url, tern.WithTLS(tlsConfig), tern.WithWebTransport())
+}
+
+// TestE2EPairingAndEncryptedRelay_QUIC exercises the full stack via raw QUIC.
+func TestE2EPairingAndEncryptedRelay_QUIC(t *testing.T) {
+	tr := startTestRelayWithQUIC(t, "")
+	runE2EPairingTest(t, tr.wtURL, tern.WithTLS(tr.tlsConfig), tern.WithQUICPort(tr.quicPort))
+}
+
+// TestE2ECrossProtocol exercises QUIC backend + WebTransport client.
+func TestE2ECrossProtocol(t *testing.T) {
+	tr := startTestRelayWithQUIC(t, "")
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+
+	// Backend registers via raw QUIC.
+	backend, err := tern.Register(ctx, tr.wtURL,
+		tern.WithTLS(tr.tlsConfig),
+		tern.WithQUICPort(tr.quicPort),
+	)
+	if err != nil {
+		t.Fatalf("backend register: %v", err)
+	}
+	defer backend.CloseNow()
+
+	// Client connects via WebTransport.
+	client, err := tern.Connect(ctx, tr.wtURL, backend.InstanceID(),
+		tern.WithTLS(tr.tlsConfig),
+		tern.WithWebTransport(),
+	)
+	if err != nil {
+		t.Fatalf("client connect: %v", err)
+	}
+	defer client.CloseNow()
+
+	// Bidirectional message exchange.
+	if err := client.Send(ctx, []byte("cross-protocol hello")); err != nil {
+		t.Fatalf("client send: %v", err)
+	}
+	data, err := backend.Recv(ctx)
+	if err != nil {
+		t.Fatalf("backend recv: %v", err)
+	}
+	if string(data) != "cross-protocol hello" {
+		t.Fatalf("got %q, want %q", data, "cross-protocol hello")
+	}
+
+	if err := backend.Send(ctx, []byte("cross-protocol reply")); err != nil {
+		t.Fatalf("backend send: %v", err)
+	}
+	data, err = client.Recv(ctx)
+	if err != nil {
+		t.Fatalf("client recv: %v", err)
+	}
+	if string(data) != "cross-protocol reply" {
+		t.Fatalf("got %q, want %q", data, "cross-protocol reply")
+	}
+
+	t.Log("Cross-protocol (QUIC backend + WT client): PASS")
 }
 
 // runE2EPairingTest exercises:
