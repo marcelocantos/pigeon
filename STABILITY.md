@@ -10,15 +10,17 @@ The pre-1.0 period (currently v0.x.x) exists to get the interaction surface righ
 
 ## Interaction Surface Catalogue
 
-*Snapshot as of v0.1.0.*
+*Snapshot as of v0.2.0.*
 
 ### Relay API (the binary's external interface)
 
 | Route | Protocol | Response |
 |-------|----------|----------|
 | `GET /health` | HTTP/3 | `{"status":"ok"}` |
-| `GET /register` | WebTransport | First stream message is the assigned instance ID |
-| `GET /ws/{id}` | WebTransport | Bridged bidirectionally (streams + datagrams) to registered backend |
+| `GET /register` | WebTransport (QUIC) | First stream message is the assigned instance ID |
+| `GET /ws/{id}` | WebTransport (QUIC) | Bridged bidirectionally (streams + datagrams) to registered backend |
+
+Supports both reliable streams (via `Send`/`Recv`) and unreliable datagrams (via `SendDatagram`/`RecvDatagram`).
 
 Constraints: one client per instance; second client returns HTTP 409.
 Max message frame size: 1 MiB.
@@ -33,6 +35,8 @@ CORS: origin check disabled (intentional default).
 | `--port` | string | `""` | Listening port (overrides `PORT` env var) |
 | `--cert` | string | `""` | TLS certificate file (PEM); generates self-signed if omitted |
 | `--key` | string | `""` | TLS private key file (PEM) |
+| `--domain` | string | `""` | Domain name for ACME (Let's Encrypt) certificate provisioning |
+| `--acme-email` | string | `""` | Contact email for ACME certificate registration |
 | `--version` | bool | `false` | Print version and exit |
 | `--help-agent` | bool | `false` | Print usage + agents-guide.md and exit |
 
@@ -52,6 +56,38 @@ Build-time version injection: `-ldflags "-X main.version=<version>"`.
 
 The sequence number doubles as both the replay-prevention counter and the
 AES-GCM nonce (first 8 bytes of the 12-byte nonce, remaining 4 bytes zero).
+
+*Stability: Stable.*
+
+### Root Go package (`github.com/marcelocantos/tern`)
+
+```go
+// Conn type
+type Conn struct { /* unexported fields */ }
+func (c *Conn) InstanceID() string
+func (c *Conn) Send(ctx context.Context, data []byte) error
+func (c *Conn) Recv(ctx context.Context) ([]byte, error)
+func (c *Conn) SendDatagram(data []byte) error
+func (c *Conn) RecvDatagram(ctx context.Context) ([]byte, error)
+func (c *Conn) SetChannel(ch *crypto.Channel)
+func (c *Conn) SetDatagramChannel(ch *crypto.Channel)
+func (c *Conn) CloseNow()
+
+// Connection options
+type Option func(*options)
+func WithToken(token string) Option
+func WithTLS(tlsConfig *tls.Config) Option
+
+// Client-side connectivity
+func Register(ctx context.Context, relayURL string, opts ...Option) (*Conn, error)
+func Connect(ctx context.Context, relayURL, instanceID string, opts ...Option) (*Conn, error)
+
+// Server library
+type WebTransportServer struct { /* unexported fields */ }
+func NewWebTransportServer(addr string, tlsConfig *tls.Config, token string) (*WebTransportServer, error)
+func (s *WebTransportServer) Serve(conn net.PacketConn) error
+func (s *WebTransportServer) Close()
+```
 
 *Stability: Stable.*
 
@@ -75,9 +111,17 @@ func GenerateNonce() ([]byte, error)    // 32 random bytes
 func GenerateSecret() ([]byte, error)  // 32 random bytes
 func DeriveConfirmationCode(pubA, pubB *ecdh.PublicKey) (string, error) // 6-digit code
 
+// Channel mode
+type ChannelMode int
+const (
+    ModeStrict   ChannelMode = iota // sequential, no gaps (default)
+    ModeDatagrams                   // gaps allowed, replay rejected
+)
+
 // Channel construction
 func NewChannel(sendKey, recvKey []byte) (*Channel, error)
 func NewSymmetricChannel(key []byte, isServer bool) (*Channel, error)
+func NewDatagramChannel(sendKey, recvKey []byte) (*Channel, error)
 
 // Channel methods
 func (*Channel) Encrypt(plaintext []byte) []byte
@@ -162,10 +206,17 @@ public struct E2EKeyPair {
     public func deriveSessionKey(peerPublicKey: Data, info: Data) throws -> SymmetricKey
 }
 
+// ChannelMode
+public enum ChannelMode {
+    case strict    // sequential, no gaps (default)
+    case datagrams // gaps allowed, replay rejected
+}
+
 // E2EChannel
 public final class E2EChannel: @unchecked Sendable {
     public init(sendKey: SymmetricKey, recvKey: SymmetricKey)
     public convenience init(sharedKey: Data, isServer: Bool)
+    public var mode: ChannelMode
     public func encrypt(_ plaintext: Data) throws -> Data
     public func decrypt(_ data: Data) throws -> Data
     public enum E2EError: LocalizedError { ... }

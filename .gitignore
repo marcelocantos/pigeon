@@ -1,4 +1,5 @@
 /tern
+*.test
 .DS_Store
 sqlite_mcp_server.db
 .build/

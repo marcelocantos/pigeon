@@ -251,17 +251,3 @@ func TestSecondClientRejected(t *testing.T) {
 		t.Fatal("expected error for second client")
 	}
 }
-
-func TestGenerateIDLength(t *testing.T) {
-	for range 100 {
-		cert, err := generateSelfSignedCert()
-		if err != nil {
-			t.Fatal(err)
-		}
-		// Just verify cert generation works (ID generation is in the tern package now).
-		if len(cert.Certificate) == 0 {
-			t.Fatal("empty certificate")
-		}
-		break // only need one iteration for cert test
-	}
-}

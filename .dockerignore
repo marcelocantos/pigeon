@@ -1,0 +1,11 @@
+.git/
+.build/
+.swiftpm/
+.claude/
+web/node_modules/
+android/.gradle/
+android/terncrypto/build/
+formal/states/
+docs/
+*.test
+.DS_Store

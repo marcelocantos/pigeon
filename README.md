@@ -133,7 +133,7 @@ dependencyResolutionManagement {
 
 // build.gradle.kts
 dependencies {
-    implementation("com.github.marcelocantos.tern:terncrypto:v0.1.0")
+    implementation("com.github.marcelocantos.tern:terncrypto:v0.3.0")
 }
 ```
 
@@ -174,7 +174,7 @@ The full ceremony involves three actors — **server** (backend daemon),
 ## Running the Relay Server
 
 ```bash
-go build -o tern .
+go build -o tern ./cmd/tern
 PORT=443 ./tern                           # self-signed cert (development)
 ./tern --cert cert.pem --key key.pem      # production TLS certificate
 ```

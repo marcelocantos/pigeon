@@ -4,7 +4,7 @@ plugins {
 }
 
 group = "com.marcelocantos.tern"
-version = "0.1.0"
+version = "0.3.0"
 
 java {
     sourceCompatibility = JavaVersion.VERSION_21

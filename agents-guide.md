@@ -148,7 +148,7 @@ MitM detection: the 6-digit confirmation code is `HKDF(min(a,b) || max(a,b), "pa
 ```bash
 go test ./...                             # all Go tests (relay, crypto, protocol, qr, E2E)
 swift test                                # Swift tests
-go build -o tern .                        # build relay binary
+go build -o tern ./cmd/tern               # build relay binary
 go run ./cmd/protogen protocol/pairing.yaml   # regenerate state machine code
 ./formal/tlc PairingCeremony              # run TLA+ model checker
 PORT=443 ./tern                           # run relay server (self-signed cert)

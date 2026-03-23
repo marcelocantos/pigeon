@@ -4,7 +4,7 @@
 import CryptoKit
 import Foundation
 
-/// End-to-end encryption for WebSocket traffic relayed through tern.
+/// End-to-end encryption for relay traffic relayed through tern.
 /// Mirrors the Go crypto package in crypto/.
 ///
 /// Key exchange: X25519 ECDH
@@ -66,7 +66,7 @@ public enum ChannelMode {
 
 // MARK: - Encrypted channel
 
-/// Provides symmetric encryption/decryption for a WebSocket connection.
+/// Provides symmetric encryption/decryption for a relay connection.
 /// Uses AES-256-GCM with a monotonic counter nonce.
 public final class E2EChannel: @unchecked Sendable {
     private let sendKey: SymmetricKey

@@ -25,10 +25,8 @@ func TestExportGoStructure(t *testing.T) {
 		"GuardTokenValid",
 		"ActionGenerateToken",
 		"func PairingCeremony",
-		// TODO(🎯T2.6): ExportGo does not yet emit ChannelBound or OneShot.
-		// Uncomment when gogen.go is fixed.
-		// "ChannelBound",
-		// "OneShot",
+		"ChannelBound",
+		"OneShot",
 	}
 
 	for _, want := range checks {

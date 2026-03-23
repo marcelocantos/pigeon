@@ -15,7 +15,7 @@ relay/pairing/crypto logic themselves.
 ## Build, Test & Run
 
 ```bash
-go build -o tern .                # build relay server
+go build -o tern ./cmd/tern       # build relay server
 go test ./...                     # all Go tests (relay, crypto, protocol, E2E)
 go test -run TestE2E              # E2E integration test only
 swift test                        # Swift crypto + state machine tests

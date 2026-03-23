@@ -341,7 +341,7 @@ number greater than the last seen, instead of requiring exactly the
 next one. Required for loss-tolerant datagram delivery (H.264 frames).
 The strict sequential mode remains the default for reliable streams.
 
-Status: not started
+Status: done
 
 ### 🎯T8.3 Go WebTransport client
 
