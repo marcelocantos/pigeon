@@ -366,3 +366,22 @@ fall back to relay-only).
 
 Status: not started
 
+---
+
+## 🎯T9 TLA+ model for cutover protocol
+
+Model the transport cutover protocol in TLA+ to verify liveness and
+correctness properties:
+- No message lost during cutover
+- No message duplicated
+- No message delivered out of order
+- No deadlock (both sides eventually complete the transition)
+- Concurrent cutover initiation from both sides is safe
+
+The E2E encryption provides security (verified by the existing pairing
+ceremony TLA+ spec). This model focuses on the transport switching
+logic: CUTOVER markers, reorder buffer, and the transition from relay
+to LAN transport.
+
+Status: not started
+
