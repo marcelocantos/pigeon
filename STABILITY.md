@@ -10,7 +10,7 @@ The pre-1.0 period (currently v0.x.x) exists to get the interaction surface righ
 
 ## Interaction Surface Catalogue
 
-*Snapshot as of v0.3.0.*
+*Snapshot as of v0.4.0.*
 
 ### Relay API (the binary's external interface)
 
