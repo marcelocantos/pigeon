@@ -452,5 +452,94 @@ Status: done
 End-to-end test connecting the Swift client to a running tern QUIC
 server, verifying register, connect, and bidirectional message exchange.
 
+Status: done (6/6 local + live via raw NWConnection E2E binary)
+
+---
+
+## 🎯T12 Channel API
+
+Named streaming and datagram channels with built-in encryption.
+
+### 🎯T12.1 Streaming channels
+
+`conn.OpenChannel("name")` opens a new QUIC stream, sends the channel
+name as the first message, derives a unique crypto.Channel from the
+master secret + channel name. `conn.AcceptChannel(ctx)` on the other
+side accepts and returns the channel with matching encryption keys.
+
+Status: not started
+
+### 🎯T12.2 Datagram channels
+
+`conn.DatagramChannel("name")` creates a named datagram channel. Both
+sides create by name (no accept needed). Each channel has its own
+crypto.Channel (datagram mode) and a channel ID prefix for demuxing
+on the shared QUIC datagram pipe.
+
+Status: not started
+
+---
+
+## 🎯T13 Certmagic storage alignment
+
+Ensure certmagic's storage path aligns with the Fly.io volume mount.
+Currently certmagic may create new ACME accounts on every cold start
+because the storage path doesn't match the mount. Verify that
+`XDG_DATA_HOME=/data/certmagic` correctly persists certs, accounts,
+and OCSP staples across deploys and restarts.
+
+Status: not started
+
+---
+
+## 🎯T14 Browser WebTransport E2E
+
+Prove the browser WebTransport path works end-to-end via Playwright.
+Blocked on Let's Encrypt cert provisioning (rate limit). Once the cert
+is persisted on the Fly volume:
+
+1. Server logs its cert SHA-256 hash at startup
+2. For local tests: Playwright uses `serverCertificateHashes` with
+   the self-signed cert hash (Chromium-only)
+3. For live tests: server has a valid Let's Encrypt cert, browser
+   connects normally
+
+Status: not started (blocked on LE rate limit, retries after 2026-03-24 19:50 UTC)
+
+---
+
+## 🎯T15 Gomobile bindings for iOS and Android
+
+Wrap the Go QUIC client via gomobile to give native iOS and Android
+apps the same proven QUIC stack. Replaces the need for platform-specific
+QUIC libraries (Network.framework quirks, kwik builder bugs).
+
+Produces:
+- iOS: XCFramework importable from Swift
+- Android: AAR importable from Kotlin
+
+Status: not started
+
+---
+
+## 🎯T16 Fly.io auto-start for UDP
+
+The Fly.io machine stops when idle and doesn't auto-start for UDP
+traffic. Every test session requires manual `fly machines start`.
+Investigate:
+- Keep-alive mechanism (periodic health ping from a cron job)
+- Fly's `auto_start_machines` with a TCP health check on a separate port
+- Alternative hosting that handles UDP auto-start natively
+
+Status: not started
+
+---
+
+## 🎯T17 Makefile deploy target
+
+`make deploy` that deploys to Fly.io, starts the machine, and waits
+for it to be healthy. `make e2e-live` should depend on this so live
+tests work without manual machine management.
+
 Status: not started
 
