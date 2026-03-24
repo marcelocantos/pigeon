@@ -33,8 +33,8 @@ public enum TernRelayError: LocalizedError {
     }
 }
 
-/// Maximum message size for length-prefixed framing (16 MB, matching Go server).
-private let maxMessageSize: UInt32 = 16 * 1024 * 1024
+/// Maximum message size for length-prefixed framing (1 MiB, matching Go server).
+private let maxMessageSize: UInt32 = 1_048_576
 
 /// Connection to a tern relay over raw QUIC (ALPN "tern").
 ///

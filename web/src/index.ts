@@ -6,5 +6,7 @@ export {
   E2EChannel,
   deriveKeyFromSecret,
   deriveConfirmationCode,
+  generateNonce,
+  generateSecret,
 } from "./crypto.js";
 export { register, connect, Conn, type ConnectOptions } from "./relay.js";

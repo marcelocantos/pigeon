@@ -4,7 +4,7 @@
 .claude/
 web/node_modules/
 android/.gradle/
-android/terncrypto/build/
+android/tern/build/
 formal/states/
 docs/
 *.test

@@ -32,6 +32,8 @@ import (
 	"net"
 	"net/http"
 	"os"
+	"os/signal"
+	"syscall"
 	"time"
 
 	"github.com/caddyserver/certmagic"
@@ -39,7 +41,7 @@ import (
 	"github.com/marcelocantos/tern"
 )
 
-// version is set at build time via -ldflags "-X main.version=v0.1.0".
+// version is set at build time via -ldflags "-X main.version=<version>".
 var version = "dev"
 
 // generateSelfSignedCert creates a self-signed TLS certificate for
@@ -50,8 +52,9 @@ func generateSelfSignedCert() (tls.Certificate, error) {
 		return tls.Certificate{}, fmt.Errorf("generate key: %w", err)
 	}
 
+	serialNumber, _ := rand.Int(rand.Reader, new(big.Int).Lsh(big.NewInt(1), 128))
 	template := &x509.Certificate{
-		SerialNumber: big.NewInt(1),
+		SerialNumber: serialNumber,
 		DNSNames:     []string{"localhost"},
 		IPAddresses:  []net.IP{net.IPv4(127, 0, 0, 1), net.IPv6loopback},
 		NotBefore:    time.Now().Add(-time.Hour),
@@ -227,8 +230,19 @@ func main() {
 		"quic-addr", qAddr,
 		"version", version,
 	)
-	if err := srv.ListenAndServe(); err != nil {
-		slog.Error("tern failed", "err", err)
-		os.Exit(1)
-	}
+
+	// Start WebTransport server in a goroutine so we can handle signals.
+	go func() {
+		if err := srv.ListenAndServe(); err != nil {
+			slog.Error("tern failed", "err", err)
+		}
+	}()
+
+	// Wait for a termination signal, then shut down gracefully.
+	sigCh := make(chan os.Signal, 1)
+	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
+	<-sigCh
+	slog.Info("shutting down")
+	srv.Close()
+	qsrv.Close()
 }

@@ -141,6 +141,56 @@ class E2ECryptoTest {
         assertEquals(expected, deriveConfirmationCode(keyB, keyA))
     }
 
+    @Test
+    fun `datagram mode accepts messages with gaps`() {
+        val sharedKey = ByteArray(32) { it.toByte() }
+        val sender = E2EChannel(sharedKey, isServer = false)
+        val receiver = E2EChannel(sharedKey, isServer = true)
+        receiver.mode = ChannelMode.DATAGRAMS
+
+        // Encrypt seq 0..5
+        val encrypted = (0 until 6).map { sender.encrypt("msg$it".toByteArray()) }
+
+        // Decrypt 0, 1, 5 (skip 2, 3, 4)
+        assertContentEquals("msg0".toByteArray(), receiver.decrypt(encrypted[0]))
+        assertContentEquals("msg1".toByteArray(), receiver.decrypt(encrypted[1]))
+        assertContentEquals("msg5".toByteArray(), receiver.decrypt(encrypted[5]))
+    }
+
+    @Test
+    fun `datagram mode rejects replay`() {
+        val sharedKey = ByteArray(32) { it.toByte() }
+        val sender = E2EChannel(sharedKey, isServer = false)
+        val receiver = E2EChannel(sharedKey, isServer = true)
+        receiver.mode = ChannelMode.DATAGRAMS
+
+        val encrypted = sender.encrypt("hello".toByteArray())
+        receiver.decrypt(encrypted) // first time OK
+
+        assertFailsWith<E2EException> {
+            receiver.decrypt(encrypted) // replay rejected
+        }
+    }
+
+    @Test
+    fun `datagram mode rejects old seq`() {
+        val sharedKey = ByteArray(32) { it.toByte() }
+        val sender = E2EChannel(sharedKey, isServer = false)
+        val receiver = E2EChannel(sharedKey, isServer = true)
+        receiver.mode = ChannelMode.DATAGRAMS
+
+        // Encrypt seq 0..5
+        val encrypted = (0 until 6).map { sender.encrypt("msg$it".toByteArray()) }
+
+        // Accept seq 5 first
+        receiver.decrypt(encrypted[5])
+
+        // Seq 3 is now too old — should be rejected
+        assertFailsWith<E2EException> {
+            receiver.decrypt(encrypted[3])
+        }
+    }
+
     private fun assertContentEquals(expected: ByteArray, actual: ByteArray) {
         assertEquals(expected.toList(), actual.toList())
     }

@@ -3,6 +3,7 @@
 
 import CryptoKit
 import Foundation
+import Security
 
 /// End-to-end encryption for relay traffic relayed through tern.
 /// Mirrors the Go crypto package in crypto/.
@@ -38,6 +39,16 @@ public struct E2EKeyPair {
         )
     }
 }
+
+/// Generate 32 cryptographically random bytes suitable for use as a nonce.
+public func generateNonce() -> Data {
+    var d = Data(count: 32)
+    _ = d.withUnsafeMutableBytes { SecRandomCopyBytes(kSecRandomDefault, 32, $0.baseAddress!) }
+    return d
+}
+
+/// Generate 32 cryptographically random bytes suitable for use as a secret.
+public func generateSecret() -> Data { generateNonce() }
 
 /// Derive a session key from a persistent secret and nonce via HKDF.
 public func deriveKeyFromSecret(_ secret: Data, info: Data) -> SymmetricKey {

@@ -93,6 +93,54 @@ final class E2ECryptoTests: XCTestCase {
         XCTAssertThrowsError(try ch.decrypt(Data([1, 2, 3])))
     }
 
+    func testDatagramModeAcceptsGaps() throws {
+        let secret = Data((0..<32).map { UInt8($0) })
+        let sender = E2EChannel(sharedKey: secret, isServer: false)
+        let receiver = E2EChannel(sharedKey: secret, isServer: true)
+        receiver.mode = .datagrams
+
+        // Encrypt seq 0..5
+        var encrypted: [Data] = []
+        for i in 0..<6 {
+            encrypted.append(try sender.encrypt(Data("msg\(i)".utf8)))
+        }
+
+        // Decrypt 0, 1, 5 (skip 2, 3, 4)
+        XCTAssertEqual(try receiver.decrypt(encrypted[0]), Data("msg0".utf8))
+        XCTAssertEqual(try receiver.decrypt(encrypted[1]), Data("msg1".utf8))
+        XCTAssertEqual(try receiver.decrypt(encrypted[5]), Data("msg5".utf8))
+    }
+
+    func testDatagramModeRejectsReplay() throws {
+        let secret = Data((0..<32).map { UInt8($0) })
+        let sender = E2EChannel(sharedKey: secret, isServer: false)
+        let receiver = E2EChannel(sharedKey: secret, isServer: true)
+        receiver.mode = .datagrams
+
+        let ct = try sender.encrypt(Data("hello".utf8))
+        _ = try receiver.decrypt(ct) // first time OK
+        XCTAssertThrowsError(try receiver.decrypt(ct)) // replay rejected
+    }
+
+    func testDatagramModeRejectsOldSeq() throws {
+        let secret = Data((0..<32).map { UInt8($0) })
+        let sender = E2EChannel(sharedKey: secret, isServer: false)
+        let receiver = E2EChannel(sharedKey: secret, isServer: true)
+        receiver.mode = .datagrams
+
+        // Encrypt seq 0..5
+        var encrypted: [Data] = []
+        for i in 0..<6 {
+            encrypted.append(try sender.encrypt(Data("msg\(i)".utf8)))
+        }
+
+        // Accept seq 5 first
+        _ = try receiver.decrypt(encrypted[5])
+
+        // Seq 3 is now too old — should be rejected
+        XCTAssertThrowsError(try receiver.decrypt(encrypted[3]))
+    }
+
     func testConfirmationCodeCrossplatformVector() {
         // Fixed X25519 public keys (any 32-byte value works for derivation).
         let keyA = Data(repeating: 0x01, count: 32)

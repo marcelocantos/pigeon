@@ -134,7 +134,7 @@ dependencyResolutionManagement {
 
 // build.gradle.kts
 dependencies {
-    implementation("com.github.marcelocantos.tern:tern:v0.3.0")
+    implementation("com.github.marcelocantos.tern:tern:v0.5.0")
 }
 ```
 

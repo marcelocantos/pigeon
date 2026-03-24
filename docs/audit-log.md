@@ -22,7 +22,7 @@ maintenance activities. Append-only — newest entries at the bottom.
 
 ## 2026-03-24 — /release v0.4.0
 
-- **Commit**: TBD
+- **Commit**: `1f193cf`
 - **Outcome**: Released v0.4.0. Raw QUIC protocol for native clients (ALPN "tern", port 4433) alongside WebTransport (port 443, browsers). Swift relay client (TernRelay via Network.framework), Kotlin relay client (ternrelay with QuicTransport interface), tern-bridge for cross-language E2E. OpenStream on Conn. Makefile. E2E tests on all 4 platforms (local + live). Cert fallback + Fly volume. 128-bit instance IDs, timing-safe token auth.
 - **Deferred**:
   - Browser WebTransport E2E (blocked on Let's Encrypt rate limit, resolves ~2026-03-24 20:00 UTC)

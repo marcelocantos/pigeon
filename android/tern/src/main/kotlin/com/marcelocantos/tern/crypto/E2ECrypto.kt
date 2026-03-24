@@ -14,7 +14,7 @@ import javax.crypto.spec.SecretKeySpec
 
 /**
  * End-to-end encryption for traffic relayed through tern.
- * Mirrors the Go crypto package and Swift TernCrypto.
+ * Mirrors the Go crypto package and Swift Tern.
  *
  * Key exchange: X25519 ECDH
  * Symmetric encryption: AES-256-GCM with counter nonce
@@ -64,6 +64,16 @@ class E2EKeyPair {
  */
 fun deriveKeyFromSecret(secret: ByteArray, info: ByteArray): ByteArray =
     Hkdf.derive(secret, info)
+
+/** Generate 32 cryptographically random bytes suitable for use as a nonce. */
+fun generateNonce(): ByteArray {
+    val b = ByteArray(32)
+    java.security.SecureRandom().nextBytes(b)
+    return b
+}
+
+/** Generate 32 cryptographically random bytes suitable for use as a secret. */
+fun generateSecret(): ByteArray = generateNonce()
 
 // ---- Confirmation code ----
 

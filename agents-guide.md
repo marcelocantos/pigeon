@@ -160,9 +160,12 @@ PORT=443 ./tern                           # run relay server (self-signed cert)
 | Flag/Env | Default | Description |
 |----------|---------|-------------|
 | `--port` / `PORT` | `443` | Relay listening port (UDP) |
+| `--domain` | — | Domain for automatic Let's Encrypt TLS |
+| `--acme-email` | — | Email for Let's Encrypt account |
 | `--cert` | — | TLS certificate file (PEM); if omitted, generates self-signed |
 | `--key` | — | TLS private key file (PEM) |
 | `--version` | — | Print version and exit |
 | `--help-agent` | — | Print this guide |
+| `TERN_TOKEN` | — | Bearer token for /register auth |
 
-Build-time version injection: `-ldflags "-X main.version=v0.1.0"`.
+Build-time version injection: `-ldflags "-X main.version=<version>"`.

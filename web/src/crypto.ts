@@ -3,6 +3,18 @@
 
 const subtle = globalThis.crypto.subtle;
 
+/** Generate 32 cryptographically random bytes suitable for use as a nonce. */
+export function generateNonce(): Uint8Array {
+  const b = new Uint8Array(32);
+  crypto.getRandomValues(b);
+  return b;
+}
+
+/** Generate 32 cryptographically random bytes suitable for use as a secret. */
+export function generateSecret(): Uint8Array {
+  return generateNonce();
+}
+
 /**
  * Derives a 256-bit key from input keying material via HKDF-SHA256.
  * Uses empty salt (matching Go's hkdf.New(sha256.New, ikm, nil, info)).
