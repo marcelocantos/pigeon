@@ -136,12 +136,15 @@ func main() {
 
 		cfg := certmagic.NewDefault()
 		if err := cfg.ManageSync(nil, []string{*domain}); err != nil {
-			slog.Error("failed to provision certificate", "domain", *domain, "err", err)
-			os.Exit(1)
+			slog.Warn("failed to provision Let's Encrypt certificate, falling back to self-signed",
+				"domain", *domain, "err", err)
+			tlsCert, _ := generateSelfSignedCert()
+			tlsConfig = &tls.Config{Certificates: []tls.Certificate{tlsCert}}
+			slog.Info("using self-signed certificate (Let's Encrypt unavailable)")
+		} else {
+			tlsConfig = cfg.TLSConfig()
+			slog.Info("using Let's Encrypt certificate", "domain", *domain)
 		}
-
-		tlsConfig = cfg.TLSConfig()
-		slog.Info("using Let's Encrypt certificate", "domain", *domain)
 
 	case *certFile != "" && *keyFile != "":
 		tlsCert, err := tls.LoadX509KeyPair(*certFile, *keyFile)
