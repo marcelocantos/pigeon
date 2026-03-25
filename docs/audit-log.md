@@ -30,6 +30,11 @@ maintenance activities. Append-only — newest entries at the bottom.
   - TLA+ model for cutover protocol (🎯T10)
   - Channel API (streaming + datagram channels)
 
+## 2026-03-25 — /release v0.7.0
+
+- **Commit**: `0e2fab0`
+- **Outcome**: Released v0.7.0. Persistent device pairing: `WithInstanceID` for stable relay identity, `PairingRecord` on all 4 platforms for save/restore of pairing state across reboots and network changes.
+
 ## 2026-03-25 — /release v0.6.0
 
 - **Commit**: TBD
