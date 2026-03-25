@@ -30,6 +30,11 @@ maintenance activities. Append-only — newest entries at the bottom.
   - TLA+ model for cutover protocol (🎯T10)
   - Channel API (streaming + datagram channels)
 
+## 2026-03-25 — /release v0.6.0
+
+- **Commit**: TBD
+- **Outcome**: Released v0.6.0. 24 audit findings fixed (2 high, 7 medium, 15 low): Swift readExactly accumulation, goroutine leak in datagram relay, write deadline race, graceful shutdown, self-signed cert random serial, protogen output paths, maxMessageSize alignment, tern-bridge secure by default, datagram mode tests on Swift/Kotlin, generateNonce/generateSecret on all 4 platforms.
+
 ## 2026-03-24 — /release v0.5.0
 
 - **Commit**: `70b55e6`
