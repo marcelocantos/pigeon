@@ -18,6 +18,7 @@ import (
 	"strings"
 	"sync"
 
+	"github.com/quic-go/quic-go"
 	"github.com/quic-go/quic-go/http3"
 	"github.com/quic-go/webtransport-go"
 )
@@ -134,9 +135,13 @@ func NewWebTransportServerWithHub(addr string, tlsConfig *tls.Config, token stri
 
 	wtServer := &webtransport.Server{
 		H3: &http3.Server{
-			Addr:      addr,
-			Handler:   mux,
-			TLSConfig: serverTLS,
+			Addr:            addr,
+			Handler:         mux,
+			TLSConfig:       serverTLS,
+			EnableDatagrams: true,
+			QUICConfig: &quic.Config{
+				EnableDatagrams: true,
+			},
 		},
 		CheckOrigin: func(r *http.Request) bool { return true },
 	}
