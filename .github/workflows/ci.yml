@@ -14,3 +14,15 @@ jobs:
         with:
           go-version-file: go.mod
       - run: go test ./...
+
+  deploy:
+    name: Deploy to Fly.io
+    needs: test
+    if: github.ref == 'refs/heads/master' && github.event_name == 'push'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: superfly/flyctl-actions/setup-flyctl@master
+      - run: flyctl deploy --remote-only
+        env:
+          FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
