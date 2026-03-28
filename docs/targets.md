@@ -222,7 +222,9 @@ because the storage path doesn't match the mount. Verify that
 and OCSP staples across deploys and restarts.
 
 - **Weight**: 2.5 (value 5 / cost 2)
-- **Status**: not started
+- **Status**: done — verified 2026-03-28. ACME account, cert, and key
+  persist in /data/certmagic on the Fly volume. Cert is reused on
+  restart without re-provisioning.
 
 ---
 
