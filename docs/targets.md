@@ -230,18 +230,25 @@ and OCSP staples across deploys and restarts.
 
 ### 🎯T14 Browser WebTransport E2E
 
-Prove the browser WebTransport path works end-to-end via Playwright.
-Blocked on Let's Encrypt cert provisioning (rate limit). Once the cert
-is persisted on the Fly volume:
+Prove the browser WebTransport path works end-to-end.
 
-1. Server logs its cert SHA-256 hash at startup
-2. For local tests: Playwright uses `serverCertificateHashes` with
-   the self-signed cert hash (Chromium-only)
-3. For live tests: server has a valid Let's Encrypt cert, browser
-   connects normally
+Playwright headless Chromium does NOT support WebTransport/QUIC —
+tested against both tern.fly.dev and Google's webtransport.day echo
+server; both fail with ERR_QUIC_PROTOCOL_ERROR. The Go WebTransport
+client connects to the same server successfully, confirming the server
+is correct.
+
+Options:
+1. Use Playwright with `headless: false` (headed Chrome) — requires
+   a display (CI won't work without Xvfb)
+2. Use Selenium + headless Chrome (webtransport-go's own tests do this)
+3. Manual verification with a real browser
+
+Server config verified correct: EnableDatagrams on both http3.Server
+and quic.Config. Let's Encrypt cert persisted and valid.
 
 - **Weight**: 1.0 (value 3 / cost 3)
-- **Status**: not started (LE rate limit expired 2026-03-24; now unblocked)
+- **Status**: blocked on Playwright headless Chromium QUIC support
 
 ---
 
