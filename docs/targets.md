@@ -25,11 +25,10 @@ the `Tern` SPM package.
 
 ### 🎯T3 Fly.io deployment via CI
 
-Pushes to master auto-deploy to `tern.fly.dev`. Currently deployed
-manually with `fly deploy`.
+Pushes to master auto-deploy to `tern.fly.dev`.
 
 - **Weight**: 1.7 (value 5 / cost 3)
-- **Status**: not started
+- **Status**: done — deploy job in ci.yml runs after tests pass on master push
 
 ---
 
