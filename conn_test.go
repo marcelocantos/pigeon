@@ -474,3 +474,108 @@ func TestPersistentInstanceID(t *testing.T) {
 	c.CloseNow()
 	b.CloseNow()
 }
+
+func TestStreamingChannel(t *testing.T) {
+	env := localRelay(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+
+	b, err := Register(ctx, env.url, env.opts...)
+	if err != nil {
+		t.Fatal("register:", err)
+	}
+	defer b.CloseNow()
+
+	c, err := Connect(ctx, env.url, b.InstanceID(), env.opts...)
+	if err != nil {
+		t.Fatal("connect:", err)
+	}
+	defer c.CloseNow()
+
+	// Client opens a named channel.
+	ch, err := c.OpenChannel("game-state")
+	if err != nil {
+		t.Fatal("open channel:", err)
+	}
+	defer ch.Close()
+
+	// Backend accepts the channel.
+	bch, err := b.AcceptChannel(ctx)
+	if err != nil {
+		t.Fatal("accept channel:", err)
+	}
+	defer bch.Close()
+
+	if bch.Name() != "game-state" {
+		t.Fatalf("got channel name %q, want game-state", bch.Name())
+	}
+
+	// Send/recv on the channel.
+	if err := ch.Send(ctx, []byte("player moved")); err != nil {
+		t.Fatal("send:", err)
+	}
+	data, err := bch.Recv(ctx)
+	if err != nil {
+		t.Fatal("recv:", err)
+	}
+	if string(data) != "player moved" {
+		t.Fatalf("got %q, want 'player moved'", data)
+	}
+
+	// Reverse direction.
+	if err := bch.Send(ctx, []byte("state updated")); err != nil {
+		t.Fatal("send:", err)
+	}
+	data, err = ch.Recv(ctx)
+	if err != nil {
+		t.Fatal("recv:", err)
+	}
+	if string(data) != "state updated" {
+		t.Fatalf("got %q, want 'state updated'", data)
+	}
+}
+
+func TestMultipleChannels(t *testing.T) {
+	env := localRelay(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+
+	b, err := Register(ctx, env.url, env.opts...)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer b.CloseNow()
+
+	c, err := Connect(ctx, env.url, b.InstanceID(), env.opts...)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer c.CloseNow()
+
+	// Open two channels.
+	ch1, _ := c.OpenChannel("control")
+	ch2, _ := c.OpenChannel("data")
+	defer ch1.Close()
+	defer ch2.Close()
+
+	bch1, _ := b.AcceptChannel(ctx)
+	bch2, _ := b.AcceptChannel(ctx)
+	defer bch1.Close()
+	defer bch2.Close()
+
+	// Messages on different channels are independent.
+	ch1.Send(ctx, []byte("ctrl-msg"))
+	ch2.Send(ctx, []byte("data-msg"))
+
+	d1, _ := bch1.Recv(ctx)
+	d2, _ := bch2.Recv(ctx)
+
+	// Channel names tell us which is which (order may vary due to concurrency).
+	msgs := map[string]string{bch1.Name(): string(d1), bch2.Name(): string(d2)}
+	if msgs["control"] != "ctrl-msg" {
+		t.Fatalf("control channel got %q", msgs["control"])
+	}
+	if msgs["data"] != "data-msg" {
+		t.Fatalf("data channel got %q", msgs["data"])
+	}
+}

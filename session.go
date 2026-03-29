@@ -17,6 +17,10 @@ type relaySession interface {
 	ReadMessage() ([]byte, error)
 	// WriteMessage writes a length-prefixed message to the primary stream.
 	WriteMessage(data []byte) error
+	// AcceptStream accepts an incoming bidirectional stream.
+	AcceptStream(ctx context.Context) (readWriteCloserPair, error)
+	// OpenStream opens a new bidirectional stream to the peer.
+	OpenStream() (readWriteCloserPair, error)
 	// SendDatagram sends an unreliable datagram.
 	SendDatagram(data []byte) error
 	// ReceiveDatagram receives the next datagram.
@@ -24,6 +28,14 @@ type relaySession interface {
 	// Context returns the session lifecycle context.
 	Context() context.Context
 	// Close closes the session.
+	Close() error
+}
+
+// readWriteCloserPair is a bidirectional stream that supports
+// length-prefixed message framing.
+type readWriteCloserPair interface {
+	ReadMessage() ([]byte, error)
+	WriteMessage(data []byte) error
 	Close() error
 }
 
@@ -142,6 +154,60 @@ func bridgeClient(inst *instance, clientSession relaySession) {
 		}
 	}()
 
+	// Bridge additional streams opened by either side.
+	// backend opens stream -> forward to client
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		for {
+			backendStream, err := inst.session.AcceptStream(ctx)
+			if err != nil {
+				return
+			}
+			clientStream, err := clientSession.OpenStream()
+			if err != nil {
+				backendStream.Close()
+				return
+			}
+			// Bridge this stream pair in both directions.
+			wg.Add(2)
+			go func() {
+				defer wg.Done()
+				bridgeStream(backendStream, clientStream)
+			}()
+			go func() {
+				defer wg.Done()
+				bridgeStream(clientStream, backendStream)
+			}()
+		}
+	}()
+
+	// client opens stream -> forward to backend
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		for {
+			clientStream, err := clientSession.AcceptStream(ctx)
+			if err != nil {
+				return
+			}
+			backendStream, err := inst.session.OpenStream()
+			if err != nil {
+				clientStream.Close()
+				return
+			}
+			wg.Add(2)
+			go func() {
+				defer wg.Done()
+				bridgeStream(clientStream, backendStream)
+			}()
+			go func() {
+				defer wg.Done()
+				bridgeStream(backendStream, clientStream)
+			}()
+		}
+	}()
+
 	// Wait for stream relay to end or session to close.
 	select {
 	case err := <-errCh:
@@ -152,6 +218,21 @@ func bridgeClient(inst *instance, clientSession relaySession) {
 		slog.Info("backend session ended", "instance", inst.id)
 	}
 
-	cancel() // stop datagram goroutines
+	cancel() // stop datagram goroutines and stream accept loops
 	wg.Wait()
+}
+
+// bridgeStream copies messages from src to dst until an error occurs.
+func bridgeStream(src, dst readWriteCloserPair) {
+	defer src.Close()
+	defer dst.Close()
+	for {
+		msg, err := src.ReadMessage()
+		if err != nil {
+			return
+		}
+		if err := dst.WriteMessage(msg); err != nil {
+			return
+		}
+	}
 }

@@ -26,6 +26,16 @@ type quicSession struct {
 	writeMu sync.Mutex // serialises writes to the stream
 }
 
+// quicStreamWrapper wraps a quic.Stream as a readWriteCloserPair.
+type quicStreamWrapper struct {
+	stream  *quic.Stream
+	writeMu sync.Mutex
+}
+
+func (w *quicStreamWrapper) ReadMessage() ([]byte, error)  { return readMessage(w.stream) }
+func (w *quicStreamWrapper) WriteMessage(data []byte) error { w.writeMu.Lock(); defer w.writeMu.Unlock(); return writeMessage(w.stream, data) }
+func (w *quicStreamWrapper) Close() error                   { return w.stream.Close() }
+
 func (s *quicSession) ReadMessage() ([]byte, error) {
 	return readMessage(s.stream)
 }
@@ -42,6 +52,22 @@ func (s *quicSession) SendDatagram(data []byte) error {
 
 func (s *quicSession) ReceiveDatagram(ctx context.Context) ([]byte, error) {
 	return s.conn.ReceiveDatagram(ctx)
+}
+
+func (s *quicSession) AcceptStream(ctx context.Context) (readWriteCloserPair, error) {
+	stream, err := s.conn.AcceptStream(ctx)
+	if err != nil {
+		return nil, err
+	}
+	return &quicStreamWrapper{stream: stream}, nil
+}
+
+func (s *quicSession) OpenStream() (readWriteCloserPair, error) {
+	stream, err := s.conn.OpenStream()
+	if err != nil {
+		return nil, err
+	}
+	return &quicStreamWrapper{stream: stream}, nil
 }
 
 func (s *quicSession) Context() context.Context {

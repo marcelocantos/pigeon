@@ -171,7 +171,7 @@ func registerQUIC(ctx context.Context, relayURL string, o options) (*Conn, error
 	}
 
 	closer := quicCloser{conn}
-	return newConn(stream, conn, closer, quicOpener{conn}, string(idBytes)), nil
+	return newConn(stream, conn, closer, quicOpener{conn}, quicAcceptor{conn}, string(idBytes)), nil
 }
 
 func connectQUIC(ctx context.Context, relayURL, instanceID string, o options) (*Conn, error) {
@@ -198,7 +198,7 @@ func connectQUIC(ctx context.Context, relayURL, instanceID string, o options) (*
 	}
 
 	closer := quicCloser{conn}
-	return newConn(stream, conn, closer, quicOpener{conn}, instanceID), nil
+	return newConn(stream, conn, closer, quicOpener{conn}, quicAcceptor{conn}, instanceID), nil
 }
 
 // quicCloser wraps *quic.Conn to satisfy io.Closer.
@@ -211,12 +211,16 @@ func (c quicCloser) Close() error {
 }
 
 // quicOpener adapts *quic.Conn to the streamOpener interface.
-type quicOpener struct {
-	conn *quic.Conn
-}
+type quicOpener struct{ conn *quic.Conn }
 
 func (o quicOpener) OpenStream() (io.ReadWriteCloser, error) {
 	return o.conn.OpenStream()
+}
+
+type quicAcceptor struct{ conn *quic.Conn }
+
+func (a quicAcceptor) AcceptStream(ctx context.Context) (io.ReadWriteCloser, error) {
+	return a.conn.AcceptStream(ctx)
 }
 
 // --- WebTransport client (for browsers / backward compat) ---
@@ -266,7 +270,7 @@ func registerWebTransport(ctx context.Context, relayURL string, o options) (*Con
 	}
 
 	closer := wtCloser{session}
-	return newConn(stream, session, closer, wtOpener{session}, string(idBytes)), nil
+	return newConn(stream, session, closer, wtOpener{session}, wtAcceptor{session}, string(idBytes)), nil
 }
 
 func connectWebTransport(ctx context.Context, relayURL, instanceID string, o options) (*Conn, error) {
@@ -298,7 +302,7 @@ func connectWebTransport(ctx context.Context, relayURL, instanceID string, o opt
 	}
 
 	closer := wtCloser{session}
-	return newConn(stream, session, closer, wtOpener{session}, instanceID), nil
+	return newConn(stream, session, closer, wtOpener{session}, wtAcceptor{session}, instanceID), nil
 }
 
 // wtCloser wraps webtransport.Session to satisfy io.Closer.
@@ -311,10 +315,14 @@ func (c wtCloser) Close() error {
 }
 
 // wtOpener adapts *webtransport.Session to the streamOpener interface.
-type wtOpener struct {
-	session *webtransport.Session
-}
+type wtOpener struct{ session *webtransport.Session }
 
 func (o wtOpener) OpenStream() (io.ReadWriteCloser, error) {
 	return o.session.OpenStream()
+}
+
+type wtAcceptor struct{ session *webtransport.Session }
+
+func (a wtAcceptor) AcceptStream(ctx context.Context) (io.ReadWriteCloser, error) {
+	return a.session.AcceptStream(ctx)
 }

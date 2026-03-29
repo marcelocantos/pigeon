@@ -5,6 +5,7 @@ package tern
 
 import (
 	"context"
+	"encoding/binary"
 	"io"
 	"log/slog"
 	"sync"
@@ -34,6 +35,11 @@ type streamOpener interface {
 	OpenStream() (io.ReadWriteCloser, error)
 }
 
+// streamAcceptor can accept incoming bidirectional streams.
+type streamAcceptor interface {
+	AcceptStream(context.Context) (io.ReadWriteCloser, error)
+}
+
 // deadliner can set read/write deadlines on a stream.
 type deadliner interface {
 	SetReadDeadline(time.Time) error
@@ -53,10 +59,11 @@ type Conn struct {
 	writeMu sync.Mutex // serialises writes to the primary stream
 	instanceID string
 
-	stream io.ReadWriteCloser // primary bidirectional stream (quic.Stream or webtransport.Stream)
-	dg     datagrammer        // datagram interface (quic.Connection or webtransport.Session)
-	closer io.Closer          // the session/connection itself
-	opener streamOpener       // opens additional bidirectional streams
+	stream   io.ReadWriteCloser // primary bidirectional stream (quic.Stream or webtransport.Stream)
+	dg       datagrammer        // datagram interface (quic.Connection or webtransport.Session)
+	closer   io.Closer          // the session/connection itself
+	opener   streamOpener       // opens additional bidirectional streams
+	acceptor streamAcceptor     // accepts incoming streams from peer
 
 	// Encryption for the primary stream. Nil means raw mode.
 	channel *crypto.Channel
@@ -64,11 +71,18 @@ type Conn struct {
 	// Encryption for datagrams. Nil means raw datagram mode.
 	dgChannel *crypto.Channel
 
+	// PairingRecord for deriving per-channel encryption keys.
+	pairingRecord *crypto.PairingRecord
+
+	// Datagram channel dispatch.
+	dgChannels map[uint16]*DatagramChannel
+	dgIncoming map[uint16]chan []byte // per-channel datagram queues
+
 	ctx    context.Context    // Conn lifecycle context
 	cancel context.CancelFunc // cancels background goroutines
 }
 
-func newConn(stream io.ReadWriteCloser, dg datagrammer, closer io.Closer, opener streamOpener, instanceID string) *Conn {
+func newConn(stream io.ReadWriteCloser, dg datagrammer, closer io.Closer, opener streamOpener, acceptor streamAcceptor, instanceID string) *Conn {
 	ctx, cancel := context.WithCancel(context.Background())
 	return &Conn{
 		instanceID: instanceID,
@@ -76,8 +90,84 @@ func newConn(stream io.ReadWriteCloser, dg datagrammer, closer io.Closer, opener
 		dg:         dg,
 		closer:     closer,
 		opener:     opener,
+		acceptor:   acceptor,
 		ctx:        ctx,
 		cancel:     cancel,
+	}
+}
+
+// SetPairingRecord stores a PairingRecord for deriving per-channel
+// encryption keys. Call this after loading a saved pairing record
+// and before opening/accepting channels.
+func (c *Conn) SetPairingRecord(rec *crypto.PairingRecord) {
+	c.mu.Lock()
+	c.pairingRecord = rec
+	c.mu.Unlock()
+}
+
+// acceptStream accepts the next incoming bidirectional stream from the peer.
+func (c *Conn) acceptStream(ctx context.Context) (io.ReadWriteCloser, error) {
+	if c.acceptor == nil {
+		return nil, io.ErrClosedPipe
+	}
+	return c.acceptor.AcceptStream(ctx)
+}
+
+// datagramDispatcher reads datagrams from the QUIC connection and
+// routes them to the appropriate DatagramChannel based on the 2-byte
+// channel ID prefix.
+func (c *Conn) datagramDispatcher() {
+	for {
+		data, err := c.dg.ReceiveDatagram(c.ctx)
+		if err != nil {
+			return
+		}
+		if len(data) < 2 {
+			continue
+		}
+		id := binary.BigEndian.Uint16(data[:2])
+		payload := data[2:]
+
+		c.mu.Lock()
+		ch, ok := c.dgIncoming[id]
+		if !ok {
+			// Lazily create the incoming queue.
+			if c.dgIncoming == nil {
+				c.dgIncoming = make(map[uint16]chan []byte)
+			}
+			ch = make(chan []byte, 64)
+			c.dgIncoming[id] = ch
+		}
+		c.mu.Unlock()
+
+		select {
+		case ch <- payload:
+		default:
+			// Drop if queue is full (datagram semantics — loss is expected).
+		}
+	}
+}
+
+// recvTaggedDatagram receives the next datagram for a specific channel ID.
+func (c *Conn) recvTaggedDatagram(ctx context.Context, id uint16) ([]byte, error) {
+	c.mu.Lock()
+	ch, ok := c.dgIncoming[id]
+	if !ok {
+		if c.dgIncoming == nil {
+			c.dgIncoming = make(map[uint16]chan []byte)
+		}
+		ch = make(chan []byte, 64)
+		c.dgIncoming[id] = ch
+	}
+	c.mu.Unlock()
+
+	select {
+	case data := <-ch:
+		return data, nil
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	case <-c.ctx.Done():
+		return nil, c.ctx.Err()
 	}
 }
 

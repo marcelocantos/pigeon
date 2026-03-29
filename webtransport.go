@@ -33,6 +33,15 @@ type wtSession struct {
 	writeMu sync.Mutex // serialises writes to the stream
 }
 
+type wtStreamWrapper struct {
+	stream  *webtransport.Stream
+	writeMu sync.Mutex
+}
+
+func (w *wtStreamWrapper) ReadMessage() ([]byte, error)  { return readMessage(w.stream) }
+func (w *wtStreamWrapper) WriteMessage(data []byte) error { w.writeMu.Lock(); defer w.writeMu.Unlock(); return writeMessage(w.stream, data) }
+func (w *wtStreamWrapper) Close() error                   { return w.stream.Close() }
+
 func (s *wtSession) ReadMessage() ([]byte, error) {
 	return readMessage(s.stream)
 }
@@ -49,6 +58,22 @@ func (s *wtSession) SendDatagram(data []byte) error {
 
 func (s *wtSession) ReceiveDatagram(ctx context.Context) ([]byte, error) {
 	return s.session.ReceiveDatagram(ctx)
+}
+
+func (s *wtSession) AcceptStream(ctx context.Context) (readWriteCloserPair, error) {
+	stream, err := s.session.AcceptStream(ctx)
+	if err != nil {
+		return nil, err
+	}
+	return &wtStreamWrapper{stream: stream}, nil
+}
+
+func (s *wtSession) OpenStream() (readWriteCloserPair, error) {
+	stream, err := s.session.OpenStream()
+	if err != nil {
+		return nil, err
+	}
+	return &wtStreamWrapper{stream: stream}, nil
 }
 
 func (s *wtSession) Context() context.Context {
