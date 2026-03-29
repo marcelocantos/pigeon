@@ -12,6 +12,7 @@ import (
 	"crypto/x509"
 	"math/big"
 	"net"
+	"net/url"
 	"os"
 	"strconv"
 	"testing"
@@ -69,6 +70,18 @@ type relayEnv struct {
 // a relayEnv configured for raw QUIC connections.
 func localRelay(t *testing.T) relayEnv {
 	t.Helper()
+	// If an external instrumented relay is running (e.g. for coverage),
+	// use it instead of starting our own.
+	if qURL := os.Getenv("TERN_TEST_QUIC_URL"); qURL != "" {
+		u, _ := url.Parse(qURL)
+		return relayEnv{
+			url: qURL,
+			opts: []Option{
+				WithTLS(&tls.Config{InsecureSkipVerify: true}),
+				WithQUICPort(u.Port()),
+			},
+		}
+	}
 	return localRelayTB(t)
 }
 
@@ -118,6 +131,17 @@ func localRelayTB(t testing.TB) relayEnv {
 // for WebTransport connections (backward compat / browser path).
 func localRelayWT(t *testing.T) relayEnv {
 	t.Helper()
+
+	// If an external instrumented relay is running, use it.
+	if wtURL := os.Getenv("TERN_TEST_WT_URL"); wtURL != "" {
+		return relayEnv{
+			url: wtURL,
+			opts: []Option{
+				WithTLS(&tls.Config{InsecureSkipVerify: true}),
+				WithWebTransport(),
+			},
+		}
+	}
 
 	cert, pool := generateTestCert(t)
 	tlsCfg := &tls.Config{Certificates: []tls.Certificate{cert}}
