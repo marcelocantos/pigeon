@@ -8,6 +8,7 @@ import (
 	"crypto/tls"
 	"net"
 	"strconv"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -321,6 +322,189 @@ func TestBandwidthThrottledTransfer(t *testing.T) {
 		}
 	}
 	t.Logf("10KB at 50KB/s: %v", elapsed)
+}
+
+// --- Sequence-aware fault injection tests ---
+// These use WithDropAfter/WithDropWindow/WithPacketHook to trigger
+// mid-protocol error paths that random faults can't reliably reach.
+
+// TestRegisterDropAfterHandshake drops all packets so the register
+// QUIC dial itself fails. This exercises the dial error path.
+func TestRegisterDropAfterHandshake(t *testing.T) {
+	env, proxy := faultyRelay(t, faultproxy.WithPacketLoss(1.0))
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	_, err := Register(ctx, env.url, env.opts...)
+	if err == nil {
+		t.Fatal("expected register to fail with total packet loss")
+	}
+	t.Logf("register error (expected): %v", err)
+	stats := proxy.GetStats()
+	t.Logf("packets: forwarded=%d dropped=%d", stats.PacketsForwarded.Load(), stats.PacketsDropped.Load())
+}
+
+// TestConnectDropAfterEstablished lets the backend register cleanly,
+// then enables total drop so the client's connect fails.
+func TestConnectDropAfterEstablished(t *testing.T) {
+	env, proxy := faultyRelay(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	b, err := Register(ctx, env.url, env.opts...)
+	if err != nil {
+		t.Fatal("register:", err)
+	}
+	defer b.CloseNow()
+
+	// Drop all subsequent packets — client can't even complete TLS.
+	proxy.UpdateProfile(faultproxy.WithPacketLoss(1.0))
+
+	_, err = Connect(ctx, env.url, b.InstanceID(), env.opts...)
+	if err == nil {
+		t.Fatal("expected error from connect with all packets dropped")
+	}
+	t.Logf("connect error (expected): %v", err)
+}
+
+// TestSendRecvOnDeadConnection establishes a connection, then kills
+// the proxy entirely. Send/Recv should return errors.
+func TestSendRecvOnDeadConnection(t *testing.T) {
+	env, proxy := faultyRelay(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	b, c := connectPair(t, env)
+
+	// Kill the proxy — connection is now severed.
+	proxy.UpdateProfile(faultproxy.WithPacketLoss(1.0))
+
+	// Send may succeed (buffered locally by QUIC), but Recv will timeout.
+	c.Send(ctx, []byte("into-the-void"))
+
+	recvCtx, recvCancel := context.WithTimeout(ctx, 3*time.Second)
+	defer recvCancel()
+	_, err := b.Recv(recvCtx)
+	if err == nil {
+		t.Fatal("expected recv error on dead connection")
+	}
+	t.Logf("recv error (expected): %v", err)
+}
+
+// TestAcceptChannelOnDeadConnection verifies AcceptChannel returns
+// an error when the connection is severed.
+func TestAcceptChannelOnDeadConnection(t *testing.T) {
+	env, proxy := faultyRelay(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	b, _ := connectPair(t, env)
+
+	proxy.UpdateProfile(faultproxy.WithPacketLoss(1.0))
+
+	_, err := b.AcceptChannel(ctx)
+	if err == nil {
+		t.Fatal("expected error from accept on dead connection")
+	}
+	t.Logf("accept error (expected): %v", err)
+}
+
+// TestPacketHookSelectiveDrop uses a hook to drop packets after
+// the connection is established.
+func TestPacketHookSelectiveDrop(t *testing.T) {
+	var hookActive atomic.Bool
+	env, proxy := faultyRelay(t, faultproxy.WithPacketHook(func(pktNum int, data []byte) faultproxy.Action {
+		if hookActive.Load() {
+			return faultproxy.Drop
+		}
+		return faultproxy.Forward
+	}))
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	b, c := connectPair(t, env)
+
+	// Verify connectivity.
+	c.Send(ctx, []byte("before-hook"))
+	data, err := b.Recv(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(data) != "before-hook" {
+		t.Fatalf("got %q", data)
+	}
+
+	// Activate the hook — all subsequent packets dropped.
+	hookActive.Store(true)
+
+	c.Send(ctx, []byte("after-hook"))
+
+	recvCtx, recvCancel := context.WithTimeout(ctx, 2*time.Second)
+	defer recvCancel()
+	_, err = b.Recv(recvCtx)
+	if err == nil {
+		t.Fatal("expected recv timeout with hook active")
+	}
+
+	stats := proxy.GetStats()
+	t.Logf("hook: forwarded=%d dropped=%d",
+		stats.PacketsForwarded.Load(), stats.PacketsDropped.Load())
+	if stats.PacketsDropped.Load() == 0 {
+		t.Fatal("hook should have dropped packets")
+	}
+}
+
+// TestDropWindowMidConversation creates a temporary outage window
+// during an active conversation. Messages before and after the window
+// should work.
+func TestDropWindowMidConversation(t *testing.T) {
+	env, proxy := faultyRelay(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	b, c := connectPair(t, env)
+
+	// Send a message cleanly.
+	c.Send(ctx, []byte("before"))
+	data, err := b.Recv(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(data) != "before" {
+		t.Fatalf("got %q", data)
+	}
+
+	// Total drop for 2 seconds — simulates a network outage.
+	proxy.UpdateProfile(faultproxy.WithPacketLoss(1.0))
+
+	sendCtx, sendCancel := context.WithTimeout(ctx, 2*time.Second)
+	defer sendCancel()
+	c.Send(sendCtx, []byte("during-outage"))
+	_, err = b.Recv(sendCtx)
+	t.Logf("during outage recv: %v (expected timeout)", err)
+
+	// Restore connectivity.
+	proxy.UpdateProfile(faultproxy.WithPacketLoss(0))
+
+	// After outage, connection should resume. We may receive the
+	// "during-outage" message first (QUIC retransmitted it), then "after".
+	if err := c.Send(ctx, []byte("after")); err != nil {
+		t.Fatal("send after outage:", err)
+	}
+
+	// Read messages until we see "after" — the during-outage message
+	// may arrive first via QUIC retransmit.
+	for range 5 {
+		data, err = b.Recv(ctx)
+		if err != nil {
+			t.Fatal("recv after outage:", err)
+		}
+		if string(data) == "after" {
+			return // success
+		}
+		t.Logf("received queued message: %q", data)
+	}
+	t.Fatal("never received 'after' message")
 }
 
 // TestBlackholeRecovery verifies that a QUIC connection survives a

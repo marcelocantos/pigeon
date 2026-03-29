@@ -24,6 +24,16 @@ import (
 	"time"
 )
 
+// Action tells the proxy what to do with a packet.
+type Action int
+
+const (
+	// Forward delivers the packet normally (subject to other faults).
+	Forward Action = iota
+	// Drop silently discards the packet.
+	Drop
+)
+
 // Profile configures the fault injection behaviour.
 type Profile struct {
 	// Latency adds a fixed delay to every packet.
@@ -46,6 +56,19 @@ type Profile struct {
 	BlackholeDuration time.Duration
 	// BlackholeInterval is the time between blackhole periods.
 	BlackholeInterval time.Duration
+	// DropAfter drops all packets after the first N have been forwarded.
+	// 0 means disabled. The count is global (both directions).
+	DropAfter int
+	// DropWindowStart and DropWindowEnd define a range of packet numbers
+	// [Start, End) that are dropped. Packets outside the window pass
+	// normally. 0,0 means disabled.
+	DropWindowStart int
+	DropWindowEnd   int
+	// PacketHook, if set, is called for every packet before other fault
+	// processing. It receives the packet number (1-based) and the raw
+	// UDP payload. Return Drop to discard, Forward to continue with
+	// normal fault processing.
+	PacketHook func(pktNum int, data []byte) Action
 }
 
 // Option configures a Proxy.
@@ -81,6 +104,26 @@ func WithBlackhole(duration, interval time.Duration) Option {
 	return func(p *Profile) { p.BlackholeDuration = duration; p.BlackholeInterval = interval }
 }
 
+// WithDropAfter drops all packets after the first n have been
+// forwarded. This lets the QUIC handshake complete, then kills
+// everything — triggering mid-protocol error paths.
+func WithDropAfter(n int) Option {
+	return func(p *Profile) { p.DropAfter = n }
+}
+
+// WithDropWindow drops packets numbered [start, end) and forwards
+// all others. Packet numbers are 1-based and count both directions.
+func WithDropWindow(start, end int) Option {
+	return func(p *Profile) { p.DropWindowStart = start; p.DropWindowEnd = end }
+}
+
+// WithPacketHook sets a programmable per-packet decision function.
+// Called before all other fault processing. Return Drop to discard
+// the packet, Forward to continue with normal fault processing.
+func WithPacketHook(fn func(pktNum int, data []byte) Action) Option {
+	return func(p *Profile) { p.PacketHook = fn }
+}
+
 // Stats tracks proxy traffic counters.
 type Stats struct {
 	PacketsForwarded atomic.Int64
@@ -96,6 +139,7 @@ type Proxy struct {
 	target   *net.UDPAddr // the real relay
 	profile  Profile
 	stats    Stats
+	pktCount atomic.Int64 // global packet counter (both directions)
 	done     chan struct{}
 	wg       sync.WaitGroup
 	mu       sync.Mutex
@@ -154,6 +198,11 @@ func (p *Proxy) Addr() string {
 // GetStats returns a pointer to the live traffic counters.
 func (p *Proxy) GetStats() *Stats {
 	return &p.stats
+}
+
+// PacketCount returns the total number of packets seen (both directions).
+func (p *Proxy) PacketCount() int {
+	return int(p.pktCount.Load())
 }
 
 // UpdateProfile atomically replaces the fault profile. This allows
@@ -258,10 +307,32 @@ func (p *Proxy) getOrCreateUpstream(clientAddr *net.UDPAddr) *net.UDPConn {
 // If upstream is non-nil, sends to upstream (client→target).
 // If clientAddr is non-nil, sends back to client (target→client).
 func (p *Proxy) forward(pkt []byte, upstream *net.UDPConn, clientAddr *net.UDPAddr, _ bool) {
+	pktNum := int(p.pktCount.Add(1))
+
 	p.mu.Lock()
 	profile := p.profile
 	throttle := p.throttle
 	p.mu.Unlock()
+
+	// PacketHook: programmable per-packet decision.
+	if profile.PacketHook != nil {
+		if profile.PacketHook(pktNum, pkt) == Drop {
+			p.stats.PacketsDropped.Add(1)
+			return
+		}
+	}
+
+	// DropAfter: drop everything after the first N packets.
+	if profile.DropAfter > 0 && pktNum > profile.DropAfter {
+		p.stats.PacketsDropped.Add(1)
+		return
+	}
+
+	// DropWindow: drop packets in [Start, End).
+	if profile.DropWindowStart > 0 && pktNum >= profile.DropWindowStart && pktNum < profile.DropWindowEnd {
+		p.stats.PacketsDropped.Add(1)
+		return
+	}
 
 	// Blackhole: drop everything.
 	if p.blackholed.Load() {
