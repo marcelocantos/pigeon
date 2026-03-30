@@ -30,6 +30,11 @@ maintenance activities. Append-only — newest entries at the bottom.
   - TLA+ model for cutover protocol (🎯T10)
   - Channel API (streaming + datagram channels)
 
+## 2026-03-30 — /release v0.8.0
+
+- **Commit**: `e0d6555`
+- **Outcome**: Released v0.8.0. Channel API (streaming + datagram), faultproxy package, CI auto-deploy, WebTransport fixes, test coverage 89%/92%/98%/94%. Homebrew formula updated.
+
 ## 2026-03-25 — /release v0.7.0
 
 - **Commit**: `0e2fab0`
