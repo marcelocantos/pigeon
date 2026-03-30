@@ -23,13 +23,6 @@ the `Tern` SPM package.
 
 ---
 
-### 🎯T3 Fly.io deployment via CI
-
-Pushes to master auto-deploy to `tern.fly.dev`.
-
-- **Weight**: 1.7 (value 5 / cost 3)
-- **Status**: done — deploy job in ci.yml runs after tests pass on master push
-
 ---
 
 ### 🎯T5 Multi-transport with LAN upgrade
@@ -183,33 +176,6 @@ to LAN transport.
 
 ---
 
-### 🎯T12 Channel API
-
-Named streaming and datagram channels with built-in encryption.
-
-- **Weight**: 1.7 (value 5 / cost 3)
-
-#### 🎯T12.1 Streaming channels
-
-`conn.OpenChannel("name")` opens a new QUIC stream, sends the channel
-name as the first message, derives a unique crypto.Channel from the
-master secret + channel name. `conn.AcceptChannel(ctx)` on the other
-side accepts and returns the channel with matching encryption keys.
-
-- **Weight**: 1.7 (value 5 / cost 3)
-- **Status**: not started
-
-#### 🎯T12.2 Datagram channels
-
-`conn.DatagramChannel("name")` creates a named datagram channel. Both
-sides create by name (no accept needed). Each channel has its own
-crypto.Channel (datagram mode) and a channel ID prefix for demuxing
-on the shared QUIC datagram pipe.
-
-- **Weight**: 1.3 (value 4 / cost 3)
-- **Status**: not started
-- **Depends on**: 🎯T12.1
-
 ---
 
 ### 🎯T14 Browser WebTransport E2E
@@ -277,6 +243,26 @@ tests work without manual machine management.
 ---
 
 ## Achieved
+
+### 🎯T3 Fly.io deployment via CI
+
+- **Weight**: 1 (value 1 / cost 1)
+- **Status**: done — deploy job in ci.yml runs after tests pass on master push
+
+### 🎯T12 Channel API
+
+- **Weight**: 1 (value 1 / cost 1)
+- **Status**: done — streaming and datagram channels implemented in channel.go
+
+### 🎯T12.1 Streaming channels
+
+- **Weight**: 1 (value 1 / cost 1)
+- **Status**: done — OpenChannel/AcceptChannel with per-channel encryption
+
+### 🎯T12.2 Datagram channels
+
+- **Weight**: 1 (value 1 / cost 1)
+- **Status**: done — DatagramChannel with CRC16 demux and fragmentation support
 
 ### 🎯T13 Certmagic storage alignment
 
