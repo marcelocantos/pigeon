@@ -64,10 +64,10 @@ func generateTestCert(t testing.TB) (tls.Certificate, *x509.CertPool) {
 	return cert, pool
 }
 
-// relayEnv holds the URL and options needed to connect to a relay.
+// relayEnv holds the URL and config needed to connect to a relay.
 type relayEnv struct {
-	url  string
-	opts []Option
+	url string
+	cfg Config
 }
 
 // localRelay starts a test relay (WebTransport + raw QUIC) and returns
@@ -80,9 +80,9 @@ func localRelay(t *testing.T) relayEnv {
 		u, _ := url.Parse(qURL)
 		return relayEnv{
 			url: qURL,
-			opts: []Option{
-				WithTLS(&tls.Config{InsecureSkipVerify: true}),
-				WithQUICPort(u.Port()),
+			cfg: Config{
+				TLS:      &tls.Config{InsecureSkipVerify: true},
+				QUICPort: u.Port(),
 			},
 		}
 	}
@@ -124,9 +124,9 @@ func localRelayTB(t testing.TB) relayEnv {
 	// Default: raw QUIC. The URL host is used by both WT and QUIC paths.
 	return relayEnv{
 		url: "https://127.0.0.1:" + strconv.Itoa(wtPort),
-		opts: []Option{
-			WithTLS(&tls.Config{RootCAs: pool}),
-			WithQUICPort(strconv.Itoa(qPort)),
+		cfg: Config{
+			TLS:      &tls.Config{RootCAs: pool},
+			QUICPort: strconv.Itoa(qPort),
 		},
 	}
 }
@@ -140,9 +140,9 @@ func localRelayWT(t *testing.T) relayEnv {
 	if wtURL := os.Getenv("TERN_TEST_WT_URL"); wtURL != "" {
 		return relayEnv{
 			url: wtURL,
-			opts: []Option{
-				WithTLS(&tls.Config{InsecureSkipVerify: true}),
-				WithWebTransport(),
+			cfg: Config{
+				TLS:          &tls.Config{InsecureSkipVerify: true},
+				WebTransport: true,
 			},
 		}
 	}
@@ -170,9 +170,9 @@ func localRelayWT(t *testing.T) relayEnv {
 	addr := conn.LocalAddr().(*net.UDPAddr)
 	return relayEnv{
 		url: "https://127.0.0.1:" + strconv.Itoa(addr.Port),
-		opts: []Option{
-			WithTLS(&tls.Config{RootCAs: pool}),
-			WithWebTransport(),
+		cfg: Config{
+			TLS:          &tls.Config{RootCAs: pool},
+			WebTransport: true,
 		},
 	}
 }
@@ -189,16 +189,16 @@ func liveRelay(t *testing.T) relayEnv {
 
 	env := relayEnv{
 		url: "https://tern.fly.dev:443",
-		opts: []Option{
-			WithToken(token),
-			WithWebTransport(),
+		cfg: Config{
+			Token:        token,
+			WebTransport: true,
 		},
 	}
 
 	// Probe connectivity — skip if the relay isn't reachable over QUIC/UDP.
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	probe, err := Register(ctx, env.url, env.opts...)
+	probe, err := Register(ctx, env.url, env.cfg)
 	if err != nil {
 		t.Skipf("live relay not reachable: %v", err)
 	}
@@ -213,13 +213,13 @@ func connectPair(t *testing.T, env relayEnv) (*Conn, *Conn) {
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	t.Cleanup(cancel)
 
-	b, err := Register(ctx, env.url, env.opts...)
+	b, err := Register(ctx, env.url, env.cfg)
 	if err != nil {
 		t.Fatal("register:", err)
 	}
 	t.Cleanup(func() { b.CloseNow() })
 
-	c, err := Connect(ctx, env.url, b.InstanceID(), env.opts...)
+	c, err := Connect(ctx, env.url, b.InstanceID(), env.cfg)
 	if err != nil {
 		t.Fatal("connect:", err)
 	}
@@ -473,7 +473,9 @@ func TestPersistentInstanceID(t *testing.T) {
 	myUUID := "test-device-uuid-12345"
 
 	// Register with a persistent instance ID.
-	b, err := Register(ctx, env.url, append(env.opts, WithInstanceID(myUUID))...)
+	cfg := env.cfg
+	cfg.InstanceID = myUUID
+	b, err := Register(ctx, env.url, cfg)
 	if err != nil {
 		t.Fatal("register:", err)
 	}
@@ -482,7 +484,7 @@ func TestPersistentInstanceID(t *testing.T) {
 	}
 
 	// Client connects using the persistent ID.
-	c, err := Connect(ctx, env.url, myUUID, env.opts...)
+	c, err := Connect(ctx, env.url, myUUID, env.cfg)
 	if err != nil {
 		t.Fatal("connect:", err)
 	}
@@ -508,13 +510,13 @@ func TestStreamingChannel(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
 
-	b, err := Register(ctx, env.url, env.opts...)
+	b, err := Register(ctx, env.url, env.cfg)
 	if err != nil {
 		t.Fatal("register:", err)
 	}
 	defer b.CloseNow()
 
-	c, err := Connect(ctx, env.url, b.InstanceID(), env.opts...)
+	c, err := Connect(ctx, env.url, b.InstanceID(), env.cfg)
 	if err != nil {
 		t.Fatal("connect:", err)
 	}
@@ -572,7 +574,9 @@ func TestPersistentInstanceIDWebTransport(t *testing.T) {
 
 	myUUID := "wt-persistent-uuid-99"
 
-	b, err := Register(ctx, env.url, append(env.opts, WithInstanceID(myUUID))...)
+	cfg := env.cfg
+	cfg.InstanceID = myUUID
+	b, err := Register(ctx, env.url, cfg)
 	if err != nil {
 		t.Fatal("register:", err)
 	}
@@ -582,7 +586,7 @@ func TestPersistentInstanceIDWebTransport(t *testing.T) {
 		t.Fatalf("got instance ID %q, want %q", b.InstanceID(), myUUID)
 	}
 
-	c, err := Connect(ctx, env.url, myUUID, env.opts...)
+	c, err := Connect(ctx, env.url, myUUID, env.cfg)
 	if err != nil {
 		t.Fatal("connect:", err)
 	}
@@ -605,12 +609,12 @@ func TestPersistentInstanceIDWebTransport(t *testing.T) {
 func TestConnectToNonListeningURL(t *testing.T) {
 	// Use a port that's almost certainly not listening.
 	badURL := "https://127.0.0.1:19999"
-	tlsOpt := WithTLS(&tls.Config{InsecureSkipVerify: true})
+	badTLS := &tls.Config{InsecureSkipVerify: true}
 
 	t.Run("register/quic", func(t *testing.T) {
 		ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 		defer cancel()
-		_, err := Register(ctx, badURL, tlsOpt, WithQUICPort("19999"))
+		_, err := Register(ctx, badURL, Config{TLS: badTLS, QUICPort: "19999"})
 		if err == nil {
 			t.Fatal("expected error registering to non-listening URL")
 		}
@@ -620,7 +624,7 @@ func TestConnectToNonListeningURL(t *testing.T) {
 	t.Run("connect/quic", func(t *testing.T) {
 		ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 		defer cancel()
-		_, err := Connect(ctx, badURL, "fake-id", tlsOpt, WithQUICPort("19999"))
+		_, err := Connect(ctx, badURL, "fake-id", Config{TLS: badTLS, QUICPort: "19999"})
 		if err == nil {
 			t.Fatal("expected error connecting to non-listening URL")
 		}
@@ -630,7 +634,7 @@ func TestConnectToNonListeningURL(t *testing.T) {
 	t.Run("register/wt", func(t *testing.T) {
 		ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 		defer cancel()
-		_, err := Register(ctx, badURL, tlsOpt, WithWebTransport())
+		_, err := Register(ctx, badURL, Config{TLS: badTLS, WebTransport: true})
 		if err == nil {
 			t.Fatal("expected error registering to non-listening URL via WT")
 		}
@@ -640,7 +644,7 @@ func TestConnectToNonListeningURL(t *testing.T) {
 	t.Run("connect/wt", func(t *testing.T) {
 		ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 		defer cancel()
-		_, err := Connect(ctx, badURL, "fake-id", tlsOpt, WithWebTransport())
+		_, err := Connect(ctx, badURL, "fake-id", Config{TLS: badTLS, WebTransport: true})
 		if err == nil {
 			t.Fatal("expected error connecting to non-listening URL via WT")
 		}
@@ -739,22 +743,22 @@ func TestRegisterWithTokenWebTransport(t *testing.T) {
 	defer cancel()
 
 	// Wrong token should fail.
-	_, err = Register(ctx, relayURL,
-		WithTLS(&tls.Config{RootCAs: pool}),
-		WithWebTransport(),
-		WithToken("wrong-token"),
-	)
+	_, err = Register(ctx, relayURL, Config{
+		TLS:          &tls.Config{RootCAs: pool},
+		WebTransport: true,
+		Token:        "wrong-token",
+	})
 	if err == nil {
 		t.Fatal("expected error with wrong WT token")
 	}
 	t.Logf("wrong WT token: %v", err)
 
 	// Correct token should succeed.
-	b, err := Register(ctx, relayURL,
-		WithTLS(&tls.Config{RootCAs: pool}),
-		WithWebTransport(),
-		WithToken("wt-secret"),
-	)
+	b, err := Register(ctx, relayURL, Config{
+		TLS:          &tls.Config{RootCAs: pool},
+		WebTransport: true,
+		Token:        "wt-secret",
+	})
 	if err != nil {
 		t.Fatal("register with correct WT token:", err)
 	}
@@ -768,14 +772,14 @@ func TestConnectToOccupiedInstanceWebTransport(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
 
-	b, err := Register(ctx, env.url, env.opts...)
+	b, err := Register(ctx, env.url, env.cfg)
 	if err != nil {
 		t.Fatal("register:", err)
 	}
 	defer b.CloseNow()
 
 	// First client connects.
-	c1, err := Connect(ctx, env.url, b.InstanceID(), env.opts...)
+	c1, err := Connect(ctx, env.url, b.InstanceID(), env.cfg)
 	if err != nil {
 		t.Fatal("connect c1:", err)
 	}
@@ -794,7 +798,7 @@ func TestConnectToOccupiedInstanceWebTransport(t *testing.T) {
 	}
 
 	// Second client should be rejected.
-	c2, err := Connect(ctx, env.url, b.InstanceID(), env.opts...)
+	c2, err := Connect(ctx, env.url, b.InstanceID(), env.cfg)
 	if err != nil {
 		t.Logf("second WT client rejected at connect: %v", err)
 		return
@@ -818,7 +822,7 @@ func TestConnectToNonExistentInstanceWebTransport(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
-	_, err := Connect(ctx, env.url, "does-not-exist-wt-99", env.opts...)
+	_, err := Connect(ctx, env.url, "does-not-exist-wt-99", env.cfg)
 	if err != nil {
 		t.Logf("connect to non-existent WT: %v", err)
 		return
@@ -835,7 +839,7 @@ func TestConnectToInvalidInstanceIDWebTransport(t *testing.T) {
 
 	// Empty ID — the /ws/ prefix is present but the ID is empty.
 	// This may fail at Connect or at the first Send/Recv.
-	_, err := Connect(ctx, env.url, "", env.opts...)
+	_, err := Connect(ctx, env.url, "", env.cfg)
 	if err != nil {
 		t.Logf("empty WT instance ID: %v", err)
 		return
@@ -883,9 +887,10 @@ func TestRegisterWithTokenQUIC(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
-	// Wrong token: Replace the token in opts.
-	wrongOpts := []Option{env.opts[0], env.opts[1], WithToken("bad-token")}
-	b, err := Register(ctx, env.url, wrongOpts...)
+	// Wrong token.
+	wrongCfg := env.cfg
+	wrongCfg.Token = "bad-token"
+	b, err := Register(ctx, env.url, wrongCfg)
 	if err != nil {
 		// QUIC may fail at register if the server closes the conn fast enough.
 		t.Logf("wrong QUIC token err: %v", err)
@@ -911,7 +916,7 @@ func TestConnectToNonExistentInstanceQUIC(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
-	c, err := Connect(ctx, env.url, "quic-nonexistent-xyz", env.opts...)
+	c, err := Connect(ctx, env.url, "quic-nonexistent-xyz", env.cfg)
 	if err != nil {
 		t.Logf("connect to non-existent QUIC: %v", err)
 		return
@@ -936,13 +941,13 @@ func TestSecondClientRejectedQUIC(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
 
-	b, err := Register(ctx, env.url, env.opts...)
+	b, err := Register(ctx, env.url, env.cfg)
 	if err != nil {
 		t.Fatal("register:", err)
 	}
 	defer b.CloseNow()
 
-	c1, err := Connect(ctx, env.url, b.InstanceID(), env.opts...)
+	c1, err := Connect(ctx, env.url, b.InstanceID(), env.cfg)
 	if err != nil {
 		t.Fatal("connect c1:", err)
 	}
@@ -957,7 +962,7 @@ func TestSecondClientRejectedQUIC(t *testing.T) {
 	}
 
 	// Second client via QUIC.
-	c2, err := Connect(ctx, env.url, b.InstanceID(), env.opts...)
+	c2, err := Connect(ctx, env.url, b.InstanceID(), env.cfg)
 	if err != nil {
 		t.Logf("second QUIC client rejected at connect: %v", err)
 		return
@@ -1154,7 +1159,7 @@ func TestQUICInvalidInstanceIDConnect(t *testing.T) {
 
 // TestQuicTLSConfigNil verifies the nil TLS config path in quicTLSConfig.
 func TestQuicTLSConfigNil(t *testing.T) {
-	cfg := quicTLSConfig(options{})
+	cfg := quicTLSConfig(Config{})
 	if cfg == nil {
 		t.Fatal("expected non-nil config")
 	}
@@ -1167,7 +1172,7 @@ func TestQuicTLSConfigNil(t *testing.T) {
 // cloned (not mutated) and ALPN is set.
 func TestQuicTLSConfigWithExisting(t *testing.T) {
 	orig := &tls.Config{InsecureSkipVerify: true}
-	cfg := quicTLSConfig(options{tlsConfig: orig})
+	cfg := quicTLSConfig(Config{TLS: orig})
 	if !cfg.InsecureSkipVerify {
 		t.Fatal("expected InsecureSkipVerify to be cloned")
 	}
@@ -1182,7 +1187,7 @@ func TestQuicTLSConfigWithExisting(t *testing.T) {
 
 // TestQuicAddrBadURL tests the quicAddr error path with an invalid URL.
 func TestQuicAddrBadURL(t *testing.T) {
-	_, err := quicAddr("://invalid", options{})
+	_, err := quicAddr("://invalid", Config{})
 	if err == nil {
 		t.Fatal("expected error for invalid URL")
 	}
@@ -1190,7 +1195,7 @@ func TestQuicAddrBadURL(t *testing.T) {
 
 // TestQuicAddrCustomPort tests quicAddr with a custom port override.
 func TestQuicAddrCustomPort(t *testing.T) {
-	addr, err := quicAddr("https://example.com:443", options{quicPort: "5555"})
+	addr, err := quicAddr("https://example.com:443", Config{QUICPort: "5555"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1201,7 +1206,7 @@ func TestQuicAddrCustomPort(t *testing.T) {
 
 // TestQuicAddrDefaultPort tests quicAddr with no port override.
 func TestQuicAddrDefaultPort(t *testing.T) {
-	addr, err := quicAddr("https://example.com:443", options{})
+	addr, err := quicAddr("https://example.com:443", Config{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1215,7 +1220,7 @@ func TestQuicAddrDefaultPort(t *testing.T) {
 func TestRegisterBadURLQUIC(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 	defer cancel()
-	_, err := Register(ctx, "://bad-url")
+	_, err := Register(ctx, "://bad-url", Config{})
 	if err == nil {
 		t.Fatal("expected error for bad URL")
 	}
@@ -1225,7 +1230,7 @@ func TestRegisterBadURLQUIC(t *testing.T) {
 func TestConnectBadURLQUIC(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 	defer cancel()
-	_, err := Connect(ctx, "://bad-url", "some-id")
+	_, err := Connect(ctx, "://bad-url", "some-id", Config{})
 	if err == nil {
 		t.Fatal("expected error for bad URL")
 	}
@@ -1238,7 +1243,9 @@ func TestPersistentInstanceIDQUIC(t *testing.T) {
 	defer cancel()
 
 	myUUID := "quic-persistent-uuid-42"
-	b, err := Register(ctx, env.url, append(env.opts, WithInstanceID(myUUID))...)
+	cfg := env.cfg
+	cfg.InstanceID = myUUID
+	b, err := Register(ctx, env.url, cfg)
 	if err != nil {
 		t.Fatal("register:", err)
 	}
@@ -1248,7 +1255,7 @@ func TestPersistentInstanceIDQUIC(t *testing.T) {
 		t.Fatalf("got %q, want %q", b.InstanceID(), myUUID)
 	}
 
-	c, err := Connect(ctx, env.url, myUUID, env.opts...)
+	c, err := Connect(ctx, env.url, myUUID, env.cfg)
 	if err != nil {
 		t.Fatal("connect:", err)
 	}
@@ -1455,10 +1462,10 @@ func TestConnectToClosedRelayWT(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
-	b, err := Register(ctx, relayURL,
-		WithTLS(&tls.Config{RootCAs: pool}),
-		WithWebTransport(),
-	)
+	b, err := Register(ctx, relayURL, Config{
+		TLS:          &tls.Config{RootCAs: pool},
+		WebTransport: true,
+	})
 	if err != nil {
 		t.Fatal("register:", err)
 	}
@@ -1473,10 +1480,10 @@ func TestConnectToClosedRelayWT(t *testing.T) {
 	connectCtx, connectCancel := context.WithTimeout(context.Background(), 3*time.Second)
 	defer connectCancel()
 
-	_, err = Connect(connectCtx, relayURL, instanceID,
-		WithTLS(&tls.Config{RootCAs: pool}),
-		WithWebTransport(),
-	)
+	_, err = Connect(connectCtx, relayURL, instanceID, Config{
+		TLS:          &tls.Config{RootCAs: pool},
+		WebTransport: true,
+	})
 	if err == nil {
 		t.Fatal("expected error connecting to closed relay via WT")
 	}
@@ -1513,10 +1520,10 @@ func TestRegisterToClosedRelayWT(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 	defer cancel()
 
-	_, err = Register(ctx, relayURL,
-		WithTLS(&tls.Config{RootCAs: pool}),
-		WithWebTransport(),
-	)
+	_, err = Register(ctx, relayURL, Config{
+		TLS:          &tls.Config{RootCAs: pool},
+		WebTransport: true,
+	})
 	if err == nil {
 		t.Fatal("expected error registering to closed relay via WT")
 	}
@@ -1576,7 +1583,7 @@ func TestWTLongInstanceIDRejected(t *testing.T) {
 	defer cancel()
 
 	longID := strings.Repeat("x", 65)
-	_, err := Connect(ctx, env.url, longID, env.opts...)
+	_, err := Connect(ctx, env.url, longID, env.cfg)
 	if err != nil {
 		t.Logf("long WT instance ID: %v", err)
 		return
@@ -2019,7 +2026,7 @@ func TestConnectWTNilTLSConfig(t *testing.T) {
 	defer cancel()
 
 	// Connect with WebTransport but no TLS config (nil tlsConfig path).
-	_, err := Connect(ctx, env.url, "fake-id", WithWebTransport())
+	_, err := Connect(ctx, env.url, "fake-id", Config{WebTransport: true})
 	if err == nil {
 		t.Fatal("expected error with no TLS config (cert validation)")
 	}
@@ -2031,7 +2038,7 @@ func TestRegisterWTNilTLSConfig(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 	defer cancel()
 
-	_, err := Register(ctx, env.url, WithWebTransport())
+	_, err := Register(ctx, env.url, Config{WebTransport: true})
 	if err == nil {
 		t.Fatal("expected error with no TLS config (cert validation)")
 	}
@@ -2239,13 +2246,13 @@ func TestMultipleChannels(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
 
-	b, err := Register(ctx, env.url, env.opts...)
+	b, err := Register(ctx, env.url, env.cfg)
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer b.CloseNow()
 
-	c, err := Connect(ctx, env.url, b.InstanceID(), env.opts...)
+	c, err := Connect(ctx, env.url, b.InstanceID(), env.cfg)
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -151,14 +151,14 @@ func benchRelays(b *testing.B) []benchRelay {
 			setup: func(b *testing.B) relayEnv {
 				env := relayEnv{
 					url: url,
-					opts: []Option{
-						WithToken(token),
-						WithWebTransport(),
+					cfg: Config{
+						Token:        token,
+						WebTransport: true,
 					},
 				}
 				ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 				defer cancel()
-				probe, err := Register(ctx, env.url, env.opts...)
+				probe, err := Register(ctx, env.url, env.cfg)
 				if err != nil {
 					b.Skipf("live relay not reachable: %v", err)
 				}
@@ -176,13 +176,13 @@ func benchPair(b *testing.B, env relayEnv) (*Conn, *Conn) {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	b.Cleanup(cancel)
 
-	backend, err := Register(ctx, env.url, env.opts...)
+	backend, err := Register(ctx, env.url, env.cfg)
 	if err != nil {
 		b.Fatal("register:", err)
 	}
 	b.Cleanup(func() { backend.CloseNow() })
 
-	client, err := Connect(ctx, env.url, backend.InstanceID(), env.opts...)
+	client, err := Connect(ctx, env.url, backend.InstanceID(), env.cfg)
 	if err != nil {
 		b.Fatal("connect:", err)
 	}

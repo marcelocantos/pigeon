@@ -48,12 +48,11 @@ func main() {
 
 	switch cmd {
 	case "register":
-		var opts []tern.Option
-		opts = append(opts, tern.WithTLS(tlsConfig))
+		cfg := tern.Config{TLS: tlsConfig}
 		if len(os.Args) > 3 && os.Args[3] != "" {
-			opts = append(opts, tern.WithToken(os.Args[3]))
+			cfg.Token = os.Args[3]
 		}
-		conn, err = tern.Register(ctx, url, opts...)
+		conn, err = tern.Register(ctx, url, cfg)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "register: %v\n", err)
 			os.Exit(1)
@@ -67,7 +66,7 @@ func main() {
 			os.Exit(1)
 		}
 		instanceID := os.Args[3]
-		conn, err = tern.Connect(ctx, url, instanceID, tern.WithTLS(tlsConfig))
+		conn, err = tern.Connect(ctx, url, instanceID, tern.Config{TLS: tlsConfig})
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "connect: %v\n", err)
 			os.Exit(1)

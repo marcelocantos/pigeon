@@ -58,9 +58,9 @@ func faultyRelay(t *testing.T, opts ...faultproxy.Option) (relayEnv, *faultproxy
 
 	return relayEnv{
 		url: "https://127.0.0.1:" + strconv.Itoa(wtPort),
-		opts: []Option{
-			WithTLS(&tls.Config{RootCAs: pool}),
-			WithQUICPort(strconv.Itoa(proxyAddr.Port)),
+		cfg: Config{
+			TLS:      &tls.Config{RootCAs: pool},
+			QUICPort: strconv.Itoa(proxyAddr.Port),
 		},
 	}, proxy
 }
@@ -335,7 +335,7 @@ func TestRegisterDropAfterHandshake(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
-	_, err := Register(ctx, env.url, env.opts...)
+	_, err := Register(ctx, env.url, env.cfg)
 	if err == nil {
 		t.Fatal("expected register to fail with total packet loss")
 	}
@@ -351,7 +351,7 @@ func TestConnectDropAfterEstablished(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
-	b, err := Register(ctx, env.url, env.opts...)
+	b, err := Register(ctx, env.url, env.cfg)
 	if err != nil {
 		t.Fatal("register:", err)
 	}
@@ -360,7 +360,7 @@ func TestConnectDropAfterEstablished(t *testing.T) {
 	// Drop all subsequent packets — client can't even complete TLS.
 	proxy.UpdateProfile(faultproxy.WithPacketLoss(1.0))
 
-	_, err = Connect(ctx, env.url, b.InstanceID(), env.opts...)
+	_, err = Connect(ctx, env.url, b.InstanceID(), env.cfg)
 	if err == nil {
 		t.Fatal("expected error from connect with all packets dropped")
 	}

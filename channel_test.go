@@ -53,10 +53,10 @@ func localRelayWithToken(t *testing.T, token string) relayEnv {
 
 	return relayEnv{
 		url: "https://127.0.0.1:" + strconv.Itoa(wtPort),
-		opts: []Option{
-			WithTLS(&tls.Config{RootCAs: pool}),
-			WithQUICPort(strconv.Itoa(qPort)),
-			WithToken(token),
+		cfg: Config{
+			TLS:      &tls.Config{RootCAs: pool},
+			QUICPort: strconv.Itoa(qPort),
+			Token:    token,
 		},
 	}
 }
@@ -591,7 +591,7 @@ func TestConnectToNonExistentInstance(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
-	c, err := Connect(ctx, env.url, "does-not-exist-12345", env.opts...)
+	c, err := Connect(ctx, env.url, "does-not-exist-12345", env.cfg)
 	if err != nil {
 		// Good: Connect itself returned an error (WebTransport path).
 		t.Logf("connect to non-existent: %v", err)
@@ -618,18 +618,10 @@ func TestRegisterWithInvalidToken(t *testing.T) {
 	defer cancel()
 
 	// Use wrong token.
-	badOpts := make([]Option, len(env.opts))
-	copy(badOpts, env.opts)
-	// Replace the token option.
-	for i, opt := range badOpts {
-		_ = opt
-		_ = i
-	}
-	// Build opts without the existing token, then add wrong token.
-	optsNoToken := []Option{env.opts[0], env.opts[1]} // TLS and QUICPort
-	optsNoToken = append(optsNoToken, WithToken("wrong-token"))
+	wrongCfg := env.cfg
+	wrongCfg.Token = "wrong-token"
 
-	_, err := Register(ctx, env.url, optsNoToken...)
+	_, err := Register(ctx, env.url, wrongCfg)
 	if err == nil {
 		t.Fatal("expected error with wrong token, got nil")
 	}
@@ -961,14 +953,14 @@ func TestSecondClientRejected(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
 
-	b, err := Register(ctx, env.url, env.opts...)
+	b, err := Register(ctx, env.url, env.cfg)
 	if err != nil {
 		t.Fatal("register:", err)
 	}
 	defer b.CloseNow()
 
 	// First client connects.
-	c1, err := Connect(ctx, env.url, b.InstanceID(), env.opts...)
+	c1, err := Connect(ctx, env.url, b.InstanceID(), env.cfg)
 	if err != nil {
 		t.Fatal("connect c1:", err)
 	}
@@ -987,7 +979,7 @@ func TestSecondClientRejected(t *testing.T) {
 	}
 
 	// Second client should be rejected (instance occupied).
-	c2, err := Connect(ctx, env.url, b.InstanceID(), env.opts...)
+	c2, err := Connect(ctx, env.url, b.InstanceID(), env.cfg)
 	if err != nil {
 		// Good: Connect itself returned an error (WebTransport path).
 		t.Logf("second client rejected at connect: %v", err)

@@ -143,7 +143,7 @@ func TestRegisterAssignsID(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
-	backend, err := tern.Register(ctx, url, tern.WithTLS(tlsConfig), tern.WithWebTransport())
+	backend, err := tern.Register(ctx, url, tern.Config{TLS: tlsConfig, WebTransport: true})
 	if err != nil {
 		t.Fatal("register:", err)
 	}
@@ -160,10 +160,10 @@ func TestRegisterAssignsID_QUIC(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
-	backend, err := tern.Register(ctx, tr.wtURL,
-		tern.WithTLS(tr.tlsConfig),
-		tern.WithQUICPort(tr.quicPort),
-	)
+	backend, err := tern.Register(ctx, tr.wtURL, tern.Config{
+		TLS:      tr.tlsConfig,
+		QUICPort: tr.quicPort,
+	})
 	if err != nil {
 		t.Fatal("register:", err)
 	}
@@ -180,13 +180,13 @@ func TestBidirectionalBridge(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
-	backend, err := tern.Register(ctx, url, tern.WithTLS(tlsConfig), tern.WithWebTransport())
+	backend, err := tern.Register(ctx, url, tern.Config{TLS: tlsConfig, WebTransport: true})
 	if err != nil {
 		t.Fatal("register:", err)
 	}
 	defer backend.CloseNow()
 
-	client, err := tern.Connect(ctx, url, backend.InstanceID(), tern.WithTLS(tlsConfig), tern.WithWebTransport())
+	client, err := tern.Connect(ctx, url, backend.InstanceID(), tern.Config{TLS: tlsConfig, WebTransport: true})
 	if err != nil {
 		t.Fatal("connect:", err)
 	}
@@ -224,19 +224,19 @@ func TestBidirectionalBridge_QUIC(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
-	backend, err := tern.Register(ctx, tr.wtURL,
-		tern.WithTLS(tr.tlsConfig),
-		tern.WithQUICPort(tr.quicPort),
-	)
+	backend, err := tern.Register(ctx, tr.wtURL, tern.Config{
+		TLS:      tr.tlsConfig,
+		QUICPort: tr.quicPort,
+	})
 	if err != nil {
 		t.Fatal("register:", err)
 	}
 	defer backend.CloseNow()
 
-	client, err := tern.Connect(ctx, tr.wtURL, backend.InstanceID(),
-		tern.WithTLS(tr.tlsConfig),
-		tern.WithQUICPort(tr.quicPort),
-	)
+	client, err := tern.Connect(ctx, tr.wtURL, backend.InstanceID(), tern.Config{
+		TLS:      tr.tlsConfig,
+		QUICPort: tr.quicPort,
+	})
 	if err != nil {
 		t.Fatal("connect:", err)
 	}
@@ -276,20 +276,20 @@ func TestCrossProtocolBridge(t *testing.T) {
 	defer cancel()
 
 	// Backend registers via raw QUIC.
-	backend, err := tern.Register(ctx, tr.wtURL,
-		tern.WithTLS(tr.tlsConfig),
-		tern.WithQUICPort(tr.quicPort),
-	)
+	backend, err := tern.Register(ctx, tr.wtURL, tern.Config{
+		TLS:      tr.tlsConfig,
+		QUICPort: tr.quicPort,
+	})
 	if err != nil {
 		t.Fatal("register:", err)
 	}
 	defer backend.CloseNow()
 
 	// Client connects via WebTransport.
-	client, err := tern.Connect(ctx, tr.wtURL, backend.InstanceID(),
-		tern.WithTLS(tr.tlsConfig),
-		tern.WithWebTransport(),
-	)
+	client, err := tern.Connect(ctx, tr.wtURL, backend.InstanceID(), tern.Config{
+		TLS:          tr.tlsConfig,
+		WebTransport: true,
+	})
 	if err != nil {
 		t.Fatal("connect:", err)
 	}
@@ -325,13 +325,13 @@ func TestDatagramForwarding(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
-	backend, err := tern.Register(ctx, url, tern.WithTLS(tlsConfig), tern.WithWebTransport())
+	backend, err := tern.Register(ctx, url, tern.Config{TLS: tlsConfig, WebTransport: true})
 	if err != nil {
 		t.Fatal("register:", err)
 	}
 	defer backend.CloseNow()
 
-	client, err := tern.Connect(ctx, url, backend.InstanceID(), tern.WithTLS(tlsConfig), tern.WithWebTransport())
+	client, err := tern.Connect(ctx, url, backend.InstanceID(), tern.Config{TLS: tlsConfig, WebTransport: true})
 	if err != nil {
 		t.Fatal("connect:", err)
 	}
@@ -369,19 +369,19 @@ func TestDatagramForwarding_QUIC(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
-	backend, err := tern.Register(ctx, tr.wtURL,
-		tern.WithTLS(tr.tlsConfig),
-		tern.WithQUICPort(tr.quicPort),
-	)
+	backend, err := tern.Register(ctx, tr.wtURL, tern.Config{
+		TLS:      tr.tlsConfig,
+		QUICPort: tr.quicPort,
+	})
 	if err != nil {
 		t.Fatal("register:", err)
 	}
 	defer backend.CloseNow()
 
-	client, err := tern.Connect(ctx, tr.wtURL, backend.InstanceID(),
-		tern.WithTLS(tr.tlsConfig),
-		tern.WithQUICPort(tr.quicPort),
-	)
+	client, err := tern.Connect(ctx, tr.wtURL, backend.InstanceID(), tern.Config{
+		TLS:      tr.tlsConfig,
+		QUICPort: tr.quicPort,
+	})
 	if err != nil {
 		t.Fatal("connect:", err)
 	}
@@ -420,19 +420,19 @@ func TestTokenAuth(t *testing.T) {
 	defer cancel()
 
 	// No token -> should fail.
-	_, err := tern.Register(ctx, url, tern.WithTLS(tlsConfig), tern.WithWebTransport())
+	_, err := tern.Register(ctx, url, tern.Config{TLS: tlsConfig, WebTransport: true})
 	if err == nil {
 		t.Fatal("expected error without token")
 	}
 
 	// Wrong token -> should fail.
-	_, err = tern.Register(ctx, url, tern.WithTLS(tlsConfig), tern.WithToken("wrong"), tern.WithWebTransport())
+	_, err = tern.Register(ctx, url, tern.Config{TLS: tlsConfig, Token: "wrong", WebTransport: true})
 	if err == nil {
 		t.Fatal("expected error with wrong token")
 	}
 
 	// Correct token -> should succeed.
-	backend, err := tern.Register(ctx, url, tern.WithTLS(tlsConfig), tern.WithToken("secret-token"), tern.WithWebTransport())
+	backend, err := tern.Register(ctx, url, tern.Config{TLS: tlsConfig, Token: "secret-token", WebTransport: true})
 	if err != nil {
 		t.Fatal("register with token:", err)
 	}
@@ -449,30 +449,30 @@ func TestTokenAuth_QUIC(t *testing.T) {
 	defer cancel()
 
 	// No token -> should fail.
-	_, err := tern.Register(ctx, tr.wtURL,
-		tern.WithTLS(tr.tlsConfig),
-		tern.WithQUICPort(tr.quicPort),
-	)
+	_, err := tern.Register(ctx, tr.wtURL, tern.Config{
+		TLS:      tr.tlsConfig,
+		QUICPort: tr.quicPort,
+	})
 	if err == nil {
 		t.Fatal("expected error without token")
 	}
 
 	// Wrong token -> should fail.
-	_, err = tern.Register(ctx, tr.wtURL,
-		tern.WithTLS(tr.tlsConfig),
-		tern.WithQUICPort(tr.quicPort),
-		tern.WithToken("wrong"),
-	)
+	_, err = tern.Register(ctx, tr.wtURL, tern.Config{
+		TLS:      tr.tlsConfig,
+		QUICPort: tr.quicPort,
+		Token:    "wrong",
+	})
 	if err == nil {
 		t.Fatal("expected error with wrong token")
 	}
 
 	// Correct token -> should succeed.
-	backend, err := tern.Register(ctx, tr.wtURL,
-		tern.WithTLS(tr.tlsConfig),
-		tern.WithQUICPort(tr.quicPort),
-		tern.WithToken("secret-token"),
-	)
+	backend, err := tern.Register(ctx, tr.wtURL, tern.Config{
+		TLS:      tr.tlsConfig,
+		QUICPort: tr.quicPort,
+		Token:    "secret-token",
+	})
 	if err != nil {
 		t.Fatal("register with token:", err)
 	}
@@ -488,21 +488,21 @@ func TestSecondClientRejected(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
-	backend, err := tern.Register(ctx, url, tern.WithTLS(tlsConfig), tern.WithWebTransport())
+	backend, err := tern.Register(ctx, url, tern.Config{TLS: tlsConfig, WebTransport: true})
 	if err != nil {
 		t.Fatal("register:", err)
 	}
 	defer backend.CloseNow()
 
 	// First client connects.
-	client1, err := tern.Connect(ctx, url, backend.InstanceID(), tern.WithTLS(tlsConfig), tern.WithWebTransport())
+	client1, err := tern.Connect(ctx, url, backend.InstanceID(), tern.Config{TLS: tlsConfig, WebTransport: true})
 	if err != nil {
 		t.Fatal("connect first:", err)
 	}
 	defer client1.CloseNow()
 
 	// Second client should be rejected.
-	_, err = tern.Connect(ctx, url, backend.InstanceID(), tern.WithTLS(tlsConfig), tern.WithWebTransport())
+	_, err = tern.Connect(ctx, url, backend.InstanceID(), tern.Config{TLS: tlsConfig, WebTransport: true})
 	if err == nil {
 		t.Fatal("expected error for second client")
 	}

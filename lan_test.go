@@ -18,19 +18,23 @@ func lanPair(t *testing.T, env relayEnv) (*Conn, *Conn, *LANServer) {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
-	lanSrv, err := NewLANServer(nil)
+	lanSrv, err := NewLANServer("", nil)
 	if err != nil {
 		t.Fatal("NewLANServer:", err)
 	}
 	t.Cleanup(func() { lanSrv.Close() })
 
-	b, err := Register(ctx, env.url, append(env.opts, WithLANServer(lanSrv))...)
+	bCfg := env.cfg
+	bCfg.LANServer = lanSrv
+	b, err := Register(ctx, env.url, bCfg)
 	if err != nil {
 		t.Fatal("register:", err)
 	}
 	t.Cleanup(func() { b.CloseNow() })
 
-	c, err := Connect(ctx, env.url, b.InstanceID(), append(env.opts, WithLAN(nil))...)
+	cCfg := env.cfg
+	cCfg.LAN = true
+	c, err := Connect(ctx, env.url, b.InstanceID(), cCfg)
 	if err != nil {
 		t.Fatal("connect:", err)
 	}
@@ -123,20 +127,26 @@ func TestLANServerMultipleClients(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
 
-	lanSrv, err := NewLANServer(nil)
+	lanSrv, err := NewLANServer("", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer lanSrv.Close()
 
 	// Two backends sharing the same LAN server.
-	b1, err := Register(ctx, env.url, append(env.opts, WithLANServer(lanSrv), WithInstanceID("b1"))...)
+	b1Cfg := env.cfg
+	b1Cfg.LANServer = lanSrv
+	b1Cfg.InstanceID = "b1"
+	b1, err := Register(ctx, env.url, b1Cfg)
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer b1.CloseNow()
 
-	b2, err := Register(ctx, env.url, append(env.opts, WithLANServer(lanSrv), WithInstanceID("b2"))...)
+	b2Cfg := env.cfg
+	b2Cfg.LANServer = lanSrv
+	b2Cfg.InstanceID = "b2"
+	b2, err := Register(ctx, env.url, b2Cfg)
 	if err != nil {
 		t.Fatal(err)
 	}
