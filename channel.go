@@ -156,11 +156,22 @@ func (dc *DatagramChannel) Send(data []byte) error {
 	if dc.ch != nil {
 		payload = dc.ch.Encrypt(data)
 	}
-	// Prefix with 2-byte channel ID.
-	frame := make([]byte, 2+len(payload))
-	binary.BigEndian.PutUint16(frame[:2], dc.id)
-	copy(frame[2:], payload)
-	return dc.conn.dg.SendDatagram(frame)
+
+	chanPrefix := make([]byte, chanIDSize)
+	binary.BigEndian.PutUint16(chanPrefix, dc.id)
+
+	// Does it fit in a single datagram?
+	if 1+chanIDSize+len(payload) <= dc.conn.maxDgPayload {
+		frame := make([]byte, 1+chanIDSize+len(payload))
+		frame[0] = dgChanWhole
+		copy(frame[1:], chanPrefix)
+		copy(frame[1+chanIDSize:], payload)
+		return dc.conn.dg.SendDatagram(frame)
+	}
+
+	// Fragment it.
+	msgID := nextMsgID.Add(1)
+	return sendFragmented(dc.conn.dg, payload, dc.conn.maxDgPayload, msgID, dgChanFragment, chanPrefix)
 }
 
 // Recv receives the next datagram on this channel. Blocks until a
@@ -186,13 +197,13 @@ func (dc *DatagramChannel) Recv(ctx context.Context) ([]byte, error) {
 // Unlike streaming channels, there is no open/accept — both sides
 // create the channel by name and it works immediately.
 func (c *Conn) DatagramChannel(name string) *DatagramChannel {
+	c.ensureDispatcher()
+
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
 	if c.dgChannels == nil {
 		c.dgChannels = make(map[uint16]*DatagramChannel)
-		// Start the datagram dispatcher if not already running.
-		go c.datagramDispatcher()
 	}
 
 	id := channelID(name)

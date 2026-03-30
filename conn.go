@@ -75,8 +75,14 @@ type Conn struct {
 	pairingRecord *crypto.PairingRecord
 
 	// Datagram channel dispatch.
-	dgChannels map[uint16]*DatagramChannel
-	dgIncoming map[uint16]chan []byte // per-channel datagram queues
+	dgChannels  map[uint16]*DatagramChannel
+	dgIncoming  map[uint16]chan []byte // per-channel datagram queues
+	connDg      chan []byte            // conn-level datagram queue (when dispatcher is running)
+	dgDispatch  sync.Once             // starts dispatcher once
+
+	// Fragment reassembly for large datagrams.
+	reasm        *reassembler
+	maxDgPayload int // max bytes per raw datagram (default 1200)
 
 	ctx    context.Context    // Conn lifecycle context
 	cancel context.CancelFunc // cancels background goroutines
@@ -84,16 +90,25 @@ type Conn struct {
 
 func newConn(stream io.ReadWriteCloser, dg datagrammer, closer io.Closer, opener streamOpener, acceptor streamAcceptor, instanceID string) *Conn {
 	ctx, cancel := context.WithCancel(context.Background())
-	return &Conn{
-		instanceID: instanceID,
-		stream:     stream,
-		dg:         dg,
-		closer:     closer,
-		opener:     opener,
-		acceptor:   acceptor,
-		ctx:        ctx,
-		cancel:     cancel,
+	done := make(chan struct{})
+	c := &Conn{
+		instanceID:   instanceID,
+		stream:       stream,
+		dg:           dg,
+		closer:       closer,
+		opener:       opener,
+		acceptor:     acceptor,
+		reasm:        newReassembler(DefaultFragmentTimeout, done),
+		maxDgPayload: DefaultMaxDatagramPayload,
+		ctx:          ctx,
+		cancel:       cancel,
 	}
+	// Close the reassembler when the conn context is cancelled.
+	go func() {
+		<-ctx.Done()
+		close(done)
+	}()
+	return c
 }
 
 // SetPairingRecord stores a PairingRecord for deriving per-channel
@@ -114,36 +129,22 @@ func (c *Conn) acceptStream(ctx context.Context) (io.ReadWriteCloser, error) {
 }
 
 // datagramDispatcher reads datagrams from the QUIC connection and
-// routes them to the appropriate DatagramChannel based on the 2-byte
-// channel ID prefix.
+// routes them: conn-level datagrams go to the connDg queue, channel-
+// tagged datagrams go to the appropriate channel queue. Handles both
+// whole and fragmented datagrams.
 func (c *Conn) datagramDispatcher() {
 	for {
-		data, err := c.dg.ReceiveDatagram(c.ctx)
+		payload, chanID, err := c.recvRawDatagram(c.ctx)
 		if err != nil {
 			return
 		}
-		if len(data) < 2 {
-			continue
-		}
-		id := binary.BigEndian.Uint16(data[:2])
-		payload := data[2:]
-
-		c.mu.Lock()
-		ch, ok := c.dgIncoming[id]
-		if !ok {
-			// Lazily create the incoming queue.
-			if c.dgIncoming == nil {
-				c.dgIncoming = make(map[uint16]chan []byte)
+		if chanID >= 0 {
+			c.routeToChannel(uint16(chanID), payload)
+		} else {
+			select {
+			case c.connDg <- payload:
+			default:
 			}
-			ch = make(chan []byte, 64)
-			c.dgIncoming[id] = ch
-		}
-		c.mu.Unlock()
-
-		select {
-		case ch <- payload:
-		default:
-			// Drop if queue is full (datagram semantics — loss is expected).
 		}
 	}
 }
@@ -291,9 +292,14 @@ func (c *Conn) Recv(ctx context.Context) ([]byte, error) {
 	}
 }
 
-// SendDatagram sends an unreliable datagram to the peer via the
-// QUIC session. In raw mode, data is sent as-is. In encrypted
-// mode (after SetDatagramChannel), data is encrypted before sending.
+// SendDatagram sends an unreliable datagram to the peer. Payloads that
+// fit in a single QUIC datagram are sent as-is (with a 1-byte framing
+// prefix). Larger payloads are automatically split into fragments and
+// reassembled by the receiver. If any fragment is lost, the entire
+// message is discarded after a timeout (datagram semantics).
+//
+// In encrypted mode (after SetDatagramChannel), data is encrypted
+// before framing/fragmentation.
 func (c *Conn) SendDatagram(data []byte) error {
 	c.mu.Lock()
 	ch := c.dgChannel
@@ -303,36 +309,163 @@ func (c *Conn) SendDatagram(data []byte) error {
 	if ch != nil {
 		payload = ch.Encrypt(data)
 	}
-	return c.dg.SendDatagram(payload)
-}
 
-// RecvDatagram receives the next datagram from the peer. In raw mode,
-// returns the raw bytes. In encrypted mode (after SetDatagramChannel),
-// decrypts the datagram before returning.
-func (c *Conn) RecvDatagram(ctx context.Context) ([]byte, error) {
-	data, err := c.dg.ReceiveDatagram(ctx)
-	if err != nil {
-		return nil, err
+	// Does it fit in a single datagram? (1 byte prefix + payload)
+	if 1+len(payload) <= c.maxDgPayload {
+		frame := make([]byte, 1+len(payload))
+		frame[0] = dgConnWhole
+		copy(frame[1:], payload)
+		return c.dg.SendDatagram(frame)
 	}
 
+	// Fragment it.
+	msgID := nextMsgID.Add(1)
+	return sendFragmented(c.dg, payload, c.maxDgPayload, msgID, dgConnFragment, nil)
+}
+
+// RecvDatagram receives the next datagram from the peer. Fragmented
+// datagrams are reassembled transparently. If reassembly of a message
+// times out (missing fragments), it is silently discarded and the next
+// complete message is returned.
+//
+// Channel-tagged datagrams (from DatagramChannel) are routed to the
+// appropriate channel queue and not returned here.
+//
+// In encrypted mode (after SetDatagramChannel), the datagram is
+// decrypted after reassembly.
+func (c *Conn) RecvDatagram(ctx context.Context) ([]byte, error) {
+	c.mu.Lock()
+	hasChannels := len(c.dgChannels) > 0
+	c.mu.Unlock()
+
+	if hasChannels {
+		// Dispatcher is running — read from the conn-level queue.
+		c.ensureDispatcher()
+		select {
+		case payload := <-c.connDg:
+			return c.decryptDatagram(payload)
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		case <-c.ctx.Done():
+			return nil, c.ctx.Err()
+		}
+	}
+
+	// No channels — read directly.
+	for {
+		payload, chanID, err := c.recvRawDatagram(ctx)
+		if err != nil {
+			return nil, err
+		}
+		if chanID >= 0 {
+			c.routeToChannel(uint16(chanID), payload)
+			continue
+		}
+		return c.decryptDatagram(payload)
+	}
+}
+
+func (c *Conn) decryptDatagram(payload []byte) ([]byte, error) {
 	c.mu.Lock()
 	ch := c.dgChannel
 	c.mu.Unlock()
-
-	if ch == nil {
-		return data, nil
+	if ch != nil {
+		return ch.Decrypt(payload)
 	}
-
-	return ch.Decrypt(data)
+	return payload, nil
 }
 
-// Fragmenter returns a Fragmenter for sending and receiving large
-// datagrams that exceed the QUIC datagram frame size. Fragments are
-// sent as individual datagrams and reassembled on the receive side.
-// If any fragment doesn't arrive within the timeout, the entire
-// message is discarded.
-func (c *Conn) Fragmenter(opts ...FragmenterOption) *Fragmenter {
-	return NewFragmenter(c.dg, opts...)
+func (c *Conn) ensureDispatcher() {
+	c.dgDispatch.Do(func() {
+		c.connDg = make(chan []byte, 64)
+		go c.datagramDispatcher()
+	})
+}
+
+// recvRawDatagram reads one logical datagram from the QUIC layer,
+// handling framing and fragment reassembly. Returns the payload and
+// the channel ID (-1 for conn-level datagrams).
+func (c *Conn) recvRawDatagram(ctx context.Context) (payload []byte, chanID int, err error) {
+	for {
+		data, err := c.dg.ReceiveDatagram(ctx)
+		if err != nil {
+			return nil, -1, err
+		}
+		if len(data) == 0 {
+			continue
+		}
+
+		switch data[0] {
+		case dgConnWhole:
+			return data[1:], -1, nil
+
+		case dgConnFragment:
+			if len(data) < 1+fragHeaderSize {
+				continue
+			}
+			msgID := binary.BigEndian.Uint32(data[1:5])
+			fragIdx := int(binary.BigEndian.Uint16(data[5:7]))
+			totalFrags := int(binary.BigEndian.Uint16(data[7:9]))
+			chunk := data[1+fragHeaderSize:]
+			if totalFrags < 2 || fragIdx >= totalFrags {
+				continue
+			}
+			assembled := c.reasm.feed(msgID, fragIdx, totalFrags, chunk)
+			if assembled == nil {
+				continue
+			}
+			return assembled, -1, nil
+
+		case dgChanWhole:
+			if len(data) < 1+chanIDSize {
+				continue
+			}
+			id := int(binary.BigEndian.Uint16(data[1:3]))
+			return data[1+chanIDSize:], id, nil
+
+		case dgChanFragment:
+			if len(data) < 1+chanIDSize+fragHeaderSize {
+				continue
+			}
+			id := int(binary.BigEndian.Uint16(data[1:3]))
+			off := 1 + chanIDSize
+			msgID := binary.BigEndian.Uint32(data[off : off+4])
+			fragIdx := int(binary.BigEndian.Uint16(data[off+4 : off+6]))
+			totalFrags := int(binary.BigEndian.Uint16(data[off+6 : off+8]))
+			chunk := data[off+fragHeaderSize:]
+			if totalFrags < 2 || fragIdx >= totalFrags {
+				continue
+			}
+			assembled := c.reasm.feed(msgID, fragIdx, totalFrags, chunk)
+			if assembled == nil {
+				continue
+			}
+			return assembled, id, nil
+
+		default:
+			continue
+		}
+	}
+}
+
+// routeToChannel delivers a datagram payload to the named channel's queue.
+func (c *Conn) routeToChannel(id uint16, payload []byte) {
+	c.mu.Lock()
+	ch, ok := c.dgIncoming[id]
+	if !ok {
+		if c.dgIncoming == nil {
+			c.dgIncoming = make(map[uint16]chan []byte)
+		}
+		ch = make(chan []byte, 64)
+		c.dgIncoming[id] = ch
+	}
+	c.mu.Unlock()
+
+	select {
+	case ch <- payload:
+	default:
+		// Drop if full (datagram semantics).
+	}
 }
 
 // Close gracefully closes the session. It closes the primary

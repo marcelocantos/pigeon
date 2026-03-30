@@ -12,25 +12,20 @@ import (
 	"time"
 )
 
-// TestFragmentSmallPayload sends a payload that fits in one fragment.
-func TestFragmentSmallPayload(t *testing.T) {
+// TestDatagramSmallPayload sends a small datagram (fits in one packet).
+func TestDatagramSmallPayload(t *testing.T) {
 	env := localRelay(t)
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
 	b, c := connectPair(t, env)
 
-	sf := c.Fragmenter()
-	defer sf.Close()
-	rf := b.Fragmenter()
-	defer rf.Close()
-
-	msg := []byte("hello fragments")
-	if err := sf.Send(msg); err != nil {
+	msg := []byte("hello datagrams")
+	if err := c.SendDatagram(msg); err != nil {
 		t.Fatal("send:", err)
 	}
 
-	got, err := rf.Recv(ctx)
+	got, err := b.RecvDatagram(ctx)
 	if err != nil {
 		t.Fatal("recv:", err)
 	}
@@ -39,31 +34,30 @@ func TestFragmentSmallPayload(t *testing.T) {
 	}
 }
 
-// TestFragmentLargePayload sends a payload larger than one datagram.
-func TestFragmentLargePayload(t *testing.T) {
+// TestDatagramLargePayload sends a payload larger than one QUIC datagram.
+// The integrated fragmentation should split and reassemble transparently.
+func TestDatagramLargePayload(t *testing.T) {
 	env := localRelay(t)
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
 
 	b, c := connectPair(t, env)
 
-	// Use small max payload to force many fragments.
-	sf := c.Fragmenter(WithMaxPayload(50))
-	defer sf.Close()
-	rf := b.Fragmenter(WithMaxPayload(50))
-	defer rf.Close()
+	// Force small max payload to trigger fragmentation.
+	c.maxDgPayload = 50
+	b.maxDgPayload = 50
 
-	// 500 bytes → 500 / (50-10) = 13 fragments.
+	// 500 bytes → multiple fragments.
 	payload := make([]byte, 500)
 	for i := range payload {
 		payload[i] = byte(i % 256)
 	}
 
-	if err := sf.Send(payload); err != nil {
+	if err := c.SendDatagram(payload); err != nil {
 		t.Fatal("send:", err)
 	}
 
-	got, err := rf.Recv(ctx)
+	got, err := b.RecvDatagram(ctx)
 	if err != nil {
 		t.Fatal("recv:", err)
 	}
@@ -72,24 +66,19 @@ func TestFragmentLargePayload(t *testing.T) {
 	}
 }
 
-// TestFragmentEmptyPayload sends an empty payload.
-func TestFragmentEmptyPayload(t *testing.T) {
+// TestDatagramEmptyPayload sends an empty datagram.
+func TestDatagramEmptyPayload(t *testing.T) {
 	env := localRelay(t)
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
 	b, c := connectPair(t, env)
 
-	sf := c.Fragmenter()
-	defer sf.Close()
-	rf := b.Fragmenter()
-	defer rf.Close()
-
-	if err := sf.Send([]byte{}); err != nil {
+	if err := c.SendDatagram([]byte{}); err != nil {
 		t.Fatal("send:", err)
 	}
 
-	got, err := rf.Recv(ctx)
+	got, err := b.RecvDatagram(ctx)
 	if err != nil {
 		t.Fatal("recv:", err)
 	}
@@ -98,19 +87,16 @@ func TestFragmentEmptyPayload(t *testing.T) {
 	}
 }
 
-// TestFragmentMultipleMessages sends several large messages and
-// verifies they all arrive correctly and in order.
-func TestFragmentMultipleMessages(t *testing.T) {
+// TestDatagramMultipleLargeMessages sends several large messages and
+// verifies they all arrive correctly.
+func TestDatagramMultipleLargeMessages(t *testing.T) {
 	env := localRelay(t)
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
 
 	b, c := connectPair(t, env)
-
-	sf := c.Fragmenter(WithMaxPayload(100))
-	defer sf.Close()
-	rf := b.Fragmenter(WithMaxPayload(100))
-	defer rf.Close()
+	c.maxDgPayload = 100
+	b.maxDgPayload = 100
 
 	msgs := make([][]byte, 5)
 	for i := range msgs {
@@ -118,13 +104,13 @@ func TestFragmentMultipleMessages(t *testing.T) {
 	}
 
 	for _, msg := range msgs {
-		if err := sf.Send(msg); err != nil {
+		if err := c.SendDatagram(msg); err != nil {
 			t.Fatal("send:", err)
 		}
 	}
 
 	for i, want := range msgs {
-		got, err := rf.Recv(ctx)
+		got, err := b.RecvDatagram(ctx)
 		if err != nil {
 			t.Fatalf("recv %d: %v", i, err)
 		}
@@ -134,67 +120,73 @@ func TestFragmentMultipleMessages(t *testing.T) {
 	}
 }
 
-// TestFragmentTimeout verifies that incomplete assemblies are dropped
-// after the timeout expires.
-func TestFragmentTimeout(t *testing.T) {
+// TestDatagramFragmentTimeout verifies that incomplete assemblies are
+// dropped after the timeout expires.
+func TestDatagramFragmentTimeout(t *testing.T) {
 	// Use a mock datagrammer that only delivers some fragments.
 	ch := make(chan []byte, 100)
 	mock := &mockDatagram{ch: ch}
 
-	f := NewFragmenter(mock, WithMaxPayload(50), WithTimeout(500*time.Millisecond))
-	defer f.Close()
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	done := make(chan struct{})
+	reasm := newReassembler(500*time.Millisecond, done)
+	defer close(done)
 
 	// Manually send fragments for a 3-fragment message, but omit fragment 1.
-	// Message ID 1, total 3.
 	for _, idx := range []int{0, 2} {
-		frame := make([]byte, fragmentHeaderSize+10)
-		putUint32BE(frame[0:4], 1)
-		putUint16BE(frame[4:6], uint16(idx))
-		putUint16BE(frame[6:8], 3)
-		copy(frame[fragmentHeaderSize:], []byte("payload..."))
+		frame := make([]byte, 1+fragHeaderSize+10)
+		frame[0] = dgConnFragment
+		putUint32BE(frame[1:5], 42)
+		putUint16BE(frame[5:7], uint16(idx))
+		putUint16BE(frame[7:9], 3)
+		copy(frame[1+fragHeaderSize:], []byte("payload..."))
 		ch <- frame
 	}
 
-	// Recv should timeout — fragment 1 never arrives.
-	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
-	defer cancel()
-	_, err := f.Recv(ctx)
+	// Create a conn that reads from mock, with the test reassembler.
+	c := &Conn{
+		dg:           mock,
+		reasm:        reasm,
+		maxDgPayload: DefaultMaxDatagramPayload,
+	}
+	c.ctx, c.cancel = context.WithCancel(ctx)
+
+	// RecvDatagram should timeout — fragment 1 never arrives.
+	recvCtx, recvCancel := context.WithTimeout(ctx, 2*time.Second)
+	defer recvCancel()
+	_, err := c.RecvDatagram(recvCtx)
 	if err == nil {
 		t.Fatal("expected timeout for incomplete assembly")
 	}
 
 	// Verify the assembly was cleaned up.
 	time.Sleep(time.Second)
-	f.mu.Lock()
-	remaining := len(f.assemblies)
-	f.mu.Unlock()
+	reasm.mu.Lock()
+	remaining := len(reasm.assemblies)
+	reasm.mu.Unlock()
 	if remaining != 0 {
 		t.Fatalf("expected 0 assemblies after timeout, got %d", remaining)
 	}
 }
 
-// TestFragmentBidirectional sends large messages in both directions.
-func TestFragmentBidirectional(t *testing.T) {
+// TestDatagramBidirectionalLarge sends large messages in both directions.
+func TestDatagramBidirectionalLarge(t *testing.T) {
 	env := localRelay(t)
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
 
 	b, c := connectPair(t, env)
+	c.maxDgPayload = 80
+	b.maxDgPayload = 80
 
-	cf := c.Fragmenter(WithMaxPayload(80))
-	defer cf.Close()
-	bf := b.Fragmenter(WithMaxPayload(80))
-	defer bf.Close()
-
-	// Client → backend.
 	payload1 := bytes.Repeat([]byte("A"), 300)
-	cf.Send(payload1)
+	c.SendDatagram(payload1)
 
-	// Backend → client.
 	payload2 := bytes.Repeat([]byte("B"), 400)
-	bf.Send(payload2)
+	b.SendDatagram(payload2)
 
-	got1, err := bf.Recv(ctx)
+	got1, err := b.RecvDatagram(ctx)
 	if err != nil {
 		t.Fatal("recv on backend:", err)
 	}
@@ -202,7 +194,7 @@ func TestFragmentBidirectional(t *testing.T) {
 		t.Fatalf("backend got %d bytes, want %d", len(got1), len(payload1))
 	}
 
-	got2, err := cf.Recv(ctx)
+	got2, err := c.RecvDatagram(ctx)
 	if err != nil {
 		t.Fatal("recv on client:", err)
 	}
@@ -211,56 +203,92 @@ func TestFragmentBidirectional(t *testing.T) {
 	}
 }
 
-// TestFragmentUnderPacketLoss sends a large fragmented message through
-// the fault proxy with packet loss. Since fragments are datagrams,
-// some may be lost and the message may not arrive. Verify no crash.
-func TestFragmentUnderPacketLoss(t *testing.T) {
+// TestDatagramLargeUnderLoss sends fragmented datagrams through a
+// lossy path. Some messages may not arrive. Verify no crashes.
+func TestDatagramLargeUnderLoss(t *testing.T) {
 	env := localRelay(t)
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
 
 	b, c := connectPair(t, env)
+	c.maxDgPayload = 80
+	b.maxDgPayload = 80
 
-	cf := c.Fragmenter(WithMaxPayload(80), WithTimeout(2*time.Second))
-	defer cf.Close()
-	bf := b.Fragmenter(WithMaxPayload(80), WithTimeout(2*time.Second))
-	defer bf.Close()
-
-	// Send 10 large messages. Some may arrive, some may not (datagrams
-	// are unreliable). The key assertion: no panics, no hangs.
 	for i := range 10 {
 		payload := make([]byte, 200)
 		rand.Read(payload)
-		payload[0] = byte(i) // tag for identification
-		cf.Send(payload)
+		payload[0] = byte(i)
+		c.SendDatagram(payload)
 	}
 
-	// Try to receive — we may get fewer than 10.
 	received := 0
 	recvCtx, recvCancel := context.WithTimeout(ctx, 5*time.Second)
 	defer recvCancel()
 	for {
-		_, err := bf.Recv(recvCtx)
+		_, err := b.RecvDatagram(recvCtx)
 		if err != nil {
 			break
 		}
 		received++
 	}
-	t.Logf("fragment under loss: sent=10, received=%d", received)
+	t.Logf("large datagrams: sent=10, received=%d", received)
 }
 
-// TestFragmentTooLarge verifies that payloads exceeding max fragment
-// count are rejected.
-func TestFragmentTooLarge(t *testing.T) {
-	mock := &mockDatagram{ch: make(chan []byte, 1)}
-	// maxPayload=11 means 1 byte per chunk. 65536 bytes → 65536 fragments > 65535 max.
-	f := NewFragmenter(mock, WithMaxPayload(fragmentHeaderSize+1))
-	defer f.Close()
+// TestDatagramTooLarge verifies rejection of payloads that would
+// exceed the fragment count limit.
+func TestDatagramTooLarge(t *testing.T) {
+	env := localRelay(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	_, c := connectPair(t, env)
+	// maxPayload = 10 means 1 byte per chunk (10 - 1 prefix - 8 header = 1).
+	// 65536 bytes → 65536 fragments > 65535 max.
+	c.maxDgPayload = 10
 
 	payload := make([]byte, 65536)
-	err := f.Send(payload)
+	err := c.SendDatagram(payload)
 	if err != ErrDatagramTooLarge {
 		t.Fatalf("expected ErrDatagramTooLarge, got %v", err)
+	}
+	_ = ctx
+}
+
+// TestDatagramMixedSmallAndLarge interleaves small (single-packet) and
+// large (fragmented) datagrams and verifies correct delivery of both.
+func TestDatagramMixedSmallAndLarge(t *testing.T) {
+	env := localRelay(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+
+	b, c := connectPair(t, env)
+	c.maxDgPayload = 80
+	b.maxDgPayload = 80
+
+	// Send: small, large, small, large.
+	c.SendDatagram([]byte("small-1"))
+	c.SendDatagram(bytes.Repeat([]byte("L"), 200))
+	c.SendDatagram([]byte("small-2"))
+	c.SendDatagram(bytes.Repeat([]byte("M"), 300))
+
+	got1, _ := b.RecvDatagram(ctx)
+	if string(got1) != "small-1" {
+		t.Fatalf("msg 1: got %d bytes %q", len(got1), got1[:min(len(got1), 20)])
+	}
+
+	got2, _ := b.RecvDatagram(ctx)
+	if len(got2) != 200 {
+		t.Fatalf("msg 2: got %d bytes, want 200", len(got2))
+	}
+
+	got3, _ := b.RecvDatagram(ctx)
+	if string(got3) != "small-2" {
+		t.Fatalf("msg 3: got %q", got3)
+	}
+
+	got4, _ := b.RecvDatagram(ctx)
+	if len(got4) != 300 {
+		t.Fatalf("msg 4: got %d bytes, want 300", len(got4))
 	}
 }
 
