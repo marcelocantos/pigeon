@@ -5,7 +5,9 @@ package tern
 
 import (
 	"context"
+	"crypto/tls"
 	"encoding/binary"
+	"encoding/json"
 	"io"
 	"log/slog"
 	"sync"
@@ -83,6 +85,10 @@ type Conn struct {
 	// Fragment reassembly for large datagrams.
 	reasm        *reassembler
 	maxDgPayload int // max bytes per raw datagram (default 1200)
+
+	// LAN upgrade.
+	lanEnabled bool
+	lanTLS     *tls.Config
 
 	ctx    context.Context    // Conn lifecycle context
 	cancel context.CancelFunc // cancels background goroutines
@@ -282,8 +288,16 @@ func (c *Conn) Recv(ctx context.Context) ([]byte, error) {
 		switch plaintext[0] {
 		case msgApp:
 			return plaintext[1:], nil
-		case msgLANOffer, msgCutover:
-			slog.Debug("discarding control message", "type", plaintext[0])
+		case msgLANOffer:
+			var offer lanOffer
+			if err := json.Unmarshal(plaintext[1:], &offer); err != nil {
+				slog.Warn("bad LAN offer", "err", err)
+			} else {
+				c.handleLANOffer(offer)
+			}
+			continue
+		case msgCutover:
+			slog.Debug("received cutover marker")
 			continue
 		default:
 			slog.Warn("discarding unknown message type", "type", plaintext[0])
