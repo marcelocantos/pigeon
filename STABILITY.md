@@ -10,7 +10,7 @@ The pre-1.0 period (currently v0.x.x) exists to get the interaction surface righ
 
 ## Interaction Surface Catalogue
 
-*Snapshot as of v0.10.0.*
+*Snapshot as of v0.11.0.*
 
 ### Relay API (the binary's external interface)
 
@@ -94,6 +94,7 @@ func (c *Conn) SetPairingRecord(rec *crypto.PairingRecord)
 func (c *Conn) OpenChannel(name string) (*StreamChannel, error)
 func (c *Conn) AcceptChannel(ctx context.Context) (*StreamChannel, error)
 func (c *Conn) DatagramChannel(name string) *DatagramChannel
+func (c *Conn) LANReady() <-chan struct{}
 func (c *Conn) Close() error
 func (c *Conn) CloseNow() error
 
@@ -121,9 +122,10 @@ type Config struct {
     LANTLS       *tls.Config
 }
 
-// Client-side connectivity
+// Client-side connectivity (both call WakeRelay automatically)
 func Register(ctx context.Context, relayURL string, c Config) (*Conn, error)
 func Connect(ctx context.Context, relayURL, instanceID string, c Config) (*Conn, error)
+func WakeRelay(ctx context.Context, relayURL string, c Config) error
 
 // LAN server
 type LANServer struct { /* unexported fields */ }

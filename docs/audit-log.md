@@ -30,6 +30,11 @@ maintenance activities. Append-only — newest entries at the bottom.
   - TLA+ model for cutover protocol (🎯T10)
   - Channel API (streaming + datagram channels)
 
+## 2026-04-02 — /release v0.11.0
+
+- **Commit**: `35f9372`
+- **Outcome**: Released v0.11.0. Fly.io auto-start (TCP wake trigger), transparent wakeRelay in all 4 client libs, LANReady() channel, encrypt+write atomicity fix.
+
 ## 2026-03-30 — /release v0.10.0
 
 - **Commit**: `f91e752`
