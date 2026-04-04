@@ -328,21 +328,32 @@ func (c *Conn) setDirectPath(
 		return p.dg.SendDatagram([]byte{dgConnWhole})
 	})
 
-	// When fallback happens, re-advertise LAN so we can re-establish
-	// when the direct path becomes available again.
+	// When fallback happens, wait with exponential backoff, then
+	// re-advertise LAN for future re-establishment.
 	c.router.onSwitch = func(from, to string) {
 		if to == "relay" {
 			c.mu.Lock()
 			lanSrv := c.lanServer
-			// Reset lanReady so callers can wait for the next switch.
 			c.lanReady = make(chan struct{})
 			c.mu.Unlock()
 
 			if lanSrv != nil {
-				slog.Info("re-advertising LAN after fallback")
-				if err := c.advertiseLAN(lanSrv); err != nil {
-					slog.Warn("re-advertise LAN failed", "err", err)
-				}
+				go func() {
+					delay := c.router.backoffDelay()
+					slog.Info("re-advertising LAN after backoff",
+						"delay", delay,
+						"backoff_level", c.router.backoffLevel)
+
+					select {
+					case <-time.After(delay):
+					case <-c.ctx.Done():
+						return
+					}
+
+					if err := c.advertiseLAN(lanSrv); err != nil {
+						slog.Warn("re-advertise LAN failed", "err", err)
+					}
+				}()
 			}
 		}
 	}

@@ -7,8 +7,16 @@ import (
 	"context"
 	"io"
 	"log/slog"
+	"math"
+	"math/rand/v2"
 	"sync"
 	"time"
+)
+
+// Backoff configuration for re-establishment attempts.
+const (
+	backoffBaseInterval = 1 * time.Second  // first retry after 1s
+	maxBackoffLevel     = 5                // cap: 2^5 = 32x base = 32s
 )
 
 // path represents a single transport path (relay, LAN, STUN, etc.).
@@ -66,6 +74,9 @@ type pathRouter struct {
 	direct *path   // optional — LAN, STUN, etc.
 	active *path   // points to either relay or direct
 
+	// Backoff state for re-establishment.
+	backoffLevel int
+
 	// Callback when the active path changes.
 	onSwitch func(from, to string)
 }
@@ -84,12 +95,13 @@ func (r *pathRouter) activePath() *path {
 	return r.active
 }
 
-// setDirect installs a direct path and switches to it.
+// setDirect installs a direct path and switches to it. Resets backoff.
 func (r *pathRouter) setDirect(p *path) {
 	r.mu.Lock()
 	old := r.active
 	r.direct = p
 	r.active = p
+	r.backoffLevel = 0 // success resets backoff
 	r.mu.Unlock()
 
 	slog.Info("path switched", "from", old.name, "to", p.name)
@@ -98,7 +110,8 @@ func (r *pathRouter) setDirect(p *path) {
 	}
 }
 
-// fallbackToRelay closes the direct path and reverts to relay.
+// fallbackToRelay closes the direct path, reverts to relay, and
+// increments the backoff level (capped at maxBackoffLevel).
 func (r *pathRouter) fallbackToRelay() {
 	r.mu.Lock()
 	direct := r.direct
@@ -109,13 +122,34 @@ func (r *pathRouter) fallbackToRelay() {
 	old := r.active
 	r.direct = nil
 	r.active = r.relay
+	r.backoffLevel++
+	if r.backoffLevel > maxBackoffLevel {
+		r.backoffLevel = maxBackoffLevel
+	}
+	level := r.backoffLevel
 	r.mu.Unlock()
 
-	slog.Info("path fallback", "from", old.name, "to", "relay")
+	slog.Info("path fallback", "from", old.name, "to", "relay",
+		"backoff_level", level)
 	direct.close()
 	if r.onSwitch != nil {
 		r.onSwitch(old.name, "relay")
 	}
+}
+
+// backoffDelay returns the current backoff delay with ±25% jitter.
+func (r *pathRouter) backoffDelay() time.Duration {
+	r.mu.Lock()
+	level := r.backoffLevel
+	r.mu.Unlock()
+
+	if level <= 0 {
+		return 0
+	}
+
+	base := backoffBaseInterval * time.Duration(math.Pow(2, float64(level-1)))
+	jitter := time.Duration(rand.Int64N(int64(base) / 2)) - base/4
+	return base + jitter
 }
 
 // hasDirect returns true if a direct path is currently installed.
