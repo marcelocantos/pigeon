@@ -146,6 +146,7 @@ type Protocol struct {
 	Guards       []GuardDef  // guard TLA+ expressions
 	Operators    []Operator  // TLA+ helper operators
 	AdvActions   []AdvAction // adversary capabilities beyond Dolev-Yao
+	AdvGuard     string      // TLA+ expression gating the adversary (empty = always active)
 	Properties   []Property
 	ChannelBound int // max messages per channel (0 = unbounded)
 	OneShot      bool // if true, actors run once then terminate (no loop)

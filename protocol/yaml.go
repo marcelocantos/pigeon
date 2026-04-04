@@ -20,6 +20,7 @@ type yamlProtocol struct {
 	Vars         yaml.Node                  `yaml:"vars"`
 	Guards       yaml.Node                  `yaml:"guards"`
 	Operators    yaml.Node                  `yaml:"operators"`
+	AdvGuard     string                     `yaml:"adversary_guard"`
 	Adversary    []yamlAdvAction            `yaml:"adversary"`
 	Properties   []yamlProperty             `yaml:"properties"`
 	ChannelBound int                        `yaml:"channel_bound"`
@@ -188,6 +189,8 @@ func ParseYAML(data []byte) (*Protocol, error) {
 			Code: strings.Join(indented, "\n"),
 		})
 	}
+
+	p.AdvGuard = yp.AdvGuard
 
 	// Properties.
 	for _, ypr := range yp.Properties {

@@ -506,6 +506,7 @@ fair process Adversary = 4
 begin
   adv_loop:
   while TRUE do
+    await backend_state \notin {backend_RelayConnected, backend_LANOffered, backend_LANActive, backend_LANDegraded, backend_RelayBackoff};
     either
       skip \* no-op: honest relay
     or
@@ -958,7 +959,8 @@ relay == /\ \/ /\ relay_state = relay_Idle
                          c_active_path, b_dispatcher_path, c_dispatcher_path, 
                          monitor_target, lan_signal >>
 
-Adversary == /\ \/ /\ TRUE
+Adversary == /\ backend_state \notin {backend_RelayConnected, backend_LANOffered, backend_LANActive, backend_LANDegraded, backend_RelayBackoff}
+             /\ \/ /\ TRUE
                    /\ UNCHANGED <<chan_backend_client, chan_client_backend, adversary_knowledge, cli_entered_code, adversary_keys, adv_saved_client_pub, adv_saved_server_pub>>
                 \/ /\ Len(chan_backend_client) > 0
                    /\ adversary_knowledge' = (adversary_knowledge \union {Head(chan_backend_client)})

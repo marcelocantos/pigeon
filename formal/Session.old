@@ -506,6 +506,7 @@ fair process Adversary = 4
 begin
   adv_loop:
   while TRUE do
+    await backend_state \notin {backend_RelayConnected, backend_LANOffered, backend_LANActive, backend_LANDegraded, backend_RelayBackoff};
     either
       skip \* no-op: honest relay
     or

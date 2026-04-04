@@ -275,6 +275,12 @@ func writeAdversary(b *strings.Builder, p *Protocol) {
 	b.WriteString("begin\n")
 	b.WriteString("  adv_loop:\n")
 	b.WriteString("  while TRUE do\n")
+	// If an adversary guard is set, the adversary self-disables when the
+	// guard is false. This prevents combinatorial explosion from adversary
+	// interleavings with phases where the adversary has no meaningful actions.
+	if p.AdvGuard != "" {
+		fmt.Fprintf(b, "    await %s;\n", p.AdvGuard)
+	}
 	b.WriteString("    either\n")
 	b.WriteString("      skip \\* no-op: honest relay\n")
 

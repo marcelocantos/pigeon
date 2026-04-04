@@ -668,6 +668,12 @@ operators:
     expr: 'IF a < b THEN a ELSE b'
     desc: minimum of two values
 
+# The adversary is only active during the pairing phase. Once the
+# backend reaches transport states, the adversary self-disables.
+# This prevents combinatorial explosion from adversary interleavings
+# with transport events that can never interact with pairing.
+adversary_guard: 'backend_state \notin {backend_RelayConnected, backend_LANOffered, backend_LANActive, backend_LANDegraded, backend_RelayBackoff}'
+
 adversary:
   - name: QR_shoulder_surf
     desc: observe QR code content
