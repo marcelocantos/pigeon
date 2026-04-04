@@ -97,8 +97,8 @@ actors:
         to: WaitingForClient
         on: relay_registered
         updates:
-          # CLI displays QR code with token + instance_id (local action).
-          qr_displayed: 'TRUE'
+          # Token published via backchannel (QR code, NFC, etc.).
+          secret_published: 'TRUE'
 
       - from: WaitingForClient
         to: DeriveSecret
@@ -333,12 +333,12 @@ actors:
       # ============================================================
 
       - from: Idle
-        to: ScanQR
-        on: user_scans_qr
+        to: ObtainBackchannelSecret
+        on: backchannel_received
 
-      - from: ScanQR
+      - from: ObtainBackchannelSecret
         to: ConnectRelay
-        on: qr_parsed
+        on: secret_parsed
 
       - from: ConnectRelay
         to: GenKeyPair
@@ -640,10 +640,10 @@ vars:
     type: string
     initial: '"none"'
     desc: nonce from auth_request
-  qr_displayed:
+  secret_published:
     type: bool
     initial: 'FALSE'
-    desc: whether QR code has been shown (local backend state)
+    desc: whether token has been published via backchannel
   recv_msg:
     type: string
     initial: '[type |-> "none"]'
@@ -791,7 +791,7 @@ phases:
       - AuthCheck
       - SessionActive
       # Client pairing states
-      - ScanQR
+      - ObtainBackchannelSecret
       - ConnectRelay
       - GenKeyPair
       - WaitAck
@@ -819,7 +819,7 @@ phases:
       - received_device_id
       - auth_nonces_used
       - received_auth_nonce
-      - qr_displayed
+      - secret_published
       - recv_msg
       - adversary_keys
       - adv_ecdh_pub

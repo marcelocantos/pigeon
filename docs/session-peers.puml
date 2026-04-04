@@ -51,8 +51,8 @@ state "backend" as B {
 state "client" as C {
   state "Pairing" as C_Pairing {
     [*] --> C_Idle
-    C_Idle --> C_ScanQR : user_scans_qr
-    C_ScanQR --> C_ConnectRelay : qr_parsed
+    C_Idle --> C_ObtainBackchannelSecret : backchannel_received
+    C_ObtainBackchannelSecret --> C_ConnectRelay : secret_parsed
     C_ConnectRelay --> C_GenKeyPair : relay_connected
     C_GenKeyPair --> C_WaitAck : key_pair_generated\nsend_pair_hello
     C_WaitAck --> C_E2EReady : recv pair_hello_ack\nderive_secret

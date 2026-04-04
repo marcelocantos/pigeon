@@ -58,8 +58,10 @@ that have never communicated before.
 ### Flow
 
 1. Backend generates a pairing token and registers with the relay
-2. QR code displayed (contains token + relay URL + instance ID)
-3. Client scans QR, connects to relay, generates ECDH key pair
+2. Token published via backchannel (QR code, NFC, Bluetooth, manual
+   entry — the protocol is agnostic to the mechanism)
+3. Client obtains token via backchannel, connects to relay, generates
+   ECDH key pair
 4. Client sends `pair_hello` with public key + token
 5. Backend verifies token, derives shared secret, sends `pair_hello_ack`
 6. Both sides independently compute a 6-digit confirmation code from
@@ -82,7 +84,7 @@ that have never communicated before.
 ### Adversary Model
 
 The TLA+ spec includes a Dolev-Yao adversary with 8 specific attack
-capabilities: QR shoulder-surfing, MitM key substitution, secret
+capabilities: backchannel observation, MitM key substitution, secret
 re-encryption, concurrent pairing race, token brute-force, code
 guessing, and session replay. All attacks are verified to be detected
 or prevented by the protocol.
