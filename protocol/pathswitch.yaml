@@ -1,0 +1,264 @@
+# Path-switching protocol definition.
+# Manages transport path lifecycle after pairing is complete:
+# relay (permanent baseline), LAN (direct), and future STUN paths.
+#
+# Three actors: backend, client, relay.
+# The relay is always connected. Direct paths come and go.
+# Traffic flows through the best healthy path at all times.
+
+name: PathSwitch
+one_shot: false    # continuous — runs for the lifetime of the session
+channel_bound: 3
+
+messages:
+  lan_offer:
+    from: backend
+    to: client
+    desc: 'LAN address + challenge (sent via relay)'
+  lan_verify:
+    from: client
+    to: backend
+    desc: 'challenge response + instance ID (sent via LAN)'
+  lan_confirm:
+    from: backend
+    to: client
+    desc: 'LAN verified, path is live (sent via LAN)'
+  path_ping:
+    from: backend
+    to: client
+    desc: 'health check on active direct path'
+  path_pong:
+    from: client
+    to: backend
+    desc: 'health check response'
+  relay_resume:
+    from: client
+    to: relay
+    desc: 'client reconnects relay stream after direct path failure'
+  relay_resumed:
+    from: relay
+    to: client
+    desc: 'relay confirms stream is re-bridged'
+
+actors:
+  backend:
+    initial: RelayConnected
+    transitions:
+      # --- LAN advertisement ---
+      - from: RelayConnected
+        to: LANOffered
+        on: lan_server_ready
+        sends:
+          - to: client
+            msg: lan_offer
+            fields:
+              addr: lan_addr
+              challenge: challenge_bytes
+
+      # --- LAN verification ---
+      - from: LANOffered
+        to: LANActive
+        on: recv lan_verify
+        guard: challenge_valid
+        do: activate_lan
+        sends:
+          - to: client
+            msg: lan_confirm
+
+      - from: LANOffered
+        to: RelayConnected
+        on: recv lan_verify
+        guard: challenge_invalid
+
+      - from: LANOffered
+        to: RelayConnected
+        on: offer_timeout
+
+      # --- Health monitoring ---
+      - from: LANActive
+        to: LANActive
+        on: ping_tick
+        sends:
+          - to: client
+            msg: path_ping
+
+      - from: LANActive
+        to: LANDegraded
+        on: ping_timeout
+
+      - from: LANDegraded
+        to: LANDegraded
+        on: ping_tick
+        sends:
+          - to: client
+            msg: path_ping
+
+      - from: LANDegraded
+        to: LANActive
+        on: recv path_pong
+        do: reset_failures
+
+      - from: LANDegraded
+        to: RelayConnected
+        on: max_failures
+        do: fallback_to_relay
+
+      # --- Re-advertisement after fallback ---
+      - from: RelayConnected
+        to: LANOffered
+        on: readvertise_tick
+        guard: lan_server_available
+        sends:
+          - to: client
+            msg: lan_offer
+            fields:
+              addr: lan_addr
+              challenge: challenge_bytes
+
+  client:
+    initial: RelayConnected
+    transitions:
+      # --- LAN offer handling ---
+      - from: RelayConnected
+        to: LANConnecting
+        on: recv lan_offer
+        guard: lan_enabled
+        do: dial_lan
+
+      - from: RelayConnected
+        to: RelayConnected
+        on: recv lan_offer
+        guard: lan_disabled
+
+      - from: LANConnecting
+        to: LANVerifying
+        on: lan_dial_ok
+        sends:
+          - to: backend
+            msg: lan_verify
+            fields:
+              challenge: offer_challenge
+              instance_id: instance_id
+
+      - from: LANConnecting
+        to: RelayConnected
+        on: lan_dial_failed
+
+      # --- LAN confirmation ---
+      - from: LANVerifying
+        to: LANActive
+        on: recv lan_confirm
+        do: activate_lan
+
+      - from: LANVerifying
+        to: RelayConnected
+        on: verify_timeout
+
+      # --- Health monitoring ---
+      - from: LANActive
+        to: LANActive
+        on: recv path_ping
+        sends:
+          - to: backend
+            msg: path_pong
+
+      - from: LANActive
+        to: RelayFallback
+        on: lan_error
+        do: fallback_to_relay
+
+      # --- Relay fallback ---
+      - from: RelayFallback
+        to: RelayConnected
+        on: relay_ok
+
+      # --- Accept new LAN offers while on LAN (address change) ---
+      - from: LANActive
+        to: LANConnecting
+        on: recv lan_offer
+        guard: lan_enabled
+        do: dial_lan
+
+  relay:
+    initial: Idle
+    transitions:
+      - from: Idle
+        to: BackendRegistered
+        on: backend_register
+
+      - from: BackendRegistered
+        to: Bridged
+        on: client_connect
+        do: bridge_streams
+
+      - from: Bridged
+        to: BackendRegistered
+        on: client_disconnect
+        do: unbrige
+
+      - from: Bridged
+        to: Bridged
+        on: recv relay_resume
+        do: rebridge_streams
+        sends:
+          - to: client
+            msg: relay_resumed
+
+      - from: BackendRegistered
+        to: Idle
+        on: backend_disconnect
+
+vars:
+  lan_addr:
+    initial: '"none"'
+    desc: LAN server address (host:port)
+  challenge_bytes:
+    initial: '"none"'
+    desc: 32-byte random challenge for LAN verification
+  offer_challenge:
+    initial: '"none"'
+    desc: challenge from the most recent LAN offer
+  instance_id:
+    initial: '"none"'
+    desc: relay instance ID of this peer
+  ping_failures:
+    initial: '0'
+    desc: consecutive failed pings on the direct path
+  max_ping_failures:
+    initial: '3'
+    desc: threshold before fallback
+  active_path:
+    initial: '"relay"'
+    desc: '"relay" or "lan" — which path is carrying traffic'
+  lan_server_addr:
+    initial: '"none"'
+    desc: LAN server listen address (backend only)
+
+guards:
+  challenge_valid: 'offer_challenge = challenge_bytes'
+  challenge_invalid: 'offer_challenge /= challenge_bytes'
+  lan_enabled: 'TRUE'
+  lan_disabled: 'FALSE'
+  lan_server_available: 'lan_server_addr /= "none"'
+
+properties:
+  - name: RelayAlwaysAvailable
+    kind: invariant
+    expr: 'relay_state \in {relay_BackendRegistered, relay_Bridged}'
+    desc: The relay registration is never lost while the session is active
+  - name: ExactlyOneActivePath
+    kind: invariant
+    expr: 'active_path \in {"relay", "lan"}'
+    desc: Traffic flows through exactly one path at any time
+  - name: LANRequiresVerification
+    kind: invariant
+    expr: '(backend_state = backend_LANActive /\ client_state = client_LANActive) => challenge_bytes = offer_challenge'
+    desc: LAN path is only active after successful challenge verification
+  - name: FallbackAlwaysSucceeds
+    kind: invariant
+    expr: '(backend_state = backend_RelayConnected \/ client_state = client_RelayFallback) => relay_state \in {relay_Bridged, relay_BackendRegistered}'
+    desc: Falling back to relay always has a valid relay connection to fall back to
+  - name: LANEventuallyEstablished
+    kind: liveness
+    expr: 'client_state = client_LANActive /\ backend_state = backend_LANActive'
+    desc: If LAN is available and enabled, both sides eventually reach LANActive
