@@ -10,16 +10,14 @@ import (
 	"strings"
 )
 
-// ExportTLA writes a TLA+ spec for the protocol. If phaseName is empty,
-// the full protocol is emitted. If phaseName matches a defined phase,
-// only that phase's transitions and variables are emitted — other
-// variables are omitted entirely, dramatically reducing the state space.
+// ExportTLA writes a pure TLA+ spec (no PlusCal) for the full protocol.
 func (p *Protocol) ExportTLA(w io.Writer) error {
 	return p.ExportTLAPhase(w, "")
 }
 
-// ExportTLAPhase writes a TLA+ spec for a specific phase, or the full
-// protocol if phaseName is empty.
+// ExportTLAPhase writes a pure TLA+ spec for a specific phase, or the
+// full protocol if phaseName is empty. Each YAML transition becomes a
+// named TLA+ action. No PlusCal, no processes, no program counters.
 func (p *Protocol) ExportTLAPhase(w io.Writer, phaseName string) error {
 	var phase *Phase
 	if phaseName != "" {
@@ -34,89 +32,298 @@ func (p *Protocol) ExportTLAPhase(w io.Writer, phaseName string) error {
 		}
 	}
 
-	var b strings.Builder
-
-	moduleName := sanitiseTLA(p.Name)
-	if phase != nil {
-		moduleName = sanitiseTLA(p.Name) + "_" + sanitiseTLA(phase.Name)
-	}
-
-	b.WriteString("---- MODULE ")
-	b.WriteString(moduleName)
-	b.WriteString(" ----\n")
-	b.WriteString("\\* Auto-generated from protocol definition. Do not edit.\n")
-	if phase != nil {
-		fmt.Fprintf(&b, "\\* Phase: %s\n", phase.Name)
-	}
-	b.WriteString("\nEXTENDS Integers, Sequences, FiniteSets, TLC\n\n")
-
-	// Build phase state set for filtering transitions.
 	phaseStates := map[State]bool{}
+	phaseVars := map[string]bool{}
 	if phase != nil {
 		for _, s := range phase.States {
 			phaseStates[s] = true
 		}
-	}
-
-	// Build phase var set for filtering variables.
-	phaseVars := map[string]bool{}
-	if phase != nil {
 		for _, v := range phase.Vars {
 			phaseVars[v] = true
 		}
 	}
 
-	writeStateConstants(&b, p, phaseStates)
-	writeMsgConstants(&b, p)
-	writeOperators(&b, p)
+	var b strings.Builder
 
-	b.WriteString("(*--algorithm ")
-	b.WriteString(moduleName)
-	b.WriteString("\n\n")
-
-	writeVariables(&b, p, phase, phaseVars)
-	writeProcesses(&b, p, phase, phaseStates)
-
-	// Only include adversary if this phase has it enabled (or no phase filter).
-	includeAdversary := phase == nil || phase.Adversary
-	if includeAdversary {
-		writeAdversary(&b, p)
+	moduleName := sanitiseTLA(p.Name)
+	if phase != nil {
+		moduleName += "_" + sanitiseTLA(phase.Name)
 	}
 
-	b.WriteString("end algorithm; *)\n")
-	b.WriteString("\\* BEGIN TRANSLATION\n")
-	b.WriteString("\\* END TRANSLATION\n\n")
+	fmt.Fprintf(&b, "---- MODULE %s ----\n", moduleName)
+	b.WriteString("\\* Auto-generated from protocol YAML. Do not edit.\n")
+	if phase != nil {
+		fmt.Fprintf(&b, "\\* Phase: %s\n", phase.Name)
+	}
+	b.WriteString("\nEXTENDS Integers, Sequences, FiniteSets, TLC\n\n")
 
-	writeProperties(&b, p, phase, phaseVars)
+	// --- State constants ---
+	for _, a := range p.Actors {
+		fmt.Fprintf(&b, "\\* States for %s\n", a.Name)
+		for _, s := range collectStates(a) {
+			if len(phaseStates) > 0 && !phaseStates[s] && !isNeighbour(a, s, phaseStates) {
+				continue
+			}
+			fmt.Fprintf(&b, "%s_%s == \"%s_%s\"\n",
+				sanitiseTLA(a.Name), sanitiseTLA(string(s)), a.Name, s)
+		}
+		b.WriteString("\n")
+	}
 
-	b.WriteString("====\n")
+	// --- Message constants ---
+	if len(p.Messages) > 0 {
+		b.WriteString("\\* Message types\n")
+		for _, m := range p.Messages {
+			fmt.Fprintf(&b, "MSG_%s == \"%s\"\n", sanitiseTLA(string(m.Type)), m.Type)
+		}
+		b.WriteString("\n")
+	}
+
+	// --- Operators ---
+	for _, op := range p.Operators {
+		if op.Desc != "" {
+			fmt.Fprintf(&b, "\\* %s\n", op.Desc)
+		}
+		if op.Params != "" {
+			fmt.Fprintf(&b, "%s(%s) == %s\n", sanitiseTLA(op.Name), op.Params, op.Expr)
+		} else {
+			fmt.Fprintf(&b, "%s == %s\n", sanitiseTLA(op.Name), op.Expr)
+		}
+	}
+	if len(p.Operators) > 0 {
+		b.WriteString("\n")
+	}
+
+	// --- CONSTANTS ---
+	b.WriteString("CONSTANTS MaxChanLen\n\n")
+
+	// --- Variables ---
+	b.WriteString("VARIABLES\n")
+	var allVarNames []string
+
+	// Actor state variables.
+	for _, a := range p.Actors {
+		name := sanitiseTLA(a.Name) + "_state"
+		allVarNames = append(allVarNames, name)
+		fmt.Fprintf(&b, "    %s,\n", name)
+	}
+
+	// Channels.
+	channels := channelPairs(p)
+	for _, ch := range channels {
+		name := channelName(ch.from, ch.to)
+		allVarNames = append(allVarNames, name)
+		fmt.Fprintf(&b, "    %s,\n", name)
+	}
+
+	// Protocol variables (phase-filtered).
+	for _, v := range p.Vars {
+		if phase != nil && !phaseVars[v.Name] && v.Name != "recv_msg" {
+			continue
+		}
+		allVarNames = append(allVarNames, sanitiseTLA(v.Name))
+		fmt.Fprintf(&b, "    %s,\n", sanitiseTLA(v.Name))
+	}
+
+	// Remove trailing comma.
+	s := b.String()
+	if idx := strings.LastIndex(s, ",\n"); idx >= 0 {
+		b.Reset()
+		b.WriteString(s[:idx])
+		b.WriteString("\n")
+	}
+	b.WriteString("\n")
+
+	// vars tuple.
+	fmt.Fprintf(&b, "vars == <<%s>>\n\n", strings.Join(allVarNames, ", "))
+
+	// Helper.
+	b.WriteString("CanSend(ch) == Len(ch) < MaxChanLen\n\n")
+
+	// --- Init ---
+	b.WriteString("Init ==\n")
+	for _, a := range p.Actors {
+		init := initialForPhase(a, phase)
+		fmt.Fprintf(&b, "    /\\ %s_state = %s_%s\n",
+			sanitiseTLA(a.Name), sanitiseTLA(a.Name), sanitiseTLA(string(init)))
+	}
+	for _, ch := range channels {
+		fmt.Fprintf(&b, "    /\\ %s = <<>>\n", channelName(ch.from, ch.to))
+	}
+	for _, v := range p.Vars {
+		if phase != nil && !phaseVars[v.Name] && v.Name != "recv_msg" {
+			continue
+		}
+		fmt.Fprintf(&b, "    /\\ %s = %s\n", sanitiseTLA(v.Name), v.Initial)
+	}
+	b.WriteString("\n")
+
+	// --- Actions ---
+	// Each YAML transition becomes a named TLA+ action.
+	var actionNames []string
+
+	for _, a := range p.Actors {
+		fmt.Fprintf(&b, "\\* ================================================================\n")
+		fmt.Fprintf(&b, "\\* %s actions\n", a.Name)
+		fmt.Fprintf(&b, "\\* ================================================================\n\n")
+
+		for _, t := range a.Transitions {
+			// Phase filter.
+			if len(phaseStates) > 0 && !phaseStates[t.From] && !phaseStates[t.To] {
+				continue
+			}
+
+			actionName := fmt.Sprintf("%s_%s_to_%s",
+				sanitiseTLA(a.Name),
+				sanitiseTLA(string(t.From)),
+				sanitiseTLA(string(t.To)))
+
+			// Disambiguate if multiple transitions share from→to.
+			if t.On.Kind == TriggerRecv {
+				actionName += "_on_" + sanitiseTLA(string(t.On.Msg))
+			} else if t.On.Desc != "" {
+				actionName += "_on_" + sanitiseTLA(t.On.Desc)
+			}
+			if t.Guard != "" {
+				actionName += "_" + sanitiseTLA(string(t.Guard))
+			}
+
+			actionNames = append(actionNames, actionName)
+
+			// Comment.
+			fmt.Fprintf(&b, "\\* %s: %s -> %s", a.Name, t.From, t.To)
+			if t.On.Kind == TriggerRecv {
+				fmt.Fprintf(&b, " on recv %s", t.On.Msg)
+			} else if t.On.Desc != "" {
+				fmt.Fprintf(&b, " (%s)", t.On.Desc)
+			}
+			if t.Guard != "" {
+				fmt.Fprintf(&b, " [%s]", t.Guard)
+			}
+			b.WriteString("\n")
+
+			fmt.Fprintf(&b, "%s ==\n", actionName)
+
+			// State guard.
+			fmt.Fprintf(&b, "    /\\ %s_state = %s_%s\n",
+				sanitiseTLA(a.Name),
+				sanitiseTLA(a.Name), sanitiseTLA(string(t.From)))
+
+			// Message guard.
+			if t.On.Kind == TriggerRecv {
+				fromActor := msgSender(p, t.On.Msg)
+				ch := channelName(fromActor, a.Name)
+				fmt.Fprintf(&b, "    /\\ Len(%s) > 0\n", ch)
+				fmt.Fprintf(&b, "    /\\ Head(%s).type = MSG_%s\n", ch, sanitiseTLA(string(t.On.Msg)))
+			}
+
+			// Guard expression.
+			if t.Guard != "" {
+				expr := guardExpr(p, t.Guard)
+				if t.On.Kind == TriggerRecv {
+					fromActor := msgSender(p, t.On.Msg)
+					ch := channelName(fromActor, a.Name)
+					expr = strings.ReplaceAll(expr, "recv_msg", "Head("+ch+")")
+				}
+				fmt.Fprintf(&b, "    /\\ %s\n", expr)
+			}
+
+			// --- Primed assignments ---
+
+			// Consume message.
+			if t.On.Kind == TriggerRecv {
+				fromActor := msgSender(p, t.On.Msg)
+				ch := channelName(fromActor, a.Name)
+				fmt.Fprintf(&b, "    /\\ %s' = Tail(%s)\n", ch, ch)
+			}
+
+			// Sends.
+			for _, s := range t.Sends {
+				ch := channelName(a.Name, s.To)
+				fmt.Fprintf(&b, "    /\\ %s' = Append(%s, ", ch, ch)
+				writeRecord(&b, s.Msg, s.Fields)
+				b.WriteString(")\n")
+			}
+
+			// State update.
+			fmt.Fprintf(&b, "    /\\ %s_state' = %s_%s\n",
+				sanitiseTLA(a.Name),
+				sanitiseTLA(a.Name), sanitiseTLA(string(t.To)))
+
+			// Variable updates.
+			for _, u := range t.Updates {
+				fmt.Fprintf(&b, "    /\\ %s' = %s\n", sanitiseTLA(u.Var), u.Expr)
+			}
+
+			// UNCHANGED for everything not modified.
+			modified := map[string]bool{
+				sanitiseTLA(a.Name) + "_state": true,
+			}
+			if t.On.Kind == TriggerRecv {
+				fromActor := msgSender(p, t.On.Msg)
+				modified[channelName(fromActor, a.Name)] = true
+			}
+			for _, s := range t.Sends {
+				modified[channelName(a.Name, s.To)] = true
+			}
+			for _, u := range t.Updates {
+				modified[sanitiseTLA(u.Var)] = true
+			}
+
+			var unchanged []string
+			for _, v := range allVarNames {
+				if !modified[v] {
+					unchanged = append(unchanged, v)
+				}
+			}
+			if len(unchanged) > 0 {
+				fmt.Fprintf(&b, "    /\\ UNCHANGED <<%s>>\n", strings.Join(unchanged, ", "))
+			}
+
+			b.WriteString("\n")
+		}
+	}
+
+	// --- Next ---
+	b.WriteString("Next ==\n")
+	for i, name := range actionNames {
+		if i == 0 {
+			fmt.Fprintf(&b, "    \\/ %s\n", name)
+		} else {
+			fmt.Fprintf(&b, "    \\/ %s\n", name)
+		}
+	}
+	b.WriteString("\n")
+
+	// --- Spec ---
+	b.WriteString("Spec == Init /\\ [][Next]_vars /\\ WF_vars(Next)\n\n")
+
+	// --- Properties ---
+	b.WriteString("\\* ================================================================\n")
+	b.WriteString("\\* Invariants and properties\n")
+	b.WriteString("\\* ================================================================\n\n")
+	for _, prop := range p.Properties {
+		if phase != nil && !propertyRelevant(prop, phaseVars, p.Vars) {
+			continue
+		}
+		if prop.Desc != "" {
+			fmt.Fprintf(&b, "\\* %s\n", prop.Desc)
+		}
+		switch prop.Kind {
+		case Invariant:
+			fmt.Fprintf(&b, "%s == %s\n", sanitiseTLA(prop.Name), prop.Expr)
+		case Liveness:
+			fmt.Fprintf(&b, "%s == <>(%s)\n", sanitiseTLA(prop.Name), prop.Expr)
+		case LeadsTo:
+			fmt.Fprintf(&b, "%s == (%s) ~> (%s)\n", sanitiseTLA(prop.Name), prop.FromExpr, prop.ToExpr)
+		}
+	}
+	b.WriteString("\n====\n")
 
 	_, err := io.WriteString(w, b.String())
 	return err
 }
 
-func writeStateConstants(b *strings.Builder, p *Protocol, phaseStates map[State]bool) {
-	for _, a := range p.Actors {
-		states := collectStates(a)
-		b.WriteString("\\* States for ")
-		b.WriteString(a.Name)
-		b.WriteString("\n")
-		for _, s := range states {
-			// In phase mode, only emit states in the phase + immediate
-			// neighbours (for initial/terminal state references).
-			if len(phaseStates) > 0 && !phaseStates[s] && !isNeighbour(a, s, phaseStates) {
-				continue
-			}
-			fmt.Fprintf(b, "%s_%s == \"%s_%s\"\n",
-				sanitiseTLA(a.Name), sanitiseTLA(string(s)),
-				a.Name, s)
-		}
-		b.WriteString("\n")
-	}
-}
-
-// isNeighbour returns true if state s is the source or target of a
-// transition where the other end is in phaseStates.
 func isNeighbour(a Actor, s State, phaseStates map[State]bool) bool {
 	for _, t := range a.Transitions {
 		if t.From == s && phaseStates[t.To] {
@@ -129,234 +336,28 @@ func isNeighbour(a Actor, s State, phaseStates map[State]bool) bool {
 	return false
 }
 
-func writeMsgConstants(b *strings.Builder, p *Protocol) {
-	if len(p.Messages) == 0 {
-		return
-	}
-	b.WriteString("\\* Message types\n")
-	for _, m := range p.Messages {
-		fmt.Fprintf(b, "MSG_%s == \"%s\" \\* %s -> %s",
-			sanitiseTLA(string(m.Type)), m.Type, m.From, m.To)
-		if m.Desc != "" {
-			fmt.Fprintf(b, " (%s)", m.Desc)
-		}
-		b.WriteString("\n")
-	}
-	b.WriteString("\n")
-}
-
-func writeOperators(b *strings.Builder, p *Protocol) {
-	if len(p.Operators) == 0 {
-		return
-	}
-	b.WriteString("\\* Helper operators\n")
-	for _, op := range p.Operators {
-		if op.Desc != "" {
-			fmt.Fprintf(b, "\\* %s\n", op.Desc)
-		}
-		if op.Params != "" {
-			fmt.Fprintf(b, "%s(%s) == %s\n", sanitiseTLA(op.Name), op.Params, op.Expr)
-		} else {
-			fmt.Fprintf(b, "%s == %s\n", sanitiseTLA(op.Name), op.Expr)
-		}
-	}
-	b.WriteString("\n")
-}
-
-func writeVariables(b *strings.Builder, p *Protocol, phase *Phase, phaseVars map[string]bool) {
-	b.WriteString("variables\n")
-
-	for _, a := range p.Actors {
-		fmt.Fprintf(b, "    %s_state = %s_%s,\n",
-			sanitiseTLA(a.Name),
-			sanitiseTLA(a.Name), sanitiseTLA(string(initialForPhase(a, phase))))
-	}
-
-	channels := channelPairs(p)
-	for _, ch := range channels {
-		fmt.Fprintf(b, "    chan_%s_%s = <<>>,\n", ch.from, ch.to)
-	}
-
-	if phase == nil || phase.Adversary {
-		b.WriteString("    adversary_knowledge = {},\n")
-	}
-
-	for _, v := range p.Vars {
-		// In phase mode, only include phase-relevant variables.
-		// Always include recv_msg — it's infrastructure for message reception.
-		if phase != nil && !phaseVars[v.Name] && v.Name != "recv_msg" {
-			continue
-		}
-		if v.Desc != "" {
-			fmt.Fprintf(b, "    \\* %s\n", v.Desc)
-		}
-		fmt.Fprintf(b, "    %s = %s,\n", sanitiseTLA(v.Name), v.Initial)
-	}
-
-	// Remove trailing comma, add semicolon.
-	s := b.String()
-	if idx := strings.LastIndex(s, ",\n"); idx >= 0 {
-		b.Reset()
-		b.WriteString(s[:idx])
-		b.WriteString(";\n\n")
-	}
-}
-
-// initialForPhase returns the initial state for an actor in a given phase.
-// If the phase defines states, use the first phase state that appears as
-// a transition target from outside the phase (the entry point). Otherwise
-// use the actor's declared initial state.
 func initialForPhase(a Actor, phase *Phase) State {
 	if phase == nil {
 		return a.Initial
 	}
-
 	phaseStates := map[State]bool{}
 	for _, s := range phase.States {
 		phaseStates[s] = true
 	}
-
-	// If the actor's initial state is in this phase, use it.
 	if phaseStates[a.Initial] {
 		return a.Initial
 	}
-
-	// Find the first phase state that's a target from outside the phase.
 	for _, t := range a.Transitions {
 		if !phaseStates[t.From] && phaseStates[t.To] {
 			return t.To
 		}
 	}
-
-	// Fallback: first phase state.
-	for _, s := range phase.States {
-		for _, as := range collectStates(a) {
-			if as == s {
-				return s
-			}
-		}
-	}
 	return a.Initial
-}
-
-func writeProcesses(b *strings.Builder, p *Protocol, phase *Phase, phaseStates map[State]bool) {
-	for i, a := range p.Actors {
-		// Filter transitions to those relevant to this phase.
-		var transitions []Transition
-		for _, t := range a.Transitions {
-			if len(phaseStates) > 0 {
-				// Include if from OR to is in the phase.
-				if !phaseStates[t.From] && !phaseStates[t.To] {
-					continue
-				}
-			}
-			transitions = append(transitions, t)
-		}
-
-		if len(transitions) == 0 {
-			continue
-		}
-
-		fmt.Fprintf(b, "fair process %s = %d\n", sanitiseTLA(a.Name), i+1)
-		b.WriteString("begin\n")
-		fmt.Fprintf(b, "  %s_loop:\n", sanitiseTLA(a.Name))
-		if !p.OneShot {
-			b.WriteString("  while TRUE do\n")
-		}
-
-		b.WriteString("    either\n")
-
-		first := true
-		for _, t := range transitions {
-			if !first {
-				b.WriteString("    or\n")
-			}
-			first = false
-
-			writeTransitionComment(b, &t)
-			writeTransitionAwait(b, p, &a, &t)
-			writeTransitionBody(b, p, &a, &t)
-		}
-
-		b.WriteString("    end either;\n")
-		if !p.OneShot {
-			b.WriteString("  end while;\n")
-		}
-		b.WriteString("end process;\n\n")
-	}
-}
-
-func writeTransitionComment(b *strings.Builder, t *Transition) {
-	fmt.Fprintf(b, "      \\* %s -> %s", t.From, t.To)
-	if t.On.Kind == TriggerRecv {
-		fmt.Fprintf(b, " on %s", t.On.Msg)
-	} else if t.On.Desc != "" {
-		fmt.Fprintf(b, " (%s)", t.On.Desc)
-	}
-	b.WriteString("\n")
-}
-
-func writeTransitionAwait(b *strings.Builder, p *Protocol, a *Actor, t *Transition) {
-	fmt.Fprintf(b, "      await %s_state = %s_%s",
-		sanitiseTLA(a.Name),
-		sanitiseTLA(a.Name), sanitiseTLA(string(t.From)))
-
-	if t.On.Kind == TriggerRecv {
-		fromActor := msgSender(p, t.On.Msg)
-		chanName := channelName(fromActor, a.Name)
-		fmt.Fprintf(b, " /\\ Len(%s) > 0 /\\ Head(%s).type = MSG_%s",
-			chanName, chanName, sanitiseTLA(string(t.On.Msg)))
-	}
-
-	if t.Guard != "" {
-		expr := guardExpr(p, t.Guard)
-		if t.On.Kind == TriggerRecv {
-			fromActor := msgSender(p, t.On.Msg)
-			chanName := channelName(fromActor, a.Name)
-			expr = strings.ReplaceAll(expr, "recv_msg", "Head("+chanName+")")
-		}
-		fmt.Fprintf(b, " /\\ (%s)", expr)
-	}
-	b.WriteString(";\n")
-}
-
-func guardExpr(p *Protocol, id GuardID) string {
-	for _, g := range p.Guards {
-		if g.ID == id {
-			return g.Expr
-		}
-	}
-	return string(id)
-}
-
-func writeTransitionBody(b *strings.Builder, p *Protocol, a *Actor, t *Transition) {
-	if t.On.Kind == TriggerRecv {
-		fromActor := msgSender(p, t.On.Msg)
-		chanName := channelName(fromActor, a.Name)
-		fmt.Fprintf(b, "      recv_msg := Head(%s);\n", chanName)
-		fmt.Fprintf(b, "      %s := Tail(%s);\n", chanName, chanName)
-	}
-
-	for _, s := range t.Sends {
-		chanName := channelName(a.Name, s.To)
-		fmt.Fprintf(b, "      %s := Append(%s, ", chanName, chanName)
-		writeRecord(b, s.Msg, s.Fields)
-		b.WriteString(");\n")
-	}
-
-	for _, u := range t.Updates {
-		fmt.Fprintf(b, "      %s := %s;\n", sanitiseTLA(u.Var), u.Expr)
-	}
-
-	fmt.Fprintf(b, "      %s_state := %s_%s;\n",
-		sanitiseTLA(a.Name),
-		sanitiseTLA(a.Name), sanitiseTLA(string(t.To)))
 }
 
 func writeRecord(b *strings.Builder, msg MsgType, fields map[string]string) {
 	b.WriteString("[type |-> MSG_")
 	b.WriteString(sanitiseTLA(string(msg)))
-
 	if len(fields) > 0 {
 		keys := make([]string, 0, len(fields))
 		for k := range fields {
@@ -370,106 +371,26 @@ func writeRecord(b *strings.Builder, msg MsgType, fields map[string]string) {
 	b.WriteString("]")
 }
 
-func writeAdversary(b *strings.Builder, p *Protocol) {
-	channels := channelPairs(p)
-	if len(channels) == 0 && len(p.AdvActions) == 0 {
-		return
-	}
-
-	b.WriteString("\\* Dolev-Yao adversary: controls the network.\n")
-	fmt.Fprintf(b, "fair process Adversary = %d\n", len(p.Actors)+1)
-	b.WriteString("begin\n")
-	b.WriteString("  adv_loop:\n")
-	b.WriteString("  while TRUE do\n")
-
-	if p.AdvGuard != "" {
-		fmt.Fprintf(b, "    await %s;\n", p.AdvGuard)
-	}
-
-	b.WriteString("    either\n")
-	b.WriteString("      skip \\* no-op: honest relay\n")
-
-	for _, ch := range channels {
-		chanName := fmt.Sprintf("chan_%s_%s", ch.from, ch.to)
-
-		b.WriteString("    or\n")
-		fmt.Fprintf(b, "      \\* Eavesdrop on %s -> %s\n", ch.from, ch.to)
-		fmt.Fprintf(b, "      await Len(%s) > 0;\n", chanName)
-		fmt.Fprintf(b, "      adversary_knowledge := adversary_knowledge \\union {Head(%s)};\n", chanName)
-
-		b.WriteString("    or\n")
-		fmt.Fprintf(b, "      \\* Drop from %s -> %s\n", ch.from, ch.to)
-		fmt.Fprintf(b, "      await Len(%s) > 0;\n", chanName)
-		fmt.Fprintf(b, "      %s := Tail(%s);\n", chanName, chanName)
-
-		b.WriteString("    or\n")
-		fmt.Fprintf(b, "      \\* Replay into %s -> %s\n", ch.from, ch.to)
-		if p.ChannelBound > 0 {
-			fmt.Fprintf(b, "      await adversary_knowledge /= {} /\\ Len(%s) < %d;\n", chanName, p.ChannelBound)
-		} else {
-			b.WriteString("      await adversary_knowledge /= {};\n")
+func guardExpr(p *Protocol, id GuardID) string {
+	for _, g := range p.Guards {
+		if g.ID == id {
+			return g.Expr
 		}
-		fmt.Fprintf(b, "      with msg \\in adversary_knowledge do\n")
-		fmt.Fprintf(b, "        %s := Append(%s, msg);\n", chanName, chanName)
-		b.WriteString("      end with;\n")
 	}
-
-	for _, aa := range p.AdvActions {
-		b.WriteString("    or\n")
-		fmt.Fprintf(b, "      \\* %s: %s\n", aa.Name, aa.Desc)
-		b.WriteString(aa.Code)
-		b.WriteString("\n")
-	}
-
-	b.WriteString("    end either;\n")
-	b.WriteString("  end while;\n")
-	b.WriteString("end process;\n\n")
+	return string(id)
 }
 
-func writeProperties(b *strings.Builder, p *Protocol, phase *Phase, phaseVars map[string]bool) {
-	if len(p.Properties) == 0 {
-		return
-	}
-	b.WriteString("\\* Verification properties\n")
-	for _, prop := range p.Properties {
-		// In phase mode, skip properties that reference non-phase variables.
-		if phase != nil && !propertyRelevant(prop, phaseVars, p.Vars) {
-			continue
-		}
-
-		if prop.Desc != "" {
-			fmt.Fprintf(b, "\\* %s\n", prop.Desc)
-		}
-		switch prop.Kind {
-		case Invariant:
-			fmt.Fprintf(b, "%s == %s\n", sanitiseTLA(prop.Name), prop.Expr)
-		case Liveness:
-			fmt.Fprintf(b, "%s == <>(%s)\n", sanitiseTLA(prop.Name), prop.Expr)
-		case LeadsTo:
-			fmt.Fprintf(b, "%s == (%s) ~> (%s)\n", sanitiseTLA(prop.Name), prop.FromExpr, prop.ToExpr)
-		}
-	}
-	b.WriteString("\n")
-}
-
-// propertyRelevant returns true if the property only references
-// variables that exist in this phase (phase vars + actor state vars +
-// channels). Returns false if ANY referenced variable is outside the phase.
 func propertyRelevant(prop Property, phaseVars map[string]bool, allVars []VarDef) bool {
 	if len(phaseVars) == 0 {
 		return true
 	}
 	expr := prop.Expr + prop.FromExpr + prop.ToExpr
-
-	// Check if any non-phase variable appears in the expression.
 	for _, v := range allVars {
 		if !phaseVars[v.Name] && v.Name != "recv_msg" && strings.Contains(expr, v.Name) {
 			return false
 		}
 	}
-	// Adversary variables are not in p.Vars — check explicitly.
 	if strings.Contains(expr, "adversary_knowledge") || strings.Contains(expr, "adversary_keys") {
-		// Only relevant if adversary variables exist (i.e., adversary phase).
 		if !phaseVars["adversary_keys"] {
 			return false
 		}

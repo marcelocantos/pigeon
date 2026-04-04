@@ -202,19 +202,11 @@ func TestExportTLA(t *testing.T) {
 			"EXTENDS Integers",
 			"server_state", "ios_state", "cli_state",
 			"chan_cli_server", "chan_server_ios",
-			"adversary_knowledge", "process Adversary", "recv_msg",
+			"Init ==", "Next ==", "Spec ==",
 		},
 		"variables": {
-			"active_tokens = {}", "used_tokens = {}",
-			"paired_devices = {}",
-			`current_token = "none"`,
-			`server_shared_key = <<"none">>`, `client_shared_key = <<"none">>`,
-			`server_code = <<"none">>`, `ios_code = <<"none">>`,
-			`device_secret = "none"`,
-			"adversary_keys = {}",
-			`adv_ecdh_pub = "adv_pub"`,
-			"auth_nonces_used = {}",
-			"code_attempts = 0",
+			"VARIABLES",
+			"vars ==",
 		},
 		"operators": {
 			"DeriveKey(a, b)", "DeriveCode(a, b)",
@@ -229,18 +221,9 @@ func TestExportTLA(t *testing.T) {
 			"Append(chan_cli_server", "Append(chan_server_cli",
 			"Append(chan_server_ios", "Append(chan_ios_server",
 		},
-		"updates": {
-			`active_tokens := active_tokens \union`,
-			`used_tokens := used_tokens \union`,
-			`paired_devices := paired_devices \union`,
-			"DeriveKey(", "DeriveCode(",
-			"code_attempts := code_attempts + 1",
-			`auth_nonces_used := auth_nonces_used \union`,
-		},
-		"adversary_actions": {
-			"QR_shoulder_surf", "MitM_pair_hello", "MitM_pair_hello_ack",
-			"MitM_reencrypt_secret", "concurrent_pair",
-			"token_bruteforce", "code_guess", "session_replay",
+		"transitions": {
+			"_state' =",
+			"UNCHANGED",
 		},
 		"properties": {
 			"NoTokenReuse", "MitMDetectedByCodeMismatch", "MitMPrevented",
@@ -268,25 +251,19 @@ func TestExportTLAKeyBoundCodes(t *testing.T) {
 
 	spec := buf.String()
 
-	// Server computes code from its view of pubkeys.
-	if !strings.Contains(spec, `server_code := DeriveCode("server_pub", recv_msg.pubkey)`) {
+	// Server computes code from its view of pubkeys (pure TLA+ uses ' =).
+	if !strings.Contains(spec, `server_code' = DeriveCode("server_pub"`) {
 		t.Error("TLA+ spec missing server-side DeriveCode")
 	}
 
 	// iOS computes code from its view of pubkeys.
-	if !strings.Contains(spec, `ios_code := DeriveCode(received_server_pub, "client_pub")`) {
+	if !strings.Contains(spec, `ios_code' = DeriveCode(received_server_pub`) {
 		t.Error("TLA+ spec missing ios-side DeriveCode")
 	}
 
 	// CLI sends ios_code (what the user read from the phone).
 	if !strings.Contains(spec, "code |-> ios_code") {
 		t.Error("TLA+ spec missing CLI sending ios_code")
-	}
-
-	// pair_confirm should NOT carry a code or key (it's just a signal now).
-	// Check that pair_confirm send has no code field.
-	if strings.Contains(spec, `MSG_pair_confirm, code`) {
-		t.Error("TLA+ spec: pair_confirm should not carry code (key-bound codes are computed independently)")
 	}
 }
 

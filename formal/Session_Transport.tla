@@ -1,5 +1,5 @@
 ---- MODULE Session_Transport ----
-\* Auto-generated from protocol definition. Do not edit.
+\* Auto-generated from protocol YAML. Do not edit.
 \* Phase: Transport
 
 EXTENDS Integers, Sequences, FiniteSets, TLC
@@ -28,19 +28,18 @@ relay_BackendRegistered == "relay_BackendRegistered"
 relay_Bridged == "relay_Bridged"
 
 \* Message types
-MSG_pair_hello == "pair_hello" \* client -> backend (ECDH pubkey + pairing token)
-MSG_pair_hello_ack == "pair_hello_ack" \* backend -> client (ECDH pubkey)
-MSG_pair_confirm == "pair_confirm" \* backend -> client (signal to compute and display code)
-MSG_pair_complete == "pair_complete" \* backend -> client (encrypted device secret)
-MSG_auth_request == "auth_request" \* client -> backend (encrypted auth with nonce)
-MSG_auth_ok == "auth_ok" \* backend -> client (session established)
-MSG_lan_offer == "lan_offer" \* backend -> client (LAN address + challenge (sent via relay))
-MSG_lan_verify == "lan_verify" \* client -> backend (challenge response + instance ID (sent via LAN))
-MSG_lan_confirm == "lan_confirm" \* backend -> client (LAN verified, path is live (sent via LAN))
-MSG_path_ping == "path_ping" \* backend -> client (health check on active direct path)
-MSG_path_pong == "path_pong" \* client -> backend (health check response)
+MSG_pair_hello == "pair_hello"
+MSG_pair_hello_ack == "pair_hello_ack"
+MSG_pair_confirm == "pair_confirm"
+MSG_pair_complete == "pair_complete"
+MSG_auth_request == "auth_request"
+MSG_auth_ok == "auth_ok"
+MSG_lan_offer == "lan_offer"
+MSG_lan_verify == "lan_verify"
+MSG_lan_confirm == "lan_confirm"
+MSG_path_ping == "path_ping"
+MSG_path_pong == "path_pong"
 
-\* Helper operators
 \* deterministic ordering for ECDH
 KeyRank(k) == CASE k = "adv_pub" -> 0 [] k = "client_pub" -> 1 [] k = "backend_pub" -> 2 [] OTHER -> 3
 \* symbolic ECDH
@@ -50,463 +49,365 @@ DeriveCode(a, b) == IF KeyRank(a) <= KeyRank(b) THEN <<"code", a, b>> ELSE <<"co
 \* minimum of two values
 Min(a, b) == IF a < b THEN a ELSE b
 
-(*--algorithm Session_Transport
+CONSTANTS MaxChanLen
 
-variables
-    backend_state = backend_RelayConnected,
-    client_state = client_RelayConnected,
-    relay_state = relay_BackendRegistered,
-    chan_client_backend = <<>>,
-    chan_backend_client = <<>>,
-    \* last received message (staging)
-    recv_msg = [type |-> "none"],
-    \* LAN server address (host:port)
-    lan_addr = "none",
-    \* 32-byte random challenge for LAN verification
-    challenge_bytes = "none",
-    \* challenge from the most recent LAN offer
-    offer_challenge = "none",
-    \* relay instance ID
-    instance_id = "none",
-    \* consecutive failed pings
-    ping_failures = 0,
-    \* threshold before fallback
-    max_ping_failures = 3,
-    \* exponential backoff level
-    backoff_level = 0,
-    \* backoff cap
-    max_backoff_level = 5,
-    \* LAN server listen address
-    lan_server_addr = "none",
-    \* backend active path
-    b_active_path = "relay",
-    \* client active path
-    c_active_path = "relay",
-    \* backend datagram dispatcher binding
-    b_dispatcher_path = "relay",
-    \* client datagram dispatcher binding
-    c_dispatcher_path = "relay",
-    \* health monitor target
-    monitor_target = "none",
-    \* LANReady notification state
-    lan_signal = "pending",
-    \* relay bridge state
-    relay_bridge = "idle";
+VARIABLES
+    backend_state,
+    client_state,
+    relay_state,
+    chan_client_backend,
+    chan_backend_client,
+    recv_msg,
+    lan_addr,
+    challenge_bytes,
+    offer_challenge,
+    instance_id,
+    ping_failures,
+    max_ping_failures,
+    backoff_level,
+    max_backoff_level,
+    lan_server_addr,
+    b_active_path,
+    c_active_path,
+    b_dispatcher_path,
+    c_dispatcher_path,
+    monitor_target,
+    lan_signal,
+    relay_bridge
 
-fair process backend = 1
-begin
-  backend_loop:
-  while TRUE do
-    either
-      \* SessionActive -> RelayConnected (session_established)
-      await backend_state = backend_SessionActive;
-      backend_state := backend_RelayConnected;
-    or
-      \* RelayConnected -> LANOffered (lan_server_ready)
-      await backend_state = backend_RelayConnected;
-      chan_backend_client := Append(chan_backend_client, [type |-> MSG_lan_offer, addr |-> lan_addr, challenge |-> challenge_bytes]);
-      backend_state := backend_LANOffered;
-    or
-      \* LANOffered -> LANActive on lan_verify
-      await backend_state = backend_LANOffered /\ Len(chan_client_backend) > 0 /\ Head(chan_client_backend).type = MSG_lan_verify /\ (offer_challenge = challenge_bytes);
-      recv_msg := Head(chan_client_backend);
-      chan_client_backend := Tail(chan_client_backend);
-      chan_backend_client := Append(chan_backend_client, [type |-> MSG_lan_confirm]);
-      ping_failures := 0;
-      backoff_level := 0;
-      b_active_path := "lan";
-      b_dispatcher_path := "lan";
-      monitor_target := "lan";
-      lan_signal := "ready";
-      backend_state := backend_LANActive;
-    or
-      \* LANOffered -> RelayConnected on lan_verify
-      await backend_state = backend_LANOffered /\ Len(chan_client_backend) > 0 /\ Head(chan_client_backend).type = MSG_lan_verify /\ (offer_challenge /= challenge_bytes);
-      recv_msg := Head(chan_client_backend);
-      chan_client_backend := Tail(chan_client_backend);
-      backend_state := backend_RelayConnected;
-    or
-      \* LANOffered -> RelayBackoff (offer_timeout)
-      await backend_state = backend_LANOffered;
-      backoff_level := Min(backoff_level + 1, max_backoff_level);
-      lan_signal := "pending";
-      backend_state := backend_RelayBackoff;
-    or
-      \* LANActive -> LANActive (ping_tick)
-      await backend_state = backend_LANActive;
-      chan_backend_client := Append(chan_backend_client, [type |-> MSG_path_ping]);
-      backend_state := backend_LANActive;
-    or
-      \* LANActive -> LANDegraded (ping_timeout)
-      await backend_state = backend_LANActive;
-      ping_failures := 1;
-      backend_state := backend_LANDegraded;
-    or
-      \* LANDegraded -> LANDegraded (ping_tick)
-      await backend_state = backend_LANDegraded;
-      chan_backend_client := Append(chan_backend_client, [type |-> MSG_path_ping]);
-      backend_state := backend_LANDegraded;
-    or
-      \* LANDegraded -> LANActive on path_pong
-      await backend_state = backend_LANDegraded /\ Len(chan_client_backend) > 0 /\ Head(chan_client_backend).type = MSG_path_pong;
-      recv_msg := Head(chan_client_backend);
-      chan_client_backend := Tail(chan_client_backend);
-      ping_failures := 0;
-      backend_state := backend_LANActive;
-    or
-      \* LANDegraded -> LANDegraded (ping_timeout)
-      await backend_state = backend_LANDegraded /\ (ping_failures + 1 < max_ping_failures);
-      ping_failures := ping_failures + 1;
-      backend_state := backend_LANDegraded;
-    or
-      \* LANDegraded -> RelayBackoff (ping_timeout)
-      await backend_state = backend_LANDegraded /\ (ping_failures + 1 >= max_ping_failures);
-      backoff_level := Min(backoff_level + 1, max_backoff_level);
-      b_active_path := "relay";
-      b_dispatcher_path := "relay";
-      monitor_target := "none";
-      lan_signal := "pending";
-      ping_failures := 0;
-      backend_state := backend_RelayBackoff;
-    or
-      \* RelayBackoff -> LANOffered (backoff_expired)
-      await backend_state = backend_RelayBackoff;
-      chan_backend_client := Append(chan_backend_client, [type |-> MSG_lan_offer, addr |-> lan_addr, challenge |-> challenge_bytes]);
-      backend_state := backend_LANOffered;
-    or
-      \* RelayBackoff -> LANOffered (lan_server_changed)
-      await backend_state = backend_RelayBackoff;
-      chan_backend_client := Append(chan_backend_client, [type |-> MSG_lan_offer, addr |-> lan_addr, challenge |-> challenge_bytes]);
-      backoff_level := 0;
-      backend_state := backend_LANOffered;
-    or
-      \* RelayConnected -> LANOffered (readvertise_tick)
-      await backend_state = backend_RelayConnected /\ (lan_server_addr /= "none");
-      chan_backend_client := Append(chan_backend_client, [type |-> MSG_lan_offer, addr |-> lan_addr, challenge |-> challenge_bytes]);
-      backend_state := backend_LANOffered;
-    or
-      \* RelayConnected -> Paired (disconnect)
-      await backend_state = backend_RelayConnected;
-      backend_state := backend_Paired;
-    end either;
-  end while;
-end process;
+vars == <<backend_state, client_state, relay_state, chan_client_backend, chan_backend_client, recv_msg, lan_addr, challenge_bytes, offer_challenge, instance_id, ping_failures, max_ping_failures, backoff_level, max_backoff_level, lan_server_addr, b_active_path, c_active_path, b_dispatcher_path, c_dispatcher_path, monitor_target, lan_signal, relay_bridge>>
 
-fair process client = 2
-begin
-  client_loop:
-  while TRUE do
-    either
-      \* SessionActive -> RelayConnected (session_established)
-      await client_state = client_SessionActive;
-      client_state := client_RelayConnected;
-    or
-      \* RelayConnected -> LANConnecting on lan_offer
-      await client_state = client_RelayConnected /\ Len(chan_backend_client) > 0 /\ Head(chan_backend_client).type = MSG_lan_offer /\ (TRUE);
-      recv_msg := Head(chan_backend_client);
-      chan_backend_client := Tail(chan_backend_client);
-      client_state := client_LANConnecting;
-    or
-      \* RelayConnected -> RelayConnected on lan_offer
-      await client_state = client_RelayConnected /\ Len(chan_backend_client) > 0 /\ Head(chan_backend_client).type = MSG_lan_offer /\ (FALSE);
-      recv_msg := Head(chan_backend_client);
-      chan_backend_client := Tail(chan_backend_client);
-      client_state := client_RelayConnected;
-    or
-      \* LANConnecting -> LANVerifying (lan_dial_ok)
-      await client_state = client_LANConnecting;
-      chan_client_backend := Append(chan_client_backend, [type |-> MSG_lan_verify, challenge |-> offer_challenge, instance_id |-> instance_id]);
-      client_state := client_LANVerifying;
-    or
-      \* LANConnecting -> RelayConnected (lan_dial_failed)
-      await client_state = client_LANConnecting;
-      client_state := client_RelayConnected;
-    or
-      \* LANVerifying -> LANActive on lan_confirm
-      await client_state = client_LANVerifying /\ Len(chan_backend_client) > 0 /\ Head(chan_backend_client).type = MSG_lan_confirm;
-      recv_msg := Head(chan_backend_client);
-      chan_backend_client := Tail(chan_backend_client);
-      c_active_path := "lan";
-      c_dispatcher_path := "lan";
-      lan_signal := "ready";
-      client_state := client_LANActive;
-    or
-      \* LANVerifying -> RelayConnected (verify_timeout)
-      await client_state = client_LANVerifying;
-      c_dispatcher_path := "relay";
-      client_state := client_RelayConnected;
-    or
-      \* LANActive -> LANActive on path_ping
-      await client_state = client_LANActive /\ Len(chan_backend_client) > 0 /\ Head(chan_backend_client).type = MSG_path_ping;
-      recv_msg := Head(chan_backend_client);
-      chan_backend_client := Tail(chan_backend_client);
-      chan_client_backend := Append(chan_client_backend, [type |-> MSG_path_pong]);
-      client_state := client_LANActive;
-    or
-      \* LANActive -> RelayFallback (lan_error)
-      await client_state = client_LANActive;
-      c_active_path := "relay";
-      c_dispatcher_path := "relay";
-      lan_signal := "pending";
-      client_state := client_RelayFallback;
-    or
-      \* RelayFallback -> RelayConnected (relay_ok)
-      await client_state = client_RelayFallback;
-      client_state := client_RelayConnected;
-    or
-      \* LANActive -> LANConnecting on lan_offer
-      await client_state = client_LANActive /\ Len(chan_backend_client) > 0 /\ Head(chan_backend_client).type = MSG_lan_offer /\ (TRUE);
-      recv_msg := Head(chan_backend_client);
-      chan_backend_client := Tail(chan_backend_client);
-      client_state := client_LANConnecting;
-    or
-      \* RelayConnected -> Paired (disconnect)
-      await client_state = client_RelayConnected;
-      client_state := client_Paired;
-    end either;
-  end while;
-end process;
+CanSend(ch) == Len(ch) < MaxChanLen
 
-fair process relay = 3
-begin
-  relay_loop:
-  while TRUE do
-    either
-      \* Idle -> BackendRegistered (backend_register)
-      await relay_state = relay_Idle;
-      relay_state := relay_BackendRegistered;
-    or
-      \* BackendRegistered -> Bridged (client_connect)
-      await relay_state = relay_BackendRegistered;
-      relay_bridge := "active";
-      relay_state := relay_Bridged;
-    or
-      \* Bridged -> BackendRegistered (client_disconnect)
-      await relay_state = relay_Bridged;
-      relay_bridge := "idle";
-      relay_state := relay_BackendRegistered;
-    or
-      \* BackendRegistered -> Idle (backend_disconnect)
-      await relay_state = relay_BackendRegistered;
-      relay_state := relay_Idle;
-    end either;
-  end while;
-end process;
+Init ==
+    /\ backend_state = backend_RelayConnected
+    /\ client_state = client_RelayConnected
+    /\ relay_state = relay_BackendRegistered
+    /\ chan_client_backend = <<>>
+    /\ chan_backend_client = <<>>
+    /\ recv_msg = [type |-> "none"]
+    /\ lan_addr = "none"
+    /\ challenge_bytes = "none"
+    /\ offer_challenge = "none"
+    /\ instance_id = "none"
+    /\ ping_failures = 0
+    /\ max_ping_failures = 3
+    /\ backoff_level = 0
+    /\ max_backoff_level = 5
+    /\ lan_server_addr = "none"
+    /\ b_active_path = "relay"
+    /\ c_active_path = "relay"
+    /\ b_dispatcher_path = "relay"
+    /\ c_dispatcher_path = "relay"
+    /\ monitor_target = "none"
+    /\ lan_signal = "pending"
+    /\ relay_bridge = "idle"
 
-end algorithm; *)
-\* BEGIN TRANSLATION
-VARIABLES backend_state, client_state, relay_state, chan_client_backend, 
-          chan_backend_client, recv_msg, lan_addr, challenge_bytes, 
-          offer_challenge, instance_id, ping_failures, max_ping_failures, 
-          backoff_level, max_backoff_level, lan_server_addr, b_active_path, 
-          c_active_path, b_dispatcher_path, c_dispatcher_path, monitor_target, 
-          lan_signal, relay_bridge
+\* ================================================================
+\* backend actions
+\* ================================================================
 
-vars == << backend_state, client_state, relay_state, chan_client_backend, 
-           chan_backend_client, recv_msg, lan_addr, challenge_bytes, 
-           offer_challenge, instance_id, ping_failures, max_ping_failures, 
-           backoff_level, max_backoff_level, lan_server_addr, b_active_path, 
-           c_active_path, b_dispatcher_path, c_dispatcher_path, 
-           monitor_target, lan_signal, relay_bridge >>
+\* backend: SessionActive -> RelayConnected (session_established)
+backend_SessionActive_to_RelayConnected_on_session_established ==
+    /\ backend_state = backend_SessionActive
+    /\ backend_state' = backend_RelayConnected
+    /\ UNCHANGED <<client_state, relay_state, chan_client_backend, chan_backend_client, recv_msg, lan_addr, challenge_bytes, offer_challenge, instance_id, ping_failures, max_ping_failures, backoff_level, max_backoff_level, lan_server_addr, b_active_path, c_active_path, b_dispatcher_path, c_dispatcher_path, monitor_target, lan_signal, relay_bridge>>
 
-ProcSet == {1} \cup {2} \cup {3}
+\* backend: RelayConnected -> LANOffered (lan_server_ready)
+backend_RelayConnected_to_LANOffered_on_lan_server_ready ==
+    /\ backend_state = backend_RelayConnected
+    /\ chan_backend_client' = Append(chan_backend_client, [type |-> MSG_lan_offer, addr |-> lan_addr, challenge |-> challenge_bytes])
+    /\ backend_state' = backend_LANOffered
+    /\ UNCHANGED <<client_state, relay_state, chan_client_backend, recv_msg, lan_addr, challenge_bytes, offer_challenge, instance_id, ping_failures, max_ping_failures, backoff_level, max_backoff_level, lan_server_addr, b_active_path, c_active_path, b_dispatcher_path, c_dispatcher_path, monitor_target, lan_signal, relay_bridge>>
 
-Init == (* Global variables *)
-        /\ backend_state = backend_RelayConnected
-        /\ client_state = client_RelayConnected
-        /\ relay_state = relay_BackendRegistered
-        /\ chan_client_backend = <<>>
-        /\ chan_backend_client = <<>>
-        /\ recv_msg = [type |-> "none"]
-        /\ lan_addr = "none"
-        /\ challenge_bytes = "none"
-        /\ offer_challenge = "none"
-        /\ instance_id = "none"
-        /\ ping_failures = 0
-        /\ max_ping_failures = 3
-        /\ backoff_level = 0
-        /\ max_backoff_level = 5
-        /\ lan_server_addr = "none"
-        /\ b_active_path = "relay"
-        /\ c_active_path = "relay"
-        /\ b_dispatcher_path = "relay"
-        /\ c_dispatcher_path = "relay"
-        /\ monitor_target = "none"
-        /\ lan_signal = "pending"
-        /\ relay_bridge = "idle"
+\* backend: LANOffered -> LANActive on recv lan_verify [challenge_valid]
+backend_LANOffered_to_LANActive_on_lan_verify_challenge_valid ==
+    /\ backend_state = backend_LANOffered
+    /\ Len(chan_client_backend) > 0
+    /\ Head(chan_client_backend).type = MSG_lan_verify
+    /\ offer_challenge = challenge_bytes
+    /\ chan_client_backend' = Tail(chan_client_backend)
+    /\ chan_backend_client' = Append(chan_backend_client, [type |-> MSG_lan_confirm])
+    /\ backend_state' = backend_LANActive
+    /\ ping_failures' = 0
+    /\ backoff_level' = 0
+    /\ b_active_path' = "lan"
+    /\ b_dispatcher_path' = "lan"
+    /\ monitor_target' = "lan"
+    /\ lan_signal' = "ready"
+    /\ UNCHANGED <<client_state, relay_state, recv_msg, lan_addr, challenge_bytes, offer_challenge, instance_id, max_ping_failures, max_backoff_level, lan_server_addr, c_active_path, c_dispatcher_path, relay_bridge>>
 
-backend == /\ \/ /\ backend_state = backend_SessionActive
-                 /\ backend_state' = backend_RelayConnected
-                 /\ UNCHANGED <<chan_client_backend, chan_backend_client, recv_msg, ping_failures, backoff_level, b_active_path, b_dispatcher_path, monitor_target, lan_signal>>
-              \/ /\ backend_state = backend_RelayConnected
-                 /\ chan_backend_client' = Append(chan_backend_client, [type |-> MSG_lan_offer, addr |-> lan_addr, challenge |-> challenge_bytes])
-                 /\ backend_state' = backend_LANOffered
-                 /\ UNCHANGED <<chan_client_backend, recv_msg, ping_failures, backoff_level, b_active_path, b_dispatcher_path, monitor_target, lan_signal>>
-              \/ /\ backend_state = backend_LANOffered /\ Len(chan_client_backend) > 0 /\ Head(chan_client_backend).type = MSG_lan_verify /\ (offer_challenge = challenge_bytes)
-                 /\ recv_msg' = Head(chan_client_backend)
-                 /\ chan_client_backend' = Tail(chan_client_backend)
-                 /\ chan_backend_client' = Append(chan_backend_client, [type |-> MSG_lan_confirm])
-                 /\ ping_failures' = 0
-                 /\ backoff_level' = 0
-                 /\ b_active_path' = "lan"
-                 /\ b_dispatcher_path' = "lan"
-                 /\ monitor_target' = "lan"
-                 /\ lan_signal' = "ready"
-                 /\ backend_state' = backend_LANActive
-              \/ /\ backend_state = backend_LANOffered /\ Len(chan_client_backend) > 0 /\ Head(chan_client_backend).type = MSG_lan_verify /\ (offer_challenge /= challenge_bytes)
-                 /\ recv_msg' = Head(chan_client_backend)
-                 /\ chan_client_backend' = Tail(chan_client_backend)
-                 /\ backend_state' = backend_RelayConnected
-                 /\ UNCHANGED <<chan_backend_client, ping_failures, backoff_level, b_active_path, b_dispatcher_path, monitor_target, lan_signal>>
-              \/ /\ backend_state = backend_LANOffered
-                 /\ backoff_level' = Min(backoff_level + 1, max_backoff_level)
-                 /\ lan_signal' = "pending"
-                 /\ backend_state' = backend_RelayBackoff
-                 /\ UNCHANGED <<chan_client_backend, chan_backend_client, recv_msg, ping_failures, b_active_path, b_dispatcher_path, monitor_target>>
-              \/ /\ backend_state = backend_LANActive
-                 /\ chan_backend_client' = Append(chan_backend_client, [type |-> MSG_path_ping])
-                 /\ backend_state' = backend_LANActive
-                 /\ UNCHANGED <<chan_client_backend, recv_msg, ping_failures, backoff_level, b_active_path, b_dispatcher_path, monitor_target, lan_signal>>
-              \/ /\ backend_state = backend_LANActive
-                 /\ ping_failures' = 1
-                 /\ backend_state' = backend_LANDegraded
-                 /\ UNCHANGED <<chan_client_backend, chan_backend_client, recv_msg, backoff_level, b_active_path, b_dispatcher_path, monitor_target, lan_signal>>
-              \/ /\ backend_state = backend_LANDegraded
-                 /\ chan_backend_client' = Append(chan_backend_client, [type |-> MSG_path_ping])
-                 /\ backend_state' = backend_LANDegraded
-                 /\ UNCHANGED <<chan_client_backend, recv_msg, ping_failures, backoff_level, b_active_path, b_dispatcher_path, monitor_target, lan_signal>>
-              \/ /\ backend_state = backend_LANDegraded /\ Len(chan_client_backend) > 0 /\ Head(chan_client_backend).type = MSG_path_pong
-                 /\ recv_msg' = Head(chan_client_backend)
-                 /\ chan_client_backend' = Tail(chan_client_backend)
-                 /\ ping_failures' = 0
-                 /\ backend_state' = backend_LANActive
-                 /\ UNCHANGED <<chan_backend_client, backoff_level, b_active_path, b_dispatcher_path, monitor_target, lan_signal>>
-              \/ /\ backend_state = backend_LANDegraded /\ (ping_failures + 1 < max_ping_failures)
-                 /\ ping_failures' = ping_failures + 1
-                 /\ backend_state' = backend_LANDegraded
-                 /\ UNCHANGED <<chan_client_backend, chan_backend_client, recv_msg, backoff_level, b_active_path, b_dispatcher_path, monitor_target, lan_signal>>
-              \/ /\ backend_state = backend_LANDegraded /\ (ping_failures + 1 >= max_ping_failures)
-                 /\ backoff_level' = Min(backoff_level + 1, max_backoff_level)
-                 /\ b_active_path' = "relay"
-                 /\ b_dispatcher_path' = "relay"
-                 /\ monitor_target' = "none"
-                 /\ lan_signal' = "pending"
-                 /\ ping_failures' = 0
-                 /\ backend_state' = backend_RelayBackoff
-                 /\ UNCHANGED <<chan_client_backend, chan_backend_client, recv_msg>>
-              \/ /\ backend_state = backend_RelayBackoff
-                 /\ chan_backend_client' = Append(chan_backend_client, [type |-> MSG_lan_offer, addr |-> lan_addr, challenge |-> challenge_bytes])
-                 /\ backend_state' = backend_LANOffered
-                 /\ UNCHANGED <<chan_client_backend, recv_msg, ping_failures, backoff_level, b_active_path, b_dispatcher_path, monitor_target, lan_signal>>
-              \/ /\ backend_state = backend_RelayBackoff
-                 /\ chan_backend_client' = Append(chan_backend_client, [type |-> MSG_lan_offer, addr |-> lan_addr, challenge |-> challenge_bytes])
-                 /\ backoff_level' = 0
-                 /\ backend_state' = backend_LANOffered
-                 /\ UNCHANGED <<chan_client_backend, recv_msg, ping_failures, b_active_path, b_dispatcher_path, monitor_target, lan_signal>>
-              \/ /\ backend_state = backend_RelayConnected /\ (lan_server_addr /= "none")
-                 /\ chan_backend_client' = Append(chan_backend_client, [type |-> MSG_lan_offer, addr |-> lan_addr, challenge |-> challenge_bytes])
-                 /\ backend_state' = backend_LANOffered
-                 /\ UNCHANGED <<chan_client_backend, recv_msg, ping_failures, backoff_level, b_active_path, b_dispatcher_path, monitor_target, lan_signal>>
-              \/ /\ backend_state = backend_RelayConnected
-                 /\ backend_state' = backend_Paired
-                 /\ UNCHANGED <<chan_client_backend, chan_backend_client, recv_msg, ping_failures, backoff_level, b_active_path, b_dispatcher_path, monitor_target, lan_signal>>
-           /\ UNCHANGED << client_state, relay_state, lan_addr, 
-                           challenge_bytes, offer_challenge, instance_id, 
-                           max_ping_failures, max_backoff_level, 
-                           lan_server_addr, c_active_path, c_dispatcher_path, 
-                           relay_bridge >>
+\* backend: LANOffered -> RelayConnected on recv lan_verify [challenge_invalid]
+backend_LANOffered_to_RelayConnected_on_lan_verify_challenge_invalid ==
+    /\ backend_state = backend_LANOffered
+    /\ Len(chan_client_backend) > 0
+    /\ Head(chan_client_backend).type = MSG_lan_verify
+    /\ offer_challenge /= challenge_bytes
+    /\ chan_client_backend' = Tail(chan_client_backend)
+    /\ backend_state' = backend_RelayConnected
+    /\ UNCHANGED <<client_state, relay_state, chan_backend_client, recv_msg, lan_addr, challenge_bytes, offer_challenge, instance_id, ping_failures, max_ping_failures, backoff_level, max_backoff_level, lan_server_addr, b_active_path, c_active_path, b_dispatcher_path, c_dispatcher_path, monitor_target, lan_signal, relay_bridge>>
 
-client == /\ \/ /\ client_state = client_SessionActive
-                /\ client_state' = client_RelayConnected
-                /\ UNCHANGED <<chan_client_backend, chan_backend_client, recv_msg, c_active_path, c_dispatcher_path, lan_signal>>
-             \/ /\ client_state = client_RelayConnected /\ Len(chan_backend_client) > 0 /\ Head(chan_backend_client).type = MSG_lan_offer /\ (TRUE)
-                /\ recv_msg' = Head(chan_backend_client)
-                /\ chan_backend_client' = Tail(chan_backend_client)
-                /\ client_state' = client_LANConnecting
-                /\ UNCHANGED <<chan_client_backend, c_active_path, c_dispatcher_path, lan_signal>>
-             \/ /\ client_state = client_RelayConnected /\ Len(chan_backend_client) > 0 /\ Head(chan_backend_client).type = MSG_lan_offer /\ (FALSE)
-                /\ recv_msg' = Head(chan_backend_client)
-                /\ chan_backend_client' = Tail(chan_backend_client)
-                /\ client_state' = client_RelayConnected
-                /\ UNCHANGED <<chan_client_backend, c_active_path, c_dispatcher_path, lan_signal>>
-             \/ /\ client_state = client_LANConnecting
-                /\ chan_client_backend' = Append(chan_client_backend, [type |-> MSG_lan_verify, challenge |-> offer_challenge, instance_id |-> instance_id])
-                /\ client_state' = client_LANVerifying
-                /\ UNCHANGED <<chan_backend_client, recv_msg, c_active_path, c_dispatcher_path, lan_signal>>
-             \/ /\ client_state = client_LANConnecting
-                /\ client_state' = client_RelayConnected
-                /\ UNCHANGED <<chan_client_backend, chan_backend_client, recv_msg, c_active_path, c_dispatcher_path, lan_signal>>
-             \/ /\ client_state = client_LANVerifying /\ Len(chan_backend_client) > 0 /\ Head(chan_backend_client).type = MSG_lan_confirm
-                /\ recv_msg' = Head(chan_backend_client)
-                /\ chan_backend_client' = Tail(chan_backend_client)
-                /\ c_active_path' = "lan"
-                /\ c_dispatcher_path' = "lan"
-                /\ lan_signal' = "ready"
-                /\ client_state' = client_LANActive
-                /\ UNCHANGED chan_client_backend
-             \/ /\ client_state = client_LANVerifying
-                /\ c_dispatcher_path' = "relay"
-                /\ client_state' = client_RelayConnected
-                /\ UNCHANGED <<chan_client_backend, chan_backend_client, recv_msg, c_active_path, lan_signal>>
-             \/ /\ client_state = client_LANActive /\ Len(chan_backend_client) > 0 /\ Head(chan_backend_client).type = MSG_path_ping
-                /\ recv_msg' = Head(chan_backend_client)
-                /\ chan_backend_client' = Tail(chan_backend_client)
-                /\ chan_client_backend' = Append(chan_client_backend, [type |-> MSG_path_pong])
-                /\ client_state' = client_LANActive
-                /\ UNCHANGED <<c_active_path, c_dispatcher_path, lan_signal>>
-             \/ /\ client_state = client_LANActive
-                /\ c_active_path' = "relay"
-                /\ c_dispatcher_path' = "relay"
-                /\ lan_signal' = "pending"
-                /\ client_state' = client_RelayFallback
-                /\ UNCHANGED <<chan_client_backend, chan_backend_client, recv_msg>>
-             \/ /\ client_state = client_RelayFallback
-                /\ client_state' = client_RelayConnected
-                /\ UNCHANGED <<chan_client_backend, chan_backend_client, recv_msg, c_active_path, c_dispatcher_path, lan_signal>>
-             \/ /\ client_state = client_LANActive /\ Len(chan_backend_client) > 0 /\ Head(chan_backend_client).type = MSG_lan_offer /\ (TRUE)
-                /\ recv_msg' = Head(chan_backend_client)
-                /\ chan_backend_client' = Tail(chan_backend_client)
-                /\ client_state' = client_LANConnecting
-                /\ UNCHANGED <<chan_client_backend, c_active_path, c_dispatcher_path, lan_signal>>
-             \/ /\ client_state = client_RelayConnected
-                /\ client_state' = client_Paired
-                /\ UNCHANGED <<chan_client_backend, chan_backend_client, recv_msg, c_active_path, c_dispatcher_path, lan_signal>>
-          /\ UNCHANGED << backend_state, relay_state, lan_addr, 
-                          challenge_bytes, offer_challenge, instance_id, 
-                          ping_failures, max_ping_failures, backoff_level, 
-                          max_backoff_level, lan_server_addr, b_active_path, 
-                          b_dispatcher_path, monitor_target, relay_bridge >>
+\* backend: LANOffered -> RelayBackoff (offer_timeout)
+backend_LANOffered_to_RelayBackoff_on_offer_timeout ==
+    /\ backend_state = backend_LANOffered
+    /\ backend_state' = backend_RelayBackoff
+    /\ backoff_level' = Min(backoff_level + 1, max_backoff_level)
+    /\ lan_signal' = "pending"
+    /\ UNCHANGED <<client_state, relay_state, chan_client_backend, chan_backend_client, recv_msg, lan_addr, challenge_bytes, offer_challenge, instance_id, ping_failures, max_ping_failures, max_backoff_level, lan_server_addr, b_active_path, c_active_path, b_dispatcher_path, c_dispatcher_path, monitor_target, relay_bridge>>
 
-relay == /\ \/ /\ relay_state = relay_Idle
-               /\ relay_state' = relay_BackendRegistered
-               /\ UNCHANGED relay_bridge
-            \/ /\ relay_state = relay_BackendRegistered
-               /\ relay_bridge' = "active"
-               /\ relay_state' = relay_Bridged
-            \/ /\ relay_state = relay_Bridged
-               /\ relay_bridge' = "idle"
-               /\ relay_state' = relay_BackendRegistered
-            \/ /\ relay_state = relay_BackendRegistered
-               /\ relay_state' = relay_Idle
-               /\ UNCHANGED relay_bridge
-         /\ UNCHANGED << backend_state, client_state, chan_client_backend, 
-                         chan_backend_client, recv_msg, lan_addr, 
-                         challenge_bytes, offer_challenge, instance_id, 
-                         ping_failures, max_ping_failures, backoff_level, 
-                         max_backoff_level, lan_server_addr, b_active_path, 
-                         c_active_path, b_dispatcher_path, c_dispatcher_path, 
-                         monitor_target, lan_signal >>
+\* backend: LANActive -> LANActive (ping_tick)
+backend_LANActive_to_LANActive_on_ping_tick ==
+    /\ backend_state = backend_LANActive
+    /\ chan_backend_client' = Append(chan_backend_client, [type |-> MSG_path_ping])
+    /\ backend_state' = backend_LANActive
+    /\ UNCHANGED <<client_state, relay_state, chan_client_backend, recv_msg, lan_addr, challenge_bytes, offer_challenge, instance_id, ping_failures, max_ping_failures, backoff_level, max_backoff_level, lan_server_addr, b_active_path, c_active_path, b_dispatcher_path, c_dispatcher_path, monitor_target, lan_signal, relay_bridge>>
 
-Next == backend \/ client \/ relay
+\* backend: LANActive -> LANDegraded (ping_timeout)
+backend_LANActive_to_LANDegraded_on_ping_timeout ==
+    /\ backend_state = backend_LANActive
+    /\ backend_state' = backend_LANDegraded
+    /\ ping_failures' = 1
+    /\ UNCHANGED <<client_state, relay_state, chan_client_backend, chan_backend_client, recv_msg, lan_addr, challenge_bytes, offer_challenge, instance_id, max_ping_failures, backoff_level, max_backoff_level, lan_server_addr, b_active_path, c_active_path, b_dispatcher_path, c_dispatcher_path, monitor_target, lan_signal, relay_bridge>>
 
-Spec == /\ Init /\ [][Next]_vars
-        /\ WF_vars(backend)
-        /\ WF_vars(client)
-        /\ WF_vars(relay)
+\* backend: LANDegraded -> LANDegraded (ping_tick)
+backend_LANDegraded_to_LANDegraded_on_ping_tick ==
+    /\ backend_state = backend_LANDegraded
+    /\ chan_backend_client' = Append(chan_backend_client, [type |-> MSG_path_ping])
+    /\ backend_state' = backend_LANDegraded
+    /\ UNCHANGED <<client_state, relay_state, chan_client_backend, recv_msg, lan_addr, challenge_bytes, offer_challenge, instance_id, ping_failures, max_ping_failures, backoff_level, max_backoff_level, lan_server_addr, b_active_path, c_active_path, b_dispatcher_path, c_dispatcher_path, monitor_target, lan_signal, relay_bridge>>
 
-\* END TRANSLATION
+\* backend: LANDegraded -> LANActive on recv path_pong
+backend_LANDegraded_to_LANActive_on_path_pong ==
+    /\ backend_state = backend_LANDegraded
+    /\ Len(chan_client_backend) > 0
+    /\ Head(chan_client_backend).type = MSG_path_pong
+    /\ chan_client_backend' = Tail(chan_client_backend)
+    /\ backend_state' = backend_LANActive
+    /\ ping_failures' = 0
+    /\ UNCHANGED <<client_state, relay_state, chan_backend_client, recv_msg, lan_addr, challenge_bytes, offer_challenge, instance_id, max_ping_failures, backoff_level, max_backoff_level, lan_server_addr, b_active_path, c_active_path, b_dispatcher_path, c_dispatcher_path, monitor_target, lan_signal, relay_bridge>>
 
-\* Verification properties
+\* backend: LANDegraded -> LANDegraded (ping_timeout) [under_max_failures]
+backend_LANDegraded_to_LANDegraded_on_ping_timeout_under_max_failures ==
+    /\ backend_state = backend_LANDegraded
+    /\ ping_failures + 1 < max_ping_failures
+    /\ backend_state' = backend_LANDegraded
+    /\ ping_failures' = ping_failures + 1
+    /\ UNCHANGED <<client_state, relay_state, chan_client_backend, chan_backend_client, recv_msg, lan_addr, challenge_bytes, offer_challenge, instance_id, max_ping_failures, backoff_level, max_backoff_level, lan_server_addr, b_active_path, c_active_path, b_dispatcher_path, c_dispatcher_path, monitor_target, lan_signal, relay_bridge>>
+
+\* backend: LANDegraded -> RelayBackoff (ping_timeout) [at_max_failures]
+backend_LANDegraded_to_RelayBackoff_on_ping_timeout_at_max_failures ==
+    /\ backend_state = backend_LANDegraded
+    /\ ping_failures + 1 >= max_ping_failures
+    /\ backend_state' = backend_RelayBackoff
+    /\ backoff_level' = Min(backoff_level + 1, max_backoff_level)
+    /\ b_active_path' = "relay"
+    /\ b_dispatcher_path' = "relay"
+    /\ monitor_target' = "none"
+    /\ lan_signal' = "pending"
+    /\ ping_failures' = 0
+    /\ UNCHANGED <<client_state, relay_state, chan_client_backend, chan_backend_client, recv_msg, lan_addr, challenge_bytes, offer_challenge, instance_id, max_ping_failures, max_backoff_level, lan_server_addr, c_active_path, c_dispatcher_path, relay_bridge>>
+
+\* backend: RelayBackoff -> LANOffered (backoff_expired)
+backend_RelayBackoff_to_LANOffered_on_backoff_expired ==
+    /\ backend_state = backend_RelayBackoff
+    /\ chan_backend_client' = Append(chan_backend_client, [type |-> MSG_lan_offer, addr |-> lan_addr, challenge |-> challenge_bytes])
+    /\ backend_state' = backend_LANOffered
+    /\ UNCHANGED <<client_state, relay_state, chan_client_backend, recv_msg, lan_addr, challenge_bytes, offer_challenge, instance_id, ping_failures, max_ping_failures, backoff_level, max_backoff_level, lan_server_addr, b_active_path, c_active_path, b_dispatcher_path, c_dispatcher_path, monitor_target, lan_signal, relay_bridge>>
+
+\* backend: RelayBackoff -> LANOffered (lan_server_changed)
+backend_RelayBackoff_to_LANOffered_on_lan_server_changed ==
+    /\ backend_state = backend_RelayBackoff
+    /\ chan_backend_client' = Append(chan_backend_client, [type |-> MSG_lan_offer, addr |-> lan_addr, challenge |-> challenge_bytes])
+    /\ backend_state' = backend_LANOffered
+    /\ backoff_level' = 0
+    /\ UNCHANGED <<client_state, relay_state, chan_client_backend, recv_msg, lan_addr, challenge_bytes, offer_challenge, instance_id, ping_failures, max_ping_failures, max_backoff_level, lan_server_addr, b_active_path, c_active_path, b_dispatcher_path, c_dispatcher_path, monitor_target, lan_signal, relay_bridge>>
+
+\* backend: RelayConnected -> LANOffered (readvertise_tick) [lan_server_available]
+backend_RelayConnected_to_LANOffered_on_readvertise_tick_lan_server_available ==
+    /\ backend_state = backend_RelayConnected
+    /\ lan_server_addr /= "none"
+    /\ chan_backend_client' = Append(chan_backend_client, [type |-> MSG_lan_offer, addr |-> lan_addr, challenge |-> challenge_bytes])
+    /\ backend_state' = backend_LANOffered
+    /\ UNCHANGED <<client_state, relay_state, chan_client_backend, recv_msg, lan_addr, challenge_bytes, offer_challenge, instance_id, ping_failures, max_ping_failures, backoff_level, max_backoff_level, lan_server_addr, b_active_path, c_active_path, b_dispatcher_path, c_dispatcher_path, monitor_target, lan_signal, relay_bridge>>
+
+\* backend: RelayConnected -> Paired (disconnect)
+backend_RelayConnected_to_Paired_on_disconnect ==
+    /\ backend_state = backend_RelayConnected
+    /\ backend_state' = backend_Paired
+    /\ UNCHANGED <<client_state, relay_state, chan_client_backend, chan_backend_client, recv_msg, lan_addr, challenge_bytes, offer_challenge, instance_id, ping_failures, max_ping_failures, backoff_level, max_backoff_level, lan_server_addr, b_active_path, c_active_path, b_dispatcher_path, c_dispatcher_path, monitor_target, lan_signal, relay_bridge>>
+
+\* ================================================================
+\* client actions
+\* ================================================================
+
+\* client: SessionActive -> RelayConnected (session_established)
+client_SessionActive_to_RelayConnected_on_session_established ==
+    /\ client_state = client_SessionActive
+    /\ client_state' = client_RelayConnected
+    /\ UNCHANGED <<backend_state, relay_state, chan_client_backend, chan_backend_client, recv_msg, lan_addr, challenge_bytes, offer_challenge, instance_id, ping_failures, max_ping_failures, backoff_level, max_backoff_level, lan_server_addr, b_active_path, c_active_path, b_dispatcher_path, c_dispatcher_path, monitor_target, lan_signal, relay_bridge>>
+
+\* client: RelayConnected -> LANConnecting on recv lan_offer [lan_enabled]
+client_RelayConnected_to_LANConnecting_on_lan_offer_lan_enabled ==
+    /\ client_state = client_RelayConnected
+    /\ Len(chan_backend_client) > 0
+    /\ Head(chan_backend_client).type = MSG_lan_offer
+    /\ TRUE
+    /\ chan_backend_client' = Tail(chan_backend_client)
+    /\ client_state' = client_LANConnecting
+    /\ UNCHANGED <<backend_state, relay_state, chan_client_backend, recv_msg, lan_addr, challenge_bytes, offer_challenge, instance_id, ping_failures, max_ping_failures, backoff_level, max_backoff_level, lan_server_addr, b_active_path, c_active_path, b_dispatcher_path, c_dispatcher_path, monitor_target, lan_signal, relay_bridge>>
+
+\* client: RelayConnected -> RelayConnected on recv lan_offer [lan_disabled]
+client_RelayConnected_to_RelayConnected_on_lan_offer_lan_disabled ==
+    /\ client_state = client_RelayConnected
+    /\ Len(chan_backend_client) > 0
+    /\ Head(chan_backend_client).type = MSG_lan_offer
+    /\ FALSE
+    /\ chan_backend_client' = Tail(chan_backend_client)
+    /\ client_state' = client_RelayConnected
+    /\ UNCHANGED <<backend_state, relay_state, chan_client_backend, recv_msg, lan_addr, challenge_bytes, offer_challenge, instance_id, ping_failures, max_ping_failures, backoff_level, max_backoff_level, lan_server_addr, b_active_path, c_active_path, b_dispatcher_path, c_dispatcher_path, monitor_target, lan_signal, relay_bridge>>
+
+\* client: LANConnecting -> LANVerifying (lan_dial_ok)
+client_LANConnecting_to_LANVerifying_on_lan_dial_ok ==
+    /\ client_state = client_LANConnecting
+    /\ chan_client_backend' = Append(chan_client_backend, [type |-> MSG_lan_verify, challenge |-> offer_challenge, instance_id |-> instance_id])
+    /\ client_state' = client_LANVerifying
+    /\ UNCHANGED <<backend_state, relay_state, chan_backend_client, recv_msg, lan_addr, challenge_bytes, offer_challenge, instance_id, ping_failures, max_ping_failures, backoff_level, max_backoff_level, lan_server_addr, b_active_path, c_active_path, b_dispatcher_path, c_dispatcher_path, monitor_target, lan_signal, relay_bridge>>
+
+\* client: LANConnecting -> RelayConnected (lan_dial_failed)
+client_LANConnecting_to_RelayConnected_on_lan_dial_failed ==
+    /\ client_state = client_LANConnecting
+    /\ client_state' = client_RelayConnected
+    /\ UNCHANGED <<backend_state, relay_state, chan_client_backend, chan_backend_client, recv_msg, lan_addr, challenge_bytes, offer_challenge, instance_id, ping_failures, max_ping_failures, backoff_level, max_backoff_level, lan_server_addr, b_active_path, c_active_path, b_dispatcher_path, c_dispatcher_path, monitor_target, lan_signal, relay_bridge>>
+
+\* client: LANVerifying -> LANActive on recv lan_confirm
+client_LANVerifying_to_LANActive_on_lan_confirm ==
+    /\ client_state = client_LANVerifying
+    /\ Len(chan_backend_client) > 0
+    /\ Head(chan_backend_client).type = MSG_lan_confirm
+    /\ chan_backend_client' = Tail(chan_backend_client)
+    /\ client_state' = client_LANActive
+    /\ c_active_path' = "lan"
+    /\ c_dispatcher_path' = "lan"
+    /\ lan_signal' = "ready"
+    /\ UNCHANGED <<backend_state, relay_state, chan_client_backend, recv_msg, lan_addr, challenge_bytes, offer_challenge, instance_id, ping_failures, max_ping_failures, backoff_level, max_backoff_level, lan_server_addr, b_active_path, b_dispatcher_path, monitor_target, relay_bridge>>
+
+\* client: LANVerifying -> RelayConnected (verify_timeout)
+client_LANVerifying_to_RelayConnected_on_verify_timeout ==
+    /\ client_state = client_LANVerifying
+    /\ client_state' = client_RelayConnected
+    /\ c_dispatcher_path' = "relay"
+    /\ UNCHANGED <<backend_state, relay_state, chan_client_backend, chan_backend_client, recv_msg, lan_addr, challenge_bytes, offer_challenge, instance_id, ping_failures, max_ping_failures, backoff_level, max_backoff_level, lan_server_addr, b_active_path, c_active_path, b_dispatcher_path, monitor_target, lan_signal, relay_bridge>>
+
+\* client: LANActive -> LANActive on recv path_ping
+client_LANActive_to_LANActive_on_path_ping ==
+    /\ client_state = client_LANActive
+    /\ Len(chan_backend_client) > 0
+    /\ Head(chan_backend_client).type = MSG_path_ping
+    /\ chan_backend_client' = Tail(chan_backend_client)
+    /\ chan_client_backend' = Append(chan_client_backend, [type |-> MSG_path_pong])
+    /\ client_state' = client_LANActive
+    /\ UNCHANGED <<backend_state, relay_state, recv_msg, lan_addr, challenge_bytes, offer_challenge, instance_id, ping_failures, max_ping_failures, backoff_level, max_backoff_level, lan_server_addr, b_active_path, c_active_path, b_dispatcher_path, c_dispatcher_path, monitor_target, lan_signal, relay_bridge>>
+
+\* client: LANActive -> RelayFallback (lan_error)
+client_LANActive_to_RelayFallback_on_lan_error ==
+    /\ client_state = client_LANActive
+    /\ client_state' = client_RelayFallback
+    /\ c_active_path' = "relay"
+    /\ c_dispatcher_path' = "relay"
+    /\ lan_signal' = "pending"
+    /\ UNCHANGED <<backend_state, relay_state, chan_client_backend, chan_backend_client, recv_msg, lan_addr, challenge_bytes, offer_challenge, instance_id, ping_failures, max_ping_failures, backoff_level, max_backoff_level, lan_server_addr, b_active_path, b_dispatcher_path, monitor_target, relay_bridge>>
+
+\* client: RelayFallback -> RelayConnected (relay_ok)
+client_RelayFallback_to_RelayConnected_on_relay_ok ==
+    /\ client_state = client_RelayFallback
+    /\ client_state' = client_RelayConnected
+    /\ UNCHANGED <<backend_state, relay_state, chan_client_backend, chan_backend_client, recv_msg, lan_addr, challenge_bytes, offer_challenge, instance_id, ping_failures, max_ping_failures, backoff_level, max_backoff_level, lan_server_addr, b_active_path, c_active_path, b_dispatcher_path, c_dispatcher_path, monitor_target, lan_signal, relay_bridge>>
+
+\* client: LANActive -> LANConnecting on recv lan_offer [lan_enabled]
+client_LANActive_to_LANConnecting_on_lan_offer_lan_enabled ==
+    /\ client_state = client_LANActive
+    /\ Len(chan_backend_client) > 0
+    /\ Head(chan_backend_client).type = MSG_lan_offer
+    /\ TRUE
+    /\ chan_backend_client' = Tail(chan_backend_client)
+    /\ client_state' = client_LANConnecting
+    /\ UNCHANGED <<backend_state, relay_state, chan_client_backend, recv_msg, lan_addr, challenge_bytes, offer_challenge, instance_id, ping_failures, max_ping_failures, backoff_level, max_backoff_level, lan_server_addr, b_active_path, c_active_path, b_dispatcher_path, c_dispatcher_path, monitor_target, lan_signal, relay_bridge>>
+
+\* client: RelayConnected -> Paired (disconnect)
+client_RelayConnected_to_Paired_on_disconnect ==
+    /\ client_state = client_RelayConnected
+    /\ client_state' = client_Paired
+    /\ UNCHANGED <<backend_state, relay_state, chan_client_backend, chan_backend_client, recv_msg, lan_addr, challenge_bytes, offer_challenge, instance_id, ping_failures, max_ping_failures, backoff_level, max_backoff_level, lan_server_addr, b_active_path, c_active_path, b_dispatcher_path, c_dispatcher_path, monitor_target, lan_signal, relay_bridge>>
+
+\* ================================================================
+\* relay actions
+\* ================================================================
+
+\* relay: Idle -> BackendRegistered (backend_register)
+relay_Idle_to_BackendRegistered_on_backend_register ==
+    /\ relay_state = relay_Idle
+    /\ relay_state' = relay_BackendRegistered
+    /\ UNCHANGED <<backend_state, client_state, chan_client_backend, chan_backend_client, recv_msg, lan_addr, challenge_bytes, offer_challenge, instance_id, ping_failures, max_ping_failures, backoff_level, max_backoff_level, lan_server_addr, b_active_path, c_active_path, b_dispatcher_path, c_dispatcher_path, monitor_target, lan_signal, relay_bridge>>
+
+\* relay: BackendRegistered -> Bridged (client_connect)
+relay_BackendRegistered_to_Bridged_on_client_connect ==
+    /\ relay_state = relay_BackendRegistered
+    /\ relay_state' = relay_Bridged
+    /\ relay_bridge' = "active"
+    /\ UNCHANGED <<backend_state, client_state, chan_client_backend, chan_backend_client, recv_msg, lan_addr, challenge_bytes, offer_challenge, instance_id, ping_failures, max_ping_failures, backoff_level, max_backoff_level, lan_server_addr, b_active_path, c_active_path, b_dispatcher_path, c_dispatcher_path, monitor_target, lan_signal>>
+
+\* relay: Bridged -> BackendRegistered (client_disconnect)
+relay_Bridged_to_BackendRegistered_on_client_disconnect ==
+    /\ relay_state = relay_Bridged
+    /\ relay_state' = relay_BackendRegistered
+    /\ relay_bridge' = "idle"
+    /\ UNCHANGED <<backend_state, client_state, chan_client_backend, chan_backend_client, recv_msg, lan_addr, challenge_bytes, offer_challenge, instance_id, ping_failures, max_ping_failures, backoff_level, max_backoff_level, lan_server_addr, b_active_path, c_active_path, b_dispatcher_path, c_dispatcher_path, monitor_target, lan_signal>>
+
+\* relay: BackendRegistered -> Idle (backend_disconnect)
+relay_BackendRegistered_to_Idle_on_backend_disconnect ==
+    /\ relay_state = relay_BackendRegistered
+    /\ relay_state' = relay_Idle
+    /\ UNCHANGED <<backend_state, client_state, chan_client_backend, chan_backend_client, recv_msg, lan_addr, challenge_bytes, offer_challenge, instance_id, ping_failures, max_ping_failures, backoff_level, max_backoff_level, lan_server_addr, b_active_path, c_active_path, b_dispatcher_path, c_dispatcher_path, monitor_target, lan_signal, relay_bridge>>
+
+Next ==
+    \/ backend_SessionActive_to_RelayConnected_on_session_established
+    \/ backend_RelayConnected_to_LANOffered_on_lan_server_ready
+    \/ backend_LANOffered_to_LANActive_on_lan_verify_challenge_valid
+    \/ backend_LANOffered_to_RelayConnected_on_lan_verify_challenge_invalid
+    \/ backend_LANOffered_to_RelayBackoff_on_offer_timeout
+    \/ backend_LANActive_to_LANActive_on_ping_tick
+    \/ backend_LANActive_to_LANDegraded_on_ping_timeout
+    \/ backend_LANDegraded_to_LANDegraded_on_ping_tick
+    \/ backend_LANDegraded_to_LANActive_on_path_pong
+    \/ backend_LANDegraded_to_LANDegraded_on_ping_timeout_under_max_failures
+    \/ backend_LANDegraded_to_RelayBackoff_on_ping_timeout_at_max_failures
+    \/ backend_RelayBackoff_to_LANOffered_on_backoff_expired
+    \/ backend_RelayBackoff_to_LANOffered_on_lan_server_changed
+    \/ backend_RelayConnected_to_LANOffered_on_readvertise_tick_lan_server_available
+    \/ backend_RelayConnected_to_Paired_on_disconnect
+    \/ client_SessionActive_to_RelayConnected_on_session_established
+    \/ client_RelayConnected_to_LANConnecting_on_lan_offer_lan_enabled
+    \/ client_RelayConnected_to_RelayConnected_on_lan_offer_lan_disabled
+    \/ client_LANConnecting_to_LANVerifying_on_lan_dial_ok
+    \/ client_LANConnecting_to_RelayConnected_on_lan_dial_failed
+    \/ client_LANVerifying_to_LANActive_on_lan_confirm
+    \/ client_LANVerifying_to_RelayConnected_on_verify_timeout
+    \/ client_LANActive_to_LANActive_on_path_ping
+    \/ client_LANActive_to_RelayFallback_on_lan_error
+    \/ client_RelayFallback_to_RelayConnected_on_relay_ok
+    \/ client_LANActive_to_LANConnecting_on_lan_offer_lan_enabled
+    \/ client_RelayConnected_to_Paired_on_disconnect
+    \/ relay_Idle_to_BackendRegistered_on_backend_register
+    \/ relay_BackendRegistered_to_Bridged_on_client_connect
+    \/ relay_Bridged_to_BackendRegistered_on_client_disconnect
+    \/ relay_BackendRegistered_to_Idle_on_backend_disconnect
+
+Spec == Init /\ [][Next]_vars /\ WF_vars(Next)
+
+\* ================================================================
+\* Invariants and properties
+\* ================================================================
+
 \* Paths are always valid
 PathConsistency == b_active_path \in {"relay", "lan"} /\ c_active_path \in {"relay", "lan"}
 \* Backoff never exceeds cap
