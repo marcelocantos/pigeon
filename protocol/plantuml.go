@@ -9,17 +9,37 @@ import (
 	"strings"
 )
 
-// ExportPlantUML writes a PlantUML state diagram. If the protocol has
-// phases defined, states are grouped into hierarchical superstates.
-// Each actor gets its own concurrent region.
+// ExportPlantUML writes a PlantUML state diagram for all actors.
 func (p *Protocol) ExportPlantUML(w io.Writer) error {
+	return p.ExportPlantUMLActors(w, "", nil)
+}
+
+// ExportPlantUMLActors writes a PlantUML state diagram for a subset
+// of actors. If actors is nil, all actors are included. The title
+// suffix is appended to the diagram title.
+func (p *Protocol) ExportPlantUMLActors(w io.Writer, titleSuffix string, actors []string) error {
+	actorSet := map[string]bool{}
+	for _, a := range actors {
+		actorSet[a] = true
+	}
+	includeActor := func(name string) bool {
+		return len(actorSet) == 0 || actorSet[name]
+	}
 	var b strings.Builder
 
+	diagramName := sanitisePUML(p.Name)
+	if titleSuffix != "" {
+		diagramName += "_" + sanitisePUML(titleSuffix)
+	}
 	b.WriteString("@startuml ")
-	b.WriteString(sanitisePUML(p.Name))
+	b.WriteString(diagramName)
 	b.WriteString("\n!theme plain\nskinparam backgroundColor white\n")
 	b.WriteString("skinparam state {\n  BackgroundColor #f8f8f8\n  BorderColor #888\n}\n\n")
-	fmt.Fprintf(&b, "title %s\n\n", p.Name)
+	title := p.Name
+	if titleSuffix != "" {
+		title += " — " + titleSuffix
+	}
+	fmt.Fprintf(&b, "title %s\n\n", title)
 
 	// Build phase lookup: state -> phase name.
 	phaseOf := map[State]string{}
@@ -35,6 +55,9 @@ func (p *Protocol) ExportPlantUML(w io.Writer) error {
 	actorAlias := make(map[string]string)
 
 	for i, a := range p.Actors {
+		if !includeActor(a.Name) {
+			continue
+		}
 		alias := aliases[i%len(aliases)]
 		actorAlias[a.Name] = alias
 
@@ -121,9 +144,15 @@ func (p *Protocol) ExportPlantUML(w io.Writer) error {
 	b.WriteString("' === Cross-actor interactions ===\n\n")
 	colorIdx := 0
 	for _, a := range p.Actors {
+		if !includeActor(a.Name) {
+			continue
+		}
 		srcAlias := actorAlias[a.Name]
 		for _, t := range a.Transitions {
 			for _, s := range t.Sends {
+				if !includeActor(s.To) {
+					continue
+				}
 				dstAlias := actorAlias[s.To]
 				from := fmt.Sprintf("%s_%s", srcAlias, sanitisePUML(string(t.From)))
 				to := findRecvState(p, s.To, s.Msg, dstAlias)

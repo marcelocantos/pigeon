@@ -30,14 +30,25 @@ Three actors participate across both phases:
 | **client** | The mobile device. Scans QR, connects via relay, dials LAN when offered. |
 | **relay** | The intermediary server. Bridges traffic between backend and client. Permanent baseline — never closes while the session is active. |
 
-## State Machine Diagram
+## State Machine Diagrams
 
-![Session Protocol State Machine](session-statechart.svg)
+### Backend & Client
 
-The diagram shows each actor's states grouped by phase (Pairing,
-Transport), with cross-phase transitions at the `SessionActive →
-RelayConnected` boundary. Strong-fair transitions are marked with
-`«SF»`. Cross-actor message sends are shown as dashed arrows.
+![Backend & Client State Machine](session-peers.svg)
+
+Both actors' states are grouped by phase (Pairing, Transport), with
+cross-phase transitions at the `SessionActive → RelayConnected`
+boundary. Strong-fair transitions are marked with `«SF»`. Cross-actor
+message sends are shown as dashed arrows.
+
+### Relay
+
+![Relay State Machine](session-relay.svg)
+
+The relay's state machine is decoupled from the peer protocol. It
+tracks registration and bridging lifecycle: `Idle → BackendRegistered
+→ Bridged`. The relay stays `Bridged` during normal operation and
+doesn't participate in path switching.
 
 ## Phase 1: Pairing
 
