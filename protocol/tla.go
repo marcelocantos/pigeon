@@ -10,14 +10,15 @@ import (
 	"strings"
 )
 
-// ExportTLA writes a pure TLA+ spec (no PlusCal) for the full protocol.
+// ExportTLA writes a pure TLA+ spec for the full protocol.
 func (p *Protocol) ExportTLA(w io.Writer) error {
 	return p.ExportTLAPhase(w, "")
 }
 
 // ExportTLAPhase writes a pure TLA+ spec for a specific phase, or the
-// full protocol if phaseName is empty. Each YAML transition becomes a
-// named TLA+ action. No PlusCal, no processes, no program counters.
+// full protocol if phaseName is empty. The generated spec is optimised:
+// only phase-relevant variables, messages, and channels are included.
+// recv_msg is eliminated by inlining Head(channel) in guards.
 func (p *Protocol) ExportTLAPhase(w io.Writer, phaseName string) error {
 	var phase *Phase
 	if phaseName != "" {
@@ -43,6 +44,58 @@ func (p *Protocol) ExportTLAPhase(w io.Writer, phaseName string) error {
 		}
 	}
 
+	// Collect transitions relevant to this phase.
+	type actorTransition struct {
+		actor      Actor
+		transition Transition
+	}
+	var phaseTransitions []actorTransition
+	for _, a := range p.Actors {
+		for _, t := range a.Transitions {
+			if len(phaseStates) > 0 {
+				if !phaseStates[t.From] || !phaseStates[t.To] {
+					// Only include transitions that stay within the phase.
+					continue
+				}
+			}
+			phaseTransitions = append(phaseTransitions, actorTransition{a, t})
+		}
+	}
+
+	// Collect messages actually used in phase transitions.
+	usedMsgs := map[MsgType]bool{}
+	for _, at := range phaseTransitions {
+		if at.transition.On.Kind == TriggerRecv {
+			usedMsgs[at.transition.On.Msg] = true
+		}
+		for _, s := range at.transition.Sends {
+			usedMsgs[s.Msg] = true
+		}
+	}
+
+	// Collect channel routes actually used.
+	usedChannels := map[string]channelPair{}
+	for _, at := range phaseTransitions {
+		t := at.transition
+		a := at.actor
+		if t.On.Kind == TriggerRecv {
+			from := msgSender(p, t.On.Msg)
+			key := from + "_" + a.Name
+			usedChannels[key] = channelPair{from, a.Name}
+		}
+		for _, s := range t.Sends {
+			key := a.Name + "_" + s.To
+			usedChannels[key] = channelPair{a.Name, s.To}
+		}
+	}
+	var channels []channelPair
+	for _, ch := range usedChannels {
+		channels = append(channels, ch)
+	}
+	sort.Slice(channels, func(i, j int) bool {
+		return channels[i].from+channels[i].to < channels[j].from+channels[j].to
+	})
+
 	var b strings.Builder
 
 	moduleName := sanitiseTLA(p.Name)
@@ -57,25 +110,39 @@ func (p *Protocol) ExportTLAPhase(w io.Writer, phaseName string) error {
 	}
 	b.WriteString("\nEXTENDS Integers, Sequences, FiniteSets, TLC\n\n")
 
-	// --- State constants ---
+	// --- State constants (phase-scoped) ---
 	for _, a := range p.Actors {
-		fmt.Fprintf(&b, "\\* States for %s\n", a.Name)
-		for _, s := range collectStates(a) {
+		states := collectStates(a)
+		var emitted bool
+		for _, s := range states {
 			if len(phaseStates) > 0 && !phaseStates[s] && !isNeighbour(a, s, phaseStates) {
 				continue
+			}
+			if !emitted {
+				fmt.Fprintf(&b, "\\* States for %s\n", a.Name)
+				emitted = true
 			}
 			fmt.Fprintf(&b, "%s_%s == \"%s_%s\"\n",
 				sanitiseTLA(a.Name), sanitiseTLA(string(s)), a.Name, s)
 		}
-		b.WriteString("\n")
+		if emitted {
+			b.WriteString("\n")
+		}
 	}
 
-	// --- Message constants ---
-	if len(p.Messages) > 0 {
-		b.WriteString("\\* Message types\n")
-		for _, m := range p.Messages {
-			fmt.Fprintf(&b, "MSG_%s == \"%s\"\n", sanitiseTLA(string(m.Type)), m.Type)
+	// --- Message constants (only used messages) ---
+	var emittedMsgs bool
+	for _, m := range p.Messages {
+		if len(usedMsgs) > 0 && !usedMsgs[m.Type] {
+			continue
 		}
+		if !emittedMsgs {
+			b.WriteString("\\* Message types\n")
+			emittedMsgs = true
+		}
+		fmt.Fprintf(&b, "MSG_%s == \"%s\"\n", sanitiseTLA(string(m.Type)), m.Type)
+	}
+	if emittedMsgs {
 		b.WriteString("\n")
 	}
 
@@ -94,32 +161,98 @@ func (p *Protocol) ExportTLAPhase(w io.Writer, phaseName string) error {
 		b.WriteString("\n")
 	}
 
-	// --- CONSTANTS ---
-	b.WriteString("CONSTANTS MaxChanLen\n\n")
+	// Detect which vars are actually modified by phase transitions.
+	modifiedVars := map[string]bool{}
+	for _, at := range phaseTransitions {
+		for _, u := range at.transition.Updates {
+			modifiedVars[u.Var] = true
+		}
+	}
 
-	// --- Variables ---
+	// --- CONSTANTS ---
+	// Variables that exist in the phase but are never updated become constants.
+	b.WriteString("CONSTANTS MaxChanLen")
+	var constVars []string
+	for _, v := range p.Vars {
+		if v.Name == "recv_msg" {
+			continue
+		}
+		if phase != nil && !phaseVars[v.Name] {
+			continue
+		}
+		if !modifiedVars[v.Name] {
+			constVars = append(constVars, sanitiseTLA(v.Name))
+			fmt.Fprintf(&b, ", %s", sanitiseTLA(v.Name))
+		}
+	}
+	b.WriteString("\n\n")
+
+	constSet := map[string]bool{}
+	for _, c := range constVars {
+		constSet[c] = true
+	}
+
+	// Detect actors with transitions that change state within this phase.
+	// Actors whose state is constant become TLA+ CONSTANTS.
+	actorChangesState := map[string]bool{}
+	for _, at := range phaseTransitions {
+		if at.transition.From != at.transition.To {
+			actorChangesState[at.actor.Name] = true
+		}
+	}
+
+	// Add constant-state actors to the CONSTANTS line.
+	for _, a := range p.Actors {
+		hasTransitions := false
+		for _, at := range phaseTransitions {
+			if at.actor.Name == a.Name {
+				hasTransitions = true
+				break
+			}
+		}
+		if hasTransitions && !actorChangesState[a.Name] {
+			name := sanitiseTLA(a.Name) + "_state"
+			constSet[name] = true
+			fmt.Fprintf(&b, ", %s", name)
+		}
+	}
+	b.WriteString("\n\n")
+
+	// --- Variables (no recv_msg — inlined as Head(channel)) ---
 	b.WriteString("VARIABLES\n")
 	var allVarNames []string
 
-	// Actor state variables.
 	for _, a := range p.Actors {
+		hasTransitions := false
+		for _, at := range phaseTransitions {
+			if at.actor.Name == a.Name {
+				hasTransitions = true
+				break
+			}
+		}
+		if !hasTransitions || !actorChangesState[a.Name] {
+			continue
+		}
 		name := sanitiseTLA(a.Name) + "_state"
 		allVarNames = append(allVarNames, name)
 		fmt.Fprintf(&b, "    %s,\n", name)
 	}
 
-	// Channels.
-	channels := channelPairs(p)
 	for _, ch := range channels {
 		name := channelName(ch.from, ch.to)
 		allVarNames = append(allVarNames, name)
 		fmt.Fprintf(&b, "    %s,\n", name)
 	}
 
-	// Protocol variables (phase-filtered).
 	for _, v := range p.Vars {
-		if phase != nil && !phaseVars[v.Name] && v.Name != "recv_msg" {
+		if v.Name == "recv_msg" {
+			continue // eliminated — inlined as Head(channel)
+		}
+		if phase != nil && !phaseVars[v.Name] {
 			continue
+		}
+		if constSet[sanitiseTLA(v.Name)] {
+			continue // promoted to CONSTANT
 		}
 		allVarNames = append(allVarNames, sanitiseTLA(v.Name))
 		fmt.Fprintf(&b, "    %s,\n", sanitiseTLA(v.Name))
@@ -134,24 +267,33 @@ func (p *Protocol) ExportTLAPhase(w io.Writer, phaseName string) error {
 	}
 	b.WriteString("\n")
 
-	// vars tuple.
 	fmt.Fprintf(&b, "vars == <<%s>>\n\n", strings.Join(allVarNames, ", "))
-
-	// Helper.
 	b.WriteString("CanSend(ch) == Len(ch) < MaxChanLen\n\n")
 
 	// --- Init ---
 	b.WriteString("Init ==\n")
-	for _, a := range p.Actors {
-		init := initialForPhase(a, phase)
+	emittedActors := map[string]bool{}
+	for _, at := range phaseTransitions {
+		if emittedActors[at.actor.Name] {
+			continue
+		}
+		emittedActors[at.actor.Name] = true
+		init := initialForPhase(at.actor, phase)
 		fmt.Fprintf(&b, "    /\\ %s_state = %s_%s\n",
-			sanitiseTLA(a.Name), sanitiseTLA(a.Name), sanitiseTLA(string(init)))
+			sanitiseTLA(at.actor.Name),
+			sanitiseTLA(at.actor.Name), sanitiseTLA(string(init)))
 	}
 	for _, ch := range channels {
 		fmt.Fprintf(&b, "    /\\ %s = <<>>\n", channelName(ch.from, ch.to))
 	}
 	for _, v := range p.Vars {
-		if phase != nil && !phaseVars[v.Name] && v.Name != "recv_msg" {
+		if v.Name == "recv_msg" {
+			continue
+		}
+		if phase != nil && !phaseVars[v.Name] {
+			continue
+		}
+		if constSet[sanitiseTLA(v.Name)] {
 			continue
 		}
 		fmt.Fprintf(&b, "    /\\ %s = %s\n", sanitiseTLA(v.Name), v.Initial)
@@ -159,36 +301,18 @@ func (p *Protocol) ExportTLAPhase(w io.Writer, phaseName string) error {
 	b.WriteString("\n")
 
 	// --- Actions ---
-	// Each YAML transition becomes a named TLA+ action.
 	var actionNames []string
 
 	for _, a := range p.Actors {
-		fmt.Fprintf(&b, "\\* ================================================================\n")
-		fmt.Fprintf(&b, "\\* %s actions\n", a.Name)
-		fmt.Fprintf(&b, "\\* ================================================================\n\n")
-
+		var actorActions []string
 		for _, t := range a.Transitions {
-			// Phase filter.
-			if len(phaseStates) > 0 && !phaseStates[t.From] && !phaseStates[t.To] {
+			if len(phaseStates) > 0 && (!phaseStates[t.From] || !phaseStates[t.To]) {
 				continue
 			}
 
-			actionName := fmt.Sprintf("%s_%s_to_%s",
-				sanitiseTLA(a.Name),
-				sanitiseTLA(string(t.From)),
-				sanitiseTLA(string(t.To)))
-
-			// Disambiguate if multiple transitions share from→to.
-			if t.On.Kind == TriggerRecv {
-				actionName += "_on_" + sanitiseTLA(string(t.On.Msg))
-			} else if t.On.Desc != "" {
-				actionName += "_on_" + sanitiseTLA(t.On.Desc)
-			}
-			if t.Guard != "" {
-				actionName += "_" + sanitiseTLA(string(t.Guard))
-			}
-
+			actionName := makeActionName(a.Name, t)
 			actionNames = append(actionNames, actionName)
+			actorActions = append(actorActions, actionName)
 
 			// Comment.
 			fmt.Fprintf(&b, "\\* %s: %s -> %s", a.Name, t.From, t.To)
@@ -209,32 +333,33 @@ func (p *Protocol) ExportTLAPhase(w io.Writer, phaseName string) error {
 				sanitiseTLA(a.Name),
 				sanitiseTLA(a.Name), sanitiseTLA(string(t.From)))
 
-			// Message guard.
+			// Message guard — inline Head(channel) instead of recv_msg.
+			var recvChan string
 			if t.On.Kind == TriggerRecv {
 				fromActor := msgSender(p, t.On.Msg)
-				ch := channelName(fromActor, a.Name)
-				fmt.Fprintf(&b, "    /\\ Len(%s) > 0\n", ch)
-				fmt.Fprintf(&b, "    /\\ Head(%s).type = MSG_%s\n", ch, sanitiseTLA(string(t.On.Msg)))
+				recvChan = channelName(fromActor, a.Name)
+				fmt.Fprintf(&b, "    /\\ Len(%s) > 0\n", recvChan)
+				fmt.Fprintf(&b, "    /\\ Head(%s).type = MSG_%s\n", recvChan, sanitiseTLA(string(t.On.Msg)))
 			}
 
-			// Guard expression.
+			// Guard expression — substitute recv_msg with Head(channel).
 			if t.Guard != "" {
 				expr := guardExpr(p, t.Guard)
-				if t.On.Kind == TriggerRecv {
-					fromActor := msgSender(p, t.On.Msg)
-					ch := channelName(fromActor, a.Name)
-					expr = strings.ReplaceAll(expr, "recv_msg", "Head("+ch+")")
+				if recvChan != "" {
+					expr = strings.ReplaceAll(expr, "recv_msg", "Head("+recvChan+")")
 				}
 				fmt.Fprintf(&b, "    /\\ %s\n", expr)
 			}
 
 			// --- Primed assignments ---
+			modified := map[string]bool{
+				sanitiseTLA(a.Name) + "_state": true,
+			}
 
-			// Consume message.
-			if t.On.Kind == TriggerRecv {
-				fromActor := msgSender(p, t.On.Msg)
-				ch := channelName(fromActor, a.Name)
-				fmt.Fprintf(&b, "    /\\ %s' = Tail(%s)\n", ch, ch)
+			// Consume message (Tail the channel).
+			if recvChan != "" {
+				fmt.Fprintf(&b, "    /\\ %s' = Tail(%s)\n", recvChan, recvChan)
+				modified[recvChan] = true
 			}
 
 			// Sends.
@@ -243,6 +368,7 @@ func (p *Protocol) ExportTLAPhase(w io.Writer, phaseName string) error {
 				fmt.Fprintf(&b, "    /\\ %s' = Append(%s, ", ch, ch)
 				writeRecord(&b, s.Msg, s.Fields)
 				b.WriteString(")\n")
+				modified[ch] = true
 			}
 
 			// State update.
@@ -253,23 +379,10 @@ func (p *Protocol) ExportTLAPhase(w io.Writer, phaseName string) error {
 			// Variable updates.
 			for _, u := range t.Updates {
 				fmt.Fprintf(&b, "    /\\ %s' = %s\n", sanitiseTLA(u.Var), u.Expr)
-			}
-
-			// UNCHANGED for everything not modified.
-			modified := map[string]bool{
-				sanitiseTLA(a.Name) + "_state": true,
-			}
-			if t.On.Kind == TriggerRecv {
-				fromActor := msgSender(p, t.On.Msg)
-				modified[channelName(fromActor, a.Name)] = true
-			}
-			for _, s := range t.Sends {
-				modified[channelName(a.Name, s.To)] = true
-			}
-			for _, u := range t.Updates {
 				modified[sanitiseTLA(u.Var)] = true
 			}
 
+			// UNCHANGED.
 			var unchanged []string
 			for _, v := range allVarNames {
 				if !modified[v] {
@@ -279,24 +392,20 @@ func (p *Protocol) ExportTLAPhase(w io.Writer, phaseName string) error {
 			if len(unchanged) > 0 {
 				fmt.Fprintf(&b, "    /\\ UNCHANGED <<%s>>\n", strings.Join(unchanged, ", "))
 			}
+			b.WriteString("\n")
+		}
 
+		if len(actorActions) > 0 {
 			b.WriteString("\n")
 		}
 	}
 
 	// --- Next ---
 	b.WriteString("Next ==\n")
-	for i, name := range actionNames {
-		if i == 0 {
-			fmt.Fprintf(&b, "    \\/ %s\n", name)
-		} else {
-			fmt.Fprintf(&b, "    \\/ %s\n", name)
-		}
+	for _, name := range actionNames {
+		fmt.Fprintf(&b, "    \\/ %s\n", name)
 	}
-	b.WriteString("\n")
-
-	// --- Spec ---
-	b.WriteString("Spec == Init /\\ [][Next]_vars /\\ WF_vars(Next)\n\n")
+	b.WriteString("\nSpec == Init /\\ [][Next]_vars /\\ WF_vars(Next)\n\n")
 
 	// --- Properties ---
 	b.WriteString("\\* ================================================================\n")
@@ -322,6 +431,22 @@ func (p *Protocol) ExportTLAPhase(w io.Writer, phaseName string) error {
 
 	_, err := io.WriteString(w, b.String())
 	return err
+}
+
+func makeActionName(actorName string, t Transition) string {
+	name := fmt.Sprintf("%s_%s_to_%s",
+		sanitiseTLA(actorName),
+		sanitiseTLA(string(t.From)),
+		sanitiseTLA(string(t.To)))
+	if t.On.Kind == TriggerRecv {
+		name += "_on_" + sanitiseTLA(string(t.On.Msg))
+	} else if t.On.Desc != "" {
+		name += "_" + sanitiseTLA(t.On.Desc)
+	}
+	if t.Guard != "" {
+		name += "_" + sanitiseTLA(string(t.Guard))
+	}
+	return name
 }
 
 func isNeighbour(a Actor, s State, phaseStates map[State]bool) bool {
@@ -398,22 +523,7 @@ func propertyRelevant(prop Property, phaseVars map[string]bool, allVars []VarDef
 	return true
 }
 
-// Helpers.
-
 type channelPair struct{ from, to string }
-
-func channelPairs(p *Protocol) []channelPair {
-	seen := map[string]bool{}
-	var pairs []channelPair
-	for _, m := range p.Messages {
-		key := m.From + "_" + m.To
-		if !seen[key] {
-			seen[key] = true
-			pairs = append(pairs, channelPair{from: m.From, to: m.To})
-		}
-	}
-	return pairs
-}
 
 func channelName(from, to string) string {
 	return "chan_" + from + "_" + to

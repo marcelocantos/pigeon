@@ -838,9 +838,6 @@ phases:
       - LANConnecting
       - LANVerifying
       - RelayFallback
-      # Relay states
-      - BackendRegistered
-      - Bridged
     vars:
       - lan_addr
       - challenge_bytes
@@ -857,7 +854,6 @@ phases:
       - c_dispatcher_path
       - monitor_target
       - lan_signal
-      - relay_bridge
     adversary: false
 
 # The adversary is only active during the pairing phase. Once the
