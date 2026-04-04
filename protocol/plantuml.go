@@ -171,20 +171,8 @@ func (p *Protocol) ExportPlantUMLActors(w io.Writer, titleSuffix string, actors 
 		}
 	}
 
-	// Leads-to properties as dashed arrows.
-	hasLeadsTo := false
-	for _, prop := range p.Properties {
-		if prop.Kind == LeadsTo {
-			if !hasLeadsTo {
-				b.WriteString("\n' === Leads-to properties ===\n\n")
-				hasLeadsTo = true
-			}
-			fmt.Fprintf(&b, "note \"%s\\n%s ~> %s\" as N_%s\n",
-				prop.Name,
-				prop.FromExpr, prop.ToExpr,
-				sanitisePUML(prop.Name))
-		}
-	}
+	// Leads-to properties are documented in the design doc, not in the
+	// diagram — floating notes add clutter without connecting to states.
 
 	b.WriteString("\n@enduml\n")
 	_, err := io.WriteString(w, b.String())

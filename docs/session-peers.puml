@@ -100,9 +100,4 @@ C_Reconnect -[#blue,dashed]-> B_Paired : auth_request\n{device_id, secret, nonce
 C_LANConnecting -[#green,dashed]-> B_LANOffered : lan_verify\n{challenge, instance_id}
 C_LANActive -[#orange,dashed]-> B_LANDegraded : path_pong
 
-' === Leads-to properties ===
-
-note "FallbackLeadsToReadvertise\nbackend_state = backend_RelayBackoff ~> backend_state = backend_LANOffered" as N_FallbackLeadsToReadvertise
-note "DegradedLeadsToResolutionOrFallback\nbackend_state = backend_LANDegraded ~> backend_state \in {backend_LANActive, backend_RelayBackoff}" as N_DegradedLeadsToResolutionOrFallback
-
 @enduml

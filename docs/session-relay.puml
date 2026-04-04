@@ -22,9 +22,4 @@ state "relay" as R {
 ' === Cross-actor interactions ===
 
 
-' === Leads-to properties ===
-
-note "FallbackLeadsToReadvertise\nbackend_state = backend_RelayBackoff ~> backend_state = backend_LANOffered" as N_FallbackLeadsToReadvertise
-note "DegradedLeadsToResolutionOrFallback\nbackend_state = backend_LANDegraded ~> backend_state \in {backend_LANActive, backend_RelayBackoff}" as N_DegradedLeadsToResolutionOrFallback
-
 @enduml
