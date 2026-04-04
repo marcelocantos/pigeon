@@ -1,0 +1,784 @@
+# Unified session protocol: pairing + transport management.
+#
+# Single state machine covering the entire session lifecycle from
+# initial pairing through transport path switching. Three actors:
+# backend, client, relay.
+#
+# Phase 1 — Pairing: ECDH key exchange, confirmation code verification,
+# device secret establishment. The "cli" actor from the original pairing
+# spec is folded into backend as local actions (user input, not protocol).
+#
+# Phase 2 — Transport: relay (permanent baseline) + LAN (direct, optional).
+# Health monitoring, exponential backoff, resource lifecycle management.
+#
+# The transition from Phase 1 to Phase 2 is:
+#   backend: SessionActive → RelayConnected (on session_established)
+#   client:  SessionActive → RelayConnected (on session_established)
+#
+# For reconnection with a saved PairingRecord, the executor starts at
+# RelayConnected directly, skipping Phase 1.
+
+name: Session
+one_shot: false
+channel_bound: 3
+
+messages:
+  # --- Phase 1: Pairing ---
+  pair_hello:
+    from: client
+    to: backend
+    desc: ECDH pubkey + pairing token
+  pair_hello_ack:
+    from: backend
+    to: client
+    desc: ECDH pubkey
+  pair_confirm:
+    from: backend
+    to: client
+    desc: signal to compute and display code
+  pair_complete:
+    from: backend
+    to: client
+    desc: encrypted device secret
+  auth_request:
+    from: client
+    to: backend
+    desc: encrypted auth with nonce
+  auth_ok:
+    from: backend
+    to: client
+    desc: session established
+
+  # --- Phase 2: Transport ---
+  lan_offer:
+    from: backend
+    to: client
+    desc: 'LAN address + challenge (sent via relay)'
+  lan_verify:
+    from: client
+    to: backend
+    desc: 'challenge response + instance ID (sent via LAN)'
+  lan_confirm:
+    from: backend
+    to: client
+    desc: 'LAN verified, path is live (sent via LAN)'
+  path_ping:
+    from: backend
+    to: client
+    desc: 'health check on active direct path'
+  path_pong:
+    from: client
+    to: backend
+    desc: 'health check response'
+
+actors:
+  backend:
+    initial: Idle
+    transitions:
+      # ============================================================
+      # Phase 1: Pairing
+      # ============================================================
+
+      # Backend initiates pairing (triggered by local CLI).
+      - from: Idle
+        to: GenerateToken
+        on: cli_init_pair
+        do: generate_token
+        updates:
+          current_token: '"tok_1"'
+          active_tokens: 'active_tokens \union {"tok_1"}'
+
+      - from: GenerateToken
+        to: RegisterRelay
+        on: token_created
+        do: register_relay
+
+      - from: RegisterRelay
+        to: WaitingForClient
+        on: relay_registered
+        updates:
+          # CLI displays QR code with token + instance_id (local action).
+          qr_displayed: 'TRUE'
+
+      - from: WaitingForClient
+        to: DeriveSecret
+        on: recv pair_hello
+        guard: token_valid
+        do: derive_secret
+        updates:
+          received_client_pub: recv_msg.pubkey
+          backend_ecdh_pub: '"backend_pub"'
+          backend_shared_key: 'DeriveKey("backend_pub", recv_msg.pubkey)'
+          backend_code: 'DeriveCode("backend_pub", recv_msg.pubkey)'
+
+      - from: WaitingForClient
+        to: Idle
+        on: recv pair_hello
+        guard: token_invalid
+
+      - from: DeriveSecret
+        to: SendAck
+        on: ecdh_complete
+        sends:
+          - to: client
+            msg: pair_hello_ack
+            fields:
+              pubkey: backend_ecdh_pub
+
+      - from: SendAck
+        to: WaitingForCode
+        on: signal_code_display
+        sends:
+          - to: client
+            msg: pair_confirm
+
+      # Code entry is a local backend action (CLI prompt).
+      - from: WaitingForCode
+        to: ValidateCode
+        on: cli_code_entered
+        updates:
+          received_code: cli_entered_code
+
+      - from: ValidateCode
+        to: StorePaired
+        on: check_code
+        guard: code_correct
+
+      - from: ValidateCode
+        to: Idle
+        on: check_code
+        guard: code_wrong
+        updates:
+          code_attempts: code_attempts + 1
+
+      - from: StorePaired
+        to: Paired
+        on: finalise
+        do: store_device
+        sends:
+          - to: client
+            msg: pair_complete
+            fields:
+              key: backend_shared_key
+              secret: '"dev_secret_1"'
+        updates:
+          device_secret: '"dev_secret_1"'
+          paired_devices: 'paired_devices \union {"device_1"}'
+          active_tokens: 'active_tokens \ {current_token}'
+          used_tokens: 'used_tokens \union {current_token}'
+
+      - from: Paired
+        to: AuthCheck
+        on: recv auth_request
+        updates:
+          received_device_id: recv_msg.device_id
+          received_auth_nonce: recv_msg.nonce
+
+      - from: AuthCheck
+        to: SessionActive
+        on: verify
+        guard: device_known
+        do: verify_device
+        sends:
+          - to: client
+            msg: auth_ok
+        updates:
+          auth_nonces_used: 'auth_nonces_used \union {received_auth_nonce}'
+
+      - from: AuthCheck
+        to: Idle
+        on: verify
+        guard: device_unknown
+
+      # ============================================================
+      # Phase 1 → Phase 2 bridge
+      # ============================================================
+      - from: SessionActive
+        to: RelayConnected
+        on: session_established
+
+      # ============================================================
+      # Phase 2: Transport management
+      # ============================================================
+
+      - from: RelayConnected
+        to: LANOffered
+        on: lan_server_ready
+        sends:
+          - to: client
+            msg: lan_offer
+            fields:
+              addr: lan_addr
+              challenge: challenge_bytes
+
+      - from: LANOffered
+        to: LANActive
+        on: recv lan_verify
+        guard: challenge_valid
+        do: activate_lan
+        sends:
+          - to: client
+            msg: lan_confirm
+        updates:
+          ping_failures: '0'
+          backoff_level: '0'
+          b_active_path: '"lan"'
+          b_dispatcher_path: '"lan"'
+          monitor_target: '"lan"'
+          lan_signal: '"ready"'
+
+      - from: LANOffered
+        to: RelayConnected
+        on: recv lan_verify
+        guard: challenge_invalid
+
+      - from: LANOffered
+        to: RelayBackoff
+        on: offer_timeout
+        updates:
+          backoff_level: 'Min(backoff_level + 1, max_backoff_level)'
+
+      - from: LANActive
+        to: LANActive
+        on: ping_tick
+        sends:
+          - to: client
+            msg: path_ping
+
+      - from: LANActive
+        to: LANDegraded
+        on: ping_timeout
+        updates:
+          ping_failures: '1'
+
+      - from: LANDegraded
+        to: LANDegraded
+        on: ping_tick
+        sends:
+          - to: client
+            msg: path_ping
+
+      - from: LANDegraded
+        to: LANActive
+        on: recv path_pong
+        do: reset_failures
+        updates:
+          ping_failures: '0'
+
+      - from: LANDegraded
+        to: LANDegraded
+        on: ping_timeout
+        guard: under_max_failures
+        updates:
+          ping_failures: 'ping_failures + 1'
+
+      - from: LANDegraded
+        to: RelayBackoff
+        on: ping_timeout
+        guard: at_max_failures
+        do: fallback_to_relay
+        updates:
+          backoff_level: 'Min(backoff_level + 1, max_backoff_level)'
+          b_active_path: '"relay"'
+          b_dispatcher_path: '"relay"'
+          monitor_target: '"none"'
+          lan_signal: '"pending"'
+          ping_failures: '0'
+
+      - from: RelayBackoff
+        to: LANOffered
+        on: backoff_expired
+        sends:
+          - to: client
+            msg: lan_offer
+            fields:
+              addr: lan_addr
+              challenge: challenge_bytes
+
+      - from: RelayBackoff
+        to: LANOffered
+        on: lan_server_changed
+        sends:
+          - to: client
+            msg: lan_offer
+            fields:
+              addr: lan_addr
+              challenge: challenge_bytes
+        updates:
+          backoff_level: '0'
+
+      - from: RelayConnected
+        to: LANOffered
+        on: readvertise_tick
+        guard: lan_server_available
+        sends:
+          - to: client
+            msg: lan_offer
+            fields:
+              addr: lan_addr
+              challenge: challenge_bytes
+
+      # Re-enter pairing on disconnect.
+      - from: RelayConnected
+        to: Paired
+        on: disconnect
+
+  client:
+    initial: Idle
+    transitions:
+      # ============================================================
+      # Phase 1: Pairing
+      # ============================================================
+
+      - from: Idle
+        to: ScanQR
+        on: user_scans_qr
+
+      - from: ScanQR
+        to: ConnectRelay
+        on: qr_parsed
+
+      - from: ConnectRelay
+        to: GenKeyPair
+        on: relay_connected
+
+      - from: GenKeyPair
+        to: WaitAck
+        on: key_pair_generated
+        do: send_pair_hello
+        sends:
+          - to: backend
+            msg: pair_hello
+            fields:
+              token: current_token
+              pubkey: '"client_pub"'
+
+      - from: WaitAck
+        to: E2EReady
+        on: recv pair_hello_ack
+        do: derive_secret
+        updates:
+          received_backend_pub: recv_msg.pubkey
+          client_shared_key: 'DeriveKey("client_pub", recv_msg.pubkey)'
+
+      - from: E2EReady
+        to: ShowCode
+        on: recv pair_confirm
+        updates:
+          client_code: 'DeriveCode(received_backend_pub, "client_pub")'
+
+      - from: ShowCode
+        to: WaitPairComplete
+        on: code_displayed
+
+      - from: WaitPairComplete
+        to: Paired
+        on: recv pair_complete
+        do: store_secret
+
+      - from: Paired
+        to: Reconnect
+        on: app_launch
+
+      - from: Reconnect
+        to: SendAuth
+        on: relay_connected
+        sends:
+          - to: backend
+            msg: auth_request
+            fields:
+              device_id: '"device_1"'
+              secret: device_secret
+              nonce: '"nonce_1"'
+              key: client_shared_key
+
+      - from: SendAuth
+        to: SessionActive
+        on: recv auth_ok
+
+      # ============================================================
+      # Phase 1 → Phase 2 bridge
+      # ============================================================
+      - from: SessionActive
+        to: RelayConnected
+        on: session_established
+
+      # ============================================================
+      # Phase 2: Transport management
+      # ============================================================
+
+      - from: RelayConnected
+        to: LANConnecting
+        on: recv lan_offer
+        guard: lan_enabled
+        do: dial_lan
+
+      - from: RelayConnected
+        to: RelayConnected
+        on: recv lan_offer
+        guard: lan_disabled
+
+      - from: LANConnecting
+        to: LANVerifying
+        on: lan_dial_ok
+        sends:
+          - to: backend
+            msg: lan_verify
+            fields:
+              challenge: offer_challenge
+              instance_id: instance_id
+
+      - from: LANConnecting
+        to: RelayConnected
+        on: lan_dial_failed
+
+      - from: LANVerifying
+        to: LANActive
+        on: recv lan_confirm
+        do: activate_lan
+        updates:
+          c_active_path: '"lan"'
+          c_dispatcher_path: '"lan"'
+          lan_signal: '"ready"'
+
+      - from: LANVerifying
+        to: RelayConnected
+        on: verify_timeout
+        updates:
+          c_dispatcher_path: '"relay"'
+
+      - from: LANActive
+        to: LANActive
+        on: recv path_ping
+        sends:
+          - to: backend
+            msg: path_pong
+
+      - from: LANActive
+        to: RelayFallback
+        on: lan_error
+        do: fallback_to_relay
+        updates:
+          c_active_path: '"relay"'
+          c_dispatcher_path: '"relay"'
+          lan_signal: '"pending"'
+
+      - from: RelayFallback
+        to: RelayConnected
+        on: relay_ok
+
+      - from: LANActive
+        to: LANConnecting
+        on: recv lan_offer
+        guard: lan_enabled
+        do: dial_lan
+
+      # Re-enter pairing on disconnect.
+      - from: RelayConnected
+        to: Paired
+        on: disconnect
+
+  relay:
+    initial: Idle
+    transitions:
+      - from: Idle
+        to: BackendRegistered
+        on: backend_register
+
+      - from: BackendRegistered
+        to: Bridged
+        on: client_connect
+        do: bridge_streams
+        updates:
+          relay_bridge: '"active"'
+
+      - from: Bridged
+        to: BackendRegistered
+        on: client_disconnect
+        do: unbridge
+        updates:
+          relay_bridge: '"idle"'
+
+      - from: BackendRegistered
+        to: Idle
+        on: backend_disconnect
+
+vars:
+  # --- Phase 1: Pairing ---
+  current_token:
+    initial: '"none"'
+    desc: pairing token currently in play
+  active_tokens:
+    initial: '{}'
+    desc: set of valid (non-revoked) tokens
+  used_tokens:
+    initial: '{}'
+    desc: set of revoked tokens
+  backend_ecdh_pub:
+    initial: '"none"'
+    desc: backend ECDH public key
+  received_client_pub:
+    initial: '"none"'
+    desc: pubkey backend received in pair_hello
+  received_backend_pub:
+    initial: '"none"'
+    desc: pubkey client received in pair_hello_ack
+  backend_shared_key:
+    initial: '<<"none">>'
+    desc: ECDH key derived by backend
+  client_shared_key:
+    initial: '<<"none">>'
+    desc: ECDH key derived by client
+  backend_code:
+    initial: '<<"none">>'
+    desc: code computed by backend
+  client_code:
+    initial: '<<"none">>'
+    desc: code computed by client
+  received_code:
+    initial: '<<"none">>'
+    desc: code entered via CLI
+  cli_entered_code:
+    initial: '<<"none">>'
+    desc: staging for CLI code input
+  code_attempts:
+    initial: '0'
+    desc: failed code submission attempts
+  device_secret:
+    initial: '"none"'
+    desc: persistent device secret
+  paired_devices:
+    initial: '{}'
+    desc: device IDs that completed pairing
+  received_device_id:
+    initial: '"none"'
+    desc: device_id from auth_request
+  auth_nonces_used:
+    initial: '{}'
+    desc: set of consumed auth nonces
+  received_auth_nonce:
+    initial: '"none"'
+    desc: nonce from auth_request
+  qr_displayed:
+    initial: 'FALSE'
+    desc: whether QR code has been shown (local backend state)
+  recv_msg:
+    initial: '[type |-> "none"]'
+    desc: last received message (staging)
+
+  # --- Adversary (Phase 1 only) ---
+  adversary_keys:
+    initial: '{}'
+    desc: encryption keys the adversary knows
+  adv_ecdh_pub:
+    initial: '"adv_pub"'
+    desc: adversary's ECDH public key
+  adv_saved_client_pub:
+    initial: '"none"'
+    desc: real client pubkey saved during MitM
+  adv_saved_server_pub:
+    initial: '"none"'
+    desc: real backend pubkey saved during MitM
+
+  # --- Phase 2: Transport ---
+  lan_addr:
+    initial: '"none"'
+    desc: LAN server address (host:port)
+  challenge_bytes:
+    initial: '"none"'
+    desc: 32-byte random challenge for LAN verification
+  offer_challenge:
+    initial: '"none"'
+    desc: challenge from the most recent LAN offer
+  instance_id:
+    initial: '"none"'
+    desc: relay instance ID
+  ping_failures:
+    initial: '0'
+    desc: consecutive failed pings
+  max_ping_failures:
+    initial: '3'
+    desc: threshold before fallback
+  backoff_level:
+    initial: '0'
+    desc: exponential backoff level
+  max_backoff_level:
+    initial: '5'
+    desc: backoff cap
+  lan_server_addr:
+    initial: '"none"'
+    desc: LAN server listen address
+
+  # --- Resource lifecycle (Phase 2) ---
+  b_active_path:
+    initial: '"relay"'
+    desc: backend active path
+  c_active_path:
+    initial: '"relay"'
+    desc: client active path
+  b_dispatcher_path:
+    initial: '"relay"'
+    desc: backend datagram dispatcher binding
+  c_dispatcher_path:
+    initial: '"relay"'
+    desc: client datagram dispatcher binding
+  monitor_target:
+    initial: '"none"'
+    desc: health monitor target
+  lan_signal:
+    initial: '"pending"'
+    desc: LANReady notification state
+  relay_bridge:
+    initial: '"idle"'
+    desc: relay bridge state
+
+guards:
+  # Phase 1
+  token_valid: 'recv_msg.token \in active_tokens'
+  token_invalid: 'recv_msg.token \notin active_tokens'
+  code_correct: received_code = backend_code
+  code_wrong: received_code /= backend_code
+  device_known: 'received_device_id \in paired_devices'
+  device_unknown: 'received_device_id \notin paired_devices'
+  nonce_fresh: 'received_auth_nonce \notin auth_nonces_used'
+  # Phase 2
+  challenge_valid: 'offer_challenge = challenge_bytes'
+  challenge_invalid: 'offer_challenge /= challenge_bytes'
+  lan_enabled: 'TRUE'
+  lan_disabled: 'FALSE'
+  lan_server_available: 'lan_server_addr /= "none"'
+  under_max_failures: 'ping_failures + 1 < max_ping_failures'
+  at_max_failures: 'ping_failures + 1 >= max_ping_failures'
+
+operators:
+  KeyRank:
+    params: k
+    expr: 'CASE k = "adv_pub" -> 0 [] k = "client_pub" -> 1 [] k = "backend_pub" -> 2 [] OTHER -> 3'
+    desc: deterministic ordering for ECDH
+  DeriveKey:
+    params: a, b
+    expr: 'IF KeyRank(a) <= KeyRank(b) THEN <<"ecdh", a, b>> ELSE <<"ecdh", b, a>>'
+    desc: symbolic ECDH
+  DeriveCode:
+    params: a, b
+    expr: 'IF KeyRank(a) <= KeyRank(b) THEN <<"code", a, b>> ELSE <<"code", b, a>>'
+    desc: confirmation code from pubkeys
+  Min:
+    params: a, b
+    expr: 'IF a < b THEN a ELSE b'
+    desc: minimum of two values
+
+adversary:
+  - name: QR_shoulder_surf
+    desc: observe QR code content
+    code: |
+      await current_token /= "none";
+      adversary_knowledge := adversary_knowledge \union {[type |-> "qr_token", token |-> current_token]};
+  - name: MitM_pair_hello
+    desc: intercept pair_hello and substitute adversary pubkey
+    code: |
+      await Len(chan_client_backend) > 0 /\ Head(chan_client_backend).type = MSG_pair_hello;
+      adv_saved_client_pub := Head(chan_client_backend).pubkey;
+      chan_client_backend := <<[type |-> MSG_pair_hello, token |-> Head(chan_client_backend).token, pubkey |-> adv_ecdh_pub]>> \o Tail(chan_client_backend);
+  - name: MitM_pair_hello_ack
+    desc: intercept pair_hello_ack and substitute adversary pubkey
+    code: |
+      await Len(chan_backend_client) > 0 /\ Head(chan_backend_client).type = MSG_pair_hello_ack;
+      adv_saved_server_pub := Head(chan_backend_client).pubkey;
+      adversary_keys := adversary_keys \union {DeriveKey(adv_ecdh_pub, adv_saved_server_pub), DeriveKey(adv_ecdh_pub, adv_saved_client_pub)};
+      chan_backend_client := <<[type |-> MSG_pair_hello_ack, pubkey |-> adv_ecdh_pub]>> \o Tail(chan_backend_client);
+  - name: MitM_reencrypt_secret
+    desc: decrypt pair_complete with MitM key
+    code: |
+      await Len(chan_backend_client) > 0 /\ Head(chan_backend_client).type = MSG_pair_complete /\ Head(chan_backend_client).key \in adversary_keys;
+      with msg = Head(chan_backend_client) do
+        adversary_knowledge := adversary_knowledge \union {[type |-> "plaintext_secret", secret |-> msg.secret]};
+        chan_backend_client := <<[type |-> MSG_pair_complete, key |-> DeriveKey(adv_ecdh_pub, adv_saved_client_pub), secret |-> msg.secret]>> \o Tail(chan_backend_client);
+      end with;
+  - name: concurrent_pair
+    desc: race a forged pair_hello using shoulder-surfed token
+    code: |
+      await \E m \in adversary_knowledge : m = [type |-> "qr_token", token |-> current_token];
+      await Len(chan_client_backend) < 3;
+      chan_client_backend := Append(chan_client_backend, [type |-> MSG_pair_hello, token |-> current_token, pubkey |-> adv_ecdh_pub]);
+  - name: token_bruteforce
+    desc: send pair_hello with fabricated token
+    code: |
+      await Len(chan_client_backend) < 3;
+      chan_client_backend := Append(chan_client_backend, [type |-> MSG_pair_hello, token |-> "fake_token", pubkey |-> adv_ecdh_pub]);
+  - name: code_guess
+    desc: submit fabricated confirmation code
+    code: |
+      await backend_state = backend_WaitingForCode;
+      cli_entered_code := <<"guess", "000000">>;
+  - name: session_replay
+    desc: replay captured auth_request with stale nonce
+    code: |
+      await Len(chan_client_backend) < 3;
+      await \E m \in adversary_knowledge : m.type = MSG_auth_request;
+      with msg \in {m \in adversary_knowledge : m.type = MSG_auth_request} do
+        chan_client_backend := Append(chan_client_backend, msg);
+      end with;
+
+properties:
+  # --- Phase 1: Security ---
+  - name: NoTokenReuse
+    kind: invariant
+    expr: 'used_tokens \intersect active_tokens = {}'
+    desc: A revoked pairing token is never accepted again
+  - name: MitMDetectedByCodeMismatch
+    kind: invariant
+    expr: '(backend_shared_key \in adversary_keys /\ backend_code /= <<"none">> /\ client_code /= <<"none">>) => backend_code /= client_code'
+    desc: MitM produces mismatched codes
+  - name: MitMPrevented
+    kind: invariant
+    expr: 'backend_shared_key \in adversary_keys => backend_state \notin {backend_StorePaired, backend_Paired, backend_AuthCheck, backend_SessionActive}'
+    desc: Compromised key prevents pairing completion
+  - name: AuthRequiresCompletedPairing
+    kind: invariant
+    expr: 'backend_state = backend_SessionActive => received_device_id \in paired_devices'
+    desc: Session requires completed pairing
+  - name: NoNonceReuse
+    kind: invariant
+    expr: 'backend_state = backend_SessionActive => received_auth_nonce \notin (auth_nonces_used \ {received_auth_nonce})'
+    desc: Each auth nonce accepted at most once
+  - name: DeviceSecretSecrecy
+    kind: invariant
+    expr: '\A m \in adversary_knowledge : "type" \in DOMAIN m => m.type /= "plaintext_secret"'
+    desc: Adversary never learns device secret
+
+  # --- Phase 2: Transport ---
+  - name: PathConsistency
+    kind: invariant
+    expr: 'b_active_path \in {"relay", "lan"} /\ c_active_path \in {"relay", "lan"}'
+    desc: Paths are always valid
+  - name: BackoffBounded
+    kind: invariant
+    expr: 'backoff_level <= max_backoff_level'
+    desc: Backoff never exceeds cap
+  - name: BackoffResetsOnSuccess
+    kind: invariant
+    expr: 'backend_state = backend_LANActive => backoff_level = 0'
+    desc: LAN success resets backoff
+
+  # --- Resource lifecycle ---
+  - name: DispatcherAlwaysBound
+    kind: invariant
+    expr: 'b_dispatcher_path \in {"relay", "lan"} /\ c_dispatcher_path \in {"relay", "lan"}'
+    desc: Dispatchers always bound to valid path
+  - name: BackendDispatcherMatchesActive
+    kind: invariant
+    expr: 'backend_state = backend_LANActive => b_dispatcher_path = "lan"'
+    desc: Backend dispatcher on LAN when LAN active
+  - name: ClientDispatcherMatchesActive
+    kind: invariant
+    expr: 'client_state = client_LANActive => c_dispatcher_path = "lan"'
+    desc: Client dispatcher on LAN when LAN active
+  - name: MonitorOnlyWhenLAN
+    kind: invariant
+    expr: 'monitor_target = "lan" => backend_state \in {backend_LANActive, backend_LANDegraded}'
+    desc: Monitor only pings when LAN is active/degraded
+  - name: LANSignalPendingOnFallback
+    kind: invariant
+    expr: 'backend_state = backend_RelayBackoff => lan_signal = "pending"'
+    desc: LAN signal resets on fallback
