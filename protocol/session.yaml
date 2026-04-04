@@ -506,129 +506,169 @@ actors:
 vars:
   # --- Phase 1: Pairing ---
   current_token:
+    type: string
     initial: '"none"'
     desc: pairing token currently in play
   active_tokens:
+    type: set<string>
     initial: '{}'
     desc: set of valid (non-revoked) tokens
   used_tokens:
+    type: set<string>
     initial: '{}'
     desc: set of revoked tokens
   backend_ecdh_pub:
+    type: string
     initial: '"none"'
     desc: backend ECDH public key
   received_client_pub:
+    type: string
     initial: '"none"'
     desc: pubkey backend received in pair_hello
   received_backend_pub:
+    type: string
     initial: '"none"'
     desc: pubkey client received in pair_hello_ack
   backend_shared_key:
+    type: string
     initial: '<<"none">>'
     desc: ECDH key derived by backend
   client_shared_key:
+    type: string
     initial: '<<"none">>'
     desc: ECDH key derived by client
   backend_code:
+    type: string
     initial: '<<"none">>'
     desc: code computed by backend
   client_code:
+    type: string
     initial: '<<"none">>'
     desc: code computed by client
   received_code:
+    type: string
     initial: '<<"none">>'
     desc: code entered via CLI
   cli_entered_code:
+    type: string
     initial: '<<"none">>'
     desc: staging for CLI code input
   code_attempts:
+    type: int
     initial: '0'
     desc: failed code submission attempts
   device_secret:
+    type: string
     initial: '"none"'
     desc: persistent device secret
   paired_devices:
+    type: set<string>
     initial: '{}'
     desc: device IDs that completed pairing
   received_device_id:
+    type: string
     initial: '"none"'
     desc: device_id from auth_request
   auth_nonces_used:
+    type: set<string>
     initial: '{}'
     desc: set of consumed auth nonces
   received_auth_nonce:
+    type: string
     initial: '"none"'
     desc: nonce from auth_request
   qr_displayed:
+    type: bool
     initial: 'FALSE'
     desc: whether QR code has been shown (local backend state)
   recv_msg:
+    type: string
     initial: '[type |-> "none"]'
     desc: last received message (staging)
 
   # --- Adversary (Phase 1 only) ---
   adversary_keys:
+    type: set<string>
     initial: '{}'
     desc: encryption keys the adversary knows
   adv_ecdh_pub:
+    type: string
     initial: '"adv_pub"'
     desc: adversary's ECDH public key
   adv_saved_client_pub:
+    type: string
     initial: '"none"'
     desc: real client pubkey saved during MitM
   adv_saved_server_pub:
+    type: string
     initial: '"none"'
     desc: real backend pubkey saved during MitM
 
   # --- Phase 2: Transport ---
   lan_addr:
+    type: string
     initial: '"none"'
     desc: LAN server address (host:port)
   challenge_bytes:
+    type: string
     initial: '"none"'
     desc: 32-byte random challenge for LAN verification
   offer_challenge:
+    type: string
     initial: '"none"'
     desc: challenge from the most recent LAN offer
   instance_id:
+    type: string
     initial: '"none"'
     desc: relay instance ID
   ping_failures:
+    type: int
     initial: '0'
     desc: consecutive failed pings
   max_ping_failures:
+    type: int
     initial: '3'
     desc: threshold before fallback
   backoff_level:
+    type: int
     initial: '0'
     desc: exponential backoff level
   max_backoff_level:
+    type: int
     initial: '5'
     desc: backoff cap
   lan_server_addr:
+    type: string
     initial: '"none"'
     desc: LAN server listen address
 
   # --- Resource lifecycle (Phase 2) ---
   b_active_path:
+    type: string
     initial: '"relay"'
     desc: backend active path
   c_active_path:
+    type: string
     initial: '"relay"'
     desc: client active path
   b_dispatcher_path:
+    type: string
     initial: '"relay"'
     desc: backend datagram dispatcher binding
   c_dispatcher_path:
+    type: string
     initial: '"relay"'
     desc: client datagram dispatcher binding
   monitor_target:
+    type: string
     initial: '"none"'
     desc: health monitor target
   lan_signal:
+    type: string
     initial: '"pending"'
     desc: LANReady notification state
   relay_bridge:
+    type: string
     initial: '"idle"'
     desc: relay bridge state
 
@@ -673,43 +713,89 @@ operators:
 # phase generates an independent spec with only its relevant variables.
 phases:
   Pairing:
-    # Backend pairing states
-    - Idle
-    - GenerateToken
-    - RegisterRelay
-    - WaitingForClient
-    - DeriveSecret
-    - SendAck
-    - WaitingForCode
-    - ValidateCode
-    - StorePaired
-    - Paired
-    - AuthCheck
-    - SessionActive
-    # Client pairing states
-    - ScanQR
-    - ConnectRelay
-    - GenKeyPair
-    - WaitAck
-    - E2EReady
-    - ShowCode
-    - WaitPairComplete
-    - Reconnect
-    - SendAuth
+    states:
+      # Backend pairing states
+      - Idle
+      - GenerateToken
+      - RegisterRelay
+      - WaitingForClient
+      - DeriveSecret
+      - SendAck
+      - WaitingForCode
+      - ValidateCode
+      - StorePaired
+      - Paired
+      - AuthCheck
+      - SessionActive
+      # Client pairing states
+      - ScanQR
+      - ConnectRelay
+      - GenKeyPair
+      - WaitAck
+      - E2EReady
+      - ShowCode
+      - WaitPairComplete
+      - Reconnect
+      - SendAuth
+    vars:
+      - current_token
+      - active_tokens
+      - used_tokens
+      - backend_ecdh_pub
+      - received_client_pub
+      - received_backend_pub
+      - backend_shared_key
+      - client_shared_key
+      - backend_code
+      - client_code
+      - received_code
+      - cli_entered_code
+      - code_attempts
+      - device_secret
+      - paired_devices
+      - received_device_id
+      - auth_nonces_used
+      - received_auth_nonce
+      - qr_displayed
+      - recv_msg
+      - adversary_keys
+      - adv_ecdh_pub
+      - adv_saved_client_pub
+      - adv_saved_server_pub
+    adversary: true
   Transport:
-    # Backend transport states
-    - RelayConnected
-    - LANOffered
-    - LANActive
-    - LANDegraded
-    - RelayBackoff
-    # Client transport states
-    - LANConnecting
-    - LANVerifying
-    - RelayFallback
-    # Relay states
-    - BackendRegistered
-    - Bridged
+    states:
+      # Backend transport states
+      - RelayConnected
+      - LANOffered
+      - LANActive
+      - LANDegraded
+      - RelayBackoff
+      # Client transport states
+      - LANConnecting
+      - LANVerifying
+      - RelayFallback
+      # Relay states
+      - BackendRegistered
+      - Bridged
+    vars:
+      - lan_addr
+      - challenge_bytes
+      - offer_challenge
+      - instance_id
+      - ping_failures
+      - max_ping_failures
+      - backoff_level
+      - max_backoff_level
+      - lan_server_addr
+      - b_active_path
+      - c_active_path
+      - b_dispatcher_path
+      - c_dispatcher_path
+      - monitor_target
+      - lan_signal
+      - relay_bridge
+    adversary: false
 
 # The adversary is only active during the pairing phase. Once the
 # backend reaches transport states, the adversary self-disables.

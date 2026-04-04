@@ -20,7 +20,7 @@ type yamlProtocol struct {
 	Vars         yaml.Node                  `yaml:"vars"`
 	Guards       yaml.Node                  `yaml:"guards"`
 	Operators    yaml.Node                  `yaml:"operators"`
-	Phases       map[string][]string        `yaml:"phases"`
+	Phases       yaml.Node                  `yaml:"phases"`
 	AdvGuard     string                     `yaml:"adversary_guard"`
 	Adversary    []yamlAdvAction            `yaml:"adversary"`
 	Properties   []yamlProperty             `yaml:"properties"`
@@ -57,6 +57,7 @@ type yamlSend struct {
 
 type yamlVar struct {
 	Initial string `yaml:"initial"`
+	Type    string `yaml:"type"`
 	Desc    string `yaml:"desc"`
 }
 
@@ -143,8 +144,20 @@ func ParseYAML(data []byte) (*Protocol, error) {
 		return nil, fmt.Errorf("vars: %w", err)
 	}
 	for _, kv := range vars {
+		vt := VarString // default
+		switch kv.val.Type {
+		case "int":
+			vt = VarInt
+		case "bool":
+			vt = VarBool
+		case "set<string>":
+			vt = VarSetString
+		case "string", "":
+			vt = VarString
+		}
 		p.Vars = append(p.Vars, VarDef{
 			Name:    kv.key,
+			Type:    vt,
 			Initial: kv.val.Initial,
 			Desc:    kv.val.Desc,
 		})
@@ -191,13 +204,38 @@ func ParseYAML(data []byte) (*Protocol, error) {
 		})
 	}
 
-	// Phases — preserve YAML key order by using sorted keys.
-	for name, states := range yp.Phases {
-		var ss []State
-		for _, s := range states {
-			ss = append(ss, State(s))
+	// Phases — parse either simple list or rich object form.
+	if yp.Phases.Kind == yaml.MappingNode {
+		for i := 0; i+1 < len(yp.Phases.Content); i += 2 {
+			name := yp.Phases.Content[i].Value
+			valueNode := yp.Phases.Content[i+1]
+
+			ph := Phase{Name: name}
+
+			if valueNode.Kind == yaml.SequenceNode {
+				// Simple form: phases: { Pairing: [Idle, ...] }
+				for _, n := range valueNode.Content {
+					ph.States = append(ph.States, State(n.Value))
+				}
+			} else if valueNode.Kind == yaml.MappingNode {
+				// Rich form: phases: { Pairing: { states: [...], vars: [...], adversary: true } }
+				var rich struct {
+					States    []string `yaml:"states"`
+					Vars      []string `yaml:"vars"`
+					Adversary bool     `yaml:"adversary"`
+				}
+				if err := valueNode.Decode(&rich); err != nil {
+					return nil, fmt.Errorf("parse phase %q: %w", name, err)
+				}
+				for _, s := range rich.States {
+					ph.States = append(ph.States, State(s))
+				}
+				ph.Vars = rich.Vars
+				ph.Adversary = rich.Adversary
+			}
+
+			p.Phases = append(p.Phases, ph)
 		}
-		p.Phases = append(p.Phases, Phase{Name: name, States: ss})
 	}
 
 	p.AdvGuard = yp.AdvGuard

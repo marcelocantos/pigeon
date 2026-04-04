@@ -89,10 +89,22 @@ type Message struct {
 
 // VarDef defines an auxiliary state variable for TLA+ model checking.
 // These track protocol-level state that isn't part of any single actor.
+// VarType represents the type of a state variable for code generation.
+// TLA+ doesn't use these (it's untyped); they're for the executor.
+type VarType string
+
+const (
+	VarString    VarType = "string"
+	VarInt       VarType = "int"
+	VarBool      VarType = "bool"
+	VarSetString VarType = "set<string>"
+)
+
 type VarDef struct {
-	Name    string // TLA+ variable name
-	Initial string // TLA+ expression for initial value
-	Desc    string // human-readable description
+	Name    string  // TLA+ variable name
+	Type    VarType // executor type (string, int, bool, set<string>)
+	Initial string  // TLA+ expression for initial value
+	Desc    string  // human-readable description
 }
 
 // GuardDef maps a GuardID to a TLA+ expression, binding the
@@ -139,10 +151,13 @@ type Actor struct {
 // Protocol is the complete definition of a multi-actor protocol.
 // This is the single source of truth for runtime and TLA+ generation.
 // Phase groups states for diagramming (hierarchical superstates in
-// PlantUML) and for splitting TLA+ verification into independent runs.
+// PlantUML) and for optimising TLA+ verification (variables scoped to
+// phases are frozen as UNCHANGED outside their phase).
 type Phase struct {
-	Name   string
-	States []State // states belonging to this phase
+	Name     string
+	States   []State  // states belonging to this phase
+	Vars     []string // variables that change in this phase (empty = all)
+	Adversary bool    // whether the adversary is active in this phase
 }
 
 type Protocol struct {
