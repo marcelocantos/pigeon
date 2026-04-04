@@ -9,8 +9,13 @@ import (
 	"strings"
 )
 
-// ExportTypeScript writes a TypeScript source file with enums for states and
-// message types, and a table-driven state machine class for each actor.
+// ExportTypeScript writes a TypeScript source file with:
+//   - Const enums for states (per actor) and message types
+//   - Guard and action ID constants
+//   - Transition table as static data
+//
+// Does NOT generate executor logic. The generic Machine class in
+// web/src/machine.ts interprets the table at runtime.
 func (p *Protocol) ExportTypeScript(w io.Writer) error {
 	var b strings.Builder
 
@@ -26,104 +31,94 @@ func (p *Protocol) ExportTypeScript(w io.Writer) error {
 	}
 	b.WriteString("}\n\n")
 
-	// Per-actor state enum + machine.
+	// Per-actor state enum.
 	for _, a := range p.Actors {
 		typeName := tsTypeName(a.Name)
 		states := collectStates(a)
 
-		// State enum.
 		fmt.Fprintf(&b, "export enum %sState {\n", typeName)
 		for _, s := range states {
 			fmt.Fprintf(&b, "    %s = \"%s\",\n", string(s), s)
 		}
 		b.WriteString("}\n\n")
+	}
 
-		// Machine class.
-		fmt.Fprintf(&b, "export class %sMachine {\n", typeName)
-		fmt.Fprintf(&b, "    private _state: %sState = %sState.%s;\n\n", typeName, typeName, a.Initial)
-		fmt.Fprintf(&b, "    get state(): %sState {\n", typeName)
-		b.WriteString("        return this._state;\n")
-		b.WriteString("    }\n\n")
-
-		// handleMessage
-		b.WriteString("    /** Process a received message. Returns the new state, or null if rejected. */\n")
-		fmt.Fprintf(&b, "    handleMessage(msg: MessageType, guard?: (name: string) => boolean): %sState | null {\n", typeName)
-		b.WriteString("        const check = guard ?? (() => true);\n")
-		fmt.Fprintf(&b, "        let newState: %sState | null = null;\n", typeName)
-
-		firstRecv := true
-		for _, t := range a.Transitions {
-			if t.On.Kind != TriggerRecv {
-				continue
-			}
-			guardExpr := ""
-			if t.Guard != "" {
-				guardExpr = fmt.Sprintf(" && check(\"%s\")", t.Guard)
-			}
-			ifKeyword := "        } else if"
-			if firstRecv {
-				ifKeyword = "        if"
-				firstRecv = false
-			}
-			fmt.Fprintf(&b, "%s (this._state === %sState.%s && msg === MessageType.%s%s) {\n",
-				ifKeyword, typeName, t.From,
-				kotlinPascalCase(string(t.On.Msg)),
-				guardExpr)
-			fmt.Fprintf(&b, "            newState = %sState.%s;\n", typeName, t.To)
+	// Guard ID enum.
+	if len(p.Guards) > 0 {
+		b.WriteString("export enum GuardID {\n")
+		for _, g := range p.Guards {
+			fmt.Fprintf(&b, "    %s = \"%s\",\n", kotlinPascalCase(string(g.ID)), g.ID)
 		}
-		if !firstRecv {
-			b.WriteString("        }\n")
-		}
-		b.WriteString("        if (newState !== null) this._state = newState;\n")
-		b.WriteString("        return newState;\n")
-		b.WriteString("    }\n\n")
-
-		// step
-		b.WriteString("    /** Attempt an internal transition. Returns the new state, or null if none available. */\n")
-		fmt.Fprintf(&b, "    step(guard?: (name: string) => boolean): %sState | null {\n", typeName)
-		b.WriteString("        const check = guard ?? (() => true);\n")
-
-		// Group internal transitions by from-state.
-		byFrom := map[State][]Transition{}
-		for _, t := range a.Transitions {
-			if t.On.Kind == TriggerInternal {
-				byFrom[t.From] = append(byFrom[t.From], t)
-			}
-		}
-
-		firstInternal := true
-		for _, s := range states {
-			ts := byFrom[s]
-			if len(ts) == 0 {
-				continue
-			}
-			for _, t := range ts {
-				ifKeyword := "        } else if"
-				if firstInternal {
-					ifKeyword = "        if"
-					firstInternal = false
-				}
-				guardExpr := ""
-				if t.Guard != "" {
-					guardExpr = fmt.Sprintf(" && check(\"%s\")", t.Guard)
-				}
-				fmt.Fprintf(&b, "%s (this._state === %sState.%s%s) {\n",
-					ifKeyword, typeName, s, guardExpr)
-				fmt.Fprintf(&b, "            this._state = %sState.%s;\n", typeName, t.To)
-				b.WriteString("            return this._state;\n")
-			}
-		}
-		if !firstInternal {
-			b.WriteString("        }\n")
-		}
-
-		b.WriteString("        return null;\n")
-		b.WriteString("    }\n")
-
 		b.WriteString("}\n\n")
 	}
 
-	// Trim trailing newline to keep file clean.
+	// Action ID enum.
+	actions := collectActions(p)
+	if len(actions) > 0 {
+		b.WriteString("export enum ActionID {\n")
+		for _, id := range actions {
+			fmt.Fprintf(&b, "    %s = \"%s\",\n", kotlinPascalCase(id), id)
+		}
+		b.WriteString("}\n\n")
+	}
+
+	// Transition table interface.
+	b.WriteString("export interface Transition {\n")
+	b.WriteString("    readonly from: string;\n")
+	b.WriteString("    readonly to: string;\n")
+	b.WriteString("    readonly on: string;\n")
+	b.WriteString("    readonly onKind: \"recv\" | \"internal\";\n")
+	b.WriteString("    readonly guard?: string;\n")
+	b.WriteString("    readonly action?: string;\n")
+	b.WriteString("    readonly sends?: ReadonlyArray<{ readonly to: string; readonly msg: string }>;\n")
+	b.WriteString("}\n\n")
+
+	b.WriteString("export interface ActorTable {\n")
+	b.WriteString("    readonly initial: string;\n")
+	b.WriteString("    readonly transitions: ReadonlyArray<Transition>;\n")
+	b.WriteString("}\n\n")
+
+	// Per-actor table.
+	for _, a := range p.Actors {
+		typeName := tsTypeName(a.Name)
+		fmt.Fprintf(&b, "/** %s transition table. */\n", a.Name)
+		fmt.Fprintf(&b, "export const %sTable: ActorTable = {\n", strings.ToLower(typeName[:1])+typeName[1:])
+		fmt.Fprintf(&b, "    initial: %sState.%s,\n", typeName, a.Initial)
+		b.WriteString("    transitions: [\n")
+
+		for _, t := range a.Transitions {
+			onKind := "internal"
+			onValue := t.On.Desc
+			if t.On.Kind == TriggerRecv {
+				onKind = "recv"
+				onValue = string(t.On.Msg)
+			}
+
+			b.WriteString("        { ")
+			fmt.Fprintf(&b, "from: %q, to: %q, on: %q, onKind: %q", t.From, t.To, onValue, onKind)
+			if t.Guard != "" {
+				fmt.Fprintf(&b, ", guard: %q", string(t.Guard))
+			}
+			if t.Do != "" {
+				fmt.Fprintf(&b, ", action: %q", string(t.Do))
+			}
+			if len(t.Sends) > 0 {
+				b.WriteString(", sends: [")
+				for i, s := range t.Sends {
+					if i > 0 {
+						b.WriteString(", ")
+					}
+					fmt.Fprintf(&b, "{ to: %q, msg: %q }", s.To, s.Msg)
+				}
+				b.WriteString("]")
+			}
+			b.WriteString(" },\n")
+		}
+
+		b.WriteString("    ],\n")
+		b.WriteString("};\n\n")
+	}
+
 	result := strings.TrimRight(b.String(), "\n") + "\n"
 	_, err := io.WriteString(w, result)
 	return err

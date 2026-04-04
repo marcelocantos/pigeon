@@ -10,8 +10,13 @@ import (
 	"unicode"
 )
 
-// ExportKotlin writes a Kotlin source file with enum classes for states and
-// message types, and table-driven state machine classes for each actor.
+// ExportKotlin writes a Kotlin source file with:
+//   - Enum classes for states (per actor) and message types
+//   - Guard and action ID constants
+//   - Transition table as static data
+//
+// Does NOT generate executor logic. The generic Machine class in
+// the Kotlin library interprets the table at runtime.
 func (p *Protocol) ExportKotlin(w io.Writer, pkg string) error {
 	var b strings.Builder
 
@@ -32,12 +37,11 @@ func (p *Protocol) ExportKotlin(w io.Writer, pkg string) error {
 	}
 	b.WriteString("}\n\n")
 
-	// Per-actor state enum + machine.
+	// Per-actor state enum.
 	for _, a := range p.Actors {
 		typeName := kotlinTypeName(a.Name)
 		states := collectStates(a)
 
-		// State enum.
 		fmt.Fprintf(&b, "enum class %sState(val value: String) {\n", typeName)
 		for i, s := range states {
 			comma := ","
@@ -47,70 +51,83 @@ func (p *Protocol) ExportKotlin(w io.Writer, pkg string) error {
 			fmt.Fprintf(&b, "    %s(\"%s\")%s\n", string(s), s, comma)
 		}
 		b.WriteString("}\n\n")
+	}
 
-		// Machine class.
-		fmt.Fprintf(&b, "class %sMachine {\n", typeName)
-		fmt.Fprintf(&b, "    var state: %sState = %sState.%s\n", typeName, typeName, a.Initial)
-		b.WriteString("        private set\n\n")
-
-		// handleMessage — use `when {}` with boolean conditions to support guards.
-		b.WriteString("    /** Process a received message. Returns the new state, or null if rejected. */\n")
-		fmt.Fprintf(&b, "    fun handleMessage(msg: MessageType, guard: (String) -> Boolean = { true }): %sState? {\n", typeName)
-		b.WriteString("        val newState = when {\n")
-		for _, t := range a.Transitions {
-			if t.On.Kind != TriggerRecv {
-				continue
+	// Guard ID enum.
+	if len(p.Guards) > 0 {
+		b.WriteString("enum class GuardID(val value: String) {\n")
+		for i, g := range p.Guards {
+			comma := ","
+			if i == len(p.Guards)-1 {
+				comma = ";"
 			}
-			guardExpr := ""
+			fmt.Fprintf(&b, "    %s(\"%s\")%s\n", kotlinPascalCase(string(g.ID)), g.ID, comma)
+		}
+		b.WriteString("}\n\n")
+	}
+
+	// Action ID enum.
+	actions := collectActions(p)
+	if len(actions) > 0 {
+		b.WriteString("enum class ActionID(val value: String) {\n")
+		for i, id := range actions {
+			comma := ","
+			if i == len(actions)-1 {
+				comma = ";"
+			}
+			fmt.Fprintf(&b, "    %s(\"%s\")%s\n", kotlinPascalCase(id), id, comma)
+		}
+		b.WriteString("}\n\n")
+	}
+
+	// Transition table per actor.
+	for _, a := range p.Actors {
+		typeName := kotlinTypeName(a.Name)
+		fmt.Fprintf(&b, "/** %s transition table. */\n", a.Name)
+		fmt.Fprintf(&b, "object %sTable {\n", typeName)
+		fmt.Fprintf(&b, "    val initial = %sState.%s\n\n", typeName, a.Initial)
+
+		fmt.Fprintf(&b, "    data class Transition(\n")
+		b.WriteString("        val from: String,\n")
+		b.WriteString("        val to: String,\n")
+		b.WriteString("        val on: String,\n")
+		b.WriteString("        val onKind: String,\n")
+		b.WriteString("        val guard: String? = null,\n")
+		b.WriteString("        val action: String? = null,\n")
+		b.WriteString("        val sends: List<Pair<String, String>> = emptyList(),\n")
+		b.WriteString("    )\n\n")
+
+		b.WriteString("    val transitions = listOf(\n")
+		for _, t := range a.Transitions {
+			onKind := "internal"
+			onValue := t.On.Desc
+			if t.On.Kind == TriggerRecv {
+				onKind = "recv"
+				onValue = string(t.On.Msg)
+			}
+
+			guardStr := "null"
 			if t.Guard != "" {
-				guardExpr = fmt.Sprintf(" && guard(\"%s\")", t.Guard)
+				guardStr = fmt.Sprintf("%q", string(t.Guard))
 			}
-			fmt.Fprintf(&b, "            state == %sState.%s && msg == MessageType.%s%s ->\n",
-				typeName, t.From,
-				kotlinPascalCase(string(t.On.Msg)),
-				guardExpr)
-			fmt.Fprintf(&b, "                %sState.%s\n", typeName, t.To)
-		}
-		b.WriteString("            else -> null\n")
-		b.WriteString("        }\n")
-		b.WriteString("        if (newState != null) state = newState\n")
-		b.WriteString("        return newState\n")
-		b.WriteString("    }\n\n")
-
-		// step
-		b.WriteString("    /** Attempt an internal transition. Returns the new state, or null if none available. */\n")
-		fmt.Fprintf(&b, "    fun step(guard: (String) -> Boolean = { true }): %sState? {\n", typeName)
-
-		// Group internal transitions by from-state.
-		byFrom := map[State][]Transition{}
-		for _, t := range a.Transitions {
-			if t.On.Kind == TriggerInternal {
-				byFrom[t.From] = append(byFrom[t.From], t)
+			actionStr := "null"
+			if t.Do != "" {
+				actionStr = fmt.Sprintf("%q", string(t.Do))
 			}
-		}
 
-		b.WriteString("        val newState = when {\n")
-		for _, s := range states {
-			ts := byFrom[s]
-			if len(ts) == 0 {
-				continue
-			}
-			for _, t := range ts {
-				guardExpr := ""
-				if t.Guard != "" {
-					guardExpr = fmt.Sprintf(" && guard(\"%s\")", t.Guard)
+			sends := "emptyList()"
+			if len(t.Sends) > 0 {
+				var parts []string
+				for _, s := range t.Sends {
+					parts = append(parts, fmt.Sprintf("%q to %q", s.To, s.Msg))
 				}
-				fmt.Fprintf(&b, "            state == %sState.%s%s ->\n",
-					typeName, s, guardExpr)
-				fmt.Fprintf(&b, "                %sState.%s\n", typeName, t.To)
+				sends = "listOf(" + strings.Join(parts, ", ") + ")"
 			}
-		}
-		b.WriteString("            else -> null\n")
-		b.WriteString("        }\n")
-		b.WriteString("        if (newState != null) state = newState\n")
-		b.WriteString("        return newState\n")
-		b.WriteString("    }\n")
 
+			fmt.Fprintf(&b, "        Transition(%q, %q, %q, %q, %s, %s, %s),\n",
+				t.From, t.To, onValue, onKind, guardStr, actionStr, sends)
+		}
+		b.WriteString("    )\n")
 		b.WriteString("}\n\n")
 	}
 
@@ -125,8 +142,6 @@ func kotlinTypeName(name string) string {
 	return strings.ToUpper(name[:1]) + name[1:]
 }
 
-// kotlinPascalCase converts snake_case to PascalCase for Kotlin enum values.
-// "pair_begin" -> "PairBegin", "token_valid" -> "TokenValid"
 func kotlinPascalCase(s string) string {
 	var result []rune
 	nextUpper := true

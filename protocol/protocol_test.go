@@ -571,7 +571,7 @@ func TestExportKotlinStructure(t *testing.T) {
 		"package com.example.tern",
 		"MessageType",
 		"enum class",
-		"handleMessage",
+		"transitions",
 	}
 	for _, want := range checks {
 		if !strings.Contains(out, want) {
@@ -589,7 +589,7 @@ func TestExportTypeScriptStructure(t *testing.T) {
 	out := buf.String()
 	checks := []string{
 		"export enum MessageType",
-		"handleMessage",
+		"transitions",
 	}
 	for _, want := range checks {
 		if !strings.Contains(out, want) {

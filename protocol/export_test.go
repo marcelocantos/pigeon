@@ -107,7 +107,7 @@ func TestExportSwiftStructure(t *testing.T) {
 		"ServerState",
 		"IosState",
 		"CliState",
-		"handleMessage",
+		"Transitions",
 		"public",
 	}
 
