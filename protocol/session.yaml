@@ -503,6 +503,67 @@ actors:
         to: Idle
         on: backend_disconnect
 
+structs:
+  ECDHState:
+    backend_pub:
+      type: string
+      initial: '""'
+      desc: backend ECDH public key
+    client_pub:
+      type: string
+      initial: '""'
+      desc: pubkey received from client
+    shared_key:
+      type: string
+      initial: '""'
+      desc: ECDH-derived shared key
+    code:
+      type: string
+      initial: '""'
+      desc: confirmation code derived from pubkeys
+
+  TokenState:
+    current:
+      type: string
+      initial: '""'
+      desc: pairing token currently in play
+    active:
+      type: set<string>
+      initial: '{}'
+      desc: set of valid (non-revoked) tokens
+    used:
+      type: set<string>
+      initial: '{}'
+      desc: set of revoked tokens
+
+  BackendPathState:
+    active_path:
+      type: string
+      initial: '"relay"'
+      desc: which path carries traffic
+    dispatcher_path:
+      type: string
+      initial: '"relay"'
+      desc: datagram dispatcher binding
+    monitor_target:
+      type: string
+      initial: '"none"'
+      desc: health monitor target
+    lan_signal:
+      type: string
+      initial: '"pending"'
+      desc: LANReady notification state
+
+  ClientPathState:
+    active_path:
+      type: string
+      initial: '"relay"'
+      desc: which path carries traffic
+    dispatcher_path:
+      type: string
+      initial: '"relay"'
+      desc: datagram dispatcher binding
+
 vars:
   # --- Phase 1: Pairing ---
   current_token:

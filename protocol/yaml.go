@@ -17,6 +17,7 @@ type yamlProtocol struct {
 	Name         string                     `yaml:"name"`
 	Messages     yaml.Node                  `yaml:"messages"`
 	Actors       yaml.Node                  `yaml:"actors"`
+	Structs      yaml.Node                  `yaml:"structs"`
 	Vars         yaml.Node                  `yaml:"vars"`
 	Guards       yaml.Node                  `yaml:"guards"`
 	Operators    yaml.Node                  `yaml:"operators"`
@@ -138,26 +139,42 @@ func ParseYAML(data []byte) (*Protocol, error) {
 		p.Actors = append(p.Actors, actor)
 	}
 
+	// Structs — named variable groups.
+	if yp.Structs.Kind == yaml.MappingNode {
+		for i := 0; i+1 < len(yp.Structs.Content); i += 2 {
+			structName := yp.Structs.Content[i].Value
+			fieldsNode := yp.Structs.Content[i+1]
+
+			sd := StructDef{Name: structName}
+
+			if fieldsNode.Kind == yaml.MappingNode {
+				fields, err := parseOrderedMap[yamlVar](fieldsNode)
+				if err != nil {
+					return nil, fmt.Errorf("struct %q: %w", structName, err)
+				}
+				for _, kv := range fields {
+					sd.Fields = append(sd.Fields, StructField{
+						Name:    kv.key,
+						Type:    parseVarType(kv.val.Type),
+						Initial: kv.val.Initial,
+						Desc:    kv.val.Desc,
+					})
+				}
+			}
+
+			p.Structs = append(p.Structs, sd)
+		}
+	}
+
 	// Vars — preserve YAML key order.
 	vars, err := parseOrderedMap[yamlVar](&yp.Vars)
 	if err != nil {
 		return nil, fmt.Errorf("vars: %w", err)
 	}
 	for _, kv := range vars {
-		vt := VarString // default
-		switch kv.val.Type {
-		case "int":
-			vt = VarInt
-		case "bool":
-			vt = VarBool
-		case "set<string>":
-			vt = VarSetString
-		case "string", "":
-			vt = VarString
-		}
 		p.Vars = append(p.Vars, VarDef{
 			Name:    kv.key,
-			Type:    vt,
+			Type:    parseVarType(kv.val.Type),
 			Initial: kv.val.Initial,
 			Desc:    kv.val.Desc,
 		})
@@ -323,6 +340,19 @@ func parseOrderedMap[V any](node *yaml.Node) ([]kv[V], error) {
 		result = append(result, kv[V]{key: key, val: val})
 	}
 	return result, nil
+}
+
+func parseVarType(s string) VarType {
+	switch s {
+	case "int":
+		return VarInt
+	case "bool":
+		return VarBool
+	case "set<string>":
+		return VarSetString
+	default:
+		return VarString
+	}
 }
 
 func parseOrderedMapString(node *yaml.Node) ([]kv[string], error) {

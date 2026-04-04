@@ -102,9 +102,26 @@ const (
 
 type VarDef struct {
 	Name    string  // TLA+ variable name
-	Type    VarType // executor type (string, int, bool, set<string>)
+	Type    VarType // executor type (string, int, bool, set<string>, or struct name)
 	Initial string  // TLA+ expression for initial value
 	Desc    string  // human-readable description
+}
+
+// StructDef defines a named group of variables that are logically
+// related and often updated together. In the executor, each struct
+// becomes a native struct/class. In TLA+, each struct is a record.
+type StructDef struct {
+	Name   string
+	Fields []StructField
+	Desc   string
+}
+
+// StructField is a single field within a StructDef.
+type StructField struct {
+	Name    string
+	Type    VarType
+	Initial string
+	Desc    string
 }
 
 // GuardDef maps a GuardID to a TLA+ expression, binding the
@@ -164,7 +181,8 @@ type Protocol struct {
 	Name         string
 	Actors       []Actor
 	Messages     []Message
-	Vars         []VarDef    // auxiliary state variables
+	Structs      []StructDef // named variable groups
+	Vars         []VarDef    // auxiliary state variables (may reference structs)
 	Guards       []GuardDef  // guard TLA+ expressions
 	Operators    []Operator  // TLA+ helper operators
 	AdvActions   []AdvAction // adversary capabilities beyond Dolev-Yao
