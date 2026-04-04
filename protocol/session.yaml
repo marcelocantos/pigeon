@@ -920,7 +920,7 @@ adversary:
 constants:
   - name: Challenges
     type: set<string>
-    values: ['"c1"', '"c2"']
+    values: [c1, c2]
     desc: possible challenge values (verifies protocol works for any challenge)
 
 properties:
