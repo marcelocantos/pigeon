@@ -201,8 +201,7 @@ func TestExportTLA(t *testing.T) {
 			"MODULE PairingCeremony",
 			"EXTENDS Integers",
 			"server_state", "ios_state", "cli_state",
-			"chan_cli_server", "chan_server_ios",
-			"Init ==", "Next ==", "Spec ==",
+			"received_", "Init ==", "Next ==", "Spec ==",
 		},
 		"variables": {
 			"VARIABLES",
@@ -218,8 +217,7 @@ func TestExportTLA(t *testing.T) {
 			`received_device_id \in paired_devices`,
 		},
 		"sends": {
-			"Append(chan_cli_server", "Append(chan_server_cli",
-			"Append(chan_server_ios", "Append(chan_ios_server",
+			"received_", "[type |->",
 		},
 		"transitions": {
 			"_state' =",
