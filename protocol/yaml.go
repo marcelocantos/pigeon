@@ -22,6 +22,7 @@ type yamlProtocol struct {
 	Guards       yaml.Node                  `yaml:"guards"`
 	Operators    yaml.Node                  `yaml:"operators"`
 	Phases       yaml.Node                  `yaml:"phases"`
+	Constants    []yamlConstant             `yaml:"constants"`
 	AdvGuard     string                     `yaml:"adversary_guard"`
 	Adversary    []yamlAdvAction            `yaml:"adversary"`
 	Properties   []yamlProperty             `yaml:"properties"`
@@ -41,13 +42,14 @@ type yamlActor struct {
 }
 
 type yamlTransition struct {
-	From    string              `yaml:"from"`
-	To      string              `yaml:"to"`
-	On      string              `yaml:"on"`
-	Guard   string              `yaml:"guard"`
-	Do      string              `yaml:"do"`
-	Sends   []yamlSend          `yaml:"sends"`
-	Updates yaml.Node           `yaml:"updates"`
+	From     string              `yaml:"from"`
+	To       string              `yaml:"to"`
+	On       string              `yaml:"on"`
+	Guard    string              `yaml:"guard"`
+	Do       string              `yaml:"do"`
+	Fairness string              `yaml:"fairness"` // "weak" (default) or "strong"
+	Sends    []yamlSend          `yaml:"sends"`
+	Updates  yaml.Node           `yaml:"updates"`
 }
 
 type yamlSend struct {
@@ -68,6 +70,13 @@ type yamlOperator struct {
 	Desc   string `yaml:"desc"`
 }
 
+type yamlConstant struct {
+	Name   string   `yaml:"name"`
+	Type   string   `yaml:"type"`
+	Values []string `yaml:"values"`
+	Desc   string   `yaml:"desc"`
+}
+
 type yamlAdvAction struct {
 	Name string `yaml:"name"`
 	Desc string `yaml:"desc"`
@@ -75,10 +84,12 @@ type yamlAdvAction struct {
 }
 
 type yamlProperty struct {
-	Name string `yaml:"name"`
-	Kind string `yaml:"kind"`
-	Expr string `yaml:"expr"`
-	Desc string `yaml:"desc"`
+	Name     string `yaml:"name"`
+	Kind     string `yaml:"kind"`      // invariant, liveness, leads_to
+	Expr     string `yaml:"expr"`      // for invariant and liveness
+	FromExpr string `yaml:"from_expr"` // for leads_to: P in P ~> Q
+	ToExpr   string `yaml:"to_expr"`   // for leads_to: Q in P ~> Q
+	Desc     string `yaml:"desc"`
 }
 
 // LoadYAML reads a protocol definition from a YAML file and returns
@@ -257,17 +268,32 @@ func ParseYAML(data []byte) (*Protocol, error) {
 
 	p.AdvGuard = yp.AdvGuard
 
+	// Constants.
+	for _, yc := range yp.Constants {
+		p.Constants = append(p.Constants, ConstantDef{
+			Name:   yc.Name,
+			Type:   parseVarType(yc.Type),
+			Values: yc.Values,
+			Desc:   yc.Desc,
+		})
+	}
+
 	// Properties.
 	for _, ypr := range yp.Properties {
 		kind := Invariant
-		if ypr.Kind == "liveness" {
+		switch ypr.Kind {
+		case "liveness":
 			kind = Liveness
+		case "leads_to":
+			kind = LeadsTo
 		}
 		p.Properties = append(p.Properties, Property{
-			Name: ypr.Name,
-			Kind: kind,
-			Expr: ypr.Expr,
-			Desc: ypr.Desc,
+			Name:     ypr.Name,
+			Kind:     kind,
+			Expr:     ypr.Expr,
+			FromExpr: ypr.FromExpr,
+			ToExpr:   ypr.ToExpr,
+			Desc:     ypr.Desc,
 		})
 	}
 
@@ -275,11 +301,17 @@ func ParseYAML(data []byte) (*Protocol, error) {
 }
 
 func convertTransition(yt yamlTransition) (Transition, error) {
+	fairness := WeakFair
+	if yt.Fairness == "strong" {
+		fairness = StrongFair
+	}
+
 	t := Transition{
-		From:  State(yt.From),
-		To:    State(yt.To),
-		Guard: GuardID(yt.Guard),
-		Do:    ActionID(yt.Do),
+		From:     State(yt.From),
+		To:       State(yt.To),
+		Guard:    GuardID(yt.Guard),
+		Do:       ActionID(yt.Do),
+		Fairness: fairness,
 	}
 
 	// Parse trigger: "recv <msg>" or free-form internal description.

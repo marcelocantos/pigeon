@@ -288,6 +288,7 @@ actors:
       - from: RelayBackoff
         to: LANOffered
         on: backoff_expired
+        fairness: strong
         sends:
           - to: client
             msg: lan_offer
@@ -916,6 +917,12 @@ adversary:
         chan_client_backend := Append(chan_client_backend, msg);
       end with;
 
+constants:
+  - name: Challenges
+    type: set<string>
+    values: ['"c1"', '"c2"']
+    desc: possible challenge values (verifies protocol works for any challenge)
+
 properties:
   # --- Phase 1: Security ---
   - name: NoTokenReuse
@@ -978,3 +985,15 @@ properties:
     kind: invariant
     expr: 'backend_state = backend_RelayBackoff => lan_signal = "pending"'
     desc: LAN signal resets on fallback
+
+  # --- Leads-to (progress guarantees) ---
+  - name: FallbackLeadsToReadvertise
+    kind: leads_to
+    from_expr: 'backend_state = backend_RelayBackoff'
+    to_expr: 'backend_state = backend_LANOffered'
+    desc: After fallback, backend eventually re-advertises LAN
+  - name: DegradedLeadsToResolutionOrFallback
+    kind: leads_to
+    from_expr: 'backend_state = backend_LANDegraded'
+    to_expr: 'backend_state \in {backend_LANActive, backend_RelayBackoff}'
+    desc: Degraded state eventually resolves (recovery or fallback)

@@ -81,7 +81,7 @@ func (p *Protocol) ExportPlantUML(w io.Writer) error {
 					if fromPhase == ph.Name && toPhase == ph.Name {
 						from := fmt.Sprintf("%s_%s", alias, sanitisePUML(string(t.From)))
 						to := fmt.Sprintf("%s_%s", alias, sanitisePUML(string(t.To)))
-						fmt.Fprintf(&b, "    %s --> %s : %s\n", from, to, transitionLabel(t))
+						fmt.Fprintf(&b, "    %s %s %s : %s\n", from, transitionStyle(t), to, transitionLabel(t))
 					}
 				}
 				b.WriteString("  }\n\n")
@@ -94,7 +94,7 @@ func (p *Protocol) ExportPlantUML(w io.Writer) error {
 				if fromPhase != toPhase {
 					from := fmt.Sprintf("%s_%s", alias, sanitisePUML(string(t.From)))
 					to := fmt.Sprintf("%s_%s", alias, sanitisePUML(string(t.To)))
-					fmt.Fprintf(&b, "  %s --> %s : %s\n", from, to, transitionLabel(t))
+					fmt.Fprintf(&b, "  %s %s %s : %s\n", from, transitionStyle(t), to, transitionLabel(t))
 				}
 			}
 
@@ -109,7 +109,7 @@ func (p *Protocol) ExportPlantUML(w io.Writer) error {
 			for _, t := range a.Transitions {
 				from := fmt.Sprintf("%s_%s", alias, sanitisePUML(string(t.From)))
 				to := fmt.Sprintf("%s_%s", alias, sanitisePUML(string(t.To)))
-				fmt.Fprintf(&b, "  %s --> %s : %s\n", from, to, transitionLabel(t))
+				fmt.Fprintf(&b, "  %s %s %s : %s\n", from, transitionStyle(t), to, transitionLabel(t))
 			}
 		}
 
@@ -142,6 +142,21 @@ func (p *Protocol) ExportPlantUML(w io.Writer) error {
 		}
 	}
 
+	// Leads-to properties as dashed arrows.
+	hasLeadsTo := false
+	for _, prop := range p.Properties {
+		if prop.Kind == LeadsTo {
+			if !hasLeadsTo {
+				b.WriteString("\n' === Leads-to properties ===\n\n")
+				hasLeadsTo = true
+			}
+			fmt.Fprintf(&b, "note \"%s\\n%s ~> %s\" as N_%s\n",
+				prop.Name,
+				prop.FromExpr, prop.ToExpr,
+				sanitisePUML(prop.Name))
+		}
+	}
+
 	b.WriteString("\n@enduml\n")
 	_, err := io.WriteString(w, b.String())
 	return err
@@ -160,7 +175,18 @@ func transitionLabel(t Transition) string {
 	if t.Do != "" {
 		parts = append(parts, string(t.Do))
 	}
+	if t.Fairness == StrongFair {
+		parts = append(parts, "«SF»")
+	}
 	return strings.Join(parts, "\\n")
+}
+
+// transitionStyle returns PlantUML arrow style based on fairness.
+func transitionStyle(t Transition) string {
+	if t.Fairness == StrongFair {
+		return "-[bold]->"
+	}
+	return "-->"
 }
 
 func findRecvState(p *Protocol, actorName string, msg MsgType, alias string) string {

@@ -26,18 +26,28 @@ type PropertyKind int
 
 const (
 	Invariant PropertyKind = iota
-	Liveness
+	Liveness              // <>P
+	LeadsTo               // P ~> Q
+)
+
+// FairnessKind specifies when TLC must force a transition to fire.
+type FairnessKind int
+
+const (
+	WeakFair   FairnessKind = iota // if continuously enabled, eventually taken
+	StrongFair                     // if enabled infinitely often, eventually taken
 )
 
 // Transition defines a single edge in an actor's state machine.
 type Transition struct {
-	From    State
-	To      State
-	On      Trigger      // what causes this transition
-	Guard   GuardID      // optional: must be true to take this edge
-	Do      ActionID     // optional: side-effect on transition
-	Sends   []Send       // messages emitted when this transition fires
-	Updates []VarUpdate  // auxiliary variable updates
+	From     State
+	To       State
+	On       Trigger      // what causes this transition
+	Guard    GuardID      // optional: must be true to take this edge
+	Do       ActionID     // optional: side-effect on transition
+	Fairness FairnessKind // weak (default) or strong
+	Sends    []Send       // messages emitted when this transition fires
+	Updates  []VarUpdate  // auxiliary variable updates
 }
 
 // Send describes a message emitted during a transition.
@@ -152,10 +162,22 @@ type AdvAction struct {
 
 // Property defines a verification property for TLA+ model checking.
 type Property struct {
-	Name string
-	Kind PropertyKind
-	Expr string // TLA+ expression
-	Desc string // human-readable description
+	Name     string
+	Kind     PropertyKind
+	Expr     string // TLA+ expression (for invariant and liveness)
+	FromExpr string // TLA+ expression for leads-to LHS (P ~> Q: P)
+	ToExpr   string // TLA+ expression for leads-to RHS (P ~> Q: Q)
+	Desc     string // human-readable description
+}
+
+// ConstantDef defines a parameterised constant for model checking.
+// TLC substitutes values from the set to verify the protocol works
+// for all possible values, not just one hardcoded scenario.
+type ConstantDef struct {
+	Name   string
+	Type   VarType
+	Values []string // set of values to check (TLA+ expressions)
+	Desc   string
 }
 
 // Actor defines one participant in the protocol.
@@ -186,8 +208,9 @@ type Protocol struct {
 	Guards       []GuardDef  // guard TLA+ expressions
 	Operators    []Operator  // TLA+ helper operators
 	AdvActions   []AdvAction // adversary capabilities beyond Dolev-Yao
-	AdvGuard     string      // TLA+ expression gating the adversary (empty = always active)
-	Phases       []Phase     // named groupings of states for diagramming and TLA+ splitting
+	AdvGuard     string       // TLA+ expression gating the adversary (empty = always active)
+	Phases       []Phase      // named groupings of states for diagramming and TLA+ splitting
+	Constants    []ConstantDef // parameterised constants for model checking
 	Properties   []Property
 	ChannelBound int // max messages per channel (0 = unbounded)
 	OneShot      bool // if true, actors run once then terminate (no loop)

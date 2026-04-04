@@ -338,6 +338,8 @@ func writeProperties(b *strings.Builder, p *Protocol) {
 			fmt.Fprintf(b, "%s == %s\n", sanitiseTLA(prop.Name), prop.Expr)
 		case Liveness:
 			fmt.Fprintf(b, "%s == <>(%s)\n", sanitiseTLA(prop.Name), prop.Expr)
+		case LeadsTo:
+			fmt.Fprintf(b, "%s == (%s) ~> (%s)\n", sanitiseTLA(prop.Name), prop.FromExpr, prop.ToExpr)
 		}
 	}
 	b.WriteString("\n")
