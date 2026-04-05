@@ -32,6 +32,8 @@ const (
 	dgConnFragment byte = 0x40
 	dgChanWhole    byte = 0x80
 	dgChanFragment byte = 0xC0
+	dgPing         byte = 0x10 // health ping on direct path
+	dgPong         byte = 0x11 // health pong on direct path
 	fragHeaderSize      = 8
 	chanIDSize          = 2
 )

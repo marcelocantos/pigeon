@@ -130,6 +130,11 @@ type executor struct {
 	// Timers managed by the executor.
 	monitorCancel  context.CancelFunc
 	backoffCancel  context.CancelFunc
+	pongCancel     context.CancelFunc // cancelled when pong received
+
+	// Configurable timing (defaults set in newExecutor).
+	pingInterval time.Duration // how often to send health pings
+	pongTimeout  time.Duration // how long to wait for a pong reply
 
 	// LAN reader cancellation.
 	lanStreamCancel context.CancelFunc
@@ -165,6 +170,8 @@ func newExecutor(
 		lanReady:     make(chan struct{}),
 		reasm:        newReassembler(DefaultFragmentTimeout, done),
 		maxDgPayload: DefaultMaxDatagramPayload,
+		pingInterval: 5 * time.Second,
+		pongTimeout:  4 * time.Second,
 		ctx:          ctx,
 		cancel:       cancel,
 	}
@@ -297,6 +304,12 @@ func (e *executor) run() {
 				continue
 			}
 
+			// Cancel pong timeout on pong receipt.
+			if ev.id == EventRecvPathPong && e.pongCancel != nil {
+				e.pongCancel()
+				e.pongCancel = nil
+			}
+
 			// Stash event-specific data before the machine processes it.
 			if ev.id == EventRecvLanOffer {
 				if od, ok := ev.payload.(*lanOfferData); ok {
@@ -426,15 +439,29 @@ func (e *executor) executeCommand(cmd CmdID, payload any) {
 		}
 
 	case CmdSendPathPing:
+		slog.Debug("sending path ping")
 		p := e.activePath()
 		if p.dg != nil {
-			p.dg.SendDatagram([]byte{dgConnWhole})
+			p.dg.SendDatagram([]byte{dgPing})
 		}
+		// Start pong timeout — if no pong arrives in time, fire ping_timeout.
+		if e.pongCancel != nil {
+			e.pongCancel()
+		}
+		ctx, cancel := context.WithCancel(e.ctx)
+		e.pongCancel = cancel
+		go func() {
+			select {
+			case <-time.After(e.pongTimeout):
+				e.submit(event{id: EventPingTimeout})
+			case <-ctx.Done():
+			}
+		}()
 
 	case CmdSendPathPong:
 		p := e.activePath()
 		if p.dg != nil {
-			p.dg.SendDatagram([]byte{dgConnWhole})
+			p.dg.SendDatagram([]byte{dgPong})
 		}
 
 	case CmdSendLanOffer:
@@ -567,6 +594,12 @@ func (e *executor) processDatagram(raw []byte) {
 	}
 
 	switch raw[0] {
+	case dgPing:
+		e.submit(event{id: EventRecvPathPing})
+		return
+	case dgPong:
+		e.submit(event{id: EventRecvPathPong})
+		return
 	case dgConnWhole:
 		payload := raw[1:]
 		if e.dgChannel != nil {
@@ -720,7 +753,7 @@ func (e *executor) datagramReader(ctx context.Context, p *path, dataEvent EventI
 
 // monitorLoop sends ping events at fixed intervals.
 func (e *executor) monitorLoop(ctx context.Context) {
-	ticker := time.NewTicker(5 * time.Second)
+	ticker := time.NewTicker(e.pingInterval)
 	defer ticker.Stop()
 
 	for {

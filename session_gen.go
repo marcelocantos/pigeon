@@ -238,7 +238,7 @@ func SessionProtocol() *Protocol {
 				{From: "WaitingForCode", To: "ValidateCode", On: Internal("cli_code_entered"), Updates: []VarUpdate{{Var: "received_code", Expr: "cli_entered_code"}, }},
 				{From: "ValidateCode", To: "StorePaired", On: Internal("check_code"), Guard: "code_correct"},
 				{From: "ValidateCode", To: "Idle", On: Internal("check_code"), Guard: "code_wrong", Updates: []VarUpdate{{Var: "code_attempts", Expr: "code_attempts + 1"}, }},
-				{From: "StorePaired", To: "Paired", On: Internal("finalise"), Do: "store_device", Sends: []Send{{To: "client", Msg: "pair_complete", Fields: map[string]string{"key": "backend_shared_key", "secret": "\"dev_secret_1\"", }}, }, Updates: []VarUpdate{{Var: "device_secret", Expr: "\"dev_secret_1\""}, {Var: "paired_devices", Expr: "paired_devices \\union {\"device_1\"}"}, {Var: "active_tokens", Expr: "active_tokens \\ {current_token}"}, {Var: "used_tokens", Expr: "used_tokens \\union {current_token}"}, }},
+				{From: "StorePaired", To: "Paired", On: Internal("finalise"), Do: "store_device", Sends: []Send{{To: "client", Msg: "pair_complete", Fields: map[string]string{"secret": "\"dev_secret_1\"", "key": "backend_shared_key", }}, }, Updates: []VarUpdate{{Var: "device_secret", Expr: "\"dev_secret_1\""}, {Var: "paired_devices", Expr: "paired_devices \\union {\"device_1\"}"}, {Var: "active_tokens", Expr: "active_tokens \\ {current_token}"}, {Var: "used_tokens", Expr: "used_tokens \\union {current_token}"}, }},
 				{From: "Paired", To: "AuthCheck", On: Recv("auth_request"), Updates: []VarUpdate{{Var: "received_device_id", Expr: "recv_msg.device_id"}, {Var: "received_auth_nonce", Expr: "recv_msg.nonce"}, }},
 				{From: "AuthCheck", To: "SessionActive", On: Internal("verify"), Guard: "device_known", Do: "verify_device", Sends: []Send{{To: "client", Msg: "auth_ok"}, }, Updates: []VarUpdate{{Var: "auth_nonces_used", Expr: "auth_nonces_used \\union {received_auth_nonce}"}, }},
 				{From: "AuthCheck", To: "Idle", On: Internal("verify"), Guard: "device_unknown"},
@@ -281,7 +281,7 @@ func SessionProtocol() *Protocol {
 				{From: "LANDegraded", To: "RelayBackoff", On: Internal("ping_timeout"), Guard: "at_max_failures", Do: "fallback_to_relay", Updates: []VarUpdate{{Var: "backoff_level", Expr: "Min(backoff_level + 1, max_backoff_level)"}, {Var: "b_active_path", Expr: "\"relay\""}, {Var: "b_dispatcher_path", Expr: "\"relay\""}, {Var: "monitor_target", Expr: "\"none\""}, {Var: "lan_signal", Expr: "\"pending\""}, {Var: "ping_failures", Expr: "0"}, }},
 				{From: "RelayBackoff", To: "LANOffered", On: Internal("backoff_expired"), Sends: []Send{{To: "client", Msg: "lan_offer", Fields: map[string]string{"addr": "lan_addr", "challenge": "challenge_bytes", }}, }},
 				{From: "RelayBackoff", To: "LANOffered", On: Internal("lan_server_changed"), Sends: []Send{{To: "client", Msg: "lan_offer", Fields: map[string]string{"addr": "lan_addr", "challenge": "challenge_bytes", }}, }, Updates: []VarUpdate{{Var: "backoff_level", Expr: "0"}, }},
-				{From: "RelayConnected", To: "LANOffered", On: Internal("readvertise_tick"), Guard: "lan_server_available", Sends: []Send{{To: "client", Msg: "lan_offer", Fields: map[string]string{"challenge": "challenge_bytes", "addr": "lan_addr", }}, }},
+				{From: "RelayConnected", To: "LANOffered", On: Internal("readvertise_tick"), Guard: "lan_server_available", Sends: []Send{{To: "client", Msg: "lan_offer", Fields: map[string]string{"addr": "lan_addr", "challenge": "challenge_bytes", }}, }},
 				{From: "RelayConnected", To: "Paired", On: Internal("disconnect")},
 			}},
 			{Name: "client", Initial: "Idle", Transitions: []Transition{
@@ -294,7 +294,7 @@ func SessionProtocol() *Protocol {
 				{From: "ShowCode", To: "WaitPairComplete", On: Internal("code_displayed")},
 				{From: "WaitPairComplete", To: "Paired", On: Recv("pair_complete"), Do: "store_secret"},
 				{From: "Paired", To: "Reconnect", On: Internal("app_launch")},
-				{From: "Reconnect", To: "SendAuth", On: Internal("relay_connected"), Sends: []Send{{To: "backend", Msg: "auth_request", Fields: map[string]string{"nonce": "\"nonce_1\"", "key": "client_shared_key", "device_id": "\"device_1\"", "secret": "device_secret", }}, }},
+				{From: "Reconnect", To: "SendAuth", On: Internal("relay_connected"), Sends: []Send{{To: "backend", Msg: "auth_request", Fields: map[string]string{"device_id": "\"device_1\"", "secret": "device_secret", "nonce": "\"nonce_1\"", "key": "client_shared_key", }}, }},
 				{From: "SendAuth", To: "SessionActive", On: Recv("auth_ok")},
 				{From: "SessionActive", To: "RelayConnected", On: Internal("session_established")},
 				{From: "RelayConnected", To: "RelayConnected", On: Internal("app_send")},
@@ -617,7 +617,8 @@ func (m *BackendMachine) Step(event EventID) (bool, error) {
 		m.State = BackendStorePaired
 		return true, nil
 	case m.State == BackendValidateCode && event == EventCheckCode && m.Guards[GuardCodeWrong] != nil && m.Guards[GuardCodeWrong]():
-		// code_attempts: code_attempts + 1 (set by action)
+		m.CodeAttempts = m.CodeAttempts + 1
+		if m.OnChange != nil { m.OnChange("code_attempts") }
 		m.State = BackendIdle
 		return true, nil
 	case m.State == BackendStorePaired && event == EventFinalise:
@@ -771,7 +772,8 @@ func (m *BackendMachine) Step(event EventID) (bool, error) {
 		m.State = BackendRelayBackoff
 		return true, nil
 	case m.State == BackendLANDegraded && event == EventPingTimeout && m.Guards[GuardUnderMaxFailures] != nil && m.Guards[GuardUnderMaxFailures]():
-		// ping_failures: ping_failures + 1 (set by action)
+		m.PingFailures = m.PingFailures + 1
+		if m.OnChange != nil { m.OnChange("ping_failures") }
 		m.State = BackendLANDegraded
 		return true, nil
 	case m.State == BackendLANDegraded && event == EventPingTimeout && m.Guards[GuardAtMaxFailures] != nil && m.Guards[GuardAtMaxFailures]():
@@ -859,7 +861,8 @@ func (m *BackendMachine) HandleEvent(ev EventID) ([]CmdID, error) {
 		m.State = BackendStorePaired
 		return nil, nil
 	case m.State == BackendValidateCode && ev == EventCheckCode && m.Guards[GuardCodeWrong] != nil && m.Guards[GuardCodeWrong]():
-		// code_attempts: code_attempts + 1 (set by action)
+		m.CodeAttempts = m.CodeAttempts + 1
+		if m.OnChange != nil { m.OnChange("code_attempts") }
 		m.State = BackendIdle
 		return nil, nil
 	case m.State == BackendStorePaired && ev == EventFinalise:
@@ -1047,7 +1050,8 @@ func (m *BackendMachine) HandleEvent(ev EventID) ([]CmdID, error) {
 		m.State = BackendLANActive
 		return nil, nil
 	case m.State == BackendLANDegraded && ev == EventPingTimeout && m.Guards[GuardUnderMaxFailures] != nil && m.Guards[GuardUnderMaxFailures]():
-		// ping_failures: ping_failures + 1 (set by action)
+		m.PingFailures = m.PingFailures + 1
+		if m.OnChange != nil { m.OnChange("ping_failures") }
 		m.State = BackendLANDegraded
 		return nil, nil
 	case m.State == BackendLANDegraded && ev == EventPingTimeout && m.Guards[GuardAtMaxFailures] != nil && m.Guards[GuardAtMaxFailures]():

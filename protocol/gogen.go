@@ -439,6 +439,9 @@ func writeGoTransitionBody(b *strings.Builder, t Transition, stateType string) {
 		if lit, ok := goSimpleLiteral(u.Expr); ok {
 			fmt.Fprintf(b, "\t\tm.%s = %s\n", field, lit)
 			fmt.Fprintf(b, "\t\tif m.OnChange != nil { m.OnChange(%q) }\n", u.Var)
+		} else if goExpr, ok := goSelfUpdate(u.Var, u.Expr); ok {
+			fmt.Fprintf(b, "\t\tm.%s = %s\n", field, goExpr)
+			fmt.Fprintf(b, "\t\tif m.OnChange != nil { m.OnChange(%q) }\n", u.Var)
 		} else {
 			// Complex expression — must be handled by the action callback.
 			fmt.Fprintf(b, "\t\t// %s: %s (set by action)\n", u.Var, u.Expr)
@@ -464,6 +467,9 @@ func writeGoEventTransitionBody(b *strings.Builder, t Transition, stateType stri
 		field := goCamel(u.Var)
 		if lit, ok := goSimpleLiteral(u.Expr); ok {
 			fmt.Fprintf(b, "\t\tm.%s = %s\n", field, lit)
+			fmt.Fprintf(b, "\t\tif m.OnChange != nil { m.OnChange(%q) }\n", u.Var)
+		} else if goExpr, ok := goSelfUpdate(u.Var, u.Expr); ok {
+			fmt.Fprintf(b, "\t\tm.%s = %s\n", field, goExpr)
 			fmt.Fprintf(b, "\t\tif m.OnChange != nil { m.OnChange(%q) }\n", u.Var)
 		} else {
 			fmt.Fprintf(b, "\t\t// %s: %s (set by action)\n", u.Var, u.Expr)
@@ -506,6 +512,24 @@ func goSimpleLiteral(expr string) (string, bool) {
 	var n int
 	if _, err := fmt.Sscanf(expr, "%d", &n); err == nil {
 		return fmt.Sprintf("%d", n), true
+	}
+	return "", false
+}
+
+// goSelfUpdate checks if expr is a simple self-referential update like
+// "var_name + 1" or "var_name - 1" and returns the Go equivalent
+// (e.g., "m.VarName + 1"). Returns ("", false) for complex expressions.
+func goSelfUpdate(varName, expr string) (string, bool) {
+	expr = strings.TrimSpace(expr)
+	// Match "var_name + N" or "var_name - N".
+	for _, op := range []string{" + ", " - "} {
+		if rest, ok := strings.CutPrefix(expr, varName+op); ok {
+			rest = strings.TrimSpace(rest)
+			var n int
+			if _, err := fmt.Sscanf(rest, "%d", &n); err == nil {
+				return fmt.Sprintf("m.%s%s%d", goCamel(varName), op, n), true
+			}
+		}
 	}
 	return "", false
 }
