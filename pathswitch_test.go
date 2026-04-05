@@ -43,8 +43,8 @@ func TestPathSwitchFullCycle(t *testing.T) {
 		}
 
 		// Fall back to relay.
-		c.router.fallbackToRelay()
-		b.router.fallbackToRelay()
+		c.fallbackToRelay()
+		b.fallbackToRelay()
 
 		// Verify relay works.
 		msg = []byte("relay-" + strconv.Itoa(cycle))
@@ -79,20 +79,8 @@ func reestablishLAN(t *testing.T, ctx context.Context, b, c *Conn) {
 		t.Fatal("backend has no LAN server")
 	}
 
-	if err := b.advertiseLAN(lanSrv); err != nil {
-		t.Fatal("advertise LAN:", err)
-	}
-
-	// The offer is a control message on the primary stream. The client
-	// processes it during Recv. Send a trigger message.
-	b.Send(ctx, []byte("lan-readvertise"))
-	data, err := c.Recv(ctx)
-	if err != nil {
-		t.Fatal("recv trigger:", err)
-	}
-	if string(data) != "lan-readvertise" {
-		t.Fatalf("got %q", data)
-	}
+	// Trigger LAN re-advertisement via the executor.
+	b.exec.submit(event{id: EventLanServerReady})
 
 	// Wait for LAN to establish.
 	select {
@@ -132,8 +120,8 @@ func TestNonceContinuityAcrossSwitch(t *testing.T) {
 	}
 
 	// Switch to relay.
-	c.router.fallbackToRelay()
-	b.router.fallbackToRelay()
+	c.fallbackToRelay()
+	b.fallbackToRelay()
 
 	// Send 10 more messages on relay. The nonce counter should continue
 	// from where it was — no "replayed or too old" errors.
@@ -210,8 +198,8 @@ func TestConcurrentSendRecvDuringSwitch(t *testing.T) {
 		defer wg.Done()
 		for time.Now().Before(deadline) {
 			time.Sleep(500 * time.Millisecond)
-			c.router.fallbackToRelay()
-			b.router.fallbackToRelay()
+			c.fallbackToRelay()
+			b.fallbackToRelay()
 			time.Sleep(500 * time.Millisecond)
 			reestablishLAN(t, ctx, b, c)
 		}
@@ -257,8 +245,8 @@ func TestDatagramChannelAcrossSwitch(t *testing.T) {
 	}
 
 	// Switch to relay.
-	c.router.fallbackToRelay()
-	b.router.fallbackToRelay()
+	c.fallbackToRelay()
+	b.fallbackToRelay()
 
 	// Send on relay. The datagram channel should still route correctly.
 	for range 5 {
@@ -309,8 +297,8 @@ func TestStreamChannelAcrossSwitch(t *testing.T) {
 	// Switch to relay. The existing channel's stream was on the LAN
 	// QUIC connection, which is now closed. The channel should fail
 	// gracefully — this tests that we don't panic or deadlock.
-	c.router.fallbackToRelay()
-	b.router.fallbackToRelay()
+	c.fallbackToRelay()
+	b.fallbackToRelay()
 
 	// The old channel's stream is dead. Sending should error.
 	sendCtx, sendCancel := context.WithTimeout(ctx, time.Second)
@@ -352,7 +340,7 @@ func TestAsymmetricSwitch(t *testing.T) {
 	waitForLAN(t, ctx, b, c)
 
 	// Only the client falls back. The backend still thinks LAN is active.
-	c.router.fallbackToRelay()
+	c.fallbackToRelay()
 
 	// Client sends via relay. The relay bridges to the backend, which
 	// is still reading from the relay stream (the relay connection is
@@ -383,8 +371,8 @@ func TestRapidFlapping(t *testing.T) {
 	waitForLAN(t, ctx, b, c)
 
 	for i := range 10 {
-		c.router.fallbackToRelay()
-		b.router.fallbackToRelay()
+		c.fallbackToRelay()
+		b.fallbackToRelay()
 
 		// Brief pause — just enough for the fallback to take effect.
 		time.Sleep(10 * time.Millisecond)
@@ -421,8 +409,8 @@ func TestLargeMessageDuringSwitch(t *testing.T) {
 	go func() {
 		// Switch after a brief delay — while the message is in flight.
 		time.Sleep(5 * time.Millisecond)
-		c.router.fallbackToRelay()
-		b.router.fallbackToRelay()
+		c.fallbackToRelay()
+		b.fallbackToRelay()
 	}()
 
 	err := c.Send(ctx, payload)
@@ -461,7 +449,7 @@ func TestHealthMonitorFallback(t *testing.T) {
 	waitForLAN(t, ctx, b, c)
 
 	// Verify LAN is active.
-	if !c.router.isDirectActive() {
+	if !c.isDirectActive() {
 		t.Fatal("expected direct path active")
 	}
 
@@ -479,7 +467,7 @@ func TestHealthMonitorFallback(t *testing.T) {
 		case <-timeout:
 			t.Fatal("health monitor did not trigger fallback within 25s")
 		case <-ticker.C:
-			if !c.router.isDirectActive() {
+			if !c.isDirectActive() {
 				t.Log("health monitor triggered fallback")
 
 				// Verify relay still works.
@@ -532,8 +520,8 @@ func TestEncryptedChannelAcrossSwitch(t *testing.T) {
 	bch.Close()
 
 	// Switch to relay.
-	c.router.fallbackToRelay()
-	b.router.fallbackToRelay()
+	c.fallbackToRelay()
+	b.fallbackToRelay()
 
 	// Open a new encrypted channel on relay.
 	ch2, err := c.OpenChannel("secure-v2")

@@ -146,12 +146,9 @@ func TestDatagramFragmentTimeout(t *testing.T) {
 
 	// Create a conn that reads from mock, with the test reassembler.
 	relay := newPath("test", nil, mock, nil, nil, nil)
-	c := &Conn{
-		router:       newPathRouter(relay),
-		reasm:        reasm,
-		maxDgPayload: DefaultMaxDatagramPayload,
-	}
-	c.ctx, c.cancel = context.WithCancel(ctx)
+	c := newConn(nil, mock, nil, nil, nil, "test-frag", roleBackend)
+	c.exec.reasm = reasm
+	_ = relay // relay is used through newConn
 
 	// RecvDatagram should timeout — fragment 1 never arrives.
 	recvCtx, recvCancel := context.WithTimeout(ctx, 2*time.Second)

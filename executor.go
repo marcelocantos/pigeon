@@ -807,12 +807,17 @@ func (e *executor) dialLAN() {
 	}
 
 	slog.Info("LAN connection established", "addr", offer.addr)
-	e.submit(event{id: EventLanDialOk, payload: &lanDialResult{
+	result := &lanDialResult{
 		stream:   stream,
 		dg:       conn,
 		closer:   quicCloser{conn},
 		opener:   quicOpener{conn},
 		acceptor: quicAcceptor{conn},
-	}})
+	}
+	// Post both events: dial succeeded, then confirm received.
+	// The dialLAN flow does the full handshake (send verify, recv ok)
+	// so both transitions fire in sequence.
+	e.submit(event{id: EventLanDialOk, payload: result})
+	e.submit(event{id: EventRecvLanConfirm, payload: result})
 }
 

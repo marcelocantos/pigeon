@@ -476,7 +476,7 @@ func TestChaosWithLAN(t *testing.T) {
 	go func() {
 		for time.Now().Before(deadline) {
 			time.Sleep(3*time.Second + time.Duration(rand.Int64N(int64(4*time.Second))))
-			c.router.fallbackToRelay()
+			c.fallbackToRelay()
 			slog.Info("chaos: forced fallback")
 			time.Sleep(2 * time.Second)
 		}
