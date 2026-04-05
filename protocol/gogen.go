@@ -6,8 +6,18 @@ package protocol
 import (
 	"fmt"
 	"io"
+	"sort"
 	"strings"
 )
+
+func sortedKeys(m map[string]bool) []string {
+	keys := make([]string, 0, len(m))
+	for k := range m {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	return keys
+}
 
 // ExportGo writes a Go source file with:
 //   - State/message/guard/action/event enum constants
@@ -128,8 +138,9 @@ func (p *Protocol) ExportGo(w io.Writer, pkgName, funcName string) error {
 		}
 	}
 	if len(actions) > 0 {
+		sortedActions := sortedKeys(actions)
 		b.WriteString("// Actions.\nconst (\n")
-		for id := range actions {
+		for _, id := range sortedActions {
 			fmt.Fprintf(&b, "\tAction%s ActionID = %q\n", goCamel(id), id)
 		}
 		b.WriteString(")\n\n")
@@ -149,8 +160,9 @@ func (p *Protocol) ExportGo(w io.Writer, pkgName, funcName string) error {
 	}
 
 	if len(events) > 0 {
+		sortedEvents := sortedKeys(events)
 		b.WriteString("// Events.\nconst (\n")
-		for id := range events {
+		for _, id := range sortedEvents {
 			fmt.Fprintf(&b, "\tEvent%s EventID = %q\n", goCamel(id), id)
 		}
 		b.WriteString(")\n\n")
