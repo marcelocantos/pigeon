@@ -90,8 +90,8 @@ public enum ActionID: String, Sendable {
     case storeDevice = "store_device"
     case verifyDevice = "verify_device"
     case activateLan = "activate_lan"
-    case resetFailures = "reset_failures"
     case fallbackToRelay = "fallback_to_relay"
+    case resetFailures = "reset_failures"
     case sendPairHello = "send_pair_hello"
     case storeSecret = "store_secret"
     case dialLan = "dial_lan"
@@ -235,6 +235,8 @@ public enum SessionProtocol {
         (from: "LANActive", to: "LANActive", on: "ping_tick", onKind: "internal", guard: nil, action: nil, sends: [(to: "client", msg: "path_ping")]),
         (from: "LANActive", to: "LANDegraded", on: "ping_timeout", onKind: "internal", guard: nil, action: nil, sends: []),
         (from: "LANDegraded", to: "LANDegraded", on: "ping_tick", onKind: "internal", guard: nil, action: nil, sends: [(to: "client", msg: "path_ping")]),
+        (from: "LANActive", to: "RelayBackoff", on: "lan_stream_error", onKind: "internal", guard: nil, action: "fallback_to_relay", sends: []),
+        (from: "LANDegraded", to: "RelayBackoff", on: "lan_stream_error", onKind: "internal", guard: nil, action: "fallback_to_relay", sends: []),
         (from: "LANDegraded", to: "LANActive", on: "path_pong", onKind: "recv", guard: nil, action: "reset_failures", sends: []),
         (from: "LANDegraded", to: "LANDegraded", on: "ping_timeout", onKind: "internal", guard: "under_max_failures", action: nil, sends: []),
         (from: "LANDegraded", to: "RelayBackoff", on: "ping_timeout", onKind: "internal", guard: "at_max_failures", action: "fallback_to_relay", sends: []),
@@ -532,6 +534,26 @@ public final class BackendMachine: @unchecked Sendable {
         case (.lANDegraded, .pingTick):
             state = .lANDegraded
             return [.sendPathPing]
+        case (.lANActive, .lanStreamError):
+            try actions[.fallbackToRelay]?()
+            // backoff_level: Min(backoff_level + 1, max_backoff_level) (set by action)
+            bActivePath = "relay"
+            bDispatcherPath = "relay"
+            monitorTarget = "none"
+            lanSignal = "pending"
+            pingFailures = 0
+            state = .relayBackoff
+            return [.stopMonitor, .stopLanStreamReader, .stopLanDgReader, .closeLanPath, .resetLanReady, .startBackoffTimer]
+        case (.lANDegraded, .lanStreamError):
+            try actions[.fallbackToRelay]?()
+            // backoff_level: Min(backoff_level + 1, max_backoff_level) (set by action)
+            bActivePath = "relay"
+            bDispatcherPath = "relay"
+            monitorTarget = "none"
+            lanSignal = "pending"
+            pingFailures = 0
+            state = .relayBackoff
+            return [.stopMonitor, .stopLanStreamReader, .stopLanDgReader, .closeLanPath, .resetLanReady, .startBackoffTimer]
         case (.lANDegraded, .recvPathPong):
             try actions[.resetFailures]?()
             pingFailures = 0

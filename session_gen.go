@@ -274,11 +274,13 @@ func SessionProtocol() *Protocol {
 				{From: "LANActive", To: "LANActive", On: Internal("ping_tick"), Sends: []Send{{To: "client", Msg: "path_ping"}, }},
 				{From: "LANActive", To: "LANDegraded", On: Internal("ping_timeout"), Updates: []VarUpdate{{Var: "ping_failures", Expr: "1"}, }},
 				{From: "LANDegraded", To: "LANDegraded", On: Internal("ping_tick"), Sends: []Send{{To: "client", Msg: "path_ping"}, }},
+				{From: "LANActive", To: "RelayBackoff", On: Internal("lan_stream_error"), Do: "fallback_to_relay", Updates: []VarUpdate{{Var: "backoff_level", Expr: "Min(backoff_level + 1, max_backoff_level)"}, {Var: "b_active_path", Expr: "\"relay\""}, {Var: "b_dispatcher_path", Expr: "\"relay\""}, {Var: "monitor_target", Expr: "\"none\""}, {Var: "lan_signal", Expr: "\"pending\""}, {Var: "ping_failures", Expr: "0"}, }},
+				{From: "LANDegraded", To: "RelayBackoff", On: Internal("lan_stream_error"), Do: "fallback_to_relay", Updates: []VarUpdate{{Var: "backoff_level", Expr: "Min(backoff_level + 1, max_backoff_level)"}, {Var: "b_active_path", Expr: "\"relay\""}, {Var: "b_dispatcher_path", Expr: "\"relay\""}, {Var: "monitor_target", Expr: "\"none\""}, {Var: "lan_signal", Expr: "\"pending\""}, {Var: "ping_failures", Expr: "0"}, }},
 				{From: "LANDegraded", To: "LANActive", On: Recv("path_pong"), Do: "reset_failures", Updates: []VarUpdate{{Var: "ping_failures", Expr: "0"}, }},
 				{From: "LANDegraded", To: "LANDegraded", On: Internal("ping_timeout"), Guard: "under_max_failures", Updates: []VarUpdate{{Var: "ping_failures", Expr: "ping_failures + 1"}, }},
 				{From: "LANDegraded", To: "RelayBackoff", On: Internal("ping_timeout"), Guard: "at_max_failures", Do: "fallback_to_relay", Updates: []VarUpdate{{Var: "backoff_level", Expr: "Min(backoff_level + 1, max_backoff_level)"}, {Var: "b_active_path", Expr: "\"relay\""}, {Var: "b_dispatcher_path", Expr: "\"relay\""}, {Var: "monitor_target", Expr: "\"none\""}, {Var: "lan_signal", Expr: "\"pending\""}, {Var: "ping_failures", Expr: "0"}, }},
 				{From: "RelayBackoff", To: "LANOffered", On: Internal("backoff_expired"), Sends: []Send{{To: "client", Msg: "lan_offer", Fields: map[string]string{"addr": "lan_addr", "challenge": "challenge_bytes", }}, }},
-				{From: "RelayBackoff", To: "LANOffered", On: Internal("lan_server_changed"), Sends: []Send{{To: "client", Msg: "lan_offer", Fields: map[string]string{"challenge": "challenge_bytes", "addr": "lan_addr", }}, }, Updates: []VarUpdate{{Var: "backoff_level", Expr: "0"}, }},
+				{From: "RelayBackoff", To: "LANOffered", On: Internal("lan_server_changed"), Sends: []Send{{To: "client", Msg: "lan_offer", Fields: map[string]string{"addr": "lan_addr", "challenge": "challenge_bytes", }}, }, Updates: []VarUpdate{{Var: "backoff_level", Expr: "0"}, }},
 				{From: "RelayConnected", To: "LANOffered", On: Internal("readvertise_tick"), Guard: "lan_server_available", Sends: []Send{{To: "client", Msg: "lan_offer", Fields: map[string]string{"addr": "lan_addr", "challenge": "challenge_bytes", }}, }},
 				{From: "RelayConnected", To: "Paired", On: Internal("disconnect")},
 			}},
@@ -734,6 +736,40 @@ func (m *BackendMachine) Step(event EventID) (bool, error) {
 	case m.State == BackendLANDegraded && event == EventPingTick:
 		m.State = BackendLANDegraded
 		return true, nil
+	case m.State == BackendLANActive && event == EventLanStreamError:
+		if fn := m.Actions[ActionFallbackToRelay]; fn != nil {
+			if err := fn(); err != nil { return false, err }
+		}
+		// backoff_level: Min(backoff_level + 1, max_backoff_level) (set by action)
+		m.BActivePath = "relay"
+		if m.OnChange != nil { m.OnChange("b_active_path") }
+		m.BDispatcherPath = "relay"
+		if m.OnChange != nil { m.OnChange("b_dispatcher_path") }
+		m.MonitorTarget = "none"
+		if m.OnChange != nil { m.OnChange("monitor_target") }
+		m.LanSignal = "pending"
+		if m.OnChange != nil { m.OnChange("lan_signal") }
+		m.PingFailures = 0
+		if m.OnChange != nil { m.OnChange("ping_failures") }
+		m.State = BackendRelayBackoff
+		return true, nil
+	case m.State == BackendLANDegraded && event == EventLanStreamError:
+		if fn := m.Actions[ActionFallbackToRelay]; fn != nil {
+			if err := fn(); err != nil { return false, err }
+		}
+		// backoff_level: Min(backoff_level + 1, max_backoff_level) (set by action)
+		m.BActivePath = "relay"
+		if m.OnChange != nil { m.OnChange("b_active_path") }
+		m.BDispatcherPath = "relay"
+		if m.OnChange != nil { m.OnChange("b_dispatcher_path") }
+		m.MonitorTarget = "none"
+		if m.OnChange != nil { m.OnChange("monitor_target") }
+		m.LanSignal = "pending"
+		if m.OnChange != nil { m.OnChange("lan_signal") }
+		m.PingFailures = 0
+		if m.OnChange != nil { m.OnChange("ping_failures") }
+		m.State = BackendRelayBackoff
+		return true, nil
 	case m.State == BackendLANDegraded && event == EventPingTimeout && m.Guards[GuardUnderMaxFailures] != nil && m.Guards[GuardUnderMaxFailures]():
 		// ping_failures: ping_failures + 1 (set by action)
 		m.State = BackendLANDegraded
@@ -968,6 +1004,40 @@ func (m *BackendMachine) HandleEvent(ev EventID) ([]CmdID, error) {
 	case m.State == BackendLANDegraded && ev == EventPingTick:
 		m.State = BackendLANDegraded
 		return []CmdID{CmdSendPathPing}, nil
+	case m.State == BackendLANActive && ev == EventLanStreamError:
+		if fn := m.Actions[ActionFallbackToRelay]; fn != nil {
+			if err := fn(); err != nil { return nil, err }
+		}
+		// backoff_level: Min(backoff_level + 1, max_backoff_level) (set by action)
+		m.BActivePath = "relay"
+		if m.OnChange != nil { m.OnChange("b_active_path") }
+		m.BDispatcherPath = "relay"
+		if m.OnChange != nil { m.OnChange("b_dispatcher_path") }
+		m.MonitorTarget = "none"
+		if m.OnChange != nil { m.OnChange("monitor_target") }
+		m.LanSignal = "pending"
+		if m.OnChange != nil { m.OnChange("lan_signal") }
+		m.PingFailures = 0
+		if m.OnChange != nil { m.OnChange("ping_failures") }
+		m.State = BackendRelayBackoff
+		return []CmdID{CmdStopMonitor, CmdStopLanStreamReader, CmdStopLanDgReader, CmdCloseLanPath, CmdResetLanReady, CmdStartBackoffTimer}, nil
+	case m.State == BackendLANDegraded && ev == EventLanStreamError:
+		if fn := m.Actions[ActionFallbackToRelay]; fn != nil {
+			if err := fn(); err != nil { return nil, err }
+		}
+		// backoff_level: Min(backoff_level + 1, max_backoff_level) (set by action)
+		m.BActivePath = "relay"
+		if m.OnChange != nil { m.OnChange("b_active_path") }
+		m.BDispatcherPath = "relay"
+		if m.OnChange != nil { m.OnChange("b_dispatcher_path") }
+		m.MonitorTarget = "none"
+		if m.OnChange != nil { m.OnChange("monitor_target") }
+		m.LanSignal = "pending"
+		if m.OnChange != nil { m.OnChange("lan_signal") }
+		m.PingFailures = 0
+		if m.OnChange != nil { m.OnChange("ping_failures") }
+		m.State = BackendRelayBackoff
+		return []CmdID{CmdStopMonitor, CmdStopLanStreamReader, CmdStopLanDgReader, CmdCloseLanPath, CmdResetLanReady, CmdStartBackoffTimer}, nil
 	case m.State == BackendLANDegraded && ev == EventRecvPathPong:
 		if fn := m.Actions[ActionResetFailures]; fn != nil {
 			if err := fn(); err != nil { return nil, err }

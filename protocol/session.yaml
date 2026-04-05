@@ -433,6 +433,45 @@ actors:
             msg: path_ping
         emits: [send_path_ping]
 
+      # LAN stream error triggers immediate fallback (no degradation).
+      - from: LANActive
+        to: RelayBackoff
+        on: lan_stream_error
+        do: fallback_to_relay
+        updates:
+          backoff_level: 'Min(backoff_level + 1, max_backoff_level)'
+          b_active_path: '"relay"'
+          b_dispatcher_path: '"relay"'
+          monitor_target: '"none"'
+          lan_signal: '"pending"'
+          ping_failures: '0'
+        emits:
+          - stop_monitor
+          - stop_lan_stream_reader
+          - stop_lan_dg_reader
+          - close_lan_path
+          - reset_lan_ready
+          - start_backoff_timer
+
+      - from: LANDegraded
+        to: RelayBackoff
+        on: lan_stream_error
+        do: fallback_to_relay
+        updates:
+          backoff_level: 'Min(backoff_level + 1, max_backoff_level)'
+          b_active_path: '"relay"'
+          b_dispatcher_path: '"relay"'
+          monitor_target: '"none"'
+          lan_signal: '"pending"'
+          ping_failures: '0'
+        emits:
+          - stop_monitor
+          - stop_lan_stream_reader
+          - stop_lan_dg_reader
+          - close_lan_path
+          - reset_lan_ready
+          - start_backoff_timer
+
       - from: LANDegraded
         to: LANActive
         on: recv path_pong

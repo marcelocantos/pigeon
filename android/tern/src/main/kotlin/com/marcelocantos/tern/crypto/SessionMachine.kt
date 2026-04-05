@@ -90,8 +90,8 @@ enum class ActionID(val value: String) {
     StoreDevice("store_device"),
     VerifyDevice("verify_device"),
     ActivateLan("activate_lan"),
-    ResetFailures("reset_failures"),
     FallbackToRelay("fallback_to_relay"),
+    ResetFailures("reset_failures"),
     SendPairHello("send_pair_hello"),
     StoreSecret("store_secret"),
     DialLan("dial_lan"),
@@ -243,6 +243,8 @@ object BackendTable {
         Transition("LANActive", "LANActive", "ping_tick", "internal", null, null, listOf("client" to "path_ping")),
         Transition("LANActive", "LANDegraded", "ping_timeout", "internal", null, null, emptyList()),
         Transition("LANDegraded", "LANDegraded", "ping_tick", "internal", null, null, listOf("client" to "path_ping")),
+        Transition("LANActive", "RelayBackoff", "lan_stream_error", "internal", null, "fallback_to_relay", emptyList()),
+        Transition("LANDegraded", "RelayBackoff", "lan_stream_error", "internal", null, "fallback_to_relay", emptyList()),
         Transition("LANDegraded", "LANActive", "path_pong", "recv", null, "reset_failures", emptyList()),
         Transition("LANDegraded", "LANDegraded", "ping_timeout", "internal", "under_max_failures", null, emptyList()),
         Transition("LANDegraded", "RelayBackoff", "ping_timeout", "internal", "at_max_failures", "fallback_to_relay", emptyList()),
@@ -629,6 +631,30 @@ class BackendMachine {
                 run {
                     state = BackendState.LANDegraded
                     listOf(CmdID.SendPathPing)
+                }
+            state == BackendState.LANActive && ev == EventID.LanStreamError ->
+                run {
+                    actions[ActionID.FallbackToRelay]?.invoke()
+                    // backoff_level: Min(backoff_level + 1, max_backoff_level) (set by action)
+                    bActivePath = "relay"
+                    bDispatcherPath = "relay"
+                    monitorTarget = "none"
+                    lanSignal = "pending"
+                    pingFailures = 0
+                    state = BackendState.RelayBackoff
+                    listOf(CmdID.StopMonitor, CmdID.StopLanStreamReader, CmdID.StopLanDgReader, CmdID.CloseLanPath, CmdID.ResetLanReady, CmdID.StartBackoffTimer)
+                }
+            state == BackendState.LANDegraded && ev == EventID.LanStreamError ->
+                run {
+                    actions[ActionID.FallbackToRelay]?.invoke()
+                    // backoff_level: Min(backoff_level + 1, max_backoff_level) (set by action)
+                    bActivePath = "relay"
+                    bDispatcherPath = "relay"
+                    monitorTarget = "none"
+                    lanSignal = "pending"
+                    pingFailures = 0
+                    state = BackendState.RelayBackoff
+                    listOf(CmdID.StopMonitor, CmdID.StopLanStreamReader, CmdID.StopLanDgReader, CmdID.CloseLanPath, CmdID.ResetLanReady, CmdID.StartBackoffTimer)
                 }
             state == BackendState.LANDegraded && ev == EventID.RecvPathPong ->
                 run {

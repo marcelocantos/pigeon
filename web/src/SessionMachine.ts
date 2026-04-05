@@ -88,8 +88,8 @@ export enum ActionID {
     StoreDevice = "store_device",
     VerifyDevice = "verify_device",
     ActivateLan = "activate_lan",
-    ResetFailures = "reset_failures",
     FallbackToRelay = "fallback_to_relay",
+    ResetFailures = "reset_failures",
     SendPairHello = "send_pair_hello",
     StoreSecret = "store_secret",
     DialLan = "dial_lan",
@@ -245,6 +245,8 @@ export const backendTable: ActorTable = {
         { from: "LANActive", to: "LANActive", on: "ping_tick", onKind: "internal", sends: [{ to: "client", msg: "path_ping" }] },
         { from: "LANActive", to: "LANDegraded", on: "ping_timeout", onKind: "internal" },
         { from: "LANDegraded", to: "LANDegraded", on: "ping_tick", onKind: "internal", sends: [{ to: "client", msg: "path_ping" }] },
+        { from: "LANActive", to: "RelayBackoff", on: "lan_stream_error", onKind: "internal", action: "fallback_to_relay" },
+        { from: "LANDegraded", to: "RelayBackoff", on: "lan_stream_error", onKind: "internal", action: "fallback_to_relay" },
         { from: "LANDegraded", to: "LANActive", on: "path_pong", onKind: "recv", action: "reset_failures" },
         { from: "LANDegraded", to: "LANDegraded", on: "ping_timeout", onKind: "internal", guard: "under_max_failures" },
         { from: "LANDegraded", to: "RelayBackoff", on: "ping_timeout", onKind: "internal", guard: "at_max_failures", action: "fallback_to_relay" },
@@ -565,6 +567,28 @@ export class BackendMachine {
             case this.state === BackendState.LANDegraded && ev === EventID.PingTick: {
                 this.state = BackendState.LANDegraded;
                 return [CmdID.SendPathPing];
+            }
+            case this.state === BackendState.LANActive && ev === EventID.LanStreamError: {
+                this.actions.get(ActionID.FallbackToRelay)?.();
+                // backoff_level: Min(backoff_level + 1, max_backoff_level) (set by action)
+                this.bActivePath = "relay";
+                this.bDispatcherPath = "relay";
+                this.monitorTarget = "none";
+                this.lanSignal = "pending";
+                this.pingFailures = 0;
+                this.state = BackendState.RelayBackoff;
+                return [CmdID.StopMonitor, CmdID.StopLanStreamReader, CmdID.StopLanDgReader, CmdID.CloseLanPath, CmdID.ResetLanReady, CmdID.StartBackoffTimer];
+            }
+            case this.state === BackendState.LANDegraded && ev === EventID.LanStreamError: {
+                this.actions.get(ActionID.FallbackToRelay)?.();
+                // backoff_level: Min(backoff_level + 1, max_backoff_level) (set by action)
+                this.bActivePath = "relay";
+                this.bDispatcherPath = "relay";
+                this.monitorTarget = "none";
+                this.lanSignal = "pending";
+                this.pingFailures = 0;
+                this.state = BackendState.RelayBackoff;
+                return [CmdID.StopMonitor, CmdID.StopLanStreamReader, CmdID.StopLanDgReader, CmdID.CloseLanPath, CmdID.ResetLanReady, CmdID.StartBackoffTimer];
             }
             case this.state === BackendState.LANDegraded && ev === EventID.RecvPathPong: {
                 this.actions.get(ActionID.ResetFailures)?.();

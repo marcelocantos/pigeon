@@ -60,6 +60,8 @@ state "backend" as B {
     B_LANActive --> B_LANActive : ping_tick
     B_LANActive --> B_LANDegraded : ping_timeout
     B_LANDegraded --> B_LANDegraded : ping_tick
+    B_LANActive --> B_RelayBackoff : lan_stream_error\nfallback_to_relay
+    B_LANDegraded --> B_RelayBackoff : lan_stream_error\nfallback_to_relay
     B_LANDegraded --> B_LANActive : recv path_pong\nreset_failures
     B_LANDegraded --> B_LANDegraded : ping_timeout\n[under_max_failures]
     B_LANDegraded --> B_RelayBackoff : ping_timeout\n[at_max_failures]\nfallback_to_relay
@@ -152,8 +154,8 @@ B_LANDegraded -[#888,dashed]-> C_LANActive : path_ping
 B_RelayBackoff -[#888,dashed]-> C_RelayConnected : lan_offer\n{addr, challenge}
 B_RelayBackoff -[#888,dashed]-> C_RelayConnected : lan_offer\n{addr, challenge}
 B_RelayConnected -[#888,dashed]-> C_RelayConnected : lan_offer\n{addr, challenge}
-C_GenKeyPair -[#888,dashed]-> B_WaitingForClient : pair_hello\n{token, pubkey}
-C_Reconnect -[#888,dashed]-> B_Paired : auth_request\n{nonce, key, device_id, secret}
+C_GenKeyPair -[#888,dashed]-> B_WaitingForClient : pair_hello\n{pubkey, token}
+C_Reconnect -[#888,dashed]-> B_Paired : auth_request\n{device_id, secret, nonce, key}
 C_LANConnecting -[#888,dashed]-> B_LANOffered : lan_verify\n{challenge, instance_id}
 C_LANActive -[#888,dashed]-> B_LANDegraded : path_pong
 

@@ -545,6 +545,34 @@ backend_LANDegraded_to_LANDegraded_ping_tick ==
 
 Cmds_backend_LANDegraded_to_LANDegraded_ping_tick == {"send_path_ping"}
 
+\* backend: LANActive -> RelayBackoff (lan_stream_error)
+backend_LANActive_to_RelayBackoff_lan_stream_error ==
+    /\ backend_state = backend_LANActive
+    /\ backend_state' = backend_RelayBackoff
+    /\ backoff_level' = Min(backoff_level + 1, max_backoff_level)
+    /\ b_active_path' = "relay"
+    /\ b_dispatcher_path' = "relay"
+    /\ monitor_target' = "none"
+    /\ lan_signal' = "pending"
+    /\ ping_failures' = 0
+    /\ UNCHANGED <<client_state, relay_state, current_token, active_tokens, used_tokens, backend_ecdh_pub, received_client_pub, received_backend_pub, backend_shared_key, client_shared_key, backend_code, client_code, received_code, code_attempts, device_secret, paired_devices, received_device_id, auth_nonces_used, received_auth_nonce, secret_published, c_active_path, c_dispatcher_path, relay_bridge, received_pair_hello, received_auth_request, received_lan_verify, received_path_pong, received_pair_hello_ack, received_pair_confirm, received_pair_complete, received_auth_ok, received_lan_offer, received_lan_confirm, received_path_ping>>
+
+Cmds_backend_LANActive_to_RelayBackoff_lan_stream_error == {"stop_monitor", "stop_lan_stream_reader", "stop_lan_dg_reader", "close_lan_path", "reset_lan_ready", "start_backoff_timer"}
+
+\* backend: LANDegraded -> RelayBackoff (lan_stream_error)
+backend_LANDegraded_to_RelayBackoff_lan_stream_error ==
+    /\ backend_state = backend_LANDegraded
+    /\ backend_state' = backend_RelayBackoff
+    /\ backoff_level' = Min(backoff_level + 1, max_backoff_level)
+    /\ b_active_path' = "relay"
+    /\ b_dispatcher_path' = "relay"
+    /\ monitor_target' = "none"
+    /\ lan_signal' = "pending"
+    /\ ping_failures' = 0
+    /\ UNCHANGED <<client_state, relay_state, current_token, active_tokens, used_tokens, backend_ecdh_pub, received_client_pub, received_backend_pub, backend_shared_key, client_shared_key, backend_code, client_code, received_code, code_attempts, device_secret, paired_devices, received_device_id, auth_nonces_used, received_auth_nonce, secret_published, c_active_path, c_dispatcher_path, relay_bridge, received_pair_hello, received_auth_request, received_lan_verify, received_path_pong, received_pair_hello_ack, received_pair_confirm, received_pair_complete, received_auth_ok, received_lan_offer, received_lan_confirm, received_path_ping>>
+
+Cmds_backend_LANDegraded_to_RelayBackoff_lan_stream_error == {"stop_monitor", "stop_lan_stream_reader", "stop_lan_dg_reader", "close_lan_path", "reset_lan_ready", "start_backoff_timer"}
+
 \* backend: LANDegraded -> LANActive on recv path_pong
 backend_LANDegraded_to_LANActive_on_path_pong ==
     /\ backend_state = backend_LANDegraded
@@ -1049,6 +1077,8 @@ Next ==
     \/ backend_LANActive_to_LANActive_ping_tick
     \/ backend_LANActive_to_LANDegraded_ping_timeout
     \/ backend_LANDegraded_to_LANDegraded_ping_tick
+    \/ backend_LANActive_to_RelayBackoff_lan_stream_error
+    \/ backend_LANDegraded_to_RelayBackoff_lan_stream_error
     \/ backend_LANDegraded_to_LANActive_on_path_pong
     \/ backend_LANDegraded_to_LANDegraded_ping_timeout_under_max_failures
     \/ backend_LANDegraded_to_RelayBackoff_ping_timeout_at_max_failures
@@ -1179,6 +1209,8 @@ DegradedLeadsToResolutionOrFallback == (backend_state = backend_LANDegraded) ~> 
 \* backend_LANOffered_to_RelayBackoff_offer_timeout emits: reset_lan_ready, start_backoff_timer
 \* backend_LANActive_to_LANActive_ping_tick emits: send_path_ping
 \* backend_LANDegraded_to_LANDegraded_ping_tick emits: send_path_ping
+\* backend_LANActive_to_RelayBackoff_lan_stream_error emits: stop_monitor, stop_lan_stream_reader, stop_lan_dg_reader, close_lan_path, reset_lan_ready, start_backoff_timer
+\* backend_LANDegraded_to_RelayBackoff_lan_stream_error emits: stop_monitor, stop_lan_stream_reader, stop_lan_dg_reader, close_lan_path, reset_lan_ready, start_backoff_timer
 \* backend_LANDegraded_to_RelayBackoff_ping_timeout_at_max_failures emits: stop_monitor, stop_lan_stream_reader, stop_lan_dg_reader, close_lan_path, reset_lan_ready, start_backoff_timer
 \* backend_RelayBackoff_to_LANOffered_backoff_expired emits: send_lan_offer
 \* backend_RelayBackoff_to_LANOffered_lan_server_changed emits: send_lan_offer
