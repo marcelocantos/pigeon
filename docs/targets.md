@@ -279,7 +279,12 @@ should be cherry-picked:
    pairingceremony_gen.go in protocol/).
 
 - **Weight**: 1.25 (value 5 / cost 4)
-- **Status**: not started
+- **Status**: core complete (Phases 0-7). pathRouter deleted. Conn
+  delegates all I/O to executor. Machine's HandleEvent returns
+  explicit commands. Events/commands declared in YAML. All integration
+  tests pass. Remaining: TLA+ generator for events/commands (Phase 8),
+  OpenChannel/DatagramChannel migration, TestHealthMonitorFallback
+  (skipped — machine-driven monitor replaces ad-hoc goroutine).
 
 ---
 
