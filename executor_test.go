@@ -5,6 +5,7 @@ package tern
 
 import (
 	"context"
+	"io"
 	"testing"
 	"time"
 )
@@ -177,6 +178,84 @@ func TestExecutorEventLoop(t *testing.T) {
 		t.Fatalf("state: got %s, want LANOffered", m.State)
 	}
 }
+
+// TestExecutorSendRecv verifies that send() and recv() work through
+// the executor event loop with real framing on an io.Pipe.
+func TestExecutorSendRecv(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	// Create a pipe for the relay stream. The executor writes to pw,
+	// the "remote" reads from pr (and vice versa for recv).
+	relayR, relayW := io.Pipe()
+
+	// The executor's relay stream needs bidirectional I/O.
+	// Use a pipeStream that reads from one pipe and writes to another.
+	remoteR, remoteW := io.Pipe()
+	localStream := &pipeStream{r: remoteR, w: relayW}
+	remoteStream := &pipeStream{r: relayR, w: remoteW}
+
+	m := NewBackendMachine()
+	m.State = BackendRelayConnected
+
+	relay := newPath("relay", localStream, &execMockDatagram{ctx: ctx}, nil, nil, nil)
+	e := newExecutor(ctx, cancel, m, relay)
+
+	// Send a message through the executor.
+	go func() {
+		if err := e.send(ctx, []byte("hello")); err != nil {
+			t.Errorf("send: %v", err)
+		}
+	}()
+
+	// Read the framed message from the remote side.
+	data, err := readMessage(remoteStream)
+	if err != nil {
+		t.Fatal("readMessage:", err)
+	}
+	if string(data) != "hello" {
+		t.Fatalf("got %q, want hello", data)
+	}
+
+	// Now test recv: write a framed message on the remote side,
+	// the executor's stream reader should pick it up and deliver.
+	// Write first (in goroutine since pipe may block), then recv.
+	wrote := make(chan struct{})
+	go func() {
+		if err := writeMessage(remoteStream, []byte("world")); err != nil {
+			t.Errorf("writeMessage: %v", err)
+		}
+		close(wrote)
+	}()
+
+	// Wait for write to complete (pipe is synchronous).
+	select {
+	case <-wrote:
+	case <-ctx.Done():
+		t.Fatal("timeout writing to remote stream")
+	}
+
+	// Give the stream reader time to read and post the event.
+	time.Sleep(100 * time.Millisecond)
+
+	got, err := e.recv(ctx)
+	if err != nil {
+		t.Fatal("recv:", err)
+	}
+	if string(got) != "world" {
+		t.Fatalf("got %q, want world", got)
+	}
+}
+
+// pipeStream combines a reader and writer into an io.ReadWriteCloser.
+type pipeStream struct {
+	r io.Reader
+	w io.Writer
+}
+
+func (p *pipeStream) Read(b []byte) (int, error)  { return p.r.Read(b) }
+func (p *pipeStream) Write(b []byte) (int, error) { return p.w.Write(b) }
+func (p *pipeStream) Close() error                { return nil }
 
 // --- Test helpers ---
 

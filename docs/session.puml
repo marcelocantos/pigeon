@@ -29,6 +29,18 @@ state "backend" as B {
 
   state "Transport" as B_Transport {
     [*] --> B_RelayConnected
+    B_RelayConnected --> B_RelayConnected : app_send
+    B_RelayConnected --> B_RelayConnected : relay_stream_data
+    B_LANOffered --> B_LANOffered : app_send
+    B_LANOffered --> B_LANOffered : relay_stream_data
+    B_LANActive --> B_LANActive : app_send
+    B_LANActive --> B_LANActive : lan_stream_data
+    B_LANActive --> B_LANActive : relay_stream_data
+    B_LANDegraded --> B_LANDegraded : app_send
+    B_LANDegraded --> B_LANDegraded : lan_stream_data
+    B_LANDegraded --> B_LANDegraded : relay_stream_data
+    B_RelayBackoff --> B_RelayBackoff : app_send
+    B_RelayBackoff --> B_RelayBackoff : relay_stream_data
     B_RelayConnected --> B_LANOffered : lan_server_ready
     B_LANOffered --> B_LANActive : recv lan_verify\n[challenge_valid]\nactivate_lan
     B_LANOffered --> B_RelayConnected : recv lan_verify\n[challenge_invalid]
@@ -66,6 +78,17 @@ state "client" as C {
 
   state "Transport" as C_Transport {
     [*] --> C_RelayConnected
+    C_RelayConnected --> C_RelayConnected : app_send
+    C_RelayConnected --> C_RelayConnected : relay_stream_data
+    C_LANConnecting --> C_LANConnecting : app_send
+    C_LANConnecting --> C_LANConnecting : relay_stream_data
+    C_LANVerifying --> C_LANVerifying : app_send
+    C_LANVerifying --> C_LANVerifying : relay_stream_data
+    C_LANActive --> C_LANActive : app_send
+    C_LANActive --> C_LANActive : lan_stream_data
+    C_LANActive --> C_LANActive : relay_stream_data
+    C_RelayFallback --> C_RelayFallback : app_send
+    C_RelayFallback --> C_RelayFallback : relay_stream_data
     C_RelayConnected --> C_LANConnecting : recv lan_offer\n[lan_enabled]\ndial_lan
     C_RelayConnected --> C_RelayConnected : recv lan_offer\n[lan_disabled]
     C_LANConnecting --> C_LANVerifying : lan_dial_ok
@@ -97,17 +120,17 @@ state "relay" as R {
 
 B_DeriveSecret -[#888,dashed]-> C_WaitAck : pair_hello_ack\n{pubkey}
 B_SendAck -[#888,dashed]-> C_E2EReady : pair_confirm
-B_StorePaired -[#888,dashed]-> C_WaitPairComplete : pair_complete\n{key, secret}
+B_StorePaired -[#888,dashed]-> C_WaitPairComplete : pair_complete\n{secret, key}
 B_AuthCheck -[#888,dashed]-> C_SendAuth : auth_ok
-B_RelayConnected -[#888,dashed]-> C_RelayConnected : lan_offer\n{addr, challenge}
+B_RelayConnected -[#888,dashed]-> C_RelayConnected : lan_offer\n{challenge, addr}
 B_LANOffered -[#888,dashed]-> C_LANVerifying : lan_confirm
 B_LANActive -[#888,dashed]-> C_LANActive : path_ping
 B_LANDegraded -[#888,dashed]-> C_LANActive : path_ping
-B_RelayBackoff -[#888,dashed]-> C_RelayConnected : lan_offer\n{challenge, addr}
-B_RelayBackoff -[#888,dashed]-> C_RelayConnected : lan_offer\n{challenge, addr}
+B_RelayBackoff -[#888,dashed]-> C_RelayConnected : lan_offer\n{addr, challenge}
+B_RelayBackoff -[#888,dashed]-> C_RelayConnected : lan_offer\n{addr, challenge}
 B_RelayConnected -[#888,dashed]-> C_RelayConnected : lan_offer\n{addr, challenge}
 C_GenKeyPair -[#888,dashed]-> B_WaitingForClient : pair_hello\n{token, pubkey}
-C_Reconnect -[#888,dashed]-> B_Paired : auth_request\n{secret, nonce, key, device_id}
+C_Reconnect -[#888,dashed]-> B_Paired : auth_request\n{device_id, secret, nonce, key}
 C_LANConnecting -[#888,dashed]-> B_LANOffered : lan_verify\n{challenge, instance_id}
 C_LANActive -[#888,dashed]-> B_LANDegraded : path_pong
 

@@ -78,9 +78,11 @@ type executor struct {
 	relay  *path // permanent
 	lan    *path // nil when no LAN path
 
-	// Application response waiters.
-	recvWaiters   []chan<- recvResult
-	dgRecvWaiters []chan<- dgRecvResult
+	// Application response waiters and buffered data.
+	recvWaiters   []chan recvResult
+	recvBuffer    [][]byte // data received before a waiter was registered
+	dgRecvWaiters []chan dgRecvResult
+	dgRecvBuffer  [][]byte
 
 	// Encryption (executor-level, not machine-level).
 	channel   *crypto.Channel
@@ -145,6 +147,34 @@ func newExecutor(
 	return e
 }
 
+// send submits an app_send event and blocks until the write completes.
+func (e *executor) send(ctx context.Context, data []byte) error {
+	done := make(chan error, 1)
+	e.submit(event{id: EventAppSend, payload: &sendRequest{data: data, done: done}})
+	select {
+	case err := <-done:
+		return err
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-e.ctx.Done():
+		return e.ctx.Err()
+	}
+}
+
+// recv submits an app_recv waiter and blocks until data arrives.
+func (e *executor) recv(ctx context.Context) ([]byte, error) {
+	result := make(chan recvResult, 1)
+	e.submit(event{id: EventAppRecv, payload: result})
+	select {
+	case r := <-result:
+		return r.data, r.err
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	case <-e.ctx.Done():
+		return nil, e.ctx.Err()
+	}
+}
+
 // submit posts an event to the executor. Non-blocking if the channel
 // has capacity; blocks if full (backpressure).
 func (e *executor) submit(ev event) {
@@ -159,6 +189,21 @@ func (e *executor) run() {
 	for {
 		select {
 		case ev := <-e.events:
+			// Recv is executor-level: register a waiter, deliver when
+			// data arrives. Not a machine transition. If buffered data
+			// exists, deliver immediately.
+			if ev.id == EventAppRecv {
+				if ch, ok := ev.payload.(chan recvResult); ok {
+					if len(e.recvBuffer) > 0 {
+						ch <- recvResult{data: e.recvBuffer[0]}
+						e.recvBuffer = e.recvBuffer[1:]
+					} else {
+						e.recvWaiters = append(e.recvWaiters, ch)
+					}
+				}
+				continue
+			}
+
 			cmds, err := e.machine.HandleEvent(ev.id)
 			if err != nil {
 				slog.Warn("machine error", "event", ev.id, "err", err)
@@ -169,7 +214,8 @@ func (e *executor) run() {
 			}
 
 			// Events with no matching transition may still need
-			// direct handling (e.g., stream data delivery).
+			// direct handling (e.g., stream data delivery when the
+			// machine has no specific transition for this state).
 			if cmds == nil {
 				e.handleUnmatchedEvent(ev)
 			}
@@ -351,15 +397,16 @@ func (e *executor) activePath() *path {
 	return e.relay
 }
 
-// deliverRecv sends data to the first waiting Recv caller.
+// deliverRecv sends data to the first waiting Recv caller, or buffers
+// it if no waiter is registered.
 func (e *executor) deliverRecv(data []byte) {
 	if len(e.recvWaiters) > 0 {
 		w := e.recvWaiters[0]
 		e.recvWaiters = e.recvWaiters[1:]
 		w <- recvResult{data: data}
+	} else {
+		e.recvBuffer = append(e.recvBuffer, data)
 	}
-	// If no waiter, data is dropped (caller should have submitted
-	// EvAppRecv before data arrives).
 }
 
 // deliverRecvError sends an error to the first waiting Recv caller.

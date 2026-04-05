@@ -263,6 +263,57 @@ actors:
       # Phase 2: Transport management
       # ============================================================
 
+      # App I/O — self-loop transitions that route to the active path.
+      # These exist on every transport state where the app can send/recv.
+      - from: RelayConnected
+        to: RelayConnected
+        on: app_send
+        emits: [write_active_stream]
+      - from: RelayConnected
+        to: RelayConnected
+        on: relay_stream_data
+        emits: [deliver_recv]
+      - from: LANOffered
+        to: LANOffered
+        on: app_send
+        emits: [write_active_stream]
+      - from: LANOffered
+        to: LANOffered
+        on: relay_stream_data
+        emits: [deliver_recv]
+      - from: LANActive
+        to: LANActive
+        on: app_send
+        emits: [write_active_stream]
+      - from: LANActive
+        to: LANActive
+        on: lan_stream_data
+        emits: [deliver_recv]
+      - from: LANActive
+        to: LANActive
+        on: relay_stream_data
+        emits: [deliver_recv]
+      - from: LANDegraded
+        to: LANDegraded
+        on: app_send
+        emits: [write_active_stream]
+      - from: LANDegraded
+        to: LANDegraded
+        on: lan_stream_data
+        emits: [deliver_recv]
+      - from: LANDegraded
+        to: LANDegraded
+        on: relay_stream_data
+        emits: [deliver_recv]
+      - from: RelayBackoff
+        to: RelayBackoff
+        on: app_send
+        emits: [write_active_stream]
+      - from: RelayBackoff
+        to: RelayBackoff
+        on: relay_stream_data
+        emits: [deliver_recv]
+
       - from: RelayConnected
         to: LANOffered
         on: lan_server_ready
@@ -488,6 +539,52 @@ actors:
       # ============================================================
       # Phase 2: Transport management
       # ============================================================
+
+      # App I/O — self-loop transitions that route to the active path.
+      - from: RelayConnected
+        to: RelayConnected
+        on: app_send
+        emits: [write_active_stream]
+      - from: RelayConnected
+        to: RelayConnected
+        on: relay_stream_data
+        emits: [deliver_recv]
+      - from: LANConnecting
+        to: LANConnecting
+        on: app_send
+        emits: [write_active_stream]
+      - from: LANConnecting
+        to: LANConnecting
+        on: relay_stream_data
+        emits: [deliver_recv]
+      - from: LANVerifying
+        to: LANVerifying
+        on: app_send
+        emits: [write_active_stream]
+      - from: LANVerifying
+        to: LANVerifying
+        on: relay_stream_data
+        emits: [deliver_recv]
+      - from: LANActive
+        to: LANActive
+        on: app_send
+        emits: [write_active_stream]
+      - from: LANActive
+        to: LANActive
+        on: lan_stream_data
+        emits: [deliver_recv]
+      - from: LANActive
+        to: LANActive
+        on: relay_stream_data
+        emits: [deliver_recv]
+      - from: RelayFallback
+        to: RelayFallback
+        on: app_send
+        emits: [write_active_stream]
+      - from: RelayFallback
+        to: RelayFallback
+        on: relay_stream_data
+        emits: [deliver_recv]
 
       - from: RelayConnected
         to: LANConnecting

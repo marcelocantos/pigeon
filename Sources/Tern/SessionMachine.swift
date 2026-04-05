@@ -36,8 +36,8 @@ public enum BackendState: String, Sendable {
     case relayConnected = "RelayConnected"
     case lANOffered = "LANOffered"
     case lANActive = "LANActive"
-    case relayBackoff = "RelayBackoff"
     case lANDegraded = "LANDegraded"
+    case relayBackoff = "RelayBackoff"
 }
 
 public enum ClientState: String, Sendable {
@@ -121,6 +121,18 @@ public enum SessionProtocol {
         (from: "AuthCheck", to: "SessionActive", on: "verify", onKind: "internal", guard: "device_known", action: "verify_device", sends: [(to: "client", msg: "auth_ok")]),
         (from: "AuthCheck", to: "Idle", on: "verify", onKind: "internal", guard: "device_unknown", action: nil, sends: []),
         (from: "SessionActive", to: "RelayConnected", on: "session_established", onKind: "internal", guard: nil, action: nil, sends: []),
+        (from: "RelayConnected", to: "RelayConnected", on: "app_send", onKind: "internal", guard: nil, action: nil, sends: []),
+        (from: "RelayConnected", to: "RelayConnected", on: "relay_stream_data", onKind: "internal", guard: nil, action: nil, sends: []),
+        (from: "LANOffered", to: "LANOffered", on: "app_send", onKind: "internal", guard: nil, action: nil, sends: []),
+        (from: "LANOffered", to: "LANOffered", on: "relay_stream_data", onKind: "internal", guard: nil, action: nil, sends: []),
+        (from: "LANActive", to: "LANActive", on: "app_send", onKind: "internal", guard: nil, action: nil, sends: []),
+        (from: "LANActive", to: "LANActive", on: "lan_stream_data", onKind: "internal", guard: nil, action: nil, sends: []),
+        (from: "LANActive", to: "LANActive", on: "relay_stream_data", onKind: "internal", guard: nil, action: nil, sends: []),
+        (from: "LANDegraded", to: "LANDegraded", on: "app_send", onKind: "internal", guard: nil, action: nil, sends: []),
+        (from: "LANDegraded", to: "LANDegraded", on: "lan_stream_data", onKind: "internal", guard: nil, action: nil, sends: []),
+        (from: "LANDegraded", to: "LANDegraded", on: "relay_stream_data", onKind: "internal", guard: nil, action: nil, sends: []),
+        (from: "RelayBackoff", to: "RelayBackoff", on: "app_send", onKind: "internal", guard: nil, action: nil, sends: []),
+        (from: "RelayBackoff", to: "RelayBackoff", on: "relay_stream_data", onKind: "internal", guard: nil, action: nil, sends: []),
         (from: "RelayConnected", to: "LANOffered", on: "lan_server_ready", onKind: "internal", guard: nil, action: nil, sends: [(to: "client", msg: "lan_offer")]),
         (from: "LANOffered", to: "LANActive", on: "lan_verify", onKind: "recv", guard: "challenge_valid", action: "activate_lan", sends: [(to: "client", msg: "lan_confirm")]),
         (from: "LANOffered", to: "RelayConnected", on: "lan_verify", onKind: "recv", guard: "challenge_invalid", action: nil, sends: []),
@@ -153,6 +165,17 @@ public enum SessionProtocol {
         (from: "Reconnect", to: "SendAuth", on: "relay_connected", onKind: "internal", guard: nil, action: nil, sends: [(to: "backend", msg: "auth_request")]),
         (from: "SendAuth", to: "SessionActive", on: "auth_ok", onKind: "recv", guard: nil, action: nil, sends: []),
         (from: "SessionActive", to: "RelayConnected", on: "session_established", onKind: "internal", guard: nil, action: nil, sends: []),
+        (from: "RelayConnected", to: "RelayConnected", on: "app_send", onKind: "internal", guard: nil, action: nil, sends: []),
+        (from: "RelayConnected", to: "RelayConnected", on: "relay_stream_data", onKind: "internal", guard: nil, action: nil, sends: []),
+        (from: "LANConnecting", to: "LANConnecting", on: "app_send", onKind: "internal", guard: nil, action: nil, sends: []),
+        (from: "LANConnecting", to: "LANConnecting", on: "relay_stream_data", onKind: "internal", guard: nil, action: nil, sends: []),
+        (from: "LANVerifying", to: "LANVerifying", on: "app_send", onKind: "internal", guard: nil, action: nil, sends: []),
+        (from: "LANVerifying", to: "LANVerifying", on: "relay_stream_data", onKind: "internal", guard: nil, action: nil, sends: []),
+        (from: "LANActive", to: "LANActive", on: "app_send", onKind: "internal", guard: nil, action: nil, sends: []),
+        (from: "LANActive", to: "LANActive", on: "lan_stream_data", onKind: "internal", guard: nil, action: nil, sends: []),
+        (from: "LANActive", to: "LANActive", on: "relay_stream_data", onKind: "internal", guard: nil, action: nil, sends: []),
+        (from: "RelayFallback", to: "RelayFallback", on: "app_send", onKind: "internal", guard: nil, action: nil, sends: []),
+        (from: "RelayFallback", to: "RelayFallback", on: "relay_stream_data", onKind: "internal", guard: nil, action: nil, sends: []),
         (from: "RelayConnected", to: "LANConnecting", on: "lan_offer", onKind: "recv", guard: "lan_enabled", action: "dial_lan", sends: []),
         (from: "RelayConnected", to: "RelayConnected", on: "lan_offer", onKind: "recv", guard: "lan_disabled", action: nil, sends: []),
         (from: "LANConnecting", to: "LANVerifying", on: "lan_dial_ok", onKind: "internal", guard: nil, action: nil, sends: [(to: "backend", msg: "lan_verify")]),
