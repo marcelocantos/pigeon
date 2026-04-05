@@ -16,6 +16,8 @@ import (
 type yamlProtocol struct {
 	Name         string                     `yaml:"name"`
 	Messages     yaml.Node                  `yaml:"messages"`
+	Events       yaml.Node                  `yaml:"events"`
+	Commands     yaml.Node                  `yaml:"commands"`
 	Actors       yaml.Node                  `yaml:"actors"`
 	Structs      yaml.Node                  `yaml:"structs"`
 	Vars         yaml.Node                  `yaml:"vars"`
@@ -50,6 +52,7 @@ type yamlTransition struct {
 	Fairness string              `yaml:"fairness"` // "weak" (default) or "strong"
 	Sends    []yamlSend          `yaml:"sends"`
 	Updates  yaml.Node           `yaml:"updates"`
+	Emits    []string            `yaml:"emits"`
 }
 
 type yamlSend struct {
@@ -114,6 +117,30 @@ func ParseYAML(data []byte) (*Protocol, error) {
 		Name:         yp.Name,
 		ChannelBound: yp.ChannelBound,
 		OneShot:      yp.OneShot,
+	}
+
+	// Events — declared event types.
+	evts, err := parseOrderedMapString(&yp.Events)
+	if err != nil {
+		return nil, fmt.Errorf("events: %w", err)
+	}
+	for _, kv := range evts {
+		p.Events = append(p.Events, EventDef{
+			ID:   EventID(kv.key),
+			Desc: kv.val,
+		})
+	}
+
+	// Commands — declared command types.
+	cmds, err := parseOrderedMapString(&yp.Commands)
+	if err != nil {
+		return nil, fmt.Errorf("commands: %w", err)
+	}
+	for _, kv := range cmds {
+		p.Commands = append(p.Commands, CommandDef{
+			ID:   CmdID(kv.key),
+			Desc: kv.val,
+		})
 	}
 
 	// Messages — preserve YAML key order.
@@ -328,6 +355,11 @@ func convertTransition(yt yamlTransition) (Transition, error) {
 			Msg:    MsgType(ys.Msg),
 			Fields: ys.Fields,
 		})
+	}
+
+	// Emits — commands emitted by this transition.
+	for _, e := range yt.Emits {
+		t.Emits = append(t.Emits, CmdID(e))
 	}
 
 	// Updates — preserve YAML key order.

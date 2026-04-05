@@ -1,65 +1,70 @@
 @startuml PairingCeremony
 !theme plain
-
-title PairingCeremony — Parallel State Machines
-
-state "server" as D {
-  [*] --> D_Idle
-  D_Idle --> D_GenerateToken : recv pair_begin\ngenerate_token
-  D_GenerateToken --> D_RegisterRelay : token created\nregister_relay
-  D_RegisterRelay --> D_WaitingForClient : relay registered
-  D_WaitingForClient --> D_DeriveSecret : recv pair_hello\n[token_valid]\nderive_secret
-  D_WaitingForClient --> D_Idle : recv pair_hello\n[token_invalid]
-  D_DeriveSecret --> D_SendAck : ECDH complete
-  D_SendAck --> D_WaitingForCode : signal code display
-  D_WaitingForCode --> D_ValidateCode : recv code_submit
-  D_ValidateCode --> D_StorePaired : check code\n[code_correct]
-  D_ValidateCode --> D_Idle : check code\n[code_wrong]
-  D_StorePaired --> D_Paired : finalise\nstore_device
-  D_Paired --> D_AuthCheck : recv auth_request
-  D_AuthCheck --> D_SessionActive : verify\n[device_known]\nverify_device
-  D_AuthCheck --> D_Idle : verify\n[device_unknown]
-  D_SessionActive --> D_Paired : disconnect
+skinparam backgroundColor white
+skinparam state {
+  BackgroundColor #f8f8f8
+  BorderColor #888
 }
 
-state "ios" as A {
-  [*] --> A_Idle
-  A_Idle --> A_ScanQR : user scans QR
-  A_ScanQR --> A_ConnectRelay : QR parsed
-  A_ConnectRelay --> A_GenKeyPair : relay connected
-  A_GenKeyPair --> A_WaitAck : key pair generated\nsend_pair_hello
-  A_WaitAck --> A_E2EReady : recv pair_hello_ack\nderive_secret
-  A_E2EReady --> A_ShowCode : recv pair_confirm
-  A_ShowCode --> A_WaitPairComplete : code displayed
-  A_WaitPairComplete --> A_Paired : recv pair_complete\nstore_secret
-  A_Paired --> A_Reconnect : app launch
-  A_Reconnect --> A_SendAuth : relay connected
-  A_SendAuth --> A_SessionActive : recv auth_ok
-  A_SessionActive --> A_Paired : disconnect
+title PairingCeremony
+
+state "server" as B {
+  [*] --> B_Idle
+  B_Idle --> B_GenerateToken : recv pair_begin\ngenerate_token
+  B_GenerateToken --> B_RegisterRelay : token created\nregister_relay
+  B_RegisterRelay --> B_WaitingForClient : relay registered
+  B_WaitingForClient --> B_DeriveSecret : recv pair_hello\n[token_valid]\nderive_secret
+  B_WaitingForClient --> B_Idle : recv pair_hello\n[token_invalid]
+  B_DeriveSecret --> B_SendAck : ECDH complete
+  B_SendAck --> B_WaitingForCode : signal code display
+  B_WaitingForCode --> B_ValidateCode : recv code_submit
+  B_ValidateCode --> B_StorePaired : check code\n[code_correct]
+  B_ValidateCode --> B_Idle : check code\n[code_wrong]
+  B_StorePaired --> B_Paired : finalise\nstore_device
+  B_Paired --> B_AuthCheck : recv auth_request
+  B_AuthCheck --> B_SessionActive : verify\n[device_known]\nverify_device
+  B_AuthCheck --> B_Idle : verify\n[device_unknown]
+  B_SessionActive --> B_Paired : disconnect
 }
 
-state "cli" as C {
+state "ios" as C {
   [*] --> C_Idle
-  C_Idle --> C_GetKey : cli --init
-  C_GetKey --> C_BeginPair : key stored
-  C_BeginPair --> C_ShowQR : recv token_response
-  C_ShowQR --> C_PromptCode : recv waiting_for_code
-  C_PromptCode --> C_SubmitCode : user enters code
-  C_SubmitCode --> C_Done : recv pair_status
+  C_Idle --> C_ScanQR : user scans QR
+  C_ScanQR --> C_ConnectRelay : QR parsed
+  C_ConnectRelay --> C_GenKeyPair : relay connected
+  C_GenKeyPair --> C_WaitAck : key pair generated\nsend_pair_hello
+  C_WaitAck --> C_E2EReady : recv pair_hello_ack\nderive_secret
+  C_E2EReady --> C_ShowCode : recv pair_confirm
+  C_ShowCode --> C_WaitPairComplete : code displayed
+  C_WaitPairComplete --> C_Paired : recv pair_complete\nstore_secret
+  C_Paired --> C_Reconnect : app launch
+  C_Reconnect --> C_SendAuth : relay connected
+  C_SendAuth --> C_SessionActive : recv auth_ok
+  C_SessionActive --> C_Paired : disconnect
+}
+
+state "cli" as R {
+  [*] --> R_Idle
+  R_Idle --> R_GetKey : cli --init
+  R_GetKey --> R_BeginPair : key stored
+  R_BeginPair --> R_ShowQR : recv token_response
+  R_ShowQR --> R_PromptCode : recv waiting_for_code
+  R_PromptCode --> R_SubmitCode : user enters code
+  R_SubmitCode --> R_Done : recv pair_status
 }
 
 ' === Cross-actor interactions ===
 
-D_RegisterRelay -[#blue,dashed]-> C_BeginPair : token_response\n{token, instance_id}
-D_DeriveSecret -[#green,dashed]-> A_WaitAck : pair_hello_ack\n{pubkey}
-D_SendAck -[#orange,dashed]-> A_E2EReady : pair_confirm
-D_SendAck -[#purple,dashed]-> C_ShowQR : waiting_for_code
-D_StorePaired -[#gray,dashed]-> A_WaitPairComplete : pair_complete\n{key, secret}
-D_StorePaired -[#red,dashed]-> C_SubmitCode : pair_status\n{status}
-D_AuthCheck -[#blue,dashed]-> A_SendAuth : auth_ok
-A_GenKeyPair -[#green,dashed]-> D_WaitingForClient : pair_hello\n{token, pubkey}
-A_Reconnect -[#orange,dashed]-> D_Paired : auth_request\n{device_id, secret, nonce, key}
-C_GetKey -[#purple,dashed]-> D_Idle : pair_begin
-C_PromptCode -[#gray,dashed]-> D_WaitingForCode : code_submit\n{code}
+B_RegisterRelay -[#888,dashed]-> R_BeginPair : token_response\n{token, instance_id}
+B_DeriveSecret -[#888,dashed]-> C_WaitAck : pair_hello_ack\n{pubkey}
+B_SendAck -[#888,dashed]-> C_E2EReady : pair_confirm
+B_SendAck -[#888,dashed]-> R_ShowQR : waiting_for_code
+B_StorePaired -[#888,dashed]-> C_WaitPairComplete : pair_complete\n{key, secret}
+B_StorePaired -[#888,dashed]-> R_SubmitCode : pair_status\n{status}
+B_AuthCheck -[#888,dashed]-> C_SendAuth : auth_ok
+C_GenKeyPair -[#888,dashed]-> B_WaitingForClient : pair_hello\n{token, pubkey}
+C_Reconnect -[#888,dashed]-> B_Paired : auth_request\n{key, device_id, secret, nonce}
+R_GetKey -[#888,dashed]-> B_Idle : pair_begin
+R_PromptCode -[#888,dashed]-> B_WaitingForCode : code_submit\n{code}
 
 @enduml

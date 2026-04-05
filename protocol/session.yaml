@@ -71,6 +71,68 @@ messages:
     to: backend
     desc: 'health check response'
 
+# Declared events — trigger transitions from application or I/O layer.
+# Events replace free-form internal strings with declared identifiers.
+# Phases 1+2 events are listed; Phase 2 (transport) events are the
+# primary focus for T18 executor integration.
+events:
+  # --- Phase 2: Transport (application surface) ---
+  app_send: 'application wants to send a message'
+  app_recv: 'application wants to receive a message'
+  app_send_datagram: 'application wants to send a datagram'
+  app_recv_datagram: 'application wants to receive a datagram'
+  app_close: 'application wants to close the connection'
+
+  # --- Phase 2: Transport (I/O surface) ---
+  relay_stream_data: 'data received on relay stream'
+  relay_stream_error: 'error reading relay stream'
+  relay_datagram: 'datagram received on relay'
+  lan_stream_data: 'data received on LAN stream'
+  lan_stream_error: 'error reading LAN stream'
+  lan_datagram: 'datagram received on LAN'
+  lan_dial_ok: 'LAN dial succeeded (client has connection resources)'
+  lan_dial_failed: 'LAN dial failed'
+  lan_verify_ok: 'LAN challenge verified (backend has connection resources)'
+  ping_timeout: 'health ping timed out (no pong)'
+  ping_tick: 'health ping timer fired'
+  backoff_expired: 'backoff timer expired'
+  offer_timeout: 'LAN offer timed out with no verification'
+
+# Declared commands — emitted by transitions for the executor.
+# The executor carries out these commands as I/O operations or
+# resource lifecycle management. The machine never does I/O directly.
+commands:
+  # I/O operations.
+  write_active_stream: 'write data to the currently active path stream'
+  send_active_datagram: 'send datagram on the currently active path'
+  send_path_ping: 'send health ping on direct path'
+  send_path_pong: 'send health pong on direct path'
+  send_lan_offer: 'send LAN offer via relay control channel'
+  send_lan_verify: 'send LAN verification on direct connection'
+  send_lan_confirm: 'send LAN confirmation on direct connection'
+  dial_lan: 'initiate LAN connection to offered address'
+
+  # Deliver to application.
+  deliver_recv: 'deliver received data to blocked Recv() caller'
+  deliver_recv_datagram: 'deliver received datagram to blocked RecvDatagram() caller'
+
+  # Resource lifecycle.
+  start_lan_stream_reader: 'start goroutine reading from LAN stream'
+  stop_lan_stream_reader: 'stop LAN stream reader goroutine'
+  start_lan_dg_reader: 'start goroutine reading from LAN datagrams'
+  stop_lan_dg_reader: 'stop LAN datagram reader goroutine'
+  start_monitor: 'start health ping timer for direct path'
+  stop_monitor: 'stop health ping timer'
+  start_backoff_timer: 'start exponential backoff timer'
+  close_lan_path: 'close the LAN path resources'
+
+  # Notifications.
+  signal_lan_ready: 'close the LANReady channel (LAN active)'
+  reset_lan_ready: 'create a new LANReady channel (LAN inactive)'
+
+  # Encryption mode.
+  set_crypto_datagram: 'switch crypto channels to datagram mode'
+
 actors:
   backend:
     initial: Idle
@@ -201,6 +263,107 @@ actors:
       # Phase 2: Transport management
       # ============================================================
 
+      # App I/O — self-loop transitions that route to the active path.
+      # These exist on every transport state where the app can send/recv.
+      # Streams:
+      - from: RelayConnected
+        to: RelayConnected
+        on: app_send
+        emits: [write_active_stream]
+      - from: RelayConnected
+        to: RelayConnected
+        on: relay_stream_data
+        emits: [deliver_recv]
+      - from: LANOffered
+        to: LANOffered
+        on: app_send
+        emits: [write_active_stream]
+      - from: LANOffered
+        to: LANOffered
+        on: relay_stream_data
+        emits: [deliver_recv]
+      - from: LANActive
+        to: LANActive
+        on: app_send
+        emits: [write_active_stream]
+      - from: LANActive
+        to: LANActive
+        on: lan_stream_data
+        emits: [deliver_recv]
+      - from: LANActive
+        to: LANActive
+        on: relay_stream_data
+        emits: [deliver_recv]
+      - from: LANDegraded
+        to: LANDegraded
+        on: app_send
+        emits: [write_active_stream]
+      - from: LANDegraded
+        to: LANDegraded
+        on: lan_stream_data
+        emits: [deliver_recv]
+      - from: LANDegraded
+        to: LANDegraded
+        on: relay_stream_data
+        emits: [deliver_recv]
+      - from: RelayBackoff
+        to: RelayBackoff
+        on: app_send
+        emits: [write_active_stream]
+      - from: RelayBackoff
+        to: RelayBackoff
+        on: relay_stream_data
+        emits: [deliver_recv]
+      # Datagrams:
+      - from: RelayConnected
+        to: RelayConnected
+        on: app_send_datagram
+        emits: [send_active_datagram]
+      - from: RelayConnected
+        to: RelayConnected
+        on: relay_datagram
+        emits: [deliver_recv_datagram]
+      - from: LANOffered
+        to: LANOffered
+        on: app_send_datagram
+        emits: [send_active_datagram]
+      - from: LANOffered
+        to: LANOffered
+        on: relay_datagram
+        emits: [deliver_recv_datagram]
+      - from: LANActive
+        to: LANActive
+        on: app_send_datagram
+        emits: [send_active_datagram]
+      - from: LANActive
+        to: LANActive
+        on: lan_datagram
+        emits: [deliver_recv_datagram]
+      - from: LANActive
+        to: LANActive
+        on: relay_datagram
+        emits: [deliver_recv_datagram]
+      - from: LANDegraded
+        to: LANDegraded
+        on: app_send_datagram
+        emits: [send_active_datagram]
+      - from: LANDegraded
+        to: LANDegraded
+        on: lan_datagram
+        emits: [deliver_recv_datagram]
+      - from: LANDegraded
+        to: LANDegraded
+        on: relay_datagram
+        emits: [deliver_recv_datagram]
+      - from: RelayBackoff
+        to: RelayBackoff
+        on: app_send_datagram
+        emits: [send_active_datagram]
+      - from: RelayBackoff
+        to: RelayBackoff
+        on: relay_datagram
+        emits: [deliver_recv_datagram]
+
       - from: RelayConnected
         to: LANOffered
         on: lan_server_ready
@@ -210,6 +373,7 @@ actors:
             fields:
               addr: lan_addr
               challenge: challenge_bytes
+        emits: [send_lan_offer]
 
       - from: LANOffered
         to: LANActive
@@ -226,6 +390,13 @@ actors:
           b_dispatcher_path: '"lan"'
           monitor_target: '"lan"'
           lan_signal: '"ready"'
+        emits:
+          - send_lan_confirm
+          - start_lan_stream_reader
+          - start_lan_dg_reader
+          - start_monitor
+          - signal_lan_ready
+          - set_crypto_datagram
 
       - from: LANOffered
         to: RelayConnected
@@ -238,6 +409,7 @@ actors:
         updates:
           backoff_level: 'Min(backoff_level + 1, max_backoff_level)'
           lan_signal: '"pending"'
+        emits: [reset_lan_ready, start_backoff_timer]
 
       - from: LANActive
         to: LANActive
@@ -245,6 +417,7 @@ actors:
         sends:
           - to: client
             msg: path_ping
+        emits: [send_path_ping]
 
       - from: LANActive
         to: LANDegraded
@@ -258,6 +431,46 @@ actors:
         sends:
           - to: client
             msg: path_ping
+        emits: [send_path_ping]
+
+      # LAN stream error triggers immediate fallback (no degradation).
+      - from: LANActive
+        to: RelayBackoff
+        on: lan_stream_error
+        do: fallback_to_relay
+        updates:
+          backoff_level: 'Min(backoff_level + 1, max_backoff_level)'
+          b_active_path: '"relay"'
+          b_dispatcher_path: '"relay"'
+          monitor_target: '"none"'
+          lan_signal: '"pending"'
+          ping_failures: '0'
+        emits:
+          - stop_monitor
+          - stop_lan_stream_reader
+          - stop_lan_dg_reader
+          - close_lan_path
+          - reset_lan_ready
+          - start_backoff_timer
+
+      - from: LANDegraded
+        to: RelayBackoff
+        on: lan_stream_error
+        do: fallback_to_relay
+        updates:
+          backoff_level: 'Min(backoff_level + 1, max_backoff_level)'
+          b_active_path: '"relay"'
+          b_dispatcher_path: '"relay"'
+          monitor_target: '"none"'
+          lan_signal: '"pending"'
+          ping_failures: '0'
+        emits:
+          - stop_monitor
+          - stop_lan_stream_reader
+          - stop_lan_dg_reader
+          - close_lan_path
+          - reset_lan_ready
+          - start_backoff_timer
 
       - from: LANDegraded
         to: LANActive
@@ -285,6 +498,13 @@ actors:
           monitor_target: '"none"'
           lan_signal: '"pending"'
           ping_failures: '0'
+        emits:
+          - stop_monitor
+          - stop_lan_stream_reader
+          - stop_lan_dg_reader
+          - close_lan_path
+          - reset_lan_ready
+          - start_backoff_timer
 
       - from: RelayBackoff
         to: LANOffered
@@ -296,6 +516,7 @@ actors:
             fields:
               addr: lan_addr
               challenge: challenge_bytes
+        emits: [send_lan_offer]
 
       - from: RelayBackoff
         to: LANOffered
@@ -308,6 +529,7 @@ actors:
               challenge: challenge_bytes
         updates:
           backoff_level: '0'
+        emits: [send_lan_offer]
 
       - from: RelayConnected
         to: LANOffered
@@ -319,6 +541,7 @@ actors:
             fields:
               addr: lan_addr
               challenge: challenge_bytes
+        emits: [send_lan_offer]
 
       # Re-enter pairing on disconnect.
       - from: RelayConnected
@@ -409,11 +632,103 @@ actors:
       # Phase 2: Transport management
       # ============================================================
 
+      # App I/O — self-loop transitions that route to the active path.
+      - from: RelayConnected
+        to: RelayConnected
+        on: app_send
+        emits: [write_active_stream]
+      - from: RelayConnected
+        to: RelayConnected
+        on: relay_stream_data
+        emits: [deliver_recv]
+      - from: LANConnecting
+        to: LANConnecting
+        on: app_send
+        emits: [write_active_stream]
+      - from: LANConnecting
+        to: LANConnecting
+        on: relay_stream_data
+        emits: [deliver_recv]
+      - from: LANVerifying
+        to: LANVerifying
+        on: app_send
+        emits: [write_active_stream]
+      - from: LANVerifying
+        to: LANVerifying
+        on: relay_stream_data
+        emits: [deliver_recv]
+      - from: LANActive
+        to: LANActive
+        on: app_send
+        emits: [write_active_stream]
+      - from: LANActive
+        to: LANActive
+        on: lan_stream_data
+        emits: [deliver_recv]
+      - from: LANActive
+        to: LANActive
+        on: relay_stream_data
+        emits: [deliver_recv]
+      - from: RelayFallback
+        to: RelayFallback
+        on: app_send
+        emits: [write_active_stream]
+      - from: RelayFallback
+        to: RelayFallback
+        on: relay_stream_data
+        emits: [deliver_recv]
+      # Datagrams:
+      - from: RelayConnected
+        to: RelayConnected
+        on: app_send_datagram
+        emits: [send_active_datagram]
+      - from: RelayConnected
+        to: RelayConnected
+        on: relay_datagram
+        emits: [deliver_recv_datagram]
+      - from: LANConnecting
+        to: LANConnecting
+        on: app_send_datagram
+        emits: [send_active_datagram]
+      - from: LANConnecting
+        to: LANConnecting
+        on: relay_datagram
+        emits: [deliver_recv_datagram]
+      - from: LANVerifying
+        to: LANVerifying
+        on: app_send_datagram
+        emits: [send_active_datagram]
+      - from: LANVerifying
+        to: LANVerifying
+        on: relay_datagram
+        emits: [deliver_recv_datagram]
+      - from: LANActive
+        to: LANActive
+        on: app_send_datagram
+        emits: [send_active_datagram]
+      - from: LANActive
+        to: LANActive
+        on: lan_datagram
+        emits: [deliver_recv_datagram]
+      - from: LANActive
+        to: LANActive
+        on: relay_datagram
+        emits: [deliver_recv_datagram]
+      - from: RelayFallback
+        to: RelayFallback
+        on: app_send_datagram
+        emits: [send_active_datagram]
+      - from: RelayFallback
+        to: RelayFallback
+        on: relay_datagram
+        emits: [deliver_recv_datagram]
+
       - from: RelayConnected
         to: LANConnecting
         on: recv lan_offer
         guard: lan_enabled
         do: dial_lan
+        emits: [dial_lan]
 
       - from: RelayConnected
         to: RelayConnected
@@ -429,6 +744,7 @@ actors:
             fields:
               challenge: offer_challenge
               instance_id: instance_id
+        emits: [send_lan_verify]
 
       - from: LANConnecting
         to: RelayConnected
@@ -442,6 +758,11 @@ actors:
           c_active_path: '"lan"'
           c_dispatcher_path: '"lan"'
           lan_signal: '"ready"'
+        emits:
+          - start_lan_stream_reader
+          - start_lan_dg_reader
+          - signal_lan_ready
+          - set_crypto_datagram
 
       - from: LANVerifying
         to: RelayConnected
@@ -455,6 +776,7 @@ actors:
         sends:
           - to: backend
             msg: path_pong
+        emits: [send_path_pong]
 
       - from: LANActive
         to: RelayFallback
@@ -464,6 +786,11 @@ actors:
           c_active_path: '"relay"'
           c_dispatcher_path: '"relay"'
           lan_signal: '"pending"'
+        emits:
+          - stop_lan_stream_reader
+          - stop_lan_dg_reader
+          - close_lan_path
+          - reset_lan_ready
 
       - from: RelayFallback
         to: RelayConnected
@@ -474,6 +801,11 @@ actors:
         on: recv lan_offer
         guard: lan_enabled
         do: dial_lan
+        emits:
+          - stop_lan_stream_reader
+          - stop_lan_dg_reader
+          - close_lan_path
+          - dial_lan
 
       # Re-enter pairing on disconnect.
       - from: RelayConnected

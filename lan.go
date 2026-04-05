@@ -19,7 +19,6 @@ import (
 	"sync"
 	"time"
 
-	"github.com/marcelocantos/tern/crypto"
 	"github.com/marcelocantos/tern/qr"
 	"github.com/quic-go/quic-go"
 )
@@ -51,7 +50,8 @@ type LANServer struct {
 // pendingLAN tracks a client that should connect via LAN.
 type pendingLAN struct {
 	challenge []byte
-	conn      *Conn // the relay Conn to upgrade
+	conn      *Conn // the relay Conn to upgrade (nil when executor-driven)
+	onVerify  func(stream io.ReadWriteCloser, conn *quic.Conn) // executor callback
 }
 
 // NewLANServer creates a LAN QUIC listener. The addr parameter
@@ -195,8 +195,9 @@ func (s *LANServer) handleConn(conn *quic.Conn) {
 
 	slog.Info("LAN connection verified", "peer", verify.InstanceID)
 
-	// Swap the relay Conn's transport to the direct LAN connection.
-	pending.conn.setDirectPath(stream, conn, quicCloser{conn}, quicOpener{conn}, quicAcceptor{conn})
+	if pending.onVerify != nil {
+		pending.onVerify(stream, conn)
+	}
 	slog.Info("upgraded to LAN", "peer", verify.InstanceID)
 }
 
@@ -216,183 +217,8 @@ type lanVerify struct {
 }
 
 // --- Conn integration ---
-
-// advertiseLAN sends the LAN offer to the peer via the encrypted
-// relay channel. Called automatically after Register when WithLANServer
-// is set.
-func (c *Conn) advertiseLAN(s *LANServer) error {
-	offer, err := s.registerConn(c)
-	if err != nil {
-		return err
-	}
-	return c.sendControl(msgLANOffer, offer)
-}
-
-// handleLANOffer is called when a LAN offer control message is
-// received on the encrypted relay channel.
-func (c *Conn) handleLANOffer(offer lanOffer) {
-	c.mu.Lock()
-	enabled := c.lanEnabled
-	tlsConfig := c.lanTLS
-	c.mu.Unlock()
-
-	if !enabled {
-		return
-	}
-
-	slog.Info("received LAN offer", "addr", offer.Addr)
-
-	go func() {
-		if tlsConfig == nil {
-			tlsConfig = &tls.Config{
-				InsecureSkipVerify: true,
-				NextProtos:         []string{"tern-lan"},
-			}
-		} else {
-			tlsConfig = tlsConfig.Clone()
-			tlsConfig.NextProtos = []string{"tern-lan"}
-		}
-
-		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-		defer cancel()
-
-		conn, err := quic.DialAddr(ctx, offer.Addr, tlsConfig, &quic.Config{
-			EnableDatagrams: true,
-		})
-		if err != nil {
-			slog.Debug("LAN dial failed", "addr", offer.Addr, "err", err)
-			return
-		}
-
-		stream, err := conn.OpenStream()
-		if err != nil {
-			conn.CloseWithError(1, "open stream failed")
-			return
-		}
-
-		verify := lanVerify{
-			Challenge:  offer.Challenge,
-			InstanceID: c.instanceID,
-		}
-		data, _ := json.Marshal(verify)
-		if err := writeMessage(stream, data); err != nil {
-			conn.CloseWithError(1, "write verify failed")
-			return
-		}
-
-		resp, err := readMessage(stream)
-		if err != nil || string(resp) != "ok" {
-			conn.CloseWithError(1, "verify rejected")
-			return
-		}
-
-		slog.Info("LAN connection established", "addr", offer.Addr)
-		c.setDirectPath(stream, conn, quicCloser{conn}, quicOpener{conn}, quicAcceptor{conn})
-		slog.Info("upgraded to LAN", "addr", offer.Addr)
-	}()
-}
-
-// setDirectPath installs a direct (LAN/STUN) transport path and
-// starts health monitoring. If the direct path fails, the Conn falls
-// back to relay and re-advertises LAN for future re-establishment.
-func (c *Conn) setDirectPath(
-	stream io.ReadWriteCloser,
-	dg datagrammer,
-	closer io.Closer,
-	opener streamOpener,
-	acceptor streamAcceptor,
-) {
-	direct := newPath("lan", stream, dg, closer, opener, acceptor)
-
-	c.mu.Lock()
-	if c.channel != nil {
-		c.channel.SetMode(crypto.ModeDatagrams)
-	}
-	if c.dgChannel != nil {
-		c.dgChannel.SetMode(crypto.ModeDatagrams)
-	}
-	select {
-	case <-c.lanReady:
-	default:
-		close(c.lanReady)
-	}
-	c.mu.Unlock()
-
-	c.router.setDirect(direct)
-
-	// Start health monitoring — falls back to relay if the direct
-	// path degrades, then re-advertises LAN.
-	go c.router.monitor(c.ctx, func(p *path) error {
-		// Ping by sending a zero-length datagram. The QUIC stack will
-		// detect if the path is dead (no ACK, connection timeout).
-		return p.dg.SendDatagram([]byte{dgConnWhole})
-	})
-
-	// When fallback happens, wait with exponential backoff, then
-	// re-advertise LAN for future re-establishment.
-	c.router.onSwitch = func(from, to string) {
-		if to == "relay" {
-			c.mu.Lock()
-			lanSrv := c.lanServer
-			c.lanReady = make(chan struct{})
-			c.mu.Unlock()
-
-			if lanSrv != nil {
-				go func() {
-					delay := c.router.backoffDelay()
-					slog.Info("re-advertising LAN after backoff",
-						"delay", delay,
-						"backoff_level", c.router.backoffLevel)
-
-					select {
-					case <-time.After(delay):
-					case <-c.ctx.Done():
-						return
-					}
-
-					if err := c.advertiseLAN(lanSrv); err != nil {
-						slog.Warn("re-advertise LAN failed", "err", err)
-					}
-				}()
-			}
-		}
-	}
-}
-
-// sendControl sends an internal control message on the primary stream.
-func (c *Conn) sendControl(msgType byte, payload any) error {
-	c.writeMu.Lock()
-	defer c.writeMu.Unlock()
-
-	c.mu.Lock()
-	ch := c.channel
-	c.mu.Unlock()
-	stream := c.active().stream
-
-	return c.sendControlInner(stream, ch, msgType, payload)
-}
-
-// sendControlInner sends a control message. Caller must hold writeMu.
-func (c *Conn) sendControlInner(stream io.ReadWriteCloser, ch interface{ Encrypt([]byte) []byte }, msgType byte, payload any) error {
-	var data []byte
-	if payload != nil {
-		var err error
-		data, err = json.Marshal(payload)
-		if err != nil {
-			return err
-		}
-	}
-
-	framed := make([]byte, 1+len(data))
-	framed[0] = msgType
-	copy(framed[1:], data)
-
-	if ch != nil {
-		framed = ch.Encrypt(framed)
-	}
-
-	return writeMessage(stream, framed)
-}
+// All LAN lifecycle (advertiseLAN, handleLANOffer, setDirectPath,
+// sendControl) is now handled by the executor. See executor.go.
 
 // --- Helpers ---
 

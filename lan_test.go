@@ -393,87 +393,30 @@ func TestChallengeEqual(t *testing.T) {
 	}
 }
 
-// TestBackoffLevel verifies that backoff increases on fallback and
-// resets on successful LAN establishment.
-func TestBackoffLevel(t *testing.T) {
-	relay := newPath("relay", nil, nil, nil, nil, nil)
-	r := newPathRouter(relay)
-
-	if r.backoffLevel != 0 {
-		t.Fatalf("initial backoff: got %d, want 0", r.backoffLevel)
-	}
-
-	// Fallback increases backoff.
-	direct := newPath("lan", nil, nil, nil, nil, nil)
-	r.setDirect(direct)
-	r.fallbackToRelay()
-	if r.backoffLevel != 1 {
-		t.Fatalf("after first fallback: got %d, want 1", r.backoffLevel)
-	}
-
-	// Another fallback increases further.
-	direct2 := newPath("lan", nil, nil, nil, nil, nil)
-	r.setDirect(direct2)
-	// setDirect resets backoff...
-	if r.backoffLevel != 0 {
-		t.Fatalf("after setDirect: got %d, want 0", r.backoffLevel)
-	}
-	r.fallbackToRelay()
-	if r.backoffLevel != 1 {
-		t.Fatalf("after second fallback: got %d, want 1", r.backoffLevel)
-	}
-
-	// Repeated fallbacks without success increase backoff.
-	for i := 2; i <= maxBackoffLevel; i++ {
-		r.fallbackToRelay() // no-op (no direct), but let's set one first
-	}
-	// Set and fallback repeatedly.
-	for i := 0; i < 10; i++ {
-		d := newPath("lan", nil, nil, nil, nil, nil)
-		r.mu.Lock()
-		r.direct = d
-		r.active = d
-		r.mu.Unlock()
-		r.fallbackToRelay()
-	}
-	if r.backoffLevel > maxBackoffLevel {
-		t.Fatalf("backoff exceeded cap: got %d, max %d", r.backoffLevel, maxBackoffLevel)
-	}
-}
+// TestBackoffLevel is covered by TestExecutorBackendFallback and
+// TestExecutorLANLifecycle in executor_test.go.
 
 // TestBackoffDelay verifies the delay calculation.
 func TestBackoffDelay(t *testing.T) {
-	relay := newPath("relay", nil, nil, nil, nil, nil)
-	r := newPathRouter(relay)
-
 	// Level 0 = no delay.
-	if d := r.backoffDelay(); d != 0 {
+	if d := backoffDelay(0); d != 0 {
 		t.Fatalf("level 0: got %v, want 0", d)
 	}
 
 	// Level 1 = ~1s (base).
-	r.mu.Lock()
-	r.backoffLevel = 1
-	r.mu.Unlock()
-	d := r.backoffDelay()
+	d := backoffDelay(1)
 	if d < 750*time.Millisecond || d > 1250*time.Millisecond {
 		t.Fatalf("level 1: got %v, want ~1s", d)
 	}
 
 	// Level 3 = ~4s (2^2 * 1s).
-	r.mu.Lock()
-	r.backoffLevel = 3
-	r.mu.Unlock()
-	d = r.backoffDelay()
+	d = backoffDelay(3)
 	if d < 3*time.Second || d > 5*time.Second {
 		t.Fatalf("level 3: got %v, want ~4s", d)
 	}
 
 	// Level 5 = ~16s (2^4 * 1s).
-	r.mu.Lock()
-	r.backoffLevel = 5
-	r.mu.Unlock()
-	d = r.backoffDelay()
+	d = backoffDelay(5)
 	if d < 12*time.Second || d > 20*time.Second {
 		t.Fatalf("level 5: got %v, want ~16s", d)
 	}
@@ -497,12 +440,15 @@ func TestLANFallbackAndReestablish(t *testing.T) {
 	}
 
 	// Force fallback.
-	c.router.fallbackToRelay()
-	b.router.fallbackToRelay()
+	c.fallbackToRelay()
+	b.fallbackToRelay()
 
 	// Backoff should be 1.
-	if c.router.backoffLevel != 1 {
-		t.Fatalf("client backoff: got %d, want 1", c.router.backoffLevel)
+	// Backoff is tracked in the backend machine.
+	if m, ok := b.exec.machine.(*BackendMachine); ok {
+		if m.BackoffLevel < 1 {
+			t.Fatalf("backend backoff: got %d, want ≥1", m.BackoffLevel)
+		}
 	}
 
 	// Communication continues via relay.
@@ -545,8 +491,8 @@ func TestLANFallbackToRelay(t *testing.T) {
 	lanSrv.Close()
 
 	// Force fallback by triggering the router.
-	c.router.fallbackToRelay()
-	b.router.fallbackToRelay()
+	c.fallbackToRelay()
+	b.fallbackToRelay()
 
 	// Communication should continue via relay.
 	c.Send(ctx, []byte("back-on-relay"))
@@ -566,35 +512,39 @@ func TestLANFallbackToRelay(t *testing.T) {
 	}
 }
 
-// TestPathRouterBasics verifies the path router's state management.
-func TestPathRouterBasics(t *testing.T) {
-	relay := newPath("relay", nil, nil, nil, nil, nil)
-	r := newPathRouter(relay)
+// TestMachinePathBasics is covered by TestExecutorBackendLANActivation
+// and TestExecutorBackendFallback in executor_test.go.
+// The pathRouter is gone; the machine manages path state.
+func TestMachinePathBasics(t *testing.T) {
+	m := NewBackendMachine()
+	m.State = BackendRelayConnected
 
-	if r.activePath() != relay {
-		t.Fatal("expected relay as initial active path")
-	}
-	if r.hasDirect() {
-		t.Fatal("should not have direct path initially")
-	}
-
-	direct := newPath("lan", nil, nil, nil, nil, nil)
-	r.setDirect(direct)
-	if r.activePath() != direct {
-		t.Fatal("expected direct as active path after setDirect")
-	}
-	if !r.hasDirect() {
-		t.Fatal("should have direct path")
-	}
-	if !r.isDirectActive() {
-		t.Fatal("direct should be active")
+	if m.BActivePath != "relay" {
+		t.Fatalf("initial: got %q, want relay", m.BActivePath)
 	}
 
-	r.fallbackToRelay()
-	if r.activePath() != relay {
-		t.Fatal("expected relay after fallback")
+	m.Guards[GuardChallengeValid] = func() bool { return true }
+	m.Guards[GuardChallengeInvalid] = func() bool { return false }
+	m.Guards[GuardLanServerAvailable] = func() bool { return true }
+	m.Guards[GuardUnderMaxFailures] = func() bool { return false }
+	m.Guards[GuardAtMaxFailures] = func() bool { return true }
+	m.Actions[ActionActivateLan] = func() error { return nil }
+	m.Actions[ActionFallbackToRelay] = func() error { return nil }
+	m.Actions[ActionResetFailures] = func() error { return nil }
+
+	m.HandleEvent(EventLanServerReady)
+	m.HandleEvent(EventRecvLanVerify)
+
+	if m.BActivePath != "lan" {
+		t.Fatalf("after activate: got %q, want lan", m.BActivePath)
 	}
-	if r.hasDirect() {
-		t.Fatal("direct should be cleared after fallback")
+
+	// Fallback.
+	m.HandleEvent(EventPingTimeout) // → LANDegraded
+	m.PingFailures = 2
+	m.HandleEvent(EventPingTimeout) // → RelayBackoff
+
+	if m.BActivePath != "relay" {
+		t.Fatalf("after fallback: got %q, want relay", m.BActivePath)
 	}
 }

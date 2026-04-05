@@ -659,7 +659,7 @@ func TestAcceptStreamNilAcceptor(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 1*time.Second)
 	defer cancel()
 
-	c := newConn(nil, nil, io.NopCloser(nil), nil, nil, "test")
+	c := newConn(nil, nil, io.NopCloser(nil), nil, nil, "test", roleBackend)
 	_, err := c.AcceptChannel(ctx)
 	if err == nil {
 		t.Fatal("expected error from AcceptChannel with nil acceptor")
@@ -998,24 +998,21 @@ func TestEncryptedRecvControlMessages(t *testing.T) {
 	// Encrypt a control message (msgLANOffer = 0x01).
 	lanOfferPayload := append([]byte{0x01}, []byte("lan-offer-data")...)
 	cipherLAN := bCh.Encrypt(lanOfferPayload)
-	b.writeMu.Lock()
+	// writeMu removed — executor serializes writes.
 	writeMessage(b.active().stream, cipherLAN)
-	b.writeMu.Unlock()
-
+	
 	// Encrypt a control message (msgCutover = 0x02).
 	cutoverPayload := append([]byte{0x02}, []byte("cutover-data")...)
 	cipherCutover := bCh.Encrypt(cutoverPayload)
-	b.writeMu.Lock()
+	// writeMu removed — executor serializes writes.
 	writeMessage(b.active().stream, cipherCutover)
-	b.writeMu.Unlock()
-
+	
 	// Encrypt an unknown message type (0xFF).
 	unknownPayload := append([]byte{0xFF}, []byte("unknown-data")...)
 	cipherUnknown := bCh.Encrypt(unknownPayload)
-	b.writeMu.Lock()
+	// writeMu removed — executor serializes writes.
 	writeMessage(b.active().stream, cipherUnknown)
-	b.writeMu.Unlock()
-
+	
 	// Now send a normal application message.
 	if err := b.Send(ctx, []byte("after-control")); err != nil {
 		t.Fatal("send app msg:", err)
@@ -1046,10 +1043,9 @@ func TestEncryptedRecvEmptyPlaintext(t *testing.T) {
 	b.mu.Unlock()
 
 	cipherEmpty := bCh.Encrypt([]byte{})
-	b.writeMu.Lock()
+	// writeMu removed — executor serializes writes.
 	writeMessage(b.active().stream, cipherEmpty)
-	b.writeMu.Unlock()
-
+	
 	// Recv should return nil data and nil error for empty plaintext.
 	data, err := c.Recv(ctx)
 	if err != nil {
@@ -1594,7 +1590,7 @@ func TestWTLongInstanceIDRejected(t *testing.T) {
 // TestDeriveChannelKeysNoPairingRecord verifies that deriveChannelKeys
 // returns (nil, nil) when no PairingRecord is set (channel.go:131-133).
 func TestDeriveChannelKeysNoPairingRecord(t *testing.T) {
-	c := newConn(nil, nil, io.NopCloser(nil), nil, nil, "test")
+	c := newConn(nil, nil, io.NopCloser(nil), nil, nil, "test", roleBackend)
 	ch, err := c.deriveChannelKeys("test-channel", true)
 	if err != nil {
 		t.Fatal("unexpected error:", err)
@@ -2091,10 +2087,9 @@ func TestEncryptedRecvDecryptError(t *testing.T) {
 
 	// Send garbage bytes that look like a valid length-prefixed message
 	// but are not valid ciphertext. Access the raw stream directly.
-	b.writeMu.Lock()
+	// writeMu removed — executor serializes writes.
 	writeMessage(b.active().stream, []byte("this is not valid ciphertext at all!"))
-	b.writeMu.Unlock()
-
+	
 	// Client should get a decrypt error.
 	_, err := c.Recv(ctx)
 	if err == nil {
@@ -2235,7 +2230,7 @@ func TestWTListenAndServeDefaultAddr(t *testing.T) {
 
 // TestConnCloseNilStream exercises Conn.Close when stream is nil.
 func TestConnCloseNilStream(t *testing.T) {
-	c := newConn(nil, nil, io.NopCloser(nil), nil, nil, "test")
+	c := newConn(nil, nil, io.NopCloser(nil), nil, nil, "test", roleBackend)
 	if err := c.Close(); err != nil {
 		t.Fatal("close:", err)
 	}

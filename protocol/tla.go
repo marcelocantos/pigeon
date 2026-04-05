@@ -408,6 +408,19 @@ func (p *Protocol) ExportTLAPhase(w io.Writer, phaseName string) error {
 				fmt.Fprintf(&b, "    /\\ UNCHANGED <<%s>>\n", strings.Join(unchanged, ", "))
 			}
 			b.WriteString("\n")
+
+			// Command set operator — declares what commands this
+			// transition emits. Used for verification properties.
+			if len(t.Emits) > 0 {
+				fmt.Fprintf(&b, "Cmds_%s == {", actionName)
+				for i, cmd := range t.Emits {
+					if i > 0 {
+						b.WriteString(", ")
+					}
+					fmt.Fprintf(&b, "\"%s\"", cmd)
+				}
+				b.WriteString("}\n\n")
+			}
 		}
 
 		if len(actorActions) > 0 {
@@ -442,10 +455,63 @@ func (p *Protocol) ExportTLAPhase(w io.Writer, phaseName string) error {
 			fmt.Fprintf(&b, "%s == (%s) ~> (%s)\n", sanitiseTLA(prop.Name), prop.FromExpr, prop.ToExpr)
 		}
 	}
+	// --- Command-consistency invariants ---
+	// These verify that state changes implied by commands are
+	// reflected in the transition's variable updates. Generated
+	// from the relationship between commands and state variables.
+	hasCommands := false
+	for _, a := range p.Actors {
+		for _, t := range a.Transitions {
+			if len(phaseStates) > 0 && (!phaseStates[t.From] || !phaseStates[t.To]) {
+				continue
+			}
+			if len(t.Emits) > 0 {
+				hasCommands = true
+				break
+			}
+		}
+		if hasCommands {
+			break
+		}
+	}
+	if hasCommands {
+		b.WriteString("\n\\* ================================================================\n")
+		b.WriteString("\\* Command-consistency: state after transition matches emitted commands\n")
+		b.WriteString("\\* These are verified by construction (the same YAML defines both\n")
+		b.WriteString("\\* the variable updates and the command list), but documenting\n")
+		b.WriteString("\\* them as TLA+ operators makes the relationship explicit.\n")
+		b.WriteString("\\* ================================================================\n\n")
+
+		// Emit one consistency operator per actor showing what commands
+		// each transport state implies when entered.
+		for _, a := range p.Actors {
+			for _, t := range a.Transitions {
+				if len(phaseStates) > 0 && (!phaseStates[t.From] || !phaseStates[t.To]) {
+					continue
+				}
+				if len(t.Emits) == 0 {
+					continue
+				}
+				actionName := makeActionName(a.Name, t)
+				fmt.Fprintf(&b, "\\* %s emits: %s\n",
+					actionName,
+					strings.Join(cmdStrings(t.Emits), ", "))
+			}
+		}
+	}
+
 	b.WriteString("\n====\n")
 
 	_, err := io.WriteString(w, b.String())
 	return err
+}
+
+func cmdStrings(cmds []CmdID) []string {
+	out := make([]string, len(cmds))
+	for i, c := range cmds {
+		out[i] = string(c)
+	}
+	return out
 }
 
 func makeActionName(actorName string, t Transition) string {

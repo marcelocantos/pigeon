@@ -27,12 +27,17 @@ type Machine struct {
 
 	// index: (state, msgType) → applicable transitions
 	recvIndex     map[stateMsg][]Transition
-	internalIndex map[State][]Transition
+	internalIndex map[stateEvent][]Transition
 }
 
 type stateMsg struct {
 	state State
 	msg   MsgType
+}
+
+type stateEvent struct {
+	state State
+	event EventID
 }
 
 // NewMachine creates a runtime state machine for the named actor.
@@ -55,7 +60,7 @@ func NewMachine(p *Protocol, actorName string) (*Machine, error) {
 		guards:        make(map[GuardID]GuardFunc),
 		actions:       make(map[ActionID]ActionFunc),
 		recvIndex:     make(map[stateMsg][]Transition),
-		internalIndex: make(map[State][]Transition),
+		internalIndex: make(map[stateEvent][]Transition),
 	}
 
 	for _, t := range actor.Transitions {
@@ -64,7 +69,8 @@ func NewMachine(p *Protocol, actorName string) (*Machine, error) {
 			key := stateMsg{t.From, t.On.Msg}
 			m.recvIndex[key] = append(m.recvIndex[key], t)
 		case TriggerInternal:
-			m.internalIndex[t.From] = append(m.internalIndex[t.From], t)
+			key := stateEvent{t.From, EventID(t.On.Desc)}
+			m.internalIndex[key] = append(m.internalIndex[key], t)
 		}
 	}
 
@@ -104,17 +110,33 @@ func (m *Machine) HandleMessage(msg MsgType, ctx any) (State, error) {
 }
 
 // Step attempts an internal transition from the current state.
-// Returns the new state or an error if no valid transition exists.
-func (m *Machine) Step(ctx any) (State, error) {
+// If event is non-empty, only transitions triggered by that event are
+// considered. If event is empty, all internal transitions from the
+// current state are tried (first matching guard wins).
+func (m *Machine) Step(event EventID, ctx any) (State, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
-	transitions := m.internalIndex[m.state]
-	if len(transitions) == 0 {
-		return m.state, fmt.Errorf("no internal transition from %s", m.state)
+	if event != "" {
+		key := stateEvent{m.state, event}
+		transitions := m.internalIndex[key]
+		if len(transitions) == 0 {
+			return m.state, fmt.Errorf("no internal transition from %s on event %s", m.state, event)
+		}
+		return m.tryTransitions(transitions, ctx)
 	}
 
-	return m.tryTransitions(transitions, ctx)
+	// No event specified — try all internal transitions from this state.
+	var all []Transition
+	for key, ts := range m.internalIndex {
+		if key.state == m.state {
+			all = append(all, ts...)
+		}
+	}
+	if len(all) == 0 {
+		return m.state, fmt.Errorf("no internal transition from %s", m.state)
+	}
+	return m.tryTransitions(all, ctx)
 }
 
 func (m *Machine) tryTransitions(transitions []Transition, ctx any) (State, error) {

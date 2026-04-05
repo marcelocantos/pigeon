@@ -7,9 +7,7 @@ import (
 	"context"
 	"crypto/tls"
 	"encoding/binary"
-	"encoding/json"
 	"io"
-	"log/slog"
 	"sync"
 	"time"
 
@@ -57,17 +55,11 @@ type deadliner interface {
 // In encrypted mode (after SetChannel), Send/Recv automatically encrypt
 // and decrypt using the configured crypto.Channel.
 type Conn struct {
-	mu      sync.Mutex
-	writeMu sync.Mutex // serialises writes to the primary stream
+	mu         sync.Mutex
 	instanceID string
 
-	// Path routing — relay is permanent, direct (LAN/STUN) is optional.
-	router *pathRouter
-
-	// Path routing — relay is permanent, direct (LAN/STUN) is optional.
-	// TODO: Replace ad-hoc router with generated BackendMachine/
-	// ClientMachine from session_gen.go. The machine's OnChange
-	// callback will drive resource rebinding.
+	// The executor mediates all I/O through the session state machine.
+	exec *executor
 
 	// Encryption for the primary stream. Nil means raw mode.
 	channel *crypto.Channel
@@ -78,44 +70,105 @@ type Conn struct {
 	// PairingRecord for deriving per-channel encryption keys.
 	pairingRecord *crypto.PairingRecord
 
-	// Datagram channel dispatch.
+	// Datagram channel dispatch (legacy — migrating to executor).
 	dgChannels  map[uint16]*DatagramChannel
 	dgIncoming  map[uint16]chan []byte // per-channel datagram queues
-	connDg      chan []byte            // conn-level datagram queue (when dispatcher is running)
+	connDg      chan []byte            // conn-level datagram queue
 	dgDispatch  sync.Once             // starts dispatcher once
 
-	// Fragment reassembly for large datagrams.
+	// Fragment reassembly (legacy — executor has its own).
 	reasm        *reassembler
-	maxDgPayload int // max bytes per raw datagram (default 1200)
+	maxDgPayload int
 
-	// LAN upgrade.
-	lanServer  *LANServer  // backend: advertise this server to clients
-	lanEnabled bool        // client: attempt LAN upgrade
-	lanTLS     *tls.Config // client: TLS config for LAN connections
-	lanReady   chan struct{} // closed when direct path is active
+	// LAN upgrade config.
+	lanServer  *LANServer
+	lanEnabled bool
+	lanTLS     *tls.Config
 
-	ctx    context.Context    // Conn lifecycle context
-	cancel context.CancelFunc // cancels background goroutines
+	ctx    context.Context
+	cancel context.CancelFunc
 }
 
-func newConn(stream io.ReadWriteCloser, dg datagrammer, closer io.Closer, opener streamOpener, acceptor streamAcceptor, instanceID string) *Conn {
+// connRole indicates whether a Conn is a backend or client.
+type connRole int
+
+const (
+	roleBackend connRole = iota
+	roleClient
+)
+
+func newConn(stream io.ReadWriteCloser, dg datagrammer, closer io.Closer, opener streamOpener, acceptor streamAcceptor, instanceID string, role connRole) *Conn {
 	ctx, cancel := context.WithCancel(context.Background())
-	done := make(chan struct{})
 	relay := newPath("relay", stream, dg, closer, opener, acceptor)
-	c := &Conn{
-		instanceID:   instanceID,
-		router:       newPathRouter(relay),
-		reasm:        newReassembler(DefaultFragmentTimeout, done),
-		maxDgPayload: DefaultMaxDatagramPayload,
-		lanReady:     make(chan struct{}),
-		ctx:          ctx,
-		cancel:       cancel,
+
+	// Create the transport state machine for this role.
+	var machine interface {
+		HandleEvent(ev EventID) ([]CmdID, error)
 	}
-	// Close the reassembler when the conn context is cancelled.
+	switch role {
+	case roleBackend:
+		m := NewBackendMachine()
+		m.State = BackendRelayConnected
+		m.Guards[GuardChallengeValid] = func() bool { return true }
+		m.Guards[GuardChallengeInvalid] = func() bool { return false }
+		m.Guards[GuardLanServerAvailable] = func() bool { return true }
+		m.Guards[GuardUnderMaxFailures] = func() bool { return m.PingFailures+1 < 3 }
+		m.Guards[GuardAtMaxFailures] = func() bool { return m.PingFailures+1 >= 3 }
+		m.Actions[ActionActivateLan] = func() error { return nil }
+		m.Actions[ActionResetFailures] = func() error { return nil }
+		m.Actions[ActionFallbackToRelay] = func() error {
+			// Increment backoff (complex expr not handled by codegen).
+			m.BackoffLevel++
+			if m.BackoffLevel > 5 {
+				m.BackoffLevel = 5
+			}
+			return nil
+		}
+		machine = m
+	case roleClient:
+		m := NewClientMachine()
+		m.State = ClientRelayConnected
+		m.Guards[GuardLanEnabled] = func() bool { return true }
+		m.Guards[GuardLanDisabled] = func() bool { return false }
+		m.Actions[ActionDialLan] = func() error { return nil }
+		m.Actions[ActionActivateLan] = func() error { return nil }
+		m.Actions[ActionFallbackToRelay] = func() error { return nil }
+		machine = m
+	}
+
+	exec := newExecutor(ctx, cancel, machine, relay)
+	exec.instanceID = instanceID
+
+	// Legacy reassembler for old code paths still using Conn directly.
+	done := make(chan struct{})
 	go func() {
 		<-ctx.Done()
 		close(done)
 	}()
+
+	c := &Conn{
+		instanceID:   instanceID,
+		exec:         exec,
+		reasm:        newReassembler(DefaultFragmentTimeout, done),
+		maxDgPayload: DefaultMaxDatagramPayload,
+		ctx:          ctx,
+		cancel:       cancel,
+	}
+
+	// Wire legacy datagram channel routing through the executor.
+	exec.routeChannelDatagram = func(id uint16, payload []byte) {
+		c.routeToChannel(id, payload)
+	}
+	exec.drainChannelQueues = func() {
+		c.mu.Lock()
+		for _, ch := range c.dgIncoming {
+			for len(ch) > 0 {
+				<-ch
+			}
+		}
+		c.mu.Unlock()
+	}
+
 	return c
 }
 
@@ -128,8 +181,8 @@ func (c *Conn) SetPairingRecord(rec *crypto.PairingRecord) {
 	c.mu.Unlock()
 }
 
-// active returns the active path.
-func (c *Conn) active() *path { return c.router.activePath() }
+// active returns the active path from the executor.
+func (c *Conn) active() *path { return c.exec.activePath() }
 
 // acceptStream accepts the next incoming bidirectional stream from the peer.
 func (c *Conn) acceptStream(ctx context.Context) (io.ReadWriteCloser, error) {
@@ -210,7 +263,7 @@ func (c *Conn) InstanceID() string {
 //	    // timed out, still on relay
 //	}
 func (c *Conn) LANReady() <-chan struct{} {
-	return c.lanReady
+	return c.exec.lanReady
 }
 
 // SetChannel enables encrypted mode on the primary stream. After this
@@ -221,13 +274,14 @@ func (c *Conn) LANReady() <-chan struct{} {
 func (c *Conn) SetChannel(ch *crypto.Channel) {
 	c.mu.Lock()
 	c.channel = ch
-	lanSrv := c.lanServer
 	c.mu.Unlock()
 
-	if lanSrv != nil {
-		if err := c.advertiseLAN(lanSrv); err != nil {
-			slog.Warn("failed to advertise LAN", "err", err)
-		}
+	// Configure the executor's encryption.
+	c.exec.channel = ch
+
+	// Trigger LAN advertisement via the machine.
+	if c.lanServer != nil {
+		c.exec.submit(event{id: EventLanServerReady})
 	}
 }
 
@@ -237,179 +291,40 @@ func (c *Conn) SetDatagramChannel(ch *crypto.Channel) {
 	c.mu.Lock()
 	c.dgChannel = ch
 	c.mu.Unlock()
+
+	c.exec.dgChannel = ch
 }
 
 // Send writes a message on the primary bidirectional stream. In raw mode,
 // data is sent as-is with length-prefix framing. In encrypted mode, data
 // is treated as plaintext and encrypted before sending.
 //
-// Send is safe for concurrent use from multiple goroutines.
-//
-// If ctx carries a deadline, it is applied to the underlying stream write
-// via SetWriteDeadline. Cancellation without a deadline is not supported
-// (the underlying stream write is not interruptible).
+// Send is safe for concurrent use from multiple goroutines. The executor
+// serializes all writes through the event loop.
 func (c *Conn) Send(ctx context.Context, data []byte) error {
-	// Hold writeMu for the entire encrypt+write to prevent the transport
-	// swap from interleaving between encryption (nonce consumed) and the
-	// actual write to the stream.
-	c.writeMu.Lock()
-	defer c.writeMu.Unlock()
-
-	c.mu.Lock()
-	ch := c.channel
-	c.mu.Unlock()
-	p := c.active()
-	stream := p.stream
-
-	payload := data
-	if ch != nil {
-		framed := make([]byte, 1+len(data))
-		framed[0] = msgApp
-		copy(framed[1:], data)
-		payload = ch.Encrypt(framed)
-	}
-
-	if deadline, ok := ctx.Deadline(); ok {
-		if dl, ok := stream.(deadliner); ok {
-			dl.SetWriteDeadline(deadline)
-			defer dl.SetWriteDeadline(time.Time{})
-		}
-	}
-
-	return writeMessage(stream, payload)
+	return c.exec.send(ctx, data)
 }
 
 // Recv reads the next message from the primary bidirectional stream.
 // In raw mode, returns the raw bytes. In encrypted mode, decrypts and
-// returns the application payload, silently discarding control messages.
-//
-// If ctx carries a deadline, it is applied to the underlying stream read
-// via SetReadDeadline. Cancellation without a deadline is not supported
-// (the underlying stream read is not interruptible).
+// returns the application payload. Control messages (LAN offers, etc.)
+// are handled by the executor's stream reader and never delivered here.
 func (c *Conn) Recv(ctx context.Context) ([]byte, error) {
-	p := c.active()
-	if deadline, ok := ctx.Deadline(); ok {
-		if dl, ok := p.stream.(deadliner); ok {
-			dl.SetReadDeadline(deadline)
-			defer dl.SetReadDeadline(time.Time{})
-		}
-	}
-
-	for {
-		c.mu.Lock()
-		ch := c.channel
-		c.mu.Unlock()
-
-		data, err := readMessage(p.stream)
-		if err != nil {
-			return nil, err
-		}
-
-		if ch == nil {
-			return data, nil
-		}
-
-		plaintext, err := ch.Decrypt(data)
-		if err != nil {
-			return nil, err
-		}
-
-		if len(plaintext) == 0 {
-			return nil, nil
-		}
-
-		switch plaintext[0] {
-		case msgApp:
-			return plaintext[1:], nil
-		case msgLANOffer:
-			var offer lanOffer
-			if err := json.Unmarshal(plaintext[1:], &offer); err != nil {
-				slog.Warn("bad LAN offer", "err", err)
-			} else {
-				c.handleLANOffer(offer)
-			}
-			continue
-		case msgCutover:
-			slog.Debug("received cutover marker")
-			continue
-		default:
-			slog.Warn("discarding unknown message type", "type", plaintext[0])
-			continue
-		}
-	}
+	return c.exec.recv(ctx)
 }
 
-// SendDatagram sends an unreliable datagram to the peer. Payloads that
-// fit in a single QUIC datagram are sent as-is (with a 1-byte framing
-// prefix). Larger payloads are automatically split into fragments and
-// reassembled by the receiver. If any fragment is lost, the entire
-// message is discarded after a timeout (datagram semantics).
-//
-// In encrypted mode (after SetDatagramChannel), data is encrypted
-// before framing/fragmentation.
+// SendDatagram sends an unreliable datagram to the peer. The executor
+// handles encryption, framing, and fragmentation.
 func (c *Conn) SendDatagram(data []byte) error {
-	c.mu.Lock()
-	ch := c.dgChannel
-	c.mu.Unlock()
-
-	payload := data
-	if ch != nil {
-		payload = ch.Encrypt(data)
-	}
-
-	// Does it fit in a single datagram? (1 byte prefix + payload)
-	if 1+len(payload) <= c.maxDgPayload {
-		frame := make([]byte, 1+len(payload))
-		frame[0] = dgConnWhole
-		copy(frame[1:], payload)
-		return c.active().dg.SendDatagram(frame)
-	}
-
-	// Fragment it.
-	msgID := nextMsgID.Add(1)
-	return sendFragmented(c.active().dg, payload, c.maxDgPayload, msgID, dgConnFragment, nil)
+	// Sync payload limit to executor (legacy field may be overridden by tests).
+	c.exec.maxDgPayload = c.maxDgPayload
+	return c.exec.sendDatagram(data)
 }
 
-// RecvDatagram receives the next datagram from the peer. Fragmented
-// datagrams are reassembled transparently. If reassembly of a message
-// times out (missing fragments), it is silently discarded and the next
-// complete message is returned.
-//
-// Channel-tagged datagrams (from DatagramChannel) are routed to the
-// appropriate channel queue and not returned here.
-//
-// In encrypted mode (after SetDatagramChannel), the datagram is
-// decrypted after reassembly.
+// RecvDatagram receives the next datagram from the peer. The executor
+// handles reassembly, decryption, and channel demux.
 func (c *Conn) RecvDatagram(ctx context.Context) ([]byte, error) {
-	c.mu.Lock()
-	hasChannels := len(c.dgChannels) > 0
-	c.mu.Unlock()
-
-	if hasChannels {
-		// Dispatcher is running — read from the conn-level queue.
-		c.ensureDispatcher()
-		select {
-		case payload := <-c.connDg:
-			return c.decryptDatagram(payload)
-		case <-ctx.Done():
-			return nil, ctx.Err()
-		case <-c.ctx.Done():
-			return nil, c.ctx.Err()
-		}
-	}
-
-	// No channels — read directly.
-	for {
-		payload, chanID, err := c.recvRawDatagram(ctx)
-		if err != nil {
-			return nil, err
-		}
-		if chanID >= 0 {
-			c.routeToChannel(uint16(chanID), payload)
-			continue
-		}
-		return c.decryptDatagram(payload)
-	}
+	return c.exec.recvDatagram(ctx)
 }
 
 func (c *Conn) decryptDatagram(payload []byte) ([]byte, error) {
@@ -515,20 +430,54 @@ func (c *Conn) routeToChannel(id uint16, payload []byte) {
 	}
 }
 
-// Close gracefully closes the session. It closes the primary
-// bidirectional stream first (allowing buffered data to flush) before
-// closing the session.
+// Close gracefully closes the session.
 func (c *Conn) Close() error {
 	c.cancel()
-	p := c.active()
-	if p.stream != nil {
-		p.stream.Close()
+	if c.exec.lan != nil {
+		c.exec.lan.close()
 	}
-	return p.closer.Close()
+	relay := c.exec.relay
+	if relay.stream != nil {
+		relay.stream.Close()
+	}
+	return relay.closer.Close()
+}
+
+// fallbackToRelay forces a fallback from the direct path to relay.
+// Submits events to the executor and waits for each to be processed.
+func (c *Conn) fallbackToRelay() {
+	switch m := c.exec.machine.(type) {
+	case *BackendMachine:
+		switch m.State {
+		case BackendLANActive:
+			c.exec.submitSync(event{id: EventPingTimeout})
+			m.PingFailures = 2
+			c.exec.submitSync(event{id: EventPingTimeout})
+		case BackendLANDegraded:
+			m.PingFailures = 2
+			c.exec.submitSync(event{id: EventPingTimeout})
+		case BackendLANOffered:
+			c.exec.submitSync(event{id: EventOfferTimeout})
+		}
+	case *ClientMachine:
+		switch m.State {
+		case ClientLANActive:
+			c.exec.submitSync(event{id: EventLanError})
+			c.exec.submitSync(event{id: EventRelayOk})
+		}
+	}
+}
+
+// isDirectActive returns true if the direct path is active.
+func (c *Conn) isDirectActive() bool {
+	return c.exec.lan != nil
 }
 
 // CloseNow immediately closes the session.
 func (c *Conn) CloseNow() error {
 	c.cancel()
-	return c.active().closer.Close()
+	if c.exec.lan != nil {
+		c.exec.lan.close()
+	}
+	return c.exec.relay.closer.Close()
 }

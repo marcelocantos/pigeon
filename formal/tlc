@@ -23,10 +23,13 @@ if [ ! -f "$TLA_FILE" ]; then
     exit 1
 fi
 
-echo "── Translating PlusCal ──"
-java -cp "$JAR" pcal.trans -nocfg "$TLA_FILE"
+# Translate PlusCal if the spec contains a PlusCal algorithm block.
+if grep -q '\-\-algorithm' "$TLA_FILE" 2>/dev/null; then
+    echo "── Translating PlusCal ──"
+    java -cp "$JAR" pcal.trans -nocfg "$TLA_FILE"
+    echo ""
+fi
 
-echo ""
 echo "── Running TLC ──"
 java -cp "$JAR" tlc2.TLC \
     -config "$CFG_FILE" \

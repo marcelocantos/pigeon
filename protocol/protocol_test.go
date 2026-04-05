@@ -364,7 +364,7 @@ func TestStepNoInternalTransition(t *testing.T) {
 	mustStep(t, m)
 	mustStep(t, m)
 	// Now in ServerPaired — no internal transition.
-	if _, err := m.Step(nil); err == nil {
+	if _, err := m.Step("", nil); err == nil {
 		t.Fatal("expected error for Step with no internal transition")
 	}
 }
@@ -391,7 +391,7 @@ func TestTryTransitionsUnregisteredGuard(t *testing.T) {
 		t.Fatal(err)
 	}
 	// Do NOT register the guard — should get "unregistered guard" error.
-	if _, err := m.Step(nil); err == nil {
+	if _, err := m.Step("", nil); err == nil {
 		t.Fatal("expected error for unregistered guard")
 	}
 }
@@ -414,7 +414,7 @@ func TestTryTransitionsUnregisteredAction(t *testing.T) {
 		t.Fatal(err)
 	}
 	// Do NOT register the action.
-	if _, err := m.Step(nil); err == nil {
+	if _, err := m.Step("", nil); err == nil {
 		t.Fatal("expected error for unregistered action")
 	}
 }
@@ -439,7 +439,7 @@ func TestTryTransitionsActionFailure(t *testing.T) {
 	m.RegisterAction("failaction", func(any) error {
 		return errors.New("action exploded")
 	})
-	if _, err := m.Step(nil); err == nil {
+	if _, err := m.Step("", nil); err == nil {
 		t.Fatal("expected error when action fails")
 	}
 }
@@ -465,7 +465,7 @@ func TestTryTransitionsAllGuardsFail(t *testing.T) {
 		t.Fatal(err)
 	}
 	m.RegisterGuard("alwaysfalse", func(any) bool { return false })
-	if _, err := m.Step(nil); err == nil {
+	if _, err := m.Step("", nil); err == nil {
 		t.Fatal("expected error when all guards fail")
 	}
 }
@@ -584,7 +584,7 @@ func mustHandle(t *testing.T, m *Machine, msg MsgType) {
 
 func mustStep(t *testing.T, m *Machine) {
 	t.Helper()
-	if _, err := m.Step(nil); err != nil {
+	if _, err := m.Step("", nil); err != nil {
 		t.Fatalf("Step from %s: %v", m.State(), err)
 	}
 }

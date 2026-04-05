@@ -21,6 +21,12 @@ type GuardID string
 // ActionID identifies a named side-effect action.
 type ActionID string
 
+// EventID identifies an internal event that triggers a transition.
+type EventID string
+
+// CmdID identifies a command emitted by a transition.
+type CmdID string
+
 // PropertyKind classifies a verification property.
 type PropertyKind int
 
@@ -48,6 +54,7 @@ type Transition struct {
 	Fairness FairnessKind // weak (default) or strong
 	Sends    []Send       // messages emitted when this transition fires
 	Updates  []VarUpdate  // auxiliary variable updates
+	Emits    []CmdID      // commands emitted when this transition fires
 }
 
 // Send describes a message emitted during a transition.
@@ -141,6 +148,18 @@ type GuardDef struct {
 	Expr string // TLA+ boolean expression
 }
 
+// EventDef declares an event that can trigger transitions.
+type EventDef struct {
+	ID   EventID
+	Desc string
+}
+
+// CommandDef declares a command that transitions can emit.
+type CommandDef struct {
+	ID   CmdID
+	Desc string
+}
+
 // Operator defines a TLA+ helper operator used in guard expressions,
 // variable updates, or properties. These capture domain-specific
 // logic (e.g., symbolic crypto operations).
@@ -203,11 +222,13 @@ type Protocol struct {
 	Name         string
 	Actors       []Actor
 	Messages     []Message
-	Structs      []StructDef // named variable groups
-	Vars         []VarDef    // auxiliary state variables (may reference structs)
-	Guards       []GuardDef  // guard TLA+ expressions
-	Operators    []Operator  // TLA+ helper operators
-	AdvActions   []AdvAction // adversary capabilities beyond Dolev-Yao
+	Events       []EventDef   // declared event types (triggers for transitions)
+	Commands     []CommandDef // declared command types (emitted by transitions)
+	Structs      []StructDef  // named variable groups
+	Vars         []VarDef     // auxiliary state variables (may reference structs)
+	Guards       []GuardDef   // guard TLA+ expressions
+	Operators    []Operator   // TLA+ helper operators
+	AdvActions   []AdvAction  // adversary capabilities beyond Dolev-Yao
 	AdvGuard     string       // TLA+ expression gating the adversary (empty = always active)
 	Phases       []Phase      // named groupings of states for diagramming and TLA+ splitting
 	Constants    []ConstantDef // parameterised constants for model checking

@@ -12,10 +12,9 @@ import (
 // ExportTypeScript writes a TypeScript source file with:
 //   - Const enums for states (per actor) and message types
 //   - Guard and action ID constants
+//   - EventID and CmdID enums
 //   - Transition table as static data
-//
-// Does NOT generate executor logic. The generic Machine class in
-// web/src/machine.ts interprets the table at runtime.
+//   - Per-actor typed machine classes with handleEvent methods
 func (p *Protocol) ExportTypeScript(w io.Writer) error {
 	var b strings.Builder
 
@@ -58,6 +57,25 @@ func (p *Protocol) ExportTypeScript(w io.Writer) error {
 		b.WriteString("export enum ActionID {\n")
 		for _, id := range actions {
 			fmt.Fprintf(&b, "    %s = \"%s\",\n", kotlinPascalCase(id), id)
+		}
+		b.WriteString("}\n\n")
+	}
+
+	// EventID enum — internal events + recv_* events for messages.
+	events := tsCollectEvents(p)
+	if len(events) > 0 {
+		b.WriteString("export enum EventID {\n")
+		for _, id := range events {
+			fmt.Fprintf(&b, "    %s = \"%s\",\n", kotlinPascalCase(id), id)
+		}
+		b.WriteString("}\n\n")
+	}
+
+	// CmdID enum.
+	if len(p.Commands) > 0 {
+		b.WriteString("export enum CmdID {\n")
+		for _, c := range p.Commands {
+			fmt.Fprintf(&b, "    %s = \"%s\",\n", kotlinPascalCase(string(c.ID)), c.ID)
 		}
 		b.WriteString("}\n\n")
 	}
@@ -119,9 +137,221 @@ func (p *Protocol) ExportTypeScript(w io.Writer) error {
 		b.WriteString("};\n\n")
 	}
 
+	// Per-actor typed machine classes.
+	for _, a := range p.Actors {
+		typeName := tsTypeName(a.Name)
+
+		// Collect vars updated by this actor's transitions.
+		actorVarSet := map[string]bool{}
+		for _, t := range a.Transitions {
+			for _, u := range t.Updates {
+				actorVarSet[u.Var] = true
+			}
+		}
+
+		// Machine class.
+		fmt.Fprintf(&b, "/** %sMachine is the generated state machine for the %s actor. */\n", typeName, a.Name)
+		fmt.Fprintf(&b, "export class %sMachine {\n", typeName)
+		fmt.Fprintf(&b, "    state: %sState;\n", typeName)
+
+		// Typed variable fields owned by this actor.
+		for _, v := range p.Vars {
+			if !actorVarSet[v.Name] {
+				continue
+			}
+			tsT := tsVarType(v.Type)
+			init := tsInitialValue(v)
+			comment := ""
+			if v.Desc != "" {
+				comment = " // " + v.Desc
+			}
+			fmt.Fprintf(&b, "    %s: %s = %s;%s\n", tsVarFieldName(v.Name), tsT, init, comment)
+		}
+
+		if len(p.Guards) > 0 {
+			b.WriteString("    guards: Map<GuardID, () => boolean> = new Map();\n")
+		}
+		if len(actions) > 0 {
+			b.WriteString("    actions: Map<ActionID, () => void> = new Map();\n")
+		}
+		b.WriteString("\n")
+
+		// Constructor.
+		fmt.Fprintf(&b, "    constructor() {\n")
+		fmt.Fprintf(&b, "        this.state = %sState.%s;\n", typeName, a.Initial)
+		b.WriteString("    }\n\n")
+
+		// handleEvent method.
+		b.WriteString("    handleEvent(ev: EventID): CmdID[] {\n")
+		b.WriteString("        switch (true) {\n")
+
+		for _, t := range a.Transitions {
+			// Determine event constant name.
+			var eventID string
+			if t.On.Kind == TriggerRecv {
+				eventID = "recv_" + string(t.On.Msg)
+			} else {
+				eventID = t.On.Desc
+			}
+			eventVal := kotlinPascalCase(eventID)
+
+			// Build guard condition.
+			guardCond := ""
+			if t.Guard != "" {
+				guardVal := kotlinPascalCase(string(t.Guard))
+				guardCond = fmt.Sprintf(" && this.guards.get(GuardID.%s)?.() === true", guardVal)
+			}
+
+			fmt.Fprintf(&b, "            case this.state === %sState.%s && ev === EventID.%s%s: {\n",
+				typeName, t.From, eventVal, guardCond)
+
+			// Action call.
+			if t.Do != "" {
+				actionVal := kotlinPascalCase(string(t.Do))
+				fmt.Fprintf(&b, "                this.actions.get(ActionID.%s)?.();\n", actionVal)
+			}
+
+			// Variable updates.
+			for _, u := range t.Updates {
+				varField := tsVarFieldName(u.Var)
+				if lit, ok := tsSimpleLiteral(u.Expr); ok {
+					fmt.Fprintf(&b, "                this.%s = %s;\n", varField, lit)
+				} else {
+					fmt.Fprintf(&b, "                // %s: %s (set by action)\n", u.Var, u.Expr)
+				}
+			}
+
+			// State transition.
+			fmt.Fprintf(&b, "                this.state = %sState.%s;\n", typeName, t.To)
+
+			// Return commands.
+			if len(t.Emits) > 0 {
+				b.WriteString("                return [")
+				for i, cmd := range t.Emits {
+					if i > 0 {
+						b.WriteString(", ")
+					}
+					fmt.Fprintf(&b, "CmdID.%s", kotlinPascalCase(string(cmd)))
+				}
+				b.WriteString("];\n")
+			} else {
+				b.WriteString("                return [];\n")
+			}
+
+			b.WriteString("            }\n")
+		}
+
+		b.WriteString("        }\n")
+		b.WriteString("        return [];\n")
+		b.WriteString("    }\n")
+		b.WriteString("}\n\n")
+	}
+
 	result := strings.TrimRight(b.String(), "\n") + "\n"
 	_, err := io.WriteString(w, result)
 	return err
+}
+
+// tsCollectEvents returns a deduplicated, ordered list of all event IDs:
+// declared events, internal transition events, and recv_* events.
+func tsCollectEvents(p *Protocol) []string {
+	seen := map[string]bool{}
+	var result []string
+	add := func(id string) {
+		if !seen[id] {
+			seen[id] = true
+			result = append(result, id)
+		}
+	}
+	// Declared events first.
+	for _, e := range p.Events {
+		add(string(e.ID))
+	}
+	// Internal events from transitions.
+	for _, a := range p.Actors {
+		for _, t := range a.Transitions {
+			if t.On.Kind == TriggerInternal {
+				add(t.On.Desc)
+			}
+		}
+	}
+	// recv_* events.
+	for _, a := range p.Actors {
+		for _, t := range a.Transitions {
+			if t.On.Kind == TriggerRecv {
+				add("recv_" + string(t.On.Msg))
+			}
+		}
+	}
+	return result
+}
+
+// tsVarType converts a VarType to a TypeScript type string.
+func tsVarType(t VarType) string {
+	switch t {
+	case VarInt:
+		return "number"
+	case VarBool:
+		return "boolean"
+	case VarSetString:
+		return "Set<string>"
+	default:
+		return "string"
+	}
+}
+
+// tsInitialValue returns a TypeScript initial value expression for a VarDef.
+func tsInitialValue(v VarDef) string {
+	if lit, ok := tsSimpleLiteral(v.Initial); ok {
+		return lit
+	}
+	switch v.Type {
+	case VarInt:
+		return "0"
+	case VarBool:
+		return "false"
+	case VarSetString:
+		return "new Set()"
+	default:
+		return `""`
+	}
+}
+
+// tsSimpleLiteral converts a TLA+ expression to a TypeScript literal when
+// it is simple enough (string, int, bool). Returns ("", false) otherwise.
+func tsSimpleLiteral(expr string) (string, bool) {
+	expr = strings.TrimSpace(expr)
+	switch expr {
+	case "TRUE":
+		return "true", true
+	case "FALSE":
+		return "false", true
+	}
+	if strings.HasPrefix(expr, "\"") && strings.HasSuffix(expr, "\"") {
+		return expr, true // already a string literal
+	}
+	var n int
+	if _, err := fmt.Sscanf(expr, "%d", &n); err == nil {
+		return fmt.Sprintf("%d", n), true
+	}
+	return "", false
+}
+
+// tsVarFieldName converts a snake_case var name to camelCase for TypeScript.
+func tsVarFieldName(name string) string {
+	parts := strings.Split(name, "_")
+	if len(parts) == 0 {
+		return name
+	}
+	var b strings.Builder
+	for i, p := range parts {
+		if i == 0 {
+			b.WriteString(strings.ToLower(p))
+		} else if len(p) > 0 {
+			b.WriteString(strings.ToUpper(p[:1]) + p[1:])
+		}
+	}
+	return b.String()
 }
 
 func tsTypeName(name string) string {

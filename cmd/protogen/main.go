@@ -6,16 +6,17 @@
 //
 // Usage:
 //
-//	protogen protocol/pairing.yaml
+//	protogen [--root-pkg=<pkg>] protocol/session.yaml
 //
 // Outputs (relative to working directory):
 //
-//	protocol/<name>_gen.go
+//	protocol/<name>_gen.go  (skipped when --root-pkg is set)
 //	formal/<Name>.tla
 //	docs/<name>.puml
 //	Sources/Tern/<Name>Machine.swift
 //	android/tern/src/main/kotlin/com/marcelocantos/tern/crypto/<Name>Machine.kt
 //	web/src/<Name>Machine.ts
+//	<name>_gen.go           (only when --root-pkg is set)
 package main
 
 import (
@@ -28,12 +29,24 @@ import (
 )
 
 func main() {
-	if len(os.Args) < 2 {
-		fmt.Fprintln(os.Stderr, "usage: protogen <protocol.yaml>")
+	var rootPkg string
+	args := os.Args[1:]
+	for len(args) > 0 && strings.HasPrefix(args[0], "--") {
+		if rest, ok := strings.CutPrefix(args[0], "--root-pkg="); ok {
+			rootPkg = rest
+		} else {
+			fmt.Fprintf(os.Stderr, "unknown flag: %s\n", args[0])
+			os.Exit(1)
+		}
+		args = args[1:]
+	}
+
+	if len(args) < 1 {
+		fmt.Fprintln(os.Stderr, "usage: protogen [--root-pkg=<pkg>] <protocol.yaml>")
 		os.Exit(1)
 	}
 
-	p, err := protocol.LoadYAML(os.Args[1])
+	p, err := protocol.LoadYAML(args[0])
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "load: %v\n", err)
 		os.Exit(1)
@@ -51,15 +64,23 @@ func main() {
 		gen  func() error
 	}{
 		{
+			// Skip protocol/ output when --root-pkg is set (the root-level
+			// file replaces it, avoiding redeclaration conflicts when a
+			// unified protocol subsumes an older one).
 			path: filepath.Join("protocol", lowerName+"_gen.go"),
-			gen: func() error {
-				return writeFile(
-					filepath.Join("protocol", lowerName+"_gen.go"),
-					func(f *os.File) error {
-						return p.ExportGo(f, "protocol", p.Name)
-					},
-				)
-			},
+			gen: func() func() error {
+				if rootPkg != "" {
+					return nil
+				}
+				return func() error {
+					return writeFile(
+						filepath.Join("protocol", lowerName+"_gen.go"),
+						func(f *os.File) error {
+							return p.ExportGo(f, "protocol", p.Name)
+						},
+					)
+				}
+			}(),
 		},
 		{
 			path: filepath.Join("formal", p.Name+".tla"),
@@ -112,7 +133,29 @@ func main() {
 		},
 	}
 
+	// Optional root-level Go file for a different package.
+	if rootPkg != "" {
+		funcName := p.Name + "Protocol"
+		generators = append(generators, struct {
+			path string
+			gen  func() error
+		}{
+			path: lowerName + "_gen.go",
+			gen: func() error {
+				return writeFile(
+					lowerName+"_gen.go",
+					func(f *os.File) error {
+						return p.ExportGo(f, rootPkg, funcName)
+					},
+				)
+			},
+		})
+	}
+
 	for _, g := range generators {
+		if g.gen == nil {
+			continue
+		}
 		if err := g.gen(); err != nil {
 			fmt.Fprintf(os.Stderr, "generate %s: %v\n", g.path, err)
 			os.Exit(1)

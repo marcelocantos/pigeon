@@ -116,14 +116,10 @@ func Register(ctx context.Context, relayURL string, c Config) (*Conn, error) {
 		return nil, err
 	}
 
-	// If a LAN server is configured, advertise it after the relay
-	// channel is established. The offer is sent once the caller sets
-	// up encryption (SetChannel) and calls Send/Recv. We store the
-	// server for deferred advertisement.
+	// Configure the executor with LAN server for deferred advertisement.
 	if c.LANServer != nil {
-		conn.mu.Lock()
 		conn.lanServer = c.LANServer
-		conn.mu.Unlock()
+		conn.exec.lanServer = c.LANServer
 	}
 
 	return conn, nil
@@ -146,10 +142,10 @@ func Connect(ctx context.Context, relayURL, instanceID string, c Config) (*Conn,
 	}
 
 	if c.LAN {
-		conn.mu.Lock()
 		conn.lanEnabled = true
 		conn.lanTLS = c.LANTLS
-		conn.mu.Unlock()
+		conn.exec.lanEnabled = true
+		conn.exec.lanTLS = c.LANTLS
 	}
 
 	return conn, nil
@@ -218,7 +214,7 @@ func registerQUIC(ctx context.Context, relayURL string, c Config) (*Conn, error)
 	}
 
 	closer := quicCloser{conn}
-	return newConn(stream, conn, closer, quicOpener{conn}, quicAcceptor{conn}, string(idBytes)), nil
+	return newConn(stream, conn, closer, quicOpener{conn}, quicAcceptor{conn}, string(idBytes), roleBackend), nil
 }
 
 func connectQUIC(ctx context.Context, relayURL, instanceID string, c Config) (*Conn, error) {
@@ -245,7 +241,7 @@ func connectQUIC(ctx context.Context, relayURL, instanceID string, c Config) (*C
 	}
 
 	closer := quicCloser{conn}
-	return newConn(stream, conn, closer, quicOpener{conn}, quicAcceptor{conn}, instanceID), nil
+	return newConn(stream, conn, closer, quicOpener{conn}, quicAcceptor{conn}, instanceID, roleClient), nil
 }
 
 // quicCloser wraps *quic.Conn to satisfy io.Closer.
@@ -317,7 +313,7 @@ func registerWebTransport(ctx context.Context, relayURL string, c Config) (*Conn
 	}
 
 	closer := wtCloser{session}
-	return newConn(stream, session, closer, wtOpener{session}, wtAcceptor{session}, string(idBytes)), nil
+	return newConn(stream, session, closer, wtOpener{session}, wtAcceptor{session}, string(idBytes), roleBackend), nil
 }
 
 func connectWebTransport(ctx context.Context, relayURL, instanceID string, c Config) (*Conn, error) {
@@ -357,7 +353,7 @@ func connectWebTransport(ctx context.Context, relayURL, instanceID string, c Con
 	}
 
 	closer := wtCloser{session}
-	return newConn(stream, session, closer, wtOpener{session}, wtAcceptor{session}, instanceID), nil
+	return newConn(stream, session, closer, wtOpener{session}, wtAcceptor{session}, instanceID, roleClient), nil
 }
 
 // wtCloser wraps webtransport.Session to satisfy io.Closer.
