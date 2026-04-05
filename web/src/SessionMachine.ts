@@ -173,6 +173,8 @@ export enum CmdID {
     StopLanDgReader = "stop_lan_dg_reader",
     StartMonitor = "start_monitor",
     StopMonitor = "stop_monitor",
+    StartPongTimeout = "start_pong_timeout",
+    CancelPongTimeout = "cancel_pong_timeout",
     StartBackoffTimer = "start_backoff_timer",
     CloseLanPath = "close_lan_path",
     SignalLanReady = "signal_lan_ready",
@@ -557,7 +559,7 @@ export class BackendMachine {
             }
             case this.state === BackendState.LANActive && ev === EventID.PingTick: {
                 this.state = BackendState.LANActive;
-                return [CmdID.SendPathPing];
+                return [CmdID.SendPathPing, CmdID.StartPongTimeout];
             }
             case this.state === BackendState.LANActive && ev === EventID.PingTimeout: {
                 this.pingFailures = 1;
@@ -566,7 +568,7 @@ export class BackendMachine {
             }
             case this.state === BackendState.LANDegraded && ev === EventID.PingTick: {
                 this.state = BackendState.LANDegraded;
-                return [CmdID.SendPathPing];
+                return [CmdID.SendPathPing, CmdID.StartPongTimeout];
             }
             case this.state === BackendState.LANActive && ev === EventID.LanStreamError: {
                 this.actions.get(ActionID.FallbackToRelay)?.();
@@ -594,7 +596,7 @@ export class BackendMachine {
                 this.actions.get(ActionID.ResetFailures)?.();
                 this.pingFailures = 0;
                 this.state = BackendState.LANActive;
-                return [];
+                return [CmdID.CancelPongTimeout];
             }
             case this.state === BackendState.LANDegraded && ev === EventID.PingTimeout && this.guards.get(GuardID.UnderMaxFailures)?.() === true: {
                 // ping_failures: ping_failures + 1 (set by action)

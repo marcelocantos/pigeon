@@ -113,6 +113,7 @@ EVT_verify == "verify"
 EVT_verify_timeout == "verify_timeout"
 
 \* Command types
+CMD_cancel_pong_timeout == "cancel_pong_timeout"
 CMD_close_lan_path == "close_lan_path"
 CMD_deliver_recv == "deliver_recv"
 CMD_deliver_recv_datagram == "deliver_recv_datagram"
@@ -130,6 +131,7 @@ CMD_start_backoff_timer == "start_backoff_timer"
 CMD_start_lan_dg_reader == "start_lan_dg_reader"
 CMD_start_lan_stream_reader == "start_lan_stream_reader"
 CMD_start_monitor == "start_monitor"
+CMD_start_pong_timeout == "start_pong_timeout"
 CMD_stop_lan_dg_reader == "stop_lan_dg_reader"
 CMD_stop_lan_stream_reader == "stop_lan_stream_reader"
 CMD_stop_monitor == "stop_monitor"
@@ -603,7 +605,7 @@ backend_LANActive_to_LANActive_ping_tick ==
     /\ backend_state' = backend_LANActive
     /\ UNCHANGED <<client_state, relay_state, current_token, active_tokens, used_tokens, backend_ecdh_pub, received_client_pub, received_backend_pub, backend_shared_key, client_shared_key, backend_code, client_code, received_code, code_attempts, device_secret, paired_devices, received_device_id, auth_nonces_used, received_auth_nonce, secret_published, ping_failures, backoff_level, b_active_path, c_active_path, b_dispatcher_path, c_dispatcher_path, monitor_target, lan_signal, relay_bridge, received_pair_hello, received_auth_request, received_lan_verify, received_path_pong, received_pair_hello_ack, received_pair_confirm, received_pair_complete, received_auth_ok, received_lan_offer, received_lan_confirm>>
 
-Cmds_backend_LANActive_to_LANActive_ping_tick == {CMD_send_path_ping}
+Cmds_backend_LANActive_to_LANActive_ping_tick == {CMD_send_path_ping, CMD_start_pong_timeout}
 
 \* backend: LANActive -> LANDegraded (ping_timeout)
 backend_LANActive_to_LANDegraded_ping_timeout ==
@@ -619,7 +621,7 @@ backend_LANDegraded_to_LANDegraded_ping_tick ==
     /\ backend_state' = backend_LANDegraded
     /\ UNCHANGED <<client_state, relay_state, current_token, active_tokens, used_tokens, backend_ecdh_pub, received_client_pub, received_backend_pub, backend_shared_key, client_shared_key, backend_code, client_code, received_code, code_attempts, device_secret, paired_devices, received_device_id, auth_nonces_used, received_auth_nonce, secret_published, ping_failures, backoff_level, b_active_path, c_active_path, b_dispatcher_path, c_dispatcher_path, monitor_target, lan_signal, relay_bridge, received_pair_hello, received_auth_request, received_lan_verify, received_path_pong, received_pair_hello_ack, received_pair_confirm, received_pair_complete, received_auth_ok, received_lan_offer, received_lan_confirm>>
 
-Cmds_backend_LANDegraded_to_LANDegraded_ping_tick == {CMD_send_path_ping}
+Cmds_backend_LANDegraded_to_LANDegraded_ping_tick == {CMD_send_path_ping, CMD_start_pong_timeout}
 
 \* backend: LANActive -> RelayBackoff (lan_stream_error)
 backend_LANActive_to_RelayBackoff_lan_stream_error ==
@@ -657,6 +659,8 @@ backend_LANDegraded_to_LANActive_on_path_pong ==
     /\ backend_state' = backend_LANActive
     /\ ping_failures' = 0
     /\ UNCHANGED <<client_state, relay_state, current_token, active_tokens, used_tokens, backend_ecdh_pub, received_client_pub, received_backend_pub, backend_shared_key, client_shared_key, backend_code, client_code, received_code, code_attempts, device_secret, paired_devices, received_device_id, auth_nonces_used, received_auth_nonce, secret_published, backoff_level, b_active_path, c_active_path, b_dispatcher_path, c_dispatcher_path, monitor_target, lan_signal, relay_bridge, received_pair_hello, received_auth_request, received_lan_verify, received_pair_hello_ack, received_pair_confirm, received_pair_complete, received_auth_ok, received_lan_offer, received_lan_confirm, received_path_ping>>
+
+Cmds_backend_LANDegraded_to_LANActive_on_path_pong == {CMD_cancel_pong_timeout}
 
 \* backend: LANDegraded -> LANDegraded (ping_timeout) [under_max_failures]
 backend_LANDegraded_to_LANDegraded_ping_timeout_under_max_failures ==
@@ -1283,10 +1287,11 @@ DegradedLeadsToResolutionOrFallback == (backend_state = backend_LANDegraded) ~> 
 \* backend_RelayConnected_to_LANOffered_lan_server_ready emits: CMD_send_lan_offer
 \* backend_LANOffered_to_LANActive_on_lan_verify_challenge_valid emits: CMD_send_lan_confirm, CMD_start_lan_stream_reader, CMD_start_lan_dg_reader, CMD_start_monitor, CMD_signal_lan_ready, CMD_set_crypto_datagram
 \* backend_LANOffered_to_RelayBackoff_offer_timeout emits: CMD_reset_lan_ready, CMD_start_backoff_timer
-\* backend_LANActive_to_LANActive_ping_tick emits: CMD_send_path_ping
-\* backend_LANDegraded_to_LANDegraded_ping_tick emits: CMD_send_path_ping
+\* backend_LANActive_to_LANActive_ping_tick emits: CMD_send_path_ping, CMD_start_pong_timeout
+\* backend_LANDegraded_to_LANDegraded_ping_tick emits: CMD_send_path_ping, CMD_start_pong_timeout
 \* backend_LANActive_to_RelayBackoff_lan_stream_error emits: CMD_stop_monitor, CMD_stop_lan_stream_reader, CMD_stop_lan_dg_reader, CMD_close_lan_path, CMD_reset_lan_ready, CMD_start_backoff_timer
 \* backend_LANDegraded_to_RelayBackoff_lan_stream_error emits: CMD_stop_monitor, CMD_stop_lan_stream_reader, CMD_stop_lan_dg_reader, CMD_close_lan_path, CMD_reset_lan_ready, CMD_start_backoff_timer
+\* backend_LANDegraded_to_LANActive_on_path_pong emits: CMD_cancel_pong_timeout
 \* backend_LANDegraded_to_RelayBackoff_ping_timeout_at_max_failures emits: CMD_stop_monitor, CMD_stop_lan_stream_reader, CMD_stop_lan_dg_reader, CMD_close_lan_path, CMD_reset_lan_ready, CMD_start_backoff_timer
 \* backend_RelayBackoff_to_LANOffered_backoff_expired emits: CMD_send_lan_offer
 \* backend_RelayBackoff_to_LANOffered_lan_server_changed emits: CMD_send_lan_offer

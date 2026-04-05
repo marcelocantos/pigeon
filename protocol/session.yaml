@@ -123,6 +123,8 @@ commands:
   stop_lan_dg_reader: 'stop LAN datagram reader goroutine'
   start_monitor: 'start health ping timer for direct path'
   stop_monitor: 'stop health ping timer'
+  start_pong_timeout: 'start timer expecting pong reply'
+  cancel_pong_timeout: 'cancel pong reply timer (pong received)'
   start_backoff_timer: 'start exponential backoff timer'
   close_lan_path: 'close the LAN path resources'
 
@@ -417,7 +419,7 @@ actors:
         sends:
           - to: client
             msg: path_ping
-        emits: [send_path_ping]
+        emits: [send_path_ping, start_pong_timeout]
 
       - from: LANActive
         to: LANDegraded
@@ -431,7 +433,7 @@ actors:
         sends:
           - to: client
             msg: path_ping
-        emits: [send_path_ping]
+        emits: [send_path_ping, start_pong_timeout]
 
       # LAN stream error triggers immediate fallback (no degradation).
       - from: LANActive
@@ -478,6 +480,7 @@ actors:
         do: reset_failures
         updates:
           ping_failures: '0'
+        emits: [cancel_pong_timeout]
 
       - from: LANDegraded
         to: LANDegraded

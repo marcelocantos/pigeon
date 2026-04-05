@@ -175,6 +175,8 @@ enum class CmdID(val value: String) {
     StopLanDgReader("stop_lan_dg_reader"),
     StartMonitor("start_monitor"),
     StopMonitor("stop_monitor"),
+    StartPongTimeout("start_pong_timeout"),
+    CancelPongTimeout("cancel_pong_timeout"),
     StartBackoffTimer("start_backoff_timer"),
     CloseLanPath("close_lan_path"),
     SignalLanReady("signal_lan_ready"),
@@ -619,7 +621,7 @@ class BackendMachine {
             state == BackendState.LANActive && ev == EventID.PingTick ->
                 run {
                     state = BackendState.LANActive
-                    listOf(CmdID.SendPathPing)
+                    listOf(CmdID.SendPathPing, CmdID.StartPongTimeout)
                 }
             state == BackendState.LANActive && ev == EventID.PingTimeout ->
                 run {
@@ -630,7 +632,7 @@ class BackendMachine {
             state == BackendState.LANDegraded && ev == EventID.PingTick ->
                 run {
                     state = BackendState.LANDegraded
-                    listOf(CmdID.SendPathPing)
+                    listOf(CmdID.SendPathPing, CmdID.StartPongTimeout)
                 }
             state == BackendState.LANActive && ev == EventID.LanStreamError ->
                 run {
@@ -661,7 +663,7 @@ class BackendMachine {
                     actions[ActionID.ResetFailures]?.invoke()
                     pingFailures = 0
                     state = BackendState.LANActive
-                    emptyList()
+                    listOf(CmdID.CancelPongTimeout)
                 }
             state == BackendState.LANDegraded && ev == EventID.PingTimeout && guards[GuardID.UnderMaxFailures]?.invoke() == true ->
                 run {

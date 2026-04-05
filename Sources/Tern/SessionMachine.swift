@@ -175,6 +175,8 @@ public enum CmdID: String, Sendable {
     case stopLanDgReader = "stop_lan_dg_reader"
     case startMonitor = "start_monitor"
     case stopMonitor = "stop_monitor"
+    case startPongTimeout = "start_pong_timeout"
+    case cancelPongTimeout = "cancel_pong_timeout"
     case startBackoffTimer = "start_backoff_timer"
     case closeLanPath = "close_lan_path"
     case signalLanReady = "signal_lan_ready"
@@ -526,14 +528,14 @@ public final class BackendMachine: @unchecked Sendable {
             return [.resetLanReady, .startBackoffTimer]
         case (.lANActive, .pingTick):
             state = .lANActive
-            return [.sendPathPing]
+            return [.sendPathPing, .startPongTimeout]
         case (.lANActive, .pingTimeout):
             pingFailures = 1
             state = .lANDegraded
             return []
         case (.lANDegraded, .pingTick):
             state = .lANDegraded
-            return [.sendPathPing]
+            return [.sendPathPing, .startPongTimeout]
         case (.lANActive, .lanStreamError):
             try actions[.fallbackToRelay]?()
             // backoff_level: Min(backoff_level + 1, max_backoff_level) (set by action)
@@ -558,7 +560,7 @@ public final class BackendMachine: @unchecked Sendable {
             try actions[.resetFailures]?()
             pingFailures = 0
             state = .lANActive
-            return []
+            return [.cancelPongTimeout]
         case (.lANDegraded, .pingTimeout) where guards[.underMaxFailures]?() == true:
             // ping_failures: ping_failures + 1 (set by action)
             state = .lANDegraded

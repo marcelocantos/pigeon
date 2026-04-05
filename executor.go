@@ -321,12 +321,6 @@ func (e *executor) run() {
 				continue
 			}
 
-			// Cancel pong timeout on pong receipt.
-			if ev.id == EventRecvPathPong && e.pongCancel != nil {
-				e.pongCancel()
-				e.pongCancel = nil
-			}
-
 			// Stash event-specific data before the machine processes it.
 			if ev.id == EventRecvLanOffer {
 				if od, ok := ev.payload.(*lanOfferData); ok {
@@ -456,24 +450,10 @@ func (e *executor) executeCommand(cmd CmdID, payload any) {
 		}
 
 	case CmdSendPathPing:
-		slog.Debug("sending path ping")
 		p := e.activePath()
 		if p.dg != nil {
 			p.dg.SendDatagram([]byte{dgPing})
 		}
-		// Start pong timeout — if no pong arrives in time, fire ping_timeout.
-		if e.pongCancel != nil {
-			e.pongCancel()
-		}
-		ctx, cancel := context.WithCancel(e.ctx)
-		e.pongCancel = cancel
-		go func() {
-			select {
-			case <-time.After(e.pongTimeout):
-				e.submit(event{id: EventPingTimeout})
-			case <-ctx.Done():
-			}
-		}()
 
 	case CmdSendPathPong:
 		p := e.activePath()
@@ -533,6 +513,26 @@ func (e *executor) executeCommand(cmd CmdID, payload any) {
 		if e.monitorCancel != nil {
 			e.monitorCancel()
 			e.monitorCancel = nil
+		}
+
+	case CmdStartPongTimeout:
+		if e.pongCancel != nil {
+			e.pongCancel()
+		}
+		ctx, cancel := context.WithCancel(e.ctx)
+		e.pongCancel = cancel
+		go func() {
+			select {
+			case <-time.After(e.pongTimeout):
+				e.submit(event{id: EventPingTimeout})
+			case <-ctx.Done():
+			}
+		}()
+
+	case CmdCancelPongTimeout:
+		if e.pongCancel != nil {
+			e.pongCancel()
+			e.pongCancel = nil
 		}
 
 	case CmdStartBackoffTimer:
