@@ -23,7 +23,8 @@ import (
 // event carries an event ID plus optional payload into the executor.
 type event struct {
 	id      EventID
-	payload any // typed per event
+	payload any          // typed per event
+	done    chan struct{} // closed after processing (optional, for sync)
 }
 
 // sendRequest is the payload for EvAppSend.
@@ -237,6 +238,19 @@ func (e *executor) recv(ctx context.Context) ([]byte, error) {
 	}
 }
 
+// submitSync posts an event and blocks until the event loop has
+// processed it. Used by fallbackToRelay to ensure commands execute
+// before returning.
+func (e *executor) submitSync(ev event) {
+	done := make(chan struct{})
+	ev.done = done
+	e.submit(ev)
+	select {
+	case <-done:
+	case <-e.ctx.Done():
+	}
+}
+
 // submit posts an event to the executor. Non-blocking if the channel
 // has capacity; blocks if full (backpressure).
 func (e *executor) submit(ev event) {
@@ -263,6 +277,9 @@ func (e *executor) run() {
 						e.recvWaiters = append(e.recvWaiters, ch)
 					}
 				}
+				if ev.done != nil {
+					close(ev.done)
+				}
 				continue
 			}
 			if ev.id == EventAppRecvDatagram {
@@ -273,6 +290,9 @@ func (e *executor) run() {
 					} else {
 						e.dgRecvWaiters = append(e.dgRecvWaiters, ch)
 					}
+				}
+				if ev.done != nil {
+					close(ev.done)
 				}
 				continue
 			}
@@ -310,6 +330,11 @@ func (e *executor) run() {
 			// machine has no specific transition for this state).
 			if cmds == nil {
 				e.handleUnmatchedEvent(ev)
+			}
+
+			// Signal synchronous waiters.
+			if ev.done != nil {
+				close(ev.done)
 			}
 
 		case <-e.ctx.Done():

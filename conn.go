@@ -444,33 +444,26 @@ func (c *Conn) Close() error {
 }
 
 // fallbackToRelay forces a fallback from the direct path to relay.
-// Submits events to the executor so commands are properly executed.
+// Submits events to the executor and waits for each to be processed.
 func (c *Conn) fallbackToRelay() {
 	switch m := c.exec.machine.(type) {
 	case *BackendMachine:
 		switch m.State {
 		case BackendLANActive:
-			c.exec.submit(event{id: EventPingTimeout})
-			// Give the event loop time to process.
-			time.Sleep(10 * time.Millisecond)
+			c.exec.submitSync(event{id: EventPingTimeout})
 			m.PingFailures = 2
-			c.exec.submit(event{id: EventPingTimeout})
-			time.Sleep(10 * time.Millisecond)
+			c.exec.submitSync(event{id: EventPingTimeout})
 		case BackendLANDegraded:
 			m.PingFailures = 2
-			c.exec.submit(event{id: EventPingTimeout})
-			time.Sleep(10 * time.Millisecond)
+			c.exec.submitSync(event{id: EventPingTimeout})
 		case BackendLANOffered:
-			c.exec.submit(event{id: EventOfferTimeout})
-			time.Sleep(10 * time.Millisecond)
+			c.exec.submitSync(event{id: EventOfferTimeout})
 		}
 	case *ClientMachine:
 		switch m.State {
 		case ClientLANActive:
-			c.exec.submit(event{id: EventLanError})
-			time.Sleep(10 * time.Millisecond)
-			c.exec.submit(event{id: EventRelayOk})
-			time.Sleep(10 * time.Millisecond)
+			c.exec.submitSync(event{id: EventLanError})
+			c.exec.submitSync(event{id: EventRelayOk})
 		}
 	}
 }
