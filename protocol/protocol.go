@@ -21,6 +21,9 @@ type GuardID string
 // ActionID identifies a named side-effect action.
 type ActionID string
 
+// EventID identifies an internal event that triggers a transition.
+type EventID string
+
 // PropertyKind classifies a verification property.
 type PropertyKind int
 

@@ -10,7 +10,7 @@ import (
 )
 
 // ExportGo writes a Go source file with:
-//   - State/message/guard/action enum constants
+//   - State/message/guard/action/event enum constants
 //   - Protocol table literal (*Protocol)
 //   - Typed structs from YAML struct definitions
 //   - Per-actor typed state machines with HandleMessage/Step
@@ -41,41 +41,52 @@ func (p *Protocol) ExportGo(w io.Writer, pkgName, funcName string) error {
 		}
 	}
 
-	b.WriteString("import (\n")
-	b.WriteString("\t\"github.com/marcelocantos/tern/protocol\"\n")
-	if needsFrozen {
-		b.WriteString("\t\"github.com/arr-ai/frozen\"\n")
-	}
-	b.WriteString(")\n\n")
+	// When generating into the protocol package itself, skip the
+	// self-import and type aliases.
+	selfPkg := pkgName == "protocol"
+	if selfPkg {
+		if needsFrozen {
+			b.WriteString("import \"github.com/arr-ai/frozen\"\n\n")
+			b.WriteString("var _ frozen.Set[string] // suppress unused import\n\n")
+		}
+	} else {
+		b.WriteString("import (\n")
+		b.WriteString("\t\"github.com/marcelocantos/tern/protocol\"\n")
+		if needsFrozen {
+			b.WriteString("\t\"github.com/arr-ai/frozen\"\n")
+		}
+		b.WriteString(")\n\n")
 
-	b.WriteString("type (\n")
-	b.WriteString("\tState      = protocol.State\n")
-	b.WriteString("\tMsgType    = protocol.MsgType\n")
-	b.WriteString("\tGuardID    = protocol.GuardID\n")
-	b.WriteString("\tActionID   = protocol.ActionID\n")
-	b.WriteString("\tProtocol   = protocol.Protocol\n")
-	b.WriteString("\tActor      = protocol.Actor\n")
-	b.WriteString("\tTransition = protocol.Transition\n")
-	b.WriteString("\tSend       = protocol.Send\n")
-	b.WriteString("\tMessage    = protocol.Message\n")
-	b.WriteString("\tVarDef     = protocol.VarDef\n")
-	b.WriteString("\tVarUpdate  = protocol.VarUpdate\n")
-	b.WriteString("\tGuardDef   = protocol.GuardDef\n")
-	b.WriteString("\tOperator   = protocol.Operator\n")
-	b.WriteString("\tAdvAction  = protocol.AdvAction\n")
-	b.WriteString("\tProperty   = protocol.Property\n")
-	b.WriteString(")\n\n")
+		b.WriteString("type (\n")
+		b.WriteString("\tState      = protocol.State\n")
+		b.WriteString("\tMsgType    = protocol.MsgType\n")
+		b.WriteString("\tGuardID    = protocol.GuardID\n")
+		b.WriteString("\tActionID   = protocol.ActionID\n")
+		b.WriteString("\tEventID    = protocol.EventID\n")
+		b.WriteString("\tProtocol   = protocol.Protocol\n")
+		b.WriteString("\tActor      = protocol.Actor\n")
+		b.WriteString("\tTransition = protocol.Transition\n")
+		b.WriteString("\tSend       = protocol.Send\n")
+		b.WriteString("\tMessage    = protocol.Message\n")
+		b.WriteString("\tVarDef     = protocol.VarDef\n")
+		b.WriteString("\tVarUpdate  = protocol.VarUpdate\n")
+		b.WriteString("\tGuardDef   = protocol.GuardDef\n")
+		b.WriteString("\tOperator   = protocol.Operator\n")
+		b.WriteString("\tAdvAction  = protocol.AdvAction\n")
+		b.WriteString("\tProperty   = protocol.Property\n")
+		b.WriteString(")\n\n")
 
-	// Constructor aliases.
-	b.WriteString("var (\n")
-	b.WriteString("\tRecv     = protocol.Recv\n")
-	b.WriteString("\tInternal = protocol.Internal\n")
-	b.WriteString("\tInvariant = protocol.Invariant\n")
-	b.WriteString("\tLiveness  = protocol.Liveness\n")
-	b.WriteString(")\n\n")
+		// Constructor aliases.
+		b.WriteString("var (\n")
+		b.WriteString("\tRecv     = protocol.Recv\n")
+		b.WriteString("\tInternal = protocol.Internal\n")
+		b.WriteString("\tInvariant = protocol.Invariant\n")
+		b.WriteString("\tLiveness  = protocol.Liveness\n")
+		b.WriteString(")\n\n")
 
-	if needsFrozen {
-		b.WriteString("var _ frozen.Set[string] // suppress unused import\n\n")
+		if needsFrozen {
+			b.WriteString("var _ frozen.Set[string] // suppress unused import\n\n")
+		}
 	}
 
 	// --- Enum constants ---
@@ -104,10 +115,14 @@ func (p *Protocol) ExportGo(w io.Writer, pkgName, funcName string) error {
 	b.WriteString(")\n\n")
 
 	actions := map[string]bool{}
+	events := map[string]bool{}
 	for _, a := range p.Actors {
 		for _, t := range a.Transitions {
 			if t.Do != "" {
 				actions[string(t.Do)] = true
+			}
+			if t.On.Kind == TriggerInternal {
+				events[t.On.Desc] = true
 			}
 		}
 	}
@@ -115,6 +130,14 @@ func (p *Protocol) ExportGo(w io.Writer, pkgName, funcName string) error {
 		b.WriteString("// Actions.\nconst (\n")
 		for id := range actions {
 			fmt.Fprintf(&b, "\tAction%s ActionID = %q\n", goCamel(id), id)
+		}
+		b.WriteString(")\n\n")
+	}
+
+	if len(events) > 0 {
+		b.WriteString("// Internal events.\nconst (\n")
+		for id := range events {
+			fmt.Fprintf(&b, "\tEvent%s EventID = %q\n", goCamel(id), id)
 		}
 		b.WriteString(")\n\n")
 	}
@@ -313,8 +336,8 @@ func (p *Protocol) ExportGo(w io.Writer, pkgName, funcName string) error {
 		}
 		b.WriteString("\t}\n\treturn false, nil\n}\n\n")
 
-		// Step.
-		fmt.Fprintf(&b, "func (m *%sMachine) Step() (bool, error) {\n", prefix)
+		// Step — takes an EventID to disambiguate internal transitions.
+		fmt.Fprintf(&b, "func (m *%sMachine) Step(event EventID) (bool, error) {\n", prefix)
 		b.WriteString("\tswitch {\n")
 		for _, t := range a.Transitions {
 			if t.On.Kind != TriggerInternal {
@@ -325,8 +348,9 @@ func (p *Protocol) ExportGo(w io.Writer, pkgName, funcName string) error {
 				guard = fmt.Sprintf(" && m.Guards[Guard%s] != nil && m.Guards[Guard%s]()",
 					goCamel(string(t.Guard)), goCamel(string(t.Guard)))
 			}
-			fmt.Fprintf(&b, "\tcase m.State == %s%s%s:\n",
-				stateType, goCamel(string(t.From)), guard)
+			fmt.Fprintf(&b, "\tcase m.State == %s%s && event == Event%s%s:\n",
+				stateType, goCamel(string(t.From)),
+				goCamel(t.On.Desc), guard)
 
 			writeGoTransitionBody(&b, t, stateType)
 			b.WriteString("\t\treturn true, nil\n")
@@ -436,7 +460,7 @@ func goCamel(s string) string {
 	var b strings.Builder
 	upper := true
 	for _, r := range s {
-		if r == '_' || r == '-' {
+		if r == '_' || r == '-' || r == ' ' {
 			upper = true
 			continue
 		}

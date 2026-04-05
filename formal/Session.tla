@@ -1,6 +1,5 @@
 ---- MODULE Session ----
-\* Auto-generated from protocol definition. Do not edit.
-\* Source of truth: internal/protocol/ Go definition.
+\* Auto-generated from protocol YAML. Do not edit.
 
 EXTENDS Integers, Sequences, FiniteSets, TLC
 
@@ -25,7 +24,7 @@ backend_LANDegraded == "backend_LANDegraded"
 
 \* States for client
 client_Idle == "client_Idle"
-client_ScanQR == "client_ScanQR"
+client_ObtainBackchannelSecret == "client_ObtainBackchannelSecret"
 client_ConnectRelay == "client_ConnectRelay"
 client_GenKeyPair == "client_GenKeyPair"
 client_WaitAck == "client_WaitAck"
@@ -48,19 +47,18 @@ relay_BackendRegistered == "relay_BackendRegistered"
 relay_Bridged == "relay_Bridged"
 
 \* Message types
-MSG_pair_hello == "pair_hello" \* client -> backend (ECDH pubkey + pairing token)
-MSG_pair_hello_ack == "pair_hello_ack" \* backend -> client (ECDH pubkey)
-MSG_pair_confirm == "pair_confirm" \* backend -> client (signal to compute and display code)
-MSG_pair_complete == "pair_complete" \* backend -> client (encrypted device secret)
-MSG_auth_request == "auth_request" \* client -> backend (encrypted auth with nonce)
-MSG_auth_ok == "auth_ok" \* backend -> client (session established)
-MSG_lan_offer == "lan_offer" \* backend -> client (LAN address + challenge (sent via relay))
-MSG_lan_verify == "lan_verify" \* client -> backend (challenge response + instance ID (sent via LAN))
-MSG_lan_confirm == "lan_confirm" \* backend -> client (LAN verified, path is live (sent via LAN))
-MSG_path_ping == "path_ping" \* backend -> client (health check on active direct path)
-MSG_path_pong == "path_pong" \* client -> backend (health check response)
+MSG_pair_hello == "pair_hello"
+MSG_pair_hello_ack == "pair_hello_ack"
+MSG_pair_confirm == "pair_confirm"
+MSG_pair_complete == "pair_complete"
+MSG_auth_request == "auth_request"
+MSG_auth_ok == "auth_ok"
+MSG_lan_offer == "lan_offer"
+MSG_lan_verify == "lan_verify"
+MSG_lan_confirm == "lan_confirm"
+MSG_path_ping == "path_ping"
+MSG_path_pong == "path_pong"
 
-\* Helper operators
 \* deterministic ordering for ECDH
 KeyRank(k) == CASE k = "adv_pub" -> 0 [] k = "client_pub" -> 1 [] k = "backend_pub" -> 2 [] OTHER -> 3
 \* symbolic ECDH
@@ -70,977 +68,606 @@ DeriveCode(a, b) == IF KeyRank(a) <= KeyRank(b) THEN <<"code", a, b>> ELSE <<"co
 \* minimum of two values
 Min(a, b) == IF a < b THEN a ELSE b
 
-(*--algorithm Session
 
-variables
-    backend_state = backend_Idle,
-    client_state = client_Idle,
-    relay_state = relay_Idle,
-    chan_backend_client = <<>>,
-    chan_client_backend = <<>>,
-    adversary_knowledge = {},
-    \* pairing token currently in play
-    current_token = "none",
-    \* set of valid (non-revoked) tokens
-    active_tokens = {},
-    \* set of revoked tokens
-    used_tokens = {},
-    \* backend ECDH public key
-    backend_ecdh_pub = "none",
-    \* pubkey backend received in pair_hello
-    received_client_pub = "none",
-    \* pubkey client received in pair_hello_ack
-    received_backend_pub = "none",
-    \* ECDH key derived by backend
-    backend_shared_key = <<"none">>,
-    \* ECDH key derived by client
-    client_shared_key = <<"none">>,
-    \* code computed by backend
-    backend_code = <<"none">>,
-    \* code computed by client
-    client_code = <<"none">>,
-    \* code entered via CLI
-    received_code = <<"none">>,
-    \* staging for CLI code input
-    cli_entered_code = <<"none">>,
-    \* failed code submission attempts
-    code_attempts = 0,
-    \* persistent device secret
-    device_secret = "none",
-    \* device IDs that completed pairing
-    paired_devices = {},
-    \* device_id from auth_request
-    received_device_id = "none",
-    \* set of consumed auth nonces
-    auth_nonces_used = {},
-    \* nonce from auth_request
-    received_auth_nonce = "none",
-    \* whether QR code has been shown (local backend state)
-    qr_displayed = FALSE,
-    \* last received message (staging)
-    recv_msg = [type |-> "none"],
-    \* encryption keys the adversary knows
-    adversary_keys = {},
-    \* adversary's ECDH public key
-    adv_ecdh_pub = "adv_pub",
-    \* real client pubkey saved during MitM
-    adv_saved_client_pub = "none",
-    \* real backend pubkey saved during MitM
-    adv_saved_server_pub = "none",
-    \* LAN server address (host:port)
-    lan_addr = "none",
-    \* 32-byte random challenge for LAN verification
-    challenge_bytes = "none",
-    \* challenge from the most recent LAN offer
-    offer_challenge = "none",
-    \* relay instance ID
-    instance_id = "none",
-    \* consecutive failed pings
-    ping_failures = 0,
-    \* threshold before fallback
-    max_ping_failures = 3,
-    \* exponential backoff level
-    backoff_level = 0,
-    \* backoff cap
-    max_backoff_level = 5,
-    \* LAN server listen address
-    lan_server_addr = "none",
-    \* backend active path
-    b_active_path = "relay",
-    \* client active path
-    c_active_path = "relay",
-    \* backend datagram dispatcher binding
-    b_dispatcher_path = "relay",
-    \* client datagram dispatcher binding
-    c_dispatcher_path = "relay",
-    \* health monitor target
-    monitor_target = "none",
-    \* LANReady notification state
-    lan_signal = "pending",
-    \* relay bridge state
-    relay_bridge = "idle";
 
-fair process backend = 1
-begin
-  backend_loop:
-  while TRUE do
-    either
-      \* Idle -> GenerateToken (cli_init_pair)
-      await backend_state = backend_Idle;
-      current_token := "tok_1";
-      active_tokens := active_tokens \union {"tok_1"};
-      backend_state := backend_GenerateToken;
-    or
-      \* GenerateToken -> RegisterRelay (token_created)
-      await backend_state = backend_GenerateToken;
-      backend_state := backend_RegisterRelay;
-    or
-      \* RegisterRelay -> WaitingForClient (relay_registered)
-      await backend_state = backend_RegisterRelay;
-      qr_displayed := TRUE;
-      backend_state := backend_WaitingForClient;
-    or
-      \* WaitingForClient -> DeriveSecret on pair_hello
-      await backend_state = backend_WaitingForClient /\ Len(chan_client_backend) > 0 /\ Head(chan_client_backend).type = MSG_pair_hello /\ (Head(chan_client_backend).token \in active_tokens);
-      recv_msg := Head(chan_client_backend);
-      chan_client_backend := Tail(chan_client_backend);
-      received_client_pub := recv_msg.pubkey;
-      backend_ecdh_pub := "backend_pub";
-      backend_shared_key := DeriveKey("backend_pub", recv_msg.pubkey);
-      backend_code := DeriveCode("backend_pub", recv_msg.pubkey);
-      backend_state := backend_DeriveSecret;
-    or
-      \* WaitingForClient -> Idle on pair_hello
-      await backend_state = backend_WaitingForClient /\ Len(chan_client_backend) > 0 /\ Head(chan_client_backend).type = MSG_pair_hello /\ (Head(chan_client_backend).token \notin active_tokens);
-      recv_msg := Head(chan_client_backend);
-      chan_client_backend := Tail(chan_client_backend);
-      backend_state := backend_Idle;
-    or
-      \* DeriveSecret -> SendAck (ecdh_complete)
-      await backend_state = backend_DeriveSecret;
-      chan_backend_client := Append(chan_backend_client, [type |-> MSG_pair_hello_ack, pubkey |-> backend_ecdh_pub]);
-      backend_state := backend_SendAck;
-    or
-      \* SendAck -> WaitingForCode (signal_code_display)
-      await backend_state = backend_SendAck;
-      chan_backend_client := Append(chan_backend_client, [type |-> MSG_pair_confirm]);
-      backend_state := backend_WaitingForCode;
-    or
-      \* WaitingForCode -> ValidateCode (cli_code_entered)
-      await backend_state = backend_WaitingForCode;
-      received_code := cli_entered_code;
-      backend_state := backend_ValidateCode;
-    or
-      \* ValidateCode -> StorePaired (check_code)
-      await backend_state = backend_ValidateCode /\ (received_code = backend_code);
-      backend_state := backend_StorePaired;
-    or
-      \* ValidateCode -> Idle (check_code)
-      await backend_state = backend_ValidateCode /\ (received_code /= backend_code);
-      code_attempts := code_attempts + 1;
-      backend_state := backend_Idle;
-    or
-      \* StorePaired -> Paired (finalise)
-      await backend_state = backend_StorePaired;
-      chan_backend_client := Append(chan_backend_client, [type |-> MSG_pair_complete, key |-> backend_shared_key, secret |-> "dev_secret_1"]);
-      device_secret := "dev_secret_1";
-      paired_devices := paired_devices \union {"device_1"};
-      active_tokens := active_tokens \ {current_token};
-      used_tokens := used_tokens \union {current_token};
-      backend_state := backend_Paired;
-    or
-      \* Paired -> AuthCheck on auth_request
-      await backend_state = backend_Paired /\ Len(chan_client_backend) > 0 /\ Head(chan_client_backend).type = MSG_auth_request;
-      recv_msg := Head(chan_client_backend);
-      chan_client_backend := Tail(chan_client_backend);
-      received_device_id := recv_msg.device_id;
-      received_auth_nonce := recv_msg.nonce;
-      backend_state := backend_AuthCheck;
-    or
-      \* AuthCheck -> SessionActive (verify)
-      await backend_state = backend_AuthCheck /\ (received_device_id \in paired_devices);
-      chan_backend_client := Append(chan_backend_client, [type |-> MSG_auth_ok]);
-      auth_nonces_used := auth_nonces_used \union {received_auth_nonce};
-      backend_state := backend_SessionActive;
-    or
-      \* AuthCheck -> Idle (verify)
-      await backend_state = backend_AuthCheck /\ (received_device_id \notin paired_devices);
-      backend_state := backend_Idle;
-    or
-      \* SessionActive -> RelayConnected (session_established)
-      await backend_state = backend_SessionActive;
-      backend_state := backend_RelayConnected;
-    or
-      \* RelayConnected -> LANOffered (lan_server_ready)
-      await backend_state = backend_RelayConnected;
-      chan_backend_client := Append(chan_backend_client, [type |-> MSG_lan_offer, addr |-> lan_addr, challenge |-> challenge_bytes]);
-      backend_state := backend_LANOffered;
-    or
-      \* LANOffered -> LANActive on lan_verify
-      await backend_state = backend_LANOffered /\ Len(chan_client_backend) > 0 /\ Head(chan_client_backend).type = MSG_lan_verify /\ (offer_challenge = challenge_bytes);
-      recv_msg := Head(chan_client_backend);
-      chan_client_backend := Tail(chan_client_backend);
-      chan_backend_client := Append(chan_backend_client, [type |-> MSG_lan_confirm]);
-      ping_failures := 0;
-      backoff_level := 0;
-      b_active_path := "lan";
-      b_dispatcher_path := "lan";
-      monitor_target := "lan";
-      lan_signal := "ready";
-      backend_state := backend_LANActive;
-    or
-      \* LANOffered -> RelayConnected on lan_verify
-      await backend_state = backend_LANOffered /\ Len(chan_client_backend) > 0 /\ Head(chan_client_backend).type = MSG_lan_verify /\ (offer_challenge /= challenge_bytes);
-      recv_msg := Head(chan_client_backend);
-      chan_client_backend := Tail(chan_client_backend);
-      backend_state := backend_RelayConnected;
-    or
-      \* LANOffered -> RelayBackoff (offer_timeout)
-      await backend_state = backend_LANOffered;
-      backoff_level := Min(backoff_level + 1, max_backoff_level);
-      backend_state := backend_RelayBackoff;
-    or
-      \* LANActive -> LANActive (ping_tick)
-      await backend_state = backend_LANActive;
-      chan_backend_client := Append(chan_backend_client, [type |-> MSG_path_ping]);
-      backend_state := backend_LANActive;
-    or
-      \* LANActive -> LANDegraded (ping_timeout)
-      await backend_state = backend_LANActive;
-      ping_failures := 1;
-      backend_state := backend_LANDegraded;
-    or
-      \* LANDegraded -> LANDegraded (ping_tick)
-      await backend_state = backend_LANDegraded;
-      chan_backend_client := Append(chan_backend_client, [type |-> MSG_path_ping]);
-      backend_state := backend_LANDegraded;
-    or
-      \* LANDegraded -> LANActive on path_pong
-      await backend_state = backend_LANDegraded /\ Len(chan_client_backend) > 0 /\ Head(chan_client_backend).type = MSG_path_pong;
-      recv_msg := Head(chan_client_backend);
-      chan_client_backend := Tail(chan_client_backend);
-      ping_failures := 0;
-      backend_state := backend_LANActive;
-    or
-      \* LANDegraded -> LANDegraded (ping_timeout)
-      await backend_state = backend_LANDegraded /\ (ping_failures + 1 < max_ping_failures);
-      ping_failures := ping_failures + 1;
-      backend_state := backend_LANDegraded;
-    or
-      \* LANDegraded -> RelayBackoff (ping_timeout)
-      await backend_state = backend_LANDegraded /\ (ping_failures + 1 >= max_ping_failures);
-      backoff_level := Min(backoff_level + 1, max_backoff_level);
-      b_active_path := "relay";
-      b_dispatcher_path := "relay";
-      monitor_target := "none";
-      lan_signal := "pending";
-      ping_failures := 0;
-      backend_state := backend_RelayBackoff;
-    or
-      \* RelayBackoff -> LANOffered (backoff_expired)
-      await backend_state = backend_RelayBackoff;
-      chan_backend_client := Append(chan_backend_client, [type |-> MSG_lan_offer, addr |-> lan_addr, challenge |-> challenge_bytes]);
-      backend_state := backend_LANOffered;
-    or
-      \* RelayBackoff -> LANOffered (lan_server_changed)
-      await backend_state = backend_RelayBackoff;
-      chan_backend_client := Append(chan_backend_client, [type |-> MSG_lan_offer, addr |-> lan_addr, challenge |-> challenge_bytes]);
-      backoff_level := 0;
-      backend_state := backend_LANOffered;
-    or
-      \* RelayConnected -> LANOffered (readvertise_tick)
-      await backend_state = backend_RelayConnected /\ (lan_server_addr /= "none");
-      chan_backend_client := Append(chan_backend_client, [type |-> MSG_lan_offer, addr |-> lan_addr, challenge |-> challenge_bytes]);
-      backend_state := backend_LANOffered;
-    or
-      \* RelayConnected -> Paired (disconnect)
-      await backend_state = backend_RelayConnected;
-      backend_state := backend_Paired;
-    end either;
-  end while;
-end process;
+CONSTANTS cli_entered_code, adversary_keys, adv_ecdh_pub, adv_saved_client_pub, adv_saved_server_pub, lan_addr, challenge_bytes, offer_challenge, instance_id, max_ping_failures, max_backoff_level, lan_server_addr
 
-fair process client = 2
-begin
-  client_loop:
-  while TRUE do
-    either
-      \* Idle -> ScanQR (user_scans_qr)
-      await client_state = client_Idle;
-      client_state := client_ScanQR;
-    or
-      \* ScanQR -> ConnectRelay (qr_parsed)
-      await client_state = client_ScanQR;
-      client_state := client_ConnectRelay;
-    or
-      \* ConnectRelay -> GenKeyPair (relay_connected)
-      await client_state = client_ConnectRelay;
-      client_state := client_GenKeyPair;
-    or
-      \* GenKeyPair -> WaitAck (key_pair_generated)
-      await client_state = client_GenKeyPair;
-      chan_client_backend := Append(chan_client_backend, [type |-> MSG_pair_hello, pubkey |-> "client_pub", token |-> current_token]);
-      client_state := client_WaitAck;
-    or
-      \* WaitAck -> E2EReady on pair_hello_ack
-      await client_state = client_WaitAck /\ Len(chan_backend_client) > 0 /\ Head(chan_backend_client).type = MSG_pair_hello_ack;
-      recv_msg := Head(chan_backend_client);
-      chan_backend_client := Tail(chan_backend_client);
-      received_backend_pub := recv_msg.pubkey;
-      client_shared_key := DeriveKey("client_pub", recv_msg.pubkey);
-      client_state := client_E2EReady;
-    or
-      \* E2EReady -> ShowCode on pair_confirm
-      await client_state = client_E2EReady /\ Len(chan_backend_client) > 0 /\ Head(chan_backend_client).type = MSG_pair_confirm;
-      recv_msg := Head(chan_backend_client);
-      chan_backend_client := Tail(chan_backend_client);
-      client_code := DeriveCode(received_backend_pub, "client_pub");
-      client_state := client_ShowCode;
-    or
-      \* ShowCode -> WaitPairComplete (code_displayed)
-      await client_state = client_ShowCode;
-      client_state := client_WaitPairComplete;
-    or
-      \* WaitPairComplete -> Paired on pair_complete
-      await client_state = client_WaitPairComplete /\ Len(chan_backend_client) > 0 /\ Head(chan_backend_client).type = MSG_pair_complete;
-      recv_msg := Head(chan_backend_client);
-      chan_backend_client := Tail(chan_backend_client);
-      client_state := client_Paired;
-    or
-      \* Paired -> Reconnect (app_launch)
-      await client_state = client_Paired;
-      client_state := client_Reconnect;
-    or
-      \* Reconnect -> SendAuth (relay_connected)
-      await client_state = client_Reconnect;
-      chan_client_backend := Append(chan_client_backend, [type |-> MSG_auth_request, device_id |-> "device_1", key |-> client_shared_key, nonce |-> "nonce_1", secret |-> device_secret]);
-      client_state := client_SendAuth;
-    or
-      \* SendAuth -> SessionActive on auth_ok
-      await client_state = client_SendAuth /\ Len(chan_backend_client) > 0 /\ Head(chan_backend_client).type = MSG_auth_ok;
-      recv_msg := Head(chan_backend_client);
-      chan_backend_client := Tail(chan_backend_client);
-      client_state := client_SessionActive;
-    or
-      \* SessionActive -> RelayConnected (session_established)
-      await client_state = client_SessionActive;
-      client_state := client_RelayConnected;
-    or
-      \* RelayConnected -> LANConnecting on lan_offer
-      await client_state = client_RelayConnected /\ Len(chan_backend_client) > 0 /\ Head(chan_backend_client).type = MSG_lan_offer /\ (TRUE);
-      recv_msg := Head(chan_backend_client);
-      chan_backend_client := Tail(chan_backend_client);
-      client_state := client_LANConnecting;
-    or
-      \* RelayConnected -> RelayConnected on lan_offer
-      await client_state = client_RelayConnected /\ Len(chan_backend_client) > 0 /\ Head(chan_backend_client).type = MSG_lan_offer /\ (FALSE);
-      recv_msg := Head(chan_backend_client);
-      chan_backend_client := Tail(chan_backend_client);
-      client_state := client_RelayConnected;
-    or
-      \* LANConnecting -> LANVerifying (lan_dial_ok)
-      await client_state = client_LANConnecting;
-      chan_client_backend := Append(chan_client_backend, [type |-> MSG_lan_verify, challenge |-> offer_challenge, instance_id |-> instance_id]);
-      client_state := client_LANVerifying;
-    or
-      \* LANConnecting -> RelayConnected (lan_dial_failed)
-      await client_state = client_LANConnecting;
-      client_state := client_RelayConnected;
-    or
-      \* LANVerifying -> LANActive on lan_confirm
-      await client_state = client_LANVerifying /\ Len(chan_backend_client) > 0 /\ Head(chan_backend_client).type = MSG_lan_confirm;
-      recv_msg := Head(chan_backend_client);
-      chan_backend_client := Tail(chan_backend_client);
-      c_active_path := "lan";
-      c_dispatcher_path := "lan";
-      lan_signal := "ready";
-      client_state := client_LANActive;
-    or
-      \* LANVerifying -> RelayConnected (verify_timeout)
-      await client_state = client_LANVerifying;
-      c_dispatcher_path := "relay";
-      client_state := client_RelayConnected;
-    or
-      \* LANActive -> LANActive on path_ping
-      await client_state = client_LANActive /\ Len(chan_backend_client) > 0 /\ Head(chan_backend_client).type = MSG_path_ping;
-      recv_msg := Head(chan_backend_client);
-      chan_backend_client := Tail(chan_backend_client);
-      chan_client_backend := Append(chan_client_backend, [type |-> MSG_path_pong]);
-      client_state := client_LANActive;
-    or
-      \* LANActive -> RelayFallback (lan_error)
-      await client_state = client_LANActive;
-      c_active_path := "relay";
-      c_dispatcher_path := "relay";
-      lan_signal := "pending";
-      client_state := client_RelayFallback;
-    or
-      \* RelayFallback -> RelayConnected (relay_ok)
-      await client_state = client_RelayFallback;
-      client_state := client_RelayConnected;
-    or
-      \* LANActive -> LANConnecting on lan_offer
-      await client_state = client_LANActive /\ Len(chan_backend_client) > 0 /\ Head(chan_backend_client).type = MSG_lan_offer /\ (TRUE);
-      recv_msg := Head(chan_backend_client);
-      chan_backend_client := Tail(chan_backend_client);
-      client_state := client_LANConnecting;
-    or
-      \* RelayConnected -> Paired (disconnect)
-      await client_state = client_RelayConnected;
-      client_state := client_Paired;
-    end either;
-  end while;
-end process;
+VARIABLES
+    backend_state,
+    client_state,
+    relay_state,
+    current_token,
+    active_tokens,
+    used_tokens,
+    backend_ecdh_pub,
+    received_client_pub,
+    received_backend_pub,
+    backend_shared_key,
+    client_shared_key,
+    backend_code,
+    client_code,
+    received_code,
+    code_attempts,
+    device_secret,
+    paired_devices,
+    received_device_id,
+    auth_nonces_used,
+    received_auth_nonce,
+    secret_published,
+    ping_failures,
+    backoff_level,
+    b_active_path,
+    c_active_path,
+    b_dispatcher_path,
+    c_dispatcher_path,
+    monitor_target,
+    lan_signal,
+    relay_bridge,
+    received_pair_hello,
+    received_auth_request,
+    received_lan_verify,
+    received_path_pong,
+    received_pair_hello_ack,
+    received_pair_confirm,
+    received_pair_complete,
+    received_auth_ok,
+    received_lan_offer,
+    received_lan_confirm,
+    received_path_ping
 
-fair process relay = 3
-begin
-  relay_loop:
-  while TRUE do
-    either
-      \* Idle -> BackendRegistered (backend_register)
-      await relay_state = relay_Idle;
-      relay_state := relay_BackendRegistered;
-    or
-      \* BackendRegistered -> Bridged (client_connect)
-      await relay_state = relay_BackendRegistered;
-      relay_bridge := "active";
-      relay_state := relay_Bridged;
-    or
-      \* Bridged -> BackendRegistered (client_disconnect)
-      await relay_state = relay_Bridged;
-      relay_bridge := "idle";
-      relay_state := relay_BackendRegistered;
-    or
-      \* BackendRegistered -> Idle (backend_disconnect)
-      await relay_state = relay_BackendRegistered;
-      relay_state := relay_Idle;
-    end either;
-  end while;
-end process;
+vars == <<backend_state, client_state, relay_state, current_token, active_tokens, used_tokens, backend_ecdh_pub, received_client_pub, received_backend_pub, backend_shared_key, client_shared_key, backend_code, client_code, received_code, code_attempts, device_secret, paired_devices, received_device_id, auth_nonces_used, received_auth_nonce, secret_published, ping_failures, backoff_level, b_active_path, c_active_path, b_dispatcher_path, c_dispatcher_path, monitor_target, lan_signal, relay_bridge, received_pair_hello, received_auth_request, received_lan_verify, received_path_pong, received_pair_hello_ack, received_pair_confirm, received_pair_complete, received_auth_ok, received_lan_offer, received_lan_confirm, received_path_ping>>
 
-\* Dolev-Yao adversary: controls the network.
-\* Can read, drop, replay, and reorder messages on all channels.
-\* Cannot forge messages or break cryptographic primitives.
-\* Extended capabilities model specific attack scenarios.
-fair process Adversary = 4
-begin
-  adv_loop:
-  while TRUE do
-    await backend_state \notin {backend_RelayConnected, backend_LANOffered, backend_LANActive, backend_LANDegraded, backend_RelayBackoff};
-    either
-      skip \* no-op: honest relay
-    or
-      \* Eavesdrop on backend -> client
-      await Len(chan_backend_client) > 0;
-      adversary_knowledge := adversary_knowledge \union {Head(chan_backend_client)};
-    or
-      \* Drop from backend -> client
-      await Len(chan_backend_client) > 0;
-      chan_backend_client := Tail(chan_backend_client);
-    or
-      \* Replay into backend -> client
-      await adversary_knowledge /= {} /\ Len(chan_backend_client) < 3;
-      with msg \in adversary_knowledge do
-        chan_backend_client := Append(chan_backend_client, msg);
-      end with;
-    or
-      \* Eavesdrop on client -> backend
-      await Len(chan_client_backend) > 0;
-      adversary_knowledge := adversary_knowledge \union {Head(chan_client_backend)};
-    or
-      \* Drop from client -> backend
-      await Len(chan_client_backend) > 0;
-      chan_client_backend := Tail(chan_client_backend);
-    or
-      \* Replay into client -> backend
-      await adversary_knowledge /= {} /\ Len(chan_client_backend) < 3;
-      with msg \in adversary_knowledge do
-        chan_client_backend := Append(chan_client_backend, msg);
-      end with;
-    or
-      \* QR_shoulder_surf: observe QR code content
-      await current_token /= "none";
-      adversary_knowledge := adversary_knowledge \union {[type |-> "qr_token", token |-> current_token]};
-    or
-      \* MitM_pair_hello: intercept pair_hello and substitute adversary pubkey
-      await Len(chan_client_backend) > 0 /\ Head(chan_client_backend).type = MSG_pair_hello;
-      adv_saved_client_pub := Head(chan_client_backend).pubkey;
-      chan_client_backend := <<[type |-> MSG_pair_hello, token |-> Head(chan_client_backend).token, pubkey |-> adv_ecdh_pub]>> \o Tail(chan_client_backend);
-    or
-      \* MitM_pair_hello_ack: intercept pair_hello_ack and substitute adversary pubkey
-      await Len(chan_backend_client) > 0 /\ Head(chan_backend_client).type = MSG_pair_hello_ack;
-      adv_saved_server_pub := Head(chan_backend_client).pubkey;
-      adversary_keys := adversary_keys \union {DeriveKey(adv_ecdh_pub, adv_saved_server_pub), DeriveKey(adv_ecdh_pub, adv_saved_client_pub)};
-      chan_backend_client := <<[type |-> MSG_pair_hello_ack, pubkey |-> adv_ecdh_pub]>> \o Tail(chan_backend_client);
-    or
-      \* MitM_reencrypt_secret: decrypt pair_complete with MitM key
-      await Len(chan_backend_client) > 0 /\ Head(chan_backend_client).type = MSG_pair_complete /\ Head(chan_backend_client).key \in adversary_keys;
-      with msg = Head(chan_backend_client) do
-        adversary_knowledge := adversary_knowledge \union {[type |-> "plaintext_secret", secret |-> msg.secret]};
-        chan_backend_client := <<[type |-> MSG_pair_complete, key |-> DeriveKey(adv_ecdh_pub, adv_saved_client_pub), secret |-> msg.secret]>> \o Tail(chan_backend_client);
-      end with;
-    or
-      \* concurrent_pair: race a forged pair_hello using shoulder-surfed token
-      await \E m \in adversary_knowledge : m = [type |-> "qr_token", token |-> current_token];
-      await Len(chan_client_backend) < 3;
-      chan_client_backend := Append(chan_client_backend, [type |-> MSG_pair_hello, token |-> current_token, pubkey |-> adv_ecdh_pub]);
-    or
-      \* token_bruteforce: send pair_hello with fabricated token
-      await Len(chan_client_backend) < 3;
-      chan_client_backend := Append(chan_client_backend, [type |-> MSG_pair_hello, token |-> "fake_token", pubkey |-> adv_ecdh_pub]);
-    or
-      \* code_guess: submit fabricated confirmation code
-      await backend_state = backend_WaitingForCode;
-      cli_entered_code := <<"guess", "000000">>;
-    or
-      \* session_replay: replay captured auth_request with stale nonce
-      await Len(chan_client_backend) < 3;
-      await \E m \in adversary_knowledge : m.type = MSG_auth_request;
-      with msg \in {m \in adversary_knowledge : m.type = MSG_auth_request} do
-        chan_client_backend := Append(chan_client_backend, msg);
-      end with;
-    end either;
-  end while;
-end process;
+Init ==
+    /\ backend_state = backend_Idle
+    /\ client_state = client_Idle
+    /\ relay_state = relay_Idle
+    /\ current_token = "none"
+    /\ active_tokens = {}
+    /\ used_tokens = {}
+    /\ backend_ecdh_pub = "none"
+    /\ received_client_pub = "none"
+    /\ received_backend_pub = "none"
+    /\ backend_shared_key = <<"none">>
+    /\ client_shared_key = <<"none">>
+    /\ backend_code = <<"none">>
+    /\ client_code = <<"none">>
+    /\ received_code = <<"none">>
+    /\ code_attempts = 0
+    /\ device_secret = "none"
+    /\ paired_devices = {}
+    /\ received_device_id = "none"
+    /\ auth_nonces_used = {}
+    /\ received_auth_nonce = "none"
+    /\ secret_published = FALSE
+    /\ ping_failures = 0
+    /\ backoff_level = 0
+    /\ b_active_path = "relay"
+    /\ c_active_path = "relay"
+    /\ b_dispatcher_path = "relay"
+    /\ c_dispatcher_path = "relay"
+    /\ monitor_target = "none"
+    /\ lan_signal = "pending"
+    /\ relay_bridge = "idle"
+    /\ received_pair_hello = [type |-> "none"]
+    /\ received_auth_request = [type |-> "none"]
+    /\ received_lan_verify = [type |-> "none"]
+    /\ received_path_pong = [type |-> "none"]
+    /\ received_pair_hello_ack = [type |-> "none"]
+    /\ received_pair_confirm = [type |-> "none"]
+    /\ received_pair_complete = [type |-> "none"]
+    /\ received_auth_ok = [type |-> "none"]
+    /\ received_lan_offer = [type |-> "none"]
+    /\ received_lan_confirm = [type |-> "none"]
+    /\ received_path_ping = [type |-> "none"]
 
-end algorithm; *)
-\* BEGIN TRANSLATION
-VARIABLES backend_state, client_state, relay_state, chan_backend_client, 
-          chan_client_backend, adversary_knowledge, current_token, 
-          active_tokens, used_tokens, backend_ecdh_pub, received_client_pub, 
-          received_backend_pub, backend_shared_key, client_shared_key, 
-          backend_code, client_code, received_code, cli_entered_code, 
-          code_attempts, device_secret, paired_devices, received_device_id, 
-          auth_nonces_used, received_auth_nonce, qr_displayed, recv_msg, 
-          adversary_keys, adv_ecdh_pub, adv_saved_client_pub, 
-          adv_saved_server_pub, lan_addr, challenge_bytes, offer_challenge, 
-          instance_id, ping_failures, max_ping_failures, backoff_level, 
-          max_backoff_level, lan_server_addr, b_active_path, c_active_path, 
-          b_dispatcher_path, c_dispatcher_path, monitor_target, lan_signal, 
-          relay_bridge
+\* backend: Idle -> GenerateToken (cli_init_pair)
+backend_Idle_to_GenerateToken_cli_init_pair ==
+    /\ backend_state = backend_Idle
+    /\ backend_state' = backend_GenerateToken
+    /\ current_token' = "tok_1"
+    /\ active_tokens' = active_tokens \union {"tok_1"}
+    /\ UNCHANGED <<client_state, relay_state, used_tokens, backend_ecdh_pub, received_client_pub, received_backend_pub, backend_shared_key, client_shared_key, backend_code, client_code, received_code, code_attempts, device_secret, paired_devices, received_device_id, auth_nonces_used, received_auth_nonce, secret_published, ping_failures, backoff_level, b_active_path, c_active_path, b_dispatcher_path, c_dispatcher_path, monitor_target, lan_signal, relay_bridge, received_pair_hello, received_auth_request, received_lan_verify, received_path_pong, received_pair_hello_ack, received_pair_confirm, received_pair_complete, received_auth_ok, received_lan_offer, received_lan_confirm, received_path_ping>>
 
-vars == << backend_state, client_state, relay_state, chan_backend_client, 
-           chan_client_backend, adversary_knowledge, current_token, 
-           active_tokens, used_tokens, backend_ecdh_pub, received_client_pub, 
-           received_backend_pub, backend_shared_key, client_shared_key, 
-           backend_code, client_code, received_code, cli_entered_code, 
-           code_attempts, device_secret, paired_devices, received_device_id, 
-           auth_nonces_used, received_auth_nonce, qr_displayed, recv_msg, 
-           adversary_keys, adv_ecdh_pub, adv_saved_client_pub, 
-           adv_saved_server_pub, lan_addr, challenge_bytes, offer_challenge, 
-           instance_id, ping_failures, max_ping_failures, backoff_level, 
-           max_backoff_level, lan_server_addr, b_active_path, c_active_path, 
-           b_dispatcher_path, c_dispatcher_path, monitor_target, lan_signal, 
-           relay_bridge >>
+\* backend: GenerateToken -> RegisterRelay (token_created)
+backend_GenerateToken_to_RegisterRelay_token_created ==
+    /\ backend_state = backend_GenerateToken
+    /\ backend_state' = backend_RegisterRelay
+    /\ UNCHANGED <<client_state, relay_state, current_token, active_tokens, used_tokens, backend_ecdh_pub, received_client_pub, received_backend_pub, backend_shared_key, client_shared_key, backend_code, client_code, received_code, code_attempts, device_secret, paired_devices, received_device_id, auth_nonces_used, received_auth_nonce, secret_published, ping_failures, backoff_level, b_active_path, c_active_path, b_dispatcher_path, c_dispatcher_path, monitor_target, lan_signal, relay_bridge, received_pair_hello, received_auth_request, received_lan_verify, received_path_pong, received_pair_hello_ack, received_pair_confirm, received_pair_complete, received_auth_ok, received_lan_offer, received_lan_confirm, received_path_ping>>
 
-ProcSet == {1} \cup {2} \cup {3} \cup {4}
+\* backend: RegisterRelay -> WaitingForClient (relay_registered)
+backend_RegisterRelay_to_WaitingForClient_relay_registered ==
+    /\ backend_state = backend_RegisterRelay
+    /\ backend_state' = backend_WaitingForClient
+    /\ secret_published' = TRUE
+    /\ UNCHANGED <<client_state, relay_state, current_token, active_tokens, used_tokens, backend_ecdh_pub, received_client_pub, received_backend_pub, backend_shared_key, client_shared_key, backend_code, client_code, received_code, code_attempts, device_secret, paired_devices, received_device_id, auth_nonces_used, received_auth_nonce, ping_failures, backoff_level, b_active_path, c_active_path, b_dispatcher_path, c_dispatcher_path, monitor_target, lan_signal, relay_bridge, received_pair_hello, received_auth_request, received_lan_verify, received_path_pong, received_pair_hello_ack, received_pair_confirm, received_pair_complete, received_auth_ok, received_lan_offer, received_lan_confirm, received_path_ping>>
 
-Init == (* Global variables *)
-        /\ backend_state = backend_Idle
-        /\ client_state = client_Idle
-        /\ relay_state = relay_Idle
-        /\ chan_backend_client = <<>>
-        /\ chan_client_backend = <<>>
-        /\ adversary_knowledge = {}
-        /\ current_token = "none"
-        /\ active_tokens = {}
-        /\ used_tokens = {}
-        /\ backend_ecdh_pub = "none"
-        /\ received_client_pub = "none"
-        /\ received_backend_pub = "none"
-        /\ backend_shared_key = <<"none">>
-        /\ client_shared_key = <<"none">>
-        /\ backend_code = <<"none">>
-        /\ client_code = <<"none">>
-        /\ received_code = <<"none">>
-        /\ cli_entered_code = <<"none">>
-        /\ code_attempts = 0
-        /\ device_secret = "none"
-        /\ paired_devices = {}
-        /\ received_device_id = "none"
-        /\ auth_nonces_used = {}
-        /\ received_auth_nonce = "none"
-        /\ qr_displayed = FALSE
-        /\ recv_msg = [type |-> "none"]
-        /\ adversary_keys = {}
-        /\ adv_ecdh_pub = "adv_pub"
-        /\ adv_saved_client_pub = "none"
-        /\ adv_saved_server_pub = "none"
-        /\ lan_addr = "none"
-        /\ challenge_bytes = "none"
-        /\ offer_challenge = "none"
-        /\ instance_id = "none"
-        /\ ping_failures = 0
-        /\ max_ping_failures = 3
-        /\ backoff_level = 0
-        /\ max_backoff_level = 5
-        /\ lan_server_addr = "none"
-        /\ b_active_path = "relay"
-        /\ c_active_path = "relay"
-        /\ b_dispatcher_path = "relay"
-        /\ c_dispatcher_path = "relay"
-        /\ monitor_target = "none"
-        /\ lan_signal = "pending"
-        /\ relay_bridge = "idle"
+\* backend: WaitingForClient -> DeriveSecret on recv pair_hello [token_valid]
+backend_WaitingForClient_to_DeriveSecret_on_pair_hello_token_valid ==
+    /\ backend_state = backend_WaitingForClient
+    /\ received_pair_hello.type = MSG_pair_hello
+    /\ received_pair_hello.token \in active_tokens
+    /\ received_pair_hello' = [type |-> "none"]
+    /\ backend_state' = backend_DeriveSecret
+    /\ received_client_pub' = received_pair_hello.pubkey
+    /\ backend_ecdh_pub' = "backend_pub"
+    /\ backend_shared_key' = DeriveKey("backend_pub", received_pair_hello.pubkey)
+    /\ backend_code' = DeriveCode("backend_pub", received_pair_hello.pubkey)
+    /\ UNCHANGED <<client_state, relay_state, current_token, active_tokens, used_tokens, received_backend_pub, client_shared_key, client_code, received_code, code_attempts, device_secret, paired_devices, received_device_id, auth_nonces_used, received_auth_nonce, secret_published, ping_failures, backoff_level, b_active_path, c_active_path, b_dispatcher_path, c_dispatcher_path, monitor_target, lan_signal, relay_bridge, received_auth_request, received_lan_verify, received_path_pong, received_pair_hello_ack, received_pair_confirm, received_pair_complete, received_auth_ok, received_lan_offer, received_lan_confirm, received_path_ping>>
 
-backend == /\ \/ /\ backend_state = backend_Idle
-                 /\ current_token' = "tok_1"
-                 /\ active_tokens' = (active_tokens \union {"tok_1"})
-                 /\ backend_state' = backend_GenerateToken
-                 /\ UNCHANGED <<chan_backend_client, chan_client_backend, used_tokens, backend_ecdh_pub, received_client_pub, backend_shared_key, backend_code, received_code, code_attempts, device_secret, paired_devices, received_device_id, auth_nonces_used, received_auth_nonce, qr_displayed, recv_msg, ping_failures, backoff_level, b_active_path, b_dispatcher_path, monitor_target, lan_signal>>
-              \/ /\ backend_state = backend_GenerateToken
-                 /\ backend_state' = backend_RegisterRelay
-                 /\ UNCHANGED <<chan_backend_client, chan_client_backend, current_token, active_tokens, used_tokens, backend_ecdh_pub, received_client_pub, backend_shared_key, backend_code, received_code, code_attempts, device_secret, paired_devices, received_device_id, auth_nonces_used, received_auth_nonce, qr_displayed, recv_msg, ping_failures, backoff_level, b_active_path, b_dispatcher_path, monitor_target, lan_signal>>
-              \/ /\ backend_state = backend_RegisterRelay
-                 /\ qr_displayed' = TRUE
-                 /\ backend_state' = backend_WaitingForClient
-                 /\ UNCHANGED <<chan_backend_client, chan_client_backend, current_token, active_tokens, used_tokens, backend_ecdh_pub, received_client_pub, backend_shared_key, backend_code, received_code, code_attempts, device_secret, paired_devices, received_device_id, auth_nonces_used, received_auth_nonce, recv_msg, ping_failures, backoff_level, b_active_path, b_dispatcher_path, monitor_target, lan_signal>>
-              \/ /\ backend_state = backend_WaitingForClient /\ Len(chan_client_backend) > 0 /\ Head(chan_client_backend).type = MSG_pair_hello /\ (Head(chan_client_backend).token \in active_tokens)
-                 /\ recv_msg' = Head(chan_client_backend)
-                 /\ chan_client_backend' = Tail(chan_client_backend)
-                 /\ received_client_pub' = recv_msg'.pubkey
-                 /\ backend_ecdh_pub' = "backend_pub"
-                 /\ backend_shared_key' = DeriveKey("backend_pub", recv_msg'.pubkey)
-                 /\ backend_code' = DeriveCode("backend_pub", recv_msg'.pubkey)
-                 /\ backend_state' = backend_DeriveSecret
-                 /\ UNCHANGED <<chan_backend_client, current_token, active_tokens, used_tokens, received_code, code_attempts, device_secret, paired_devices, received_device_id, auth_nonces_used, received_auth_nonce, qr_displayed, ping_failures, backoff_level, b_active_path, b_dispatcher_path, monitor_target, lan_signal>>
-              \/ /\ backend_state = backend_WaitingForClient /\ Len(chan_client_backend) > 0 /\ Head(chan_client_backend).type = MSG_pair_hello /\ (Head(chan_client_backend).token \notin active_tokens)
-                 /\ recv_msg' = Head(chan_client_backend)
-                 /\ chan_client_backend' = Tail(chan_client_backend)
-                 /\ backend_state' = backend_Idle
-                 /\ UNCHANGED <<chan_backend_client, current_token, active_tokens, used_tokens, backend_ecdh_pub, received_client_pub, backend_shared_key, backend_code, received_code, code_attempts, device_secret, paired_devices, received_device_id, auth_nonces_used, received_auth_nonce, qr_displayed, ping_failures, backoff_level, b_active_path, b_dispatcher_path, monitor_target, lan_signal>>
-              \/ /\ backend_state = backend_DeriveSecret
-                 /\ chan_backend_client' = Append(chan_backend_client, [type |-> MSG_pair_hello_ack, pubkey |-> backend_ecdh_pub])
-                 /\ backend_state' = backend_SendAck
-                 /\ UNCHANGED <<chan_client_backend, current_token, active_tokens, used_tokens, backend_ecdh_pub, received_client_pub, backend_shared_key, backend_code, received_code, code_attempts, device_secret, paired_devices, received_device_id, auth_nonces_used, received_auth_nonce, qr_displayed, recv_msg, ping_failures, backoff_level, b_active_path, b_dispatcher_path, monitor_target, lan_signal>>
-              \/ /\ backend_state = backend_SendAck
-                 /\ chan_backend_client' = Append(chan_backend_client, [type |-> MSG_pair_confirm])
-                 /\ backend_state' = backend_WaitingForCode
-                 /\ UNCHANGED <<chan_client_backend, current_token, active_tokens, used_tokens, backend_ecdh_pub, received_client_pub, backend_shared_key, backend_code, received_code, code_attempts, device_secret, paired_devices, received_device_id, auth_nonces_used, received_auth_nonce, qr_displayed, recv_msg, ping_failures, backoff_level, b_active_path, b_dispatcher_path, monitor_target, lan_signal>>
-              \/ /\ backend_state = backend_WaitingForCode
-                 /\ received_code' = cli_entered_code
-                 /\ backend_state' = backend_ValidateCode
-                 /\ UNCHANGED <<chan_backend_client, chan_client_backend, current_token, active_tokens, used_tokens, backend_ecdh_pub, received_client_pub, backend_shared_key, backend_code, code_attempts, device_secret, paired_devices, received_device_id, auth_nonces_used, received_auth_nonce, qr_displayed, recv_msg, ping_failures, backoff_level, b_active_path, b_dispatcher_path, monitor_target, lan_signal>>
-              \/ /\ backend_state = backend_ValidateCode /\ (received_code = backend_code)
-                 /\ backend_state' = backend_StorePaired
-                 /\ UNCHANGED <<chan_backend_client, chan_client_backend, current_token, active_tokens, used_tokens, backend_ecdh_pub, received_client_pub, backend_shared_key, backend_code, received_code, code_attempts, device_secret, paired_devices, received_device_id, auth_nonces_used, received_auth_nonce, qr_displayed, recv_msg, ping_failures, backoff_level, b_active_path, b_dispatcher_path, monitor_target, lan_signal>>
-              \/ /\ backend_state = backend_ValidateCode /\ (received_code /= backend_code)
-                 /\ code_attempts' = code_attempts + 1
-                 /\ backend_state' = backend_Idle
-                 /\ UNCHANGED <<chan_backend_client, chan_client_backend, current_token, active_tokens, used_tokens, backend_ecdh_pub, received_client_pub, backend_shared_key, backend_code, received_code, device_secret, paired_devices, received_device_id, auth_nonces_used, received_auth_nonce, qr_displayed, recv_msg, ping_failures, backoff_level, b_active_path, b_dispatcher_path, monitor_target, lan_signal>>
-              \/ /\ backend_state = backend_StorePaired
-                 /\ chan_backend_client' = Append(chan_backend_client, [type |-> MSG_pair_complete, key |-> backend_shared_key, secret |-> "dev_secret_1"])
-                 /\ device_secret' = "dev_secret_1"
-                 /\ paired_devices' = (paired_devices \union {"device_1"})
-                 /\ active_tokens' = active_tokens \ {current_token}
-                 /\ used_tokens' = (used_tokens \union {current_token})
-                 /\ backend_state' = backend_Paired
-                 /\ UNCHANGED <<chan_client_backend, current_token, backend_ecdh_pub, received_client_pub, backend_shared_key, backend_code, received_code, code_attempts, received_device_id, auth_nonces_used, received_auth_nonce, qr_displayed, recv_msg, ping_failures, backoff_level, b_active_path, b_dispatcher_path, monitor_target, lan_signal>>
-              \/ /\ backend_state = backend_Paired /\ Len(chan_client_backend) > 0 /\ Head(chan_client_backend).type = MSG_auth_request
-                 /\ recv_msg' = Head(chan_client_backend)
-                 /\ chan_client_backend' = Tail(chan_client_backend)
-                 /\ received_device_id' = recv_msg'.device_id
-                 /\ received_auth_nonce' = recv_msg'.nonce
-                 /\ backend_state' = backend_AuthCheck
-                 /\ UNCHANGED <<chan_backend_client, current_token, active_tokens, used_tokens, backend_ecdh_pub, received_client_pub, backend_shared_key, backend_code, received_code, code_attempts, device_secret, paired_devices, auth_nonces_used, qr_displayed, ping_failures, backoff_level, b_active_path, b_dispatcher_path, monitor_target, lan_signal>>
-              \/ /\ backend_state = backend_AuthCheck /\ (received_device_id \in paired_devices)
-                 /\ chan_backend_client' = Append(chan_backend_client, [type |-> MSG_auth_ok])
-                 /\ auth_nonces_used' = (auth_nonces_used \union {received_auth_nonce})
-                 /\ backend_state' = backend_SessionActive
-                 /\ UNCHANGED <<chan_client_backend, current_token, active_tokens, used_tokens, backend_ecdh_pub, received_client_pub, backend_shared_key, backend_code, received_code, code_attempts, device_secret, paired_devices, received_device_id, received_auth_nonce, qr_displayed, recv_msg, ping_failures, backoff_level, b_active_path, b_dispatcher_path, monitor_target, lan_signal>>
-              \/ /\ backend_state = backend_AuthCheck /\ (received_device_id \notin paired_devices)
-                 /\ backend_state' = backend_Idle
-                 /\ UNCHANGED <<chan_backend_client, chan_client_backend, current_token, active_tokens, used_tokens, backend_ecdh_pub, received_client_pub, backend_shared_key, backend_code, received_code, code_attempts, device_secret, paired_devices, received_device_id, auth_nonces_used, received_auth_nonce, qr_displayed, recv_msg, ping_failures, backoff_level, b_active_path, b_dispatcher_path, monitor_target, lan_signal>>
-              \/ /\ backend_state = backend_SessionActive
-                 /\ backend_state' = backend_RelayConnected
-                 /\ UNCHANGED <<chan_backend_client, chan_client_backend, current_token, active_tokens, used_tokens, backend_ecdh_pub, received_client_pub, backend_shared_key, backend_code, received_code, code_attempts, device_secret, paired_devices, received_device_id, auth_nonces_used, received_auth_nonce, qr_displayed, recv_msg, ping_failures, backoff_level, b_active_path, b_dispatcher_path, monitor_target, lan_signal>>
-              \/ /\ backend_state = backend_RelayConnected
-                 /\ chan_backend_client' = Append(chan_backend_client, [type |-> MSG_lan_offer, addr |-> lan_addr, challenge |-> challenge_bytes])
-                 /\ backend_state' = backend_LANOffered
-                 /\ UNCHANGED <<chan_client_backend, current_token, active_tokens, used_tokens, backend_ecdh_pub, received_client_pub, backend_shared_key, backend_code, received_code, code_attempts, device_secret, paired_devices, received_device_id, auth_nonces_used, received_auth_nonce, qr_displayed, recv_msg, ping_failures, backoff_level, b_active_path, b_dispatcher_path, monitor_target, lan_signal>>
-              \/ /\ backend_state = backend_LANOffered /\ Len(chan_client_backend) > 0 /\ Head(chan_client_backend).type = MSG_lan_verify /\ (offer_challenge = challenge_bytes)
-                 /\ recv_msg' = Head(chan_client_backend)
-                 /\ chan_client_backend' = Tail(chan_client_backend)
-                 /\ chan_backend_client' = Append(chan_backend_client, [type |-> MSG_lan_confirm])
-                 /\ ping_failures' = 0
-                 /\ backoff_level' = 0
-                 /\ b_active_path' = "lan"
-                 /\ b_dispatcher_path' = "lan"
-                 /\ monitor_target' = "lan"
-                 /\ lan_signal' = "ready"
-                 /\ backend_state' = backend_LANActive
-                 /\ UNCHANGED <<current_token, active_tokens, used_tokens, backend_ecdh_pub, received_client_pub, backend_shared_key, backend_code, received_code, code_attempts, device_secret, paired_devices, received_device_id, auth_nonces_used, received_auth_nonce, qr_displayed>>
-              \/ /\ backend_state = backend_LANOffered /\ Len(chan_client_backend) > 0 /\ Head(chan_client_backend).type = MSG_lan_verify /\ (offer_challenge /= challenge_bytes)
-                 /\ recv_msg' = Head(chan_client_backend)
-                 /\ chan_client_backend' = Tail(chan_client_backend)
-                 /\ backend_state' = backend_RelayConnected
-                 /\ UNCHANGED <<chan_backend_client, current_token, active_tokens, used_tokens, backend_ecdh_pub, received_client_pub, backend_shared_key, backend_code, received_code, code_attempts, device_secret, paired_devices, received_device_id, auth_nonces_used, received_auth_nonce, qr_displayed, ping_failures, backoff_level, b_active_path, b_dispatcher_path, monitor_target, lan_signal>>
-              \/ /\ backend_state = backend_LANOffered
-                 /\ backoff_level' = Min(backoff_level + 1, max_backoff_level)
-                 /\ backend_state' = backend_RelayBackoff
-                 /\ UNCHANGED <<chan_backend_client, chan_client_backend, current_token, active_tokens, used_tokens, backend_ecdh_pub, received_client_pub, backend_shared_key, backend_code, received_code, code_attempts, device_secret, paired_devices, received_device_id, auth_nonces_used, received_auth_nonce, qr_displayed, recv_msg, ping_failures, b_active_path, b_dispatcher_path, monitor_target, lan_signal>>
-              \/ /\ backend_state = backend_LANActive
-                 /\ chan_backend_client' = Append(chan_backend_client, [type |-> MSG_path_ping])
-                 /\ backend_state' = backend_LANActive
-                 /\ UNCHANGED <<chan_client_backend, current_token, active_tokens, used_tokens, backend_ecdh_pub, received_client_pub, backend_shared_key, backend_code, received_code, code_attempts, device_secret, paired_devices, received_device_id, auth_nonces_used, received_auth_nonce, qr_displayed, recv_msg, ping_failures, backoff_level, b_active_path, b_dispatcher_path, monitor_target, lan_signal>>
-              \/ /\ backend_state = backend_LANActive
-                 /\ ping_failures' = 1
-                 /\ backend_state' = backend_LANDegraded
-                 /\ UNCHANGED <<chan_backend_client, chan_client_backend, current_token, active_tokens, used_tokens, backend_ecdh_pub, received_client_pub, backend_shared_key, backend_code, received_code, code_attempts, device_secret, paired_devices, received_device_id, auth_nonces_used, received_auth_nonce, qr_displayed, recv_msg, backoff_level, b_active_path, b_dispatcher_path, monitor_target, lan_signal>>
-              \/ /\ backend_state = backend_LANDegraded
-                 /\ chan_backend_client' = Append(chan_backend_client, [type |-> MSG_path_ping])
-                 /\ backend_state' = backend_LANDegraded
-                 /\ UNCHANGED <<chan_client_backend, current_token, active_tokens, used_tokens, backend_ecdh_pub, received_client_pub, backend_shared_key, backend_code, received_code, code_attempts, device_secret, paired_devices, received_device_id, auth_nonces_used, received_auth_nonce, qr_displayed, recv_msg, ping_failures, backoff_level, b_active_path, b_dispatcher_path, monitor_target, lan_signal>>
-              \/ /\ backend_state = backend_LANDegraded /\ Len(chan_client_backend) > 0 /\ Head(chan_client_backend).type = MSG_path_pong
-                 /\ recv_msg' = Head(chan_client_backend)
-                 /\ chan_client_backend' = Tail(chan_client_backend)
-                 /\ ping_failures' = 0
-                 /\ backend_state' = backend_LANActive
-                 /\ UNCHANGED <<chan_backend_client, current_token, active_tokens, used_tokens, backend_ecdh_pub, received_client_pub, backend_shared_key, backend_code, received_code, code_attempts, device_secret, paired_devices, received_device_id, auth_nonces_used, received_auth_nonce, qr_displayed, backoff_level, b_active_path, b_dispatcher_path, monitor_target, lan_signal>>
-              \/ /\ backend_state = backend_LANDegraded /\ (ping_failures + 1 < max_ping_failures)
-                 /\ ping_failures' = ping_failures + 1
-                 /\ backend_state' = backend_LANDegraded
-                 /\ UNCHANGED <<chan_backend_client, chan_client_backend, current_token, active_tokens, used_tokens, backend_ecdh_pub, received_client_pub, backend_shared_key, backend_code, received_code, code_attempts, device_secret, paired_devices, received_device_id, auth_nonces_used, received_auth_nonce, qr_displayed, recv_msg, backoff_level, b_active_path, b_dispatcher_path, monitor_target, lan_signal>>
-              \/ /\ backend_state = backend_LANDegraded /\ (ping_failures + 1 >= max_ping_failures)
-                 /\ backoff_level' = Min(backoff_level + 1, max_backoff_level)
-                 /\ b_active_path' = "relay"
-                 /\ b_dispatcher_path' = "relay"
-                 /\ monitor_target' = "none"
-                 /\ lan_signal' = "pending"
-                 /\ ping_failures' = 0
-                 /\ backend_state' = backend_RelayBackoff
-                 /\ UNCHANGED <<chan_backend_client, chan_client_backend, current_token, active_tokens, used_tokens, backend_ecdh_pub, received_client_pub, backend_shared_key, backend_code, received_code, code_attempts, device_secret, paired_devices, received_device_id, auth_nonces_used, received_auth_nonce, qr_displayed, recv_msg>>
-              \/ /\ backend_state = backend_RelayBackoff
-                 /\ chan_backend_client' = Append(chan_backend_client, [type |-> MSG_lan_offer, addr |-> lan_addr, challenge |-> challenge_bytes])
-                 /\ backend_state' = backend_LANOffered
-                 /\ UNCHANGED <<chan_client_backend, current_token, active_tokens, used_tokens, backend_ecdh_pub, received_client_pub, backend_shared_key, backend_code, received_code, code_attempts, device_secret, paired_devices, received_device_id, auth_nonces_used, received_auth_nonce, qr_displayed, recv_msg, ping_failures, backoff_level, b_active_path, b_dispatcher_path, monitor_target, lan_signal>>
-              \/ /\ backend_state = backend_RelayBackoff
-                 /\ chan_backend_client' = Append(chan_backend_client, [type |-> MSG_lan_offer, addr |-> lan_addr, challenge |-> challenge_bytes])
-                 /\ backoff_level' = 0
-                 /\ backend_state' = backend_LANOffered
-                 /\ UNCHANGED <<chan_client_backend, current_token, active_tokens, used_tokens, backend_ecdh_pub, received_client_pub, backend_shared_key, backend_code, received_code, code_attempts, device_secret, paired_devices, received_device_id, auth_nonces_used, received_auth_nonce, qr_displayed, recv_msg, ping_failures, b_active_path, b_dispatcher_path, monitor_target, lan_signal>>
-              \/ /\ backend_state = backend_RelayConnected /\ (lan_server_addr /= "none")
-                 /\ chan_backend_client' = Append(chan_backend_client, [type |-> MSG_lan_offer, addr |-> lan_addr, challenge |-> challenge_bytes])
-                 /\ backend_state' = backend_LANOffered
-                 /\ UNCHANGED <<chan_client_backend, current_token, active_tokens, used_tokens, backend_ecdh_pub, received_client_pub, backend_shared_key, backend_code, received_code, code_attempts, device_secret, paired_devices, received_device_id, auth_nonces_used, received_auth_nonce, qr_displayed, recv_msg, ping_failures, backoff_level, b_active_path, b_dispatcher_path, monitor_target, lan_signal>>
-              \/ /\ backend_state = backend_RelayConnected
-                 /\ backend_state' = backend_Paired
-                 /\ UNCHANGED <<chan_backend_client, chan_client_backend, current_token, active_tokens, used_tokens, backend_ecdh_pub, received_client_pub, backend_shared_key, backend_code, received_code, code_attempts, device_secret, paired_devices, received_device_id, auth_nonces_used, received_auth_nonce, qr_displayed, recv_msg, ping_failures, backoff_level, b_active_path, b_dispatcher_path, monitor_target, lan_signal>>
-           /\ UNCHANGED << client_state, relay_state, adversary_knowledge, 
-                           received_backend_pub, client_shared_key, 
-                           client_code, cli_entered_code, adversary_keys, 
-                           adv_ecdh_pub, adv_saved_client_pub, 
-                           adv_saved_server_pub, lan_addr, challenge_bytes, 
-                           offer_challenge, instance_id, max_ping_failures, 
-                           max_backoff_level, lan_server_addr, c_active_path, 
-                           c_dispatcher_path, relay_bridge >>
+\* backend: WaitingForClient -> Idle on recv pair_hello [token_invalid]
+backend_WaitingForClient_to_Idle_on_pair_hello_token_invalid ==
+    /\ backend_state = backend_WaitingForClient
+    /\ received_pair_hello.type = MSG_pair_hello
+    /\ received_pair_hello.token \notin active_tokens
+    /\ received_pair_hello' = [type |-> "none"]
+    /\ backend_state' = backend_Idle
+    /\ UNCHANGED <<client_state, relay_state, current_token, active_tokens, used_tokens, backend_ecdh_pub, received_client_pub, received_backend_pub, backend_shared_key, client_shared_key, backend_code, client_code, received_code, code_attempts, device_secret, paired_devices, received_device_id, auth_nonces_used, received_auth_nonce, secret_published, ping_failures, backoff_level, b_active_path, c_active_path, b_dispatcher_path, c_dispatcher_path, monitor_target, lan_signal, relay_bridge, received_auth_request, received_lan_verify, received_path_pong, received_pair_hello_ack, received_pair_confirm, received_pair_complete, received_auth_ok, received_lan_offer, received_lan_confirm, received_path_ping>>
 
-client == /\ \/ /\ client_state = client_Idle
-                /\ client_state' = client_ScanQR
-                /\ UNCHANGED <<chan_backend_client, chan_client_backend, received_backend_pub, client_shared_key, client_code, recv_msg, c_active_path, c_dispatcher_path, lan_signal>>
-             \/ /\ client_state = client_ScanQR
-                /\ client_state' = client_ConnectRelay
-                /\ UNCHANGED <<chan_backend_client, chan_client_backend, received_backend_pub, client_shared_key, client_code, recv_msg, c_active_path, c_dispatcher_path, lan_signal>>
-             \/ /\ client_state = client_ConnectRelay
-                /\ client_state' = client_GenKeyPair
-                /\ UNCHANGED <<chan_backend_client, chan_client_backend, received_backend_pub, client_shared_key, client_code, recv_msg, c_active_path, c_dispatcher_path, lan_signal>>
-             \/ /\ client_state = client_GenKeyPair
-                /\ chan_client_backend' = Append(chan_client_backend, [type |-> MSG_pair_hello, pubkey |-> "client_pub", token |-> current_token])
-                /\ client_state' = client_WaitAck
-                /\ UNCHANGED <<chan_backend_client, received_backend_pub, client_shared_key, client_code, recv_msg, c_active_path, c_dispatcher_path, lan_signal>>
-             \/ /\ client_state = client_WaitAck /\ Len(chan_backend_client) > 0 /\ Head(chan_backend_client).type = MSG_pair_hello_ack
-                /\ recv_msg' = Head(chan_backend_client)
-                /\ chan_backend_client' = Tail(chan_backend_client)
-                /\ received_backend_pub' = recv_msg'.pubkey
-                /\ client_shared_key' = DeriveKey("client_pub", recv_msg'.pubkey)
-                /\ client_state' = client_E2EReady
-                /\ UNCHANGED <<chan_client_backend, client_code, c_active_path, c_dispatcher_path, lan_signal>>
-             \/ /\ client_state = client_E2EReady /\ Len(chan_backend_client) > 0 /\ Head(chan_backend_client).type = MSG_pair_confirm
-                /\ recv_msg' = Head(chan_backend_client)
-                /\ chan_backend_client' = Tail(chan_backend_client)
-                /\ client_code' = DeriveCode(received_backend_pub, "client_pub")
-                /\ client_state' = client_ShowCode
-                /\ UNCHANGED <<chan_client_backend, received_backend_pub, client_shared_key, c_active_path, c_dispatcher_path, lan_signal>>
-             \/ /\ client_state = client_ShowCode
-                /\ client_state' = client_WaitPairComplete
-                /\ UNCHANGED <<chan_backend_client, chan_client_backend, received_backend_pub, client_shared_key, client_code, recv_msg, c_active_path, c_dispatcher_path, lan_signal>>
-             \/ /\ client_state = client_WaitPairComplete /\ Len(chan_backend_client) > 0 /\ Head(chan_backend_client).type = MSG_pair_complete
-                /\ recv_msg' = Head(chan_backend_client)
-                /\ chan_backend_client' = Tail(chan_backend_client)
-                /\ client_state' = client_Paired
-                /\ UNCHANGED <<chan_client_backend, received_backend_pub, client_shared_key, client_code, c_active_path, c_dispatcher_path, lan_signal>>
-             \/ /\ client_state = client_Paired
-                /\ client_state' = client_Reconnect
-                /\ UNCHANGED <<chan_backend_client, chan_client_backend, received_backend_pub, client_shared_key, client_code, recv_msg, c_active_path, c_dispatcher_path, lan_signal>>
-             \/ /\ client_state = client_Reconnect
-                /\ chan_client_backend' = Append(chan_client_backend, [type |-> MSG_auth_request, device_id |-> "device_1", key |-> client_shared_key, nonce |-> "nonce_1", secret |-> device_secret])
-                /\ client_state' = client_SendAuth
-                /\ UNCHANGED <<chan_backend_client, received_backend_pub, client_shared_key, client_code, recv_msg, c_active_path, c_dispatcher_path, lan_signal>>
-             \/ /\ client_state = client_SendAuth /\ Len(chan_backend_client) > 0 /\ Head(chan_backend_client).type = MSG_auth_ok
-                /\ recv_msg' = Head(chan_backend_client)
-                /\ chan_backend_client' = Tail(chan_backend_client)
-                /\ client_state' = client_SessionActive
-                /\ UNCHANGED <<chan_client_backend, received_backend_pub, client_shared_key, client_code, c_active_path, c_dispatcher_path, lan_signal>>
-             \/ /\ client_state = client_SessionActive
-                /\ client_state' = client_RelayConnected
-                /\ UNCHANGED <<chan_backend_client, chan_client_backend, received_backend_pub, client_shared_key, client_code, recv_msg, c_active_path, c_dispatcher_path, lan_signal>>
-             \/ /\ client_state = client_RelayConnected /\ Len(chan_backend_client) > 0 /\ Head(chan_backend_client).type = MSG_lan_offer /\ (TRUE)
-                /\ recv_msg' = Head(chan_backend_client)
-                /\ chan_backend_client' = Tail(chan_backend_client)
-                /\ client_state' = client_LANConnecting
-                /\ UNCHANGED <<chan_client_backend, received_backend_pub, client_shared_key, client_code, c_active_path, c_dispatcher_path, lan_signal>>
-             \/ /\ client_state = client_RelayConnected /\ Len(chan_backend_client) > 0 /\ Head(chan_backend_client).type = MSG_lan_offer /\ (FALSE)
-                /\ recv_msg' = Head(chan_backend_client)
-                /\ chan_backend_client' = Tail(chan_backend_client)
-                /\ client_state' = client_RelayConnected
-                /\ UNCHANGED <<chan_client_backend, received_backend_pub, client_shared_key, client_code, c_active_path, c_dispatcher_path, lan_signal>>
-             \/ /\ client_state = client_LANConnecting
-                /\ chan_client_backend' = Append(chan_client_backend, [type |-> MSG_lan_verify, challenge |-> offer_challenge, instance_id |-> instance_id])
-                /\ client_state' = client_LANVerifying
-                /\ UNCHANGED <<chan_backend_client, received_backend_pub, client_shared_key, client_code, recv_msg, c_active_path, c_dispatcher_path, lan_signal>>
-             \/ /\ client_state = client_LANConnecting
-                /\ client_state' = client_RelayConnected
-                /\ UNCHANGED <<chan_backend_client, chan_client_backend, received_backend_pub, client_shared_key, client_code, recv_msg, c_active_path, c_dispatcher_path, lan_signal>>
-             \/ /\ client_state = client_LANVerifying /\ Len(chan_backend_client) > 0 /\ Head(chan_backend_client).type = MSG_lan_confirm
-                /\ recv_msg' = Head(chan_backend_client)
-                /\ chan_backend_client' = Tail(chan_backend_client)
-                /\ c_active_path' = "lan"
-                /\ c_dispatcher_path' = "lan"
-                /\ lan_signal' = "ready"
-                /\ client_state' = client_LANActive
-                /\ UNCHANGED <<chan_client_backend, received_backend_pub, client_shared_key, client_code>>
-             \/ /\ client_state = client_LANVerifying
-                /\ c_dispatcher_path' = "relay"
-                /\ client_state' = client_RelayConnected
-                /\ UNCHANGED <<chan_backend_client, chan_client_backend, received_backend_pub, client_shared_key, client_code, recv_msg, c_active_path, lan_signal>>
-             \/ /\ client_state = client_LANActive /\ Len(chan_backend_client) > 0 /\ Head(chan_backend_client).type = MSG_path_ping
-                /\ recv_msg' = Head(chan_backend_client)
-                /\ chan_backend_client' = Tail(chan_backend_client)
-                /\ chan_client_backend' = Append(chan_client_backend, [type |-> MSG_path_pong])
-                /\ client_state' = client_LANActive
-                /\ UNCHANGED <<received_backend_pub, client_shared_key, client_code, c_active_path, c_dispatcher_path, lan_signal>>
-             \/ /\ client_state = client_LANActive
-                /\ c_active_path' = "relay"
-                /\ c_dispatcher_path' = "relay"
-                /\ lan_signal' = "pending"
-                /\ client_state' = client_RelayFallback
-                /\ UNCHANGED <<chan_backend_client, chan_client_backend, received_backend_pub, client_shared_key, client_code, recv_msg>>
-             \/ /\ client_state = client_RelayFallback
-                /\ client_state' = client_RelayConnected
-                /\ UNCHANGED <<chan_backend_client, chan_client_backend, received_backend_pub, client_shared_key, client_code, recv_msg, c_active_path, c_dispatcher_path, lan_signal>>
-             \/ /\ client_state = client_LANActive /\ Len(chan_backend_client) > 0 /\ Head(chan_backend_client).type = MSG_lan_offer /\ (TRUE)
-                /\ recv_msg' = Head(chan_backend_client)
-                /\ chan_backend_client' = Tail(chan_backend_client)
-                /\ client_state' = client_LANConnecting
-                /\ UNCHANGED <<chan_client_backend, received_backend_pub, client_shared_key, client_code, c_active_path, c_dispatcher_path, lan_signal>>
-             \/ /\ client_state = client_RelayConnected
-                /\ client_state' = client_Paired
-                /\ UNCHANGED <<chan_backend_client, chan_client_backend, received_backend_pub, client_shared_key, client_code, recv_msg, c_active_path, c_dispatcher_path, lan_signal>>
-          /\ UNCHANGED << backend_state, relay_state, adversary_knowledge, 
-                          current_token, active_tokens, used_tokens, 
-                          backend_ecdh_pub, received_client_pub, 
-                          backend_shared_key, backend_code, received_code, 
-                          cli_entered_code, code_attempts, device_secret, 
-                          paired_devices, received_device_id, auth_nonces_used, 
-                          received_auth_nonce, qr_displayed, adversary_keys, 
-                          adv_ecdh_pub, adv_saved_client_pub, 
-                          adv_saved_server_pub, lan_addr, challenge_bytes, 
-                          offer_challenge, instance_id, ping_failures, 
-                          max_ping_failures, backoff_level, max_backoff_level, 
-                          lan_server_addr, b_active_path, b_dispatcher_path, 
-                          monitor_target, relay_bridge >>
+\* backend: DeriveSecret -> SendAck (ecdh_complete)
+backend_DeriveSecret_to_SendAck_ecdh_complete ==
+    /\ backend_state = backend_DeriveSecret
+    /\ received_pair_hello_ack' = [type |-> MSG_pair_hello_ack, pubkey |-> backend_ecdh_pub]
+    /\ backend_state' = backend_SendAck
+    /\ UNCHANGED <<client_state, relay_state, current_token, active_tokens, used_tokens, backend_ecdh_pub, received_client_pub, received_backend_pub, backend_shared_key, client_shared_key, backend_code, client_code, received_code, code_attempts, device_secret, paired_devices, received_device_id, auth_nonces_used, received_auth_nonce, secret_published, ping_failures, backoff_level, b_active_path, c_active_path, b_dispatcher_path, c_dispatcher_path, monitor_target, lan_signal, relay_bridge, received_pair_hello, received_auth_request, received_lan_verify, received_path_pong, received_pair_confirm, received_pair_complete, received_auth_ok, received_lan_offer, received_lan_confirm, received_path_ping>>
 
-relay == /\ \/ /\ relay_state = relay_Idle
-               /\ relay_state' = relay_BackendRegistered
-               /\ UNCHANGED relay_bridge
-            \/ /\ relay_state = relay_BackendRegistered
-               /\ relay_bridge' = "active"
-               /\ relay_state' = relay_Bridged
-            \/ /\ relay_state = relay_Bridged
-               /\ relay_bridge' = "idle"
-               /\ relay_state' = relay_BackendRegistered
-            \/ /\ relay_state = relay_BackendRegistered
-               /\ relay_state' = relay_Idle
-               /\ UNCHANGED relay_bridge
-         /\ UNCHANGED << backend_state, client_state, chan_backend_client, 
-                         chan_client_backend, adversary_knowledge, 
-                         current_token, active_tokens, used_tokens, 
-                         backend_ecdh_pub, received_client_pub, 
-                         received_backend_pub, backend_shared_key, 
-                         client_shared_key, backend_code, client_code, 
-                         received_code, cli_entered_code, code_attempts, 
-                         device_secret, paired_devices, received_device_id, 
-                         auth_nonces_used, received_auth_nonce, qr_displayed, 
-                         recv_msg, adversary_keys, adv_ecdh_pub, 
-                         adv_saved_client_pub, adv_saved_server_pub, lan_addr, 
-                         challenge_bytes, offer_challenge, instance_id, 
-                         ping_failures, max_ping_failures, backoff_level, 
-                         max_backoff_level, lan_server_addr, b_active_path, 
-                         c_active_path, b_dispatcher_path, c_dispatcher_path, 
-                         monitor_target, lan_signal >>
+\* backend: SendAck -> WaitingForCode (signal_code_display)
+backend_SendAck_to_WaitingForCode_signal_code_display ==
+    /\ backend_state = backend_SendAck
+    /\ received_pair_confirm' = [type |-> MSG_pair_confirm]
+    /\ backend_state' = backend_WaitingForCode
+    /\ UNCHANGED <<client_state, relay_state, current_token, active_tokens, used_tokens, backend_ecdh_pub, received_client_pub, received_backend_pub, backend_shared_key, client_shared_key, backend_code, client_code, received_code, code_attempts, device_secret, paired_devices, received_device_id, auth_nonces_used, received_auth_nonce, secret_published, ping_failures, backoff_level, b_active_path, c_active_path, b_dispatcher_path, c_dispatcher_path, monitor_target, lan_signal, relay_bridge, received_pair_hello, received_auth_request, received_lan_verify, received_path_pong, received_pair_hello_ack, received_pair_complete, received_auth_ok, received_lan_offer, received_lan_confirm, received_path_ping>>
 
-Adversary == /\ backend_state \notin {backend_RelayConnected, backend_LANOffered, backend_LANActive, backend_LANDegraded, backend_RelayBackoff}
-             /\ \/ /\ TRUE
-                   /\ UNCHANGED <<chan_backend_client, chan_client_backend, adversary_knowledge, cli_entered_code, adversary_keys, adv_saved_client_pub, adv_saved_server_pub>>
-                \/ /\ Len(chan_backend_client) > 0
-                   /\ adversary_knowledge' = (adversary_knowledge \union {Head(chan_backend_client)})
-                   /\ UNCHANGED <<chan_backend_client, chan_client_backend, cli_entered_code, adversary_keys, adv_saved_client_pub, adv_saved_server_pub>>
-                \/ /\ Len(chan_backend_client) > 0
-                   /\ chan_backend_client' = Tail(chan_backend_client)
-                   /\ UNCHANGED <<chan_client_backend, adversary_knowledge, cli_entered_code, adversary_keys, adv_saved_client_pub, adv_saved_server_pub>>
-                \/ /\ adversary_knowledge /= {} /\ Len(chan_backend_client) < 3
-                   /\ \E msg \in adversary_knowledge:
-                        chan_backend_client' = Append(chan_backend_client, msg)
-                   /\ UNCHANGED <<chan_client_backend, adversary_knowledge, cli_entered_code, adversary_keys, adv_saved_client_pub, adv_saved_server_pub>>
-                \/ /\ Len(chan_client_backend) > 0
-                   /\ adversary_knowledge' = (adversary_knowledge \union {Head(chan_client_backend)})
-                   /\ UNCHANGED <<chan_backend_client, chan_client_backend, cli_entered_code, adversary_keys, adv_saved_client_pub, adv_saved_server_pub>>
-                \/ /\ Len(chan_client_backend) > 0
-                   /\ chan_client_backend' = Tail(chan_client_backend)
-                   /\ UNCHANGED <<chan_backend_client, adversary_knowledge, cli_entered_code, adversary_keys, adv_saved_client_pub, adv_saved_server_pub>>
-                \/ /\ adversary_knowledge /= {} /\ Len(chan_client_backend) < 3
-                   /\ \E msg \in adversary_knowledge:
-                        chan_client_backend' = Append(chan_client_backend, msg)
-                   /\ UNCHANGED <<chan_backend_client, adversary_knowledge, cli_entered_code, adversary_keys, adv_saved_client_pub, adv_saved_server_pub>>
-                \/ /\ current_token /= "none"
-                   /\ adversary_knowledge' = (adversary_knowledge \union {[type |-> "qr_token", token |-> current_token]})
-                   /\ UNCHANGED <<chan_backend_client, chan_client_backend, cli_entered_code, adversary_keys, adv_saved_client_pub, adv_saved_server_pub>>
-                \/ /\ Len(chan_client_backend) > 0 /\ Head(chan_client_backend).type = MSG_pair_hello
-                   /\ adv_saved_client_pub' = Head(chan_client_backend).pubkey
-                   /\ chan_client_backend' = <<[type |-> MSG_pair_hello, token |-> Head(chan_client_backend).token, pubkey |-> adv_ecdh_pub]>> \o Tail(chan_client_backend)
-                   /\ UNCHANGED <<chan_backend_client, adversary_knowledge, cli_entered_code, adversary_keys, adv_saved_server_pub>>
-                \/ /\ Len(chan_backend_client) > 0 /\ Head(chan_backend_client).type = MSG_pair_hello_ack
-                   /\ adv_saved_server_pub' = Head(chan_backend_client).pubkey
-                   /\ adversary_keys' = (adversary_keys \union {DeriveKey(adv_ecdh_pub, adv_saved_server_pub'), DeriveKey(adv_ecdh_pub, adv_saved_client_pub)})
-                   /\ chan_backend_client' = <<[type |-> MSG_pair_hello_ack, pubkey |-> adv_ecdh_pub]>> \o Tail(chan_backend_client)
-                   /\ UNCHANGED <<chan_client_backend, adversary_knowledge, cli_entered_code, adv_saved_client_pub>>
-                \/ /\ Len(chan_backend_client) > 0 /\ Head(chan_backend_client).type = MSG_pair_complete /\ Head(chan_backend_client).key \in adversary_keys
-                   /\ LET msg == Head(chan_backend_client) IN
-                        /\ adversary_knowledge' = (adversary_knowledge \union {[type |-> "plaintext_secret", secret |-> msg.secret]})
-                        /\ chan_backend_client' = <<[type |-> MSG_pair_complete, key |-> DeriveKey(adv_ecdh_pub, adv_saved_client_pub), secret |-> msg.secret]>> \o Tail(chan_backend_client)
-                   /\ UNCHANGED <<chan_client_backend, cli_entered_code, adversary_keys, adv_saved_client_pub, adv_saved_server_pub>>
-                \/ /\ \E m \in adversary_knowledge : m = [type |-> "qr_token", token |-> current_token]
-                   /\ Len(chan_client_backend) < 3
-                   /\ chan_client_backend' = Append(chan_client_backend, [type |-> MSG_pair_hello, token |-> current_token, pubkey |-> adv_ecdh_pub])
-                   /\ UNCHANGED <<chan_backend_client, adversary_knowledge, cli_entered_code, adversary_keys, adv_saved_client_pub, adv_saved_server_pub>>
-                \/ /\ Len(chan_client_backend) < 3
-                   /\ chan_client_backend' = Append(chan_client_backend, [type |-> MSG_pair_hello, token |-> "fake_token", pubkey |-> adv_ecdh_pub])
-                   /\ UNCHANGED <<chan_backend_client, adversary_knowledge, cli_entered_code, adversary_keys, adv_saved_client_pub, adv_saved_server_pub>>
-                \/ /\ backend_state = backend_WaitingForCode
-                   /\ cli_entered_code' = <<"guess", "000000">>
-                   /\ UNCHANGED <<chan_backend_client, chan_client_backend, adversary_knowledge, adversary_keys, adv_saved_client_pub, adv_saved_server_pub>>
-                \/ /\ Len(chan_client_backend) < 3
-                   /\ \E m \in adversary_knowledge : m.type = MSG_auth_request
-                   /\ \E msg \in {m \in adversary_knowledge : m.type = MSG_auth_request}:
-                        chan_client_backend' = Append(chan_client_backend, msg)
-                   /\ UNCHANGED <<chan_backend_client, adversary_knowledge, cli_entered_code, adversary_keys, adv_saved_client_pub, adv_saved_server_pub>>
-             /\ UNCHANGED << backend_state, client_state, relay_state, 
-                             current_token, active_tokens, used_tokens, 
-                             backend_ecdh_pub, received_client_pub, 
-                             received_backend_pub, backend_shared_key, 
-                             client_shared_key, backend_code, client_code, 
-                             received_code, code_attempts, device_secret, 
-                             paired_devices, received_device_id, 
-                             auth_nonces_used, received_auth_nonce, 
-                             qr_displayed, recv_msg, adv_ecdh_pub, lan_addr, 
-                             challenge_bytes, offer_challenge, instance_id, 
-                             ping_failures, max_ping_failures, backoff_level, 
-                             max_backoff_level, lan_server_addr, b_active_path, 
-                             c_active_path, b_dispatcher_path, 
-                             c_dispatcher_path, monitor_target, lan_signal, 
-                             relay_bridge >>
+\* backend: WaitingForCode -> ValidateCode (cli_code_entered)
+backend_WaitingForCode_to_ValidateCode_cli_code_entered ==
+    /\ backend_state = backend_WaitingForCode
+    /\ backend_state' = backend_ValidateCode
+    /\ received_code' = cli_entered_code
+    /\ UNCHANGED <<client_state, relay_state, current_token, active_tokens, used_tokens, backend_ecdh_pub, received_client_pub, received_backend_pub, backend_shared_key, client_shared_key, backend_code, client_code, code_attempts, device_secret, paired_devices, received_device_id, auth_nonces_used, received_auth_nonce, secret_published, ping_failures, backoff_level, b_active_path, c_active_path, b_dispatcher_path, c_dispatcher_path, monitor_target, lan_signal, relay_bridge, received_pair_hello, received_auth_request, received_lan_verify, received_path_pong, received_pair_hello_ack, received_pair_confirm, received_pair_complete, received_auth_ok, received_lan_offer, received_lan_confirm, received_path_ping>>
 
-Next == backend \/ client \/ relay \/ Adversary
+\* backend: ValidateCode -> StorePaired (check_code) [code_correct]
+backend_ValidateCode_to_StorePaired_check_code_code_correct ==
+    /\ backend_state = backend_ValidateCode
+    /\ received_code = backend_code
+    /\ backend_state' = backend_StorePaired
+    /\ UNCHANGED <<client_state, relay_state, current_token, active_tokens, used_tokens, backend_ecdh_pub, received_client_pub, received_backend_pub, backend_shared_key, client_shared_key, backend_code, client_code, received_code, code_attempts, device_secret, paired_devices, received_device_id, auth_nonces_used, received_auth_nonce, secret_published, ping_failures, backoff_level, b_active_path, c_active_path, b_dispatcher_path, c_dispatcher_path, monitor_target, lan_signal, relay_bridge, received_pair_hello, received_auth_request, received_lan_verify, received_path_pong, received_pair_hello_ack, received_pair_confirm, received_pair_complete, received_auth_ok, received_lan_offer, received_lan_confirm, received_path_ping>>
 
-Spec == /\ Init /\ [][Next]_vars
-        /\ WF_vars(backend)
-        /\ WF_vars(client)
-        /\ WF_vars(relay)
-        /\ WF_vars(Adversary)
+\* backend: ValidateCode -> Idle (check_code) [code_wrong]
+backend_ValidateCode_to_Idle_check_code_code_wrong ==
+    /\ backend_state = backend_ValidateCode
+    /\ received_code /= backend_code
+    /\ backend_state' = backend_Idle
+    /\ code_attempts' = code_attempts + 1
+    /\ UNCHANGED <<client_state, relay_state, current_token, active_tokens, used_tokens, backend_ecdh_pub, received_client_pub, received_backend_pub, backend_shared_key, client_shared_key, backend_code, client_code, received_code, device_secret, paired_devices, received_device_id, auth_nonces_used, received_auth_nonce, secret_published, ping_failures, backoff_level, b_active_path, c_active_path, b_dispatcher_path, c_dispatcher_path, monitor_target, lan_signal, relay_bridge, received_pair_hello, received_auth_request, received_lan_verify, received_path_pong, received_pair_hello_ack, received_pair_confirm, received_pair_complete, received_auth_ok, received_lan_offer, received_lan_confirm, received_path_ping>>
 
-\* END TRANSLATION
+\* backend: StorePaired -> Paired (finalise)
+backend_StorePaired_to_Paired_finalise ==
+    /\ backend_state = backend_StorePaired
+    /\ received_pair_complete' = [type |-> MSG_pair_complete, key |-> backend_shared_key, secret |-> "dev_secret_1"]
+    /\ backend_state' = backend_Paired
+    /\ device_secret' = "dev_secret_1"
+    /\ paired_devices' = paired_devices \union {"device_1"}
+    /\ active_tokens' = active_tokens \ {current_token}
+    /\ used_tokens' = used_tokens \union {current_token}
+    /\ UNCHANGED <<client_state, relay_state, current_token, backend_ecdh_pub, received_client_pub, received_backend_pub, backend_shared_key, client_shared_key, backend_code, client_code, received_code, code_attempts, received_device_id, auth_nonces_used, received_auth_nonce, secret_published, ping_failures, backoff_level, b_active_path, c_active_path, b_dispatcher_path, c_dispatcher_path, monitor_target, lan_signal, relay_bridge, received_pair_hello, received_auth_request, received_lan_verify, received_path_pong, received_pair_hello_ack, received_pair_confirm, received_auth_ok, received_lan_offer, received_lan_confirm, received_path_ping>>
 
-\* Verification properties
+\* backend: Paired -> AuthCheck on recv auth_request
+backend_Paired_to_AuthCheck_on_auth_request ==
+    /\ backend_state = backend_Paired
+    /\ received_auth_request.type = MSG_auth_request
+    /\ received_auth_request' = [type |-> "none"]
+    /\ backend_state' = backend_AuthCheck
+    /\ received_device_id' = received_auth_request.device_id
+    /\ received_auth_nonce' = received_auth_request.nonce
+    /\ UNCHANGED <<client_state, relay_state, current_token, active_tokens, used_tokens, backend_ecdh_pub, received_client_pub, received_backend_pub, backend_shared_key, client_shared_key, backend_code, client_code, received_code, code_attempts, device_secret, paired_devices, auth_nonces_used, secret_published, ping_failures, backoff_level, b_active_path, c_active_path, b_dispatcher_path, c_dispatcher_path, monitor_target, lan_signal, relay_bridge, received_pair_hello, received_lan_verify, received_path_pong, received_pair_hello_ack, received_pair_confirm, received_pair_complete, received_auth_ok, received_lan_offer, received_lan_confirm, received_path_ping>>
+
+\* backend: AuthCheck -> SessionActive (verify) [device_known]
+backend_AuthCheck_to_SessionActive_verify_device_known ==
+    /\ backend_state = backend_AuthCheck
+    /\ received_device_id \in paired_devices
+    /\ received_auth_ok' = [type |-> MSG_auth_ok]
+    /\ backend_state' = backend_SessionActive
+    /\ auth_nonces_used' = auth_nonces_used \union {received_auth_nonce}
+    /\ UNCHANGED <<client_state, relay_state, current_token, active_tokens, used_tokens, backend_ecdh_pub, received_client_pub, received_backend_pub, backend_shared_key, client_shared_key, backend_code, client_code, received_code, code_attempts, device_secret, paired_devices, received_device_id, received_auth_nonce, secret_published, ping_failures, backoff_level, b_active_path, c_active_path, b_dispatcher_path, c_dispatcher_path, monitor_target, lan_signal, relay_bridge, received_pair_hello, received_auth_request, received_lan_verify, received_path_pong, received_pair_hello_ack, received_pair_confirm, received_pair_complete, received_lan_offer, received_lan_confirm, received_path_ping>>
+
+\* backend: AuthCheck -> Idle (verify) [device_unknown]
+backend_AuthCheck_to_Idle_verify_device_unknown ==
+    /\ backend_state = backend_AuthCheck
+    /\ received_device_id \notin paired_devices
+    /\ backend_state' = backend_Idle
+    /\ UNCHANGED <<client_state, relay_state, current_token, active_tokens, used_tokens, backend_ecdh_pub, received_client_pub, received_backend_pub, backend_shared_key, client_shared_key, backend_code, client_code, received_code, code_attempts, device_secret, paired_devices, received_device_id, auth_nonces_used, received_auth_nonce, secret_published, ping_failures, backoff_level, b_active_path, c_active_path, b_dispatcher_path, c_dispatcher_path, monitor_target, lan_signal, relay_bridge, received_pair_hello, received_auth_request, received_lan_verify, received_path_pong, received_pair_hello_ack, received_pair_confirm, received_pair_complete, received_auth_ok, received_lan_offer, received_lan_confirm, received_path_ping>>
+
+\* backend: SessionActive -> RelayConnected (session_established)
+backend_SessionActive_to_RelayConnected_session_established ==
+    /\ backend_state = backend_SessionActive
+    /\ backend_state' = backend_RelayConnected
+    /\ UNCHANGED <<client_state, relay_state, current_token, active_tokens, used_tokens, backend_ecdh_pub, received_client_pub, received_backend_pub, backend_shared_key, client_shared_key, backend_code, client_code, received_code, code_attempts, device_secret, paired_devices, received_device_id, auth_nonces_used, received_auth_nonce, secret_published, ping_failures, backoff_level, b_active_path, c_active_path, b_dispatcher_path, c_dispatcher_path, monitor_target, lan_signal, relay_bridge, received_pair_hello, received_auth_request, received_lan_verify, received_path_pong, received_pair_hello_ack, received_pair_confirm, received_pair_complete, received_auth_ok, received_lan_offer, received_lan_confirm, received_path_ping>>
+
+\* backend: RelayConnected -> LANOffered (lan_server_ready)
+backend_RelayConnected_to_LANOffered_lan_server_ready ==
+    /\ backend_state = backend_RelayConnected
+    /\ received_lan_offer' = [type |-> MSG_lan_offer, addr |-> lan_addr, challenge |-> challenge_bytes]
+    /\ backend_state' = backend_LANOffered
+    /\ UNCHANGED <<client_state, relay_state, current_token, active_tokens, used_tokens, backend_ecdh_pub, received_client_pub, received_backend_pub, backend_shared_key, client_shared_key, backend_code, client_code, received_code, code_attempts, device_secret, paired_devices, received_device_id, auth_nonces_used, received_auth_nonce, secret_published, ping_failures, backoff_level, b_active_path, c_active_path, b_dispatcher_path, c_dispatcher_path, monitor_target, lan_signal, relay_bridge, received_pair_hello, received_auth_request, received_lan_verify, received_path_pong, received_pair_hello_ack, received_pair_confirm, received_pair_complete, received_auth_ok, received_lan_confirm, received_path_ping>>
+
+\* backend: LANOffered -> LANActive on recv lan_verify [challenge_valid]
+backend_LANOffered_to_LANActive_on_lan_verify_challenge_valid ==
+    /\ backend_state = backend_LANOffered
+    /\ received_lan_verify.type = MSG_lan_verify
+    /\ offer_challenge = challenge_bytes
+    /\ received_lan_verify' = [type |-> "none"]
+    /\ received_lan_confirm' = [type |-> MSG_lan_confirm]
+    /\ backend_state' = backend_LANActive
+    /\ ping_failures' = 0
+    /\ backoff_level' = 0
+    /\ b_active_path' = "lan"
+    /\ b_dispatcher_path' = "lan"
+    /\ monitor_target' = "lan"
+    /\ lan_signal' = "ready"
+    /\ UNCHANGED <<client_state, relay_state, current_token, active_tokens, used_tokens, backend_ecdh_pub, received_client_pub, received_backend_pub, backend_shared_key, client_shared_key, backend_code, client_code, received_code, code_attempts, device_secret, paired_devices, received_device_id, auth_nonces_used, received_auth_nonce, secret_published, c_active_path, c_dispatcher_path, relay_bridge, received_pair_hello, received_auth_request, received_path_pong, received_pair_hello_ack, received_pair_confirm, received_pair_complete, received_auth_ok, received_lan_offer, received_path_ping>>
+
+\* backend: LANOffered -> RelayConnected on recv lan_verify [challenge_invalid]
+backend_LANOffered_to_RelayConnected_on_lan_verify_challenge_invalid ==
+    /\ backend_state = backend_LANOffered
+    /\ received_lan_verify.type = MSG_lan_verify
+    /\ offer_challenge /= challenge_bytes
+    /\ received_lan_verify' = [type |-> "none"]
+    /\ backend_state' = backend_RelayConnected
+    /\ UNCHANGED <<client_state, relay_state, current_token, active_tokens, used_tokens, backend_ecdh_pub, received_client_pub, received_backend_pub, backend_shared_key, client_shared_key, backend_code, client_code, received_code, code_attempts, device_secret, paired_devices, received_device_id, auth_nonces_used, received_auth_nonce, secret_published, ping_failures, backoff_level, b_active_path, c_active_path, b_dispatcher_path, c_dispatcher_path, monitor_target, lan_signal, relay_bridge, received_pair_hello, received_auth_request, received_path_pong, received_pair_hello_ack, received_pair_confirm, received_pair_complete, received_auth_ok, received_lan_offer, received_lan_confirm, received_path_ping>>
+
+\* backend: LANOffered -> RelayBackoff (offer_timeout)
+backend_LANOffered_to_RelayBackoff_offer_timeout ==
+    /\ backend_state = backend_LANOffered
+    /\ backend_state' = backend_RelayBackoff
+    /\ backoff_level' = Min(backoff_level + 1, max_backoff_level)
+    /\ lan_signal' = "pending"
+    /\ UNCHANGED <<client_state, relay_state, current_token, active_tokens, used_tokens, backend_ecdh_pub, received_client_pub, received_backend_pub, backend_shared_key, client_shared_key, backend_code, client_code, received_code, code_attempts, device_secret, paired_devices, received_device_id, auth_nonces_used, received_auth_nonce, secret_published, ping_failures, b_active_path, c_active_path, b_dispatcher_path, c_dispatcher_path, monitor_target, relay_bridge, received_pair_hello, received_auth_request, received_lan_verify, received_path_pong, received_pair_hello_ack, received_pair_confirm, received_pair_complete, received_auth_ok, received_lan_offer, received_lan_confirm, received_path_ping>>
+
+\* backend: LANActive -> LANActive (ping_tick)
+backend_LANActive_to_LANActive_ping_tick ==
+    /\ backend_state = backend_LANActive
+    /\ received_path_ping' = [type |-> MSG_path_ping]
+    /\ backend_state' = backend_LANActive
+    /\ UNCHANGED <<client_state, relay_state, current_token, active_tokens, used_tokens, backend_ecdh_pub, received_client_pub, received_backend_pub, backend_shared_key, client_shared_key, backend_code, client_code, received_code, code_attempts, device_secret, paired_devices, received_device_id, auth_nonces_used, received_auth_nonce, secret_published, ping_failures, backoff_level, b_active_path, c_active_path, b_dispatcher_path, c_dispatcher_path, monitor_target, lan_signal, relay_bridge, received_pair_hello, received_auth_request, received_lan_verify, received_path_pong, received_pair_hello_ack, received_pair_confirm, received_pair_complete, received_auth_ok, received_lan_offer, received_lan_confirm>>
+
+\* backend: LANActive -> LANDegraded (ping_timeout)
+backend_LANActive_to_LANDegraded_ping_timeout ==
+    /\ backend_state = backend_LANActive
+    /\ backend_state' = backend_LANDegraded
+    /\ ping_failures' = 1
+    /\ UNCHANGED <<client_state, relay_state, current_token, active_tokens, used_tokens, backend_ecdh_pub, received_client_pub, received_backend_pub, backend_shared_key, client_shared_key, backend_code, client_code, received_code, code_attempts, device_secret, paired_devices, received_device_id, auth_nonces_used, received_auth_nonce, secret_published, backoff_level, b_active_path, c_active_path, b_dispatcher_path, c_dispatcher_path, monitor_target, lan_signal, relay_bridge, received_pair_hello, received_auth_request, received_lan_verify, received_path_pong, received_pair_hello_ack, received_pair_confirm, received_pair_complete, received_auth_ok, received_lan_offer, received_lan_confirm, received_path_ping>>
+
+\* backend: LANDegraded -> LANDegraded (ping_tick)
+backend_LANDegraded_to_LANDegraded_ping_tick ==
+    /\ backend_state = backend_LANDegraded
+    /\ received_path_ping' = [type |-> MSG_path_ping]
+    /\ backend_state' = backend_LANDegraded
+    /\ UNCHANGED <<client_state, relay_state, current_token, active_tokens, used_tokens, backend_ecdh_pub, received_client_pub, received_backend_pub, backend_shared_key, client_shared_key, backend_code, client_code, received_code, code_attempts, device_secret, paired_devices, received_device_id, auth_nonces_used, received_auth_nonce, secret_published, ping_failures, backoff_level, b_active_path, c_active_path, b_dispatcher_path, c_dispatcher_path, monitor_target, lan_signal, relay_bridge, received_pair_hello, received_auth_request, received_lan_verify, received_path_pong, received_pair_hello_ack, received_pair_confirm, received_pair_complete, received_auth_ok, received_lan_offer, received_lan_confirm>>
+
+\* backend: LANDegraded -> LANActive on recv path_pong
+backend_LANDegraded_to_LANActive_on_path_pong ==
+    /\ backend_state = backend_LANDegraded
+    /\ received_path_pong.type = MSG_path_pong
+    /\ received_path_pong' = [type |-> "none"]
+    /\ backend_state' = backend_LANActive
+    /\ ping_failures' = 0
+    /\ UNCHANGED <<client_state, relay_state, current_token, active_tokens, used_tokens, backend_ecdh_pub, received_client_pub, received_backend_pub, backend_shared_key, client_shared_key, backend_code, client_code, received_code, code_attempts, device_secret, paired_devices, received_device_id, auth_nonces_used, received_auth_nonce, secret_published, backoff_level, b_active_path, c_active_path, b_dispatcher_path, c_dispatcher_path, monitor_target, lan_signal, relay_bridge, received_pair_hello, received_auth_request, received_lan_verify, received_pair_hello_ack, received_pair_confirm, received_pair_complete, received_auth_ok, received_lan_offer, received_lan_confirm, received_path_ping>>
+
+\* backend: LANDegraded -> LANDegraded (ping_timeout) [under_max_failures]
+backend_LANDegraded_to_LANDegraded_ping_timeout_under_max_failures ==
+    /\ backend_state = backend_LANDegraded
+    /\ ping_failures + 1 < max_ping_failures
+    /\ backend_state' = backend_LANDegraded
+    /\ ping_failures' = ping_failures + 1
+    /\ UNCHANGED <<client_state, relay_state, current_token, active_tokens, used_tokens, backend_ecdh_pub, received_client_pub, received_backend_pub, backend_shared_key, client_shared_key, backend_code, client_code, received_code, code_attempts, device_secret, paired_devices, received_device_id, auth_nonces_used, received_auth_nonce, secret_published, backoff_level, b_active_path, c_active_path, b_dispatcher_path, c_dispatcher_path, monitor_target, lan_signal, relay_bridge, received_pair_hello, received_auth_request, received_lan_verify, received_path_pong, received_pair_hello_ack, received_pair_confirm, received_pair_complete, received_auth_ok, received_lan_offer, received_lan_confirm, received_path_ping>>
+
+\* backend: LANDegraded -> RelayBackoff (ping_timeout) [at_max_failures]
+backend_LANDegraded_to_RelayBackoff_ping_timeout_at_max_failures ==
+    /\ backend_state = backend_LANDegraded
+    /\ ping_failures + 1 >= max_ping_failures
+    /\ backend_state' = backend_RelayBackoff
+    /\ backoff_level' = Min(backoff_level + 1, max_backoff_level)
+    /\ b_active_path' = "relay"
+    /\ b_dispatcher_path' = "relay"
+    /\ monitor_target' = "none"
+    /\ lan_signal' = "pending"
+    /\ ping_failures' = 0
+    /\ UNCHANGED <<client_state, relay_state, current_token, active_tokens, used_tokens, backend_ecdh_pub, received_client_pub, received_backend_pub, backend_shared_key, client_shared_key, backend_code, client_code, received_code, code_attempts, device_secret, paired_devices, received_device_id, auth_nonces_used, received_auth_nonce, secret_published, c_active_path, c_dispatcher_path, relay_bridge, received_pair_hello, received_auth_request, received_lan_verify, received_path_pong, received_pair_hello_ack, received_pair_confirm, received_pair_complete, received_auth_ok, received_lan_offer, received_lan_confirm, received_path_ping>>
+
+\* backend: RelayBackoff -> LANOffered (backoff_expired)
+backend_RelayBackoff_to_LANOffered_backoff_expired ==
+    /\ backend_state = backend_RelayBackoff
+    /\ received_lan_offer' = [type |-> MSG_lan_offer, addr |-> lan_addr, challenge |-> challenge_bytes]
+    /\ backend_state' = backend_LANOffered
+    /\ UNCHANGED <<client_state, relay_state, current_token, active_tokens, used_tokens, backend_ecdh_pub, received_client_pub, received_backend_pub, backend_shared_key, client_shared_key, backend_code, client_code, received_code, code_attempts, device_secret, paired_devices, received_device_id, auth_nonces_used, received_auth_nonce, secret_published, ping_failures, backoff_level, b_active_path, c_active_path, b_dispatcher_path, c_dispatcher_path, monitor_target, lan_signal, relay_bridge, received_pair_hello, received_auth_request, received_lan_verify, received_path_pong, received_pair_hello_ack, received_pair_confirm, received_pair_complete, received_auth_ok, received_lan_confirm, received_path_ping>>
+
+\* backend: RelayBackoff -> LANOffered (lan_server_changed)
+backend_RelayBackoff_to_LANOffered_lan_server_changed ==
+    /\ backend_state = backend_RelayBackoff
+    /\ received_lan_offer' = [type |-> MSG_lan_offer, addr |-> lan_addr, challenge |-> challenge_bytes]
+    /\ backend_state' = backend_LANOffered
+    /\ backoff_level' = 0
+    /\ UNCHANGED <<client_state, relay_state, current_token, active_tokens, used_tokens, backend_ecdh_pub, received_client_pub, received_backend_pub, backend_shared_key, client_shared_key, backend_code, client_code, received_code, code_attempts, device_secret, paired_devices, received_device_id, auth_nonces_used, received_auth_nonce, secret_published, ping_failures, b_active_path, c_active_path, b_dispatcher_path, c_dispatcher_path, monitor_target, lan_signal, relay_bridge, received_pair_hello, received_auth_request, received_lan_verify, received_path_pong, received_pair_hello_ack, received_pair_confirm, received_pair_complete, received_auth_ok, received_lan_confirm, received_path_ping>>
+
+\* backend: RelayConnected -> LANOffered (readvertise_tick) [lan_server_available]
+backend_RelayConnected_to_LANOffered_readvertise_tick_lan_server_available ==
+    /\ backend_state = backend_RelayConnected
+    /\ lan_server_addr /= "none"
+    /\ received_lan_offer' = [type |-> MSG_lan_offer, addr |-> lan_addr, challenge |-> challenge_bytes]
+    /\ backend_state' = backend_LANOffered
+    /\ UNCHANGED <<client_state, relay_state, current_token, active_tokens, used_tokens, backend_ecdh_pub, received_client_pub, received_backend_pub, backend_shared_key, client_shared_key, backend_code, client_code, received_code, code_attempts, device_secret, paired_devices, received_device_id, auth_nonces_used, received_auth_nonce, secret_published, ping_failures, backoff_level, b_active_path, c_active_path, b_dispatcher_path, c_dispatcher_path, monitor_target, lan_signal, relay_bridge, received_pair_hello, received_auth_request, received_lan_verify, received_path_pong, received_pair_hello_ack, received_pair_confirm, received_pair_complete, received_auth_ok, received_lan_confirm, received_path_ping>>
+
+\* backend: RelayConnected -> Paired (disconnect)
+backend_RelayConnected_to_Paired_disconnect ==
+    /\ backend_state = backend_RelayConnected
+    /\ backend_state' = backend_Paired
+    /\ UNCHANGED <<client_state, relay_state, current_token, active_tokens, used_tokens, backend_ecdh_pub, received_client_pub, received_backend_pub, backend_shared_key, client_shared_key, backend_code, client_code, received_code, code_attempts, device_secret, paired_devices, received_device_id, auth_nonces_used, received_auth_nonce, secret_published, ping_failures, backoff_level, b_active_path, c_active_path, b_dispatcher_path, c_dispatcher_path, monitor_target, lan_signal, relay_bridge, received_pair_hello, received_auth_request, received_lan_verify, received_path_pong, received_pair_hello_ack, received_pair_confirm, received_pair_complete, received_auth_ok, received_lan_offer, received_lan_confirm, received_path_ping>>
+
+
+\* client: Idle -> ObtainBackchannelSecret (backchannel_received)
+client_Idle_to_ObtainBackchannelSecret_backchannel_received ==
+    /\ client_state = client_Idle
+    /\ client_state' = client_ObtainBackchannelSecret
+    /\ UNCHANGED <<backend_state, relay_state, current_token, active_tokens, used_tokens, backend_ecdh_pub, received_client_pub, received_backend_pub, backend_shared_key, client_shared_key, backend_code, client_code, received_code, code_attempts, device_secret, paired_devices, received_device_id, auth_nonces_used, received_auth_nonce, secret_published, ping_failures, backoff_level, b_active_path, c_active_path, b_dispatcher_path, c_dispatcher_path, monitor_target, lan_signal, relay_bridge, received_pair_hello, received_auth_request, received_lan_verify, received_path_pong, received_pair_hello_ack, received_pair_confirm, received_pair_complete, received_auth_ok, received_lan_offer, received_lan_confirm, received_path_ping>>
+
+\* client: ObtainBackchannelSecret -> ConnectRelay (secret_parsed)
+client_ObtainBackchannelSecret_to_ConnectRelay_secret_parsed ==
+    /\ client_state = client_ObtainBackchannelSecret
+    /\ client_state' = client_ConnectRelay
+    /\ UNCHANGED <<backend_state, relay_state, current_token, active_tokens, used_tokens, backend_ecdh_pub, received_client_pub, received_backend_pub, backend_shared_key, client_shared_key, backend_code, client_code, received_code, code_attempts, device_secret, paired_devices, received_device_id, auth_nonces_used, received_auth_nonce, secret_published, ping_failures, backoff_level, b_active_path, c_active_path, b_dispatcher_path, c_dispatcher_path, monitor_target, lan_signal, relay_bridge, received_pair_hello, received_auth_request, received_lan_verify, received_path_pong, received_pair_hello_ack, received_pair_confirm, received_pair_complete, received_auth_ok, received_lan_offer, received_lan_confirm, received_path_ping>>
+
+\* client: ConnectRelay -> GenKeyPair (relay_connected)
+client_ConnectRelay_to_GenKeyPair_relay_connected ==
+    /\ client_state = client_ConnectRelay
+    /\ client_state' = client_GenKeyPair
+    /\ UNCHANGED <<backend_state, relay_state, current_token, active_tokens, used_tokens, backend_ecdh_pub, received_client_pub, received_backend_pub, backend_shared_key, client_shared_key, backend_code, client_code, received_code, code_attempts, device_secret, paired_devices, received_device_id, auth_nonces_used, received_auth_nonce, secret_published, ping_failures, backoff_level, b_active_path, c_active_path, b_dispatcher_path, c_dispatcher_path, monitor_target, lan_signal, relay_bridge, received_pair_hello, received_auth_request, received_lan_verify, received_path_pong, received_pair_hello_ack, received_pair_confirm, received_pair_complete, received_auth_ok, received_lan_offer, received_lan_confirm, received_path_ping>>
+
+\* client: GenKeyPair -> WaitAck (key_pair_generated)
+client_GenKeyPair_to_WaitAck_key_pair_generated ==
+    /\ client_state = client_GenKeyPair
+    /\ received_pair_hello' = [type |-> MSG_pair_hello, pubkey |-> "client_pub", token |-> current_token]
+    /\ client_state' = client_WaitAck
+    /\ UNCHANGED <<backend_state, relay_state, current_token, active_tokens, used_tokens, backend_ecdh_pub, received_client_pub, received_backend_pub, backend_shared_key, client_shared_key, backend_code, client_code, received_code, code_attempts, device_secret, paired_devices, received_device_id, auth_nonces_used, received_auth_nonce, secret_published, ping_failures, backoff_level, b_active_path, c_active_path, b_dispatcher_path, c_dispatcher_path, monitor_target, lan_signal, relay_bridge, received_auth_request, received_lan_verify, received_path_pong, received_pair_hello_ack, received_pair_confirm, received_pair_complete, received_auth_ok, received_lan_offer, received_lan_confirm, received_path_ping>>
+
+\* client: WaitAck -> E2EReady on recv pair_hello_ack
+client_WaitAck_to_E2EReady_on_pair_hello_ack ==
+    /\ client_state = client_WaitAck
+    /\ received_pair_hello_ack.type = MSG_pair_hello_ack
+    /\ received_pair_hello_ack' = [type |-> "none"]
+    /\ client_state' = client_E2EReady
+    /\ received_backend_pub' = received_pair_hello_ack.pubkey
+    /\ client_shared_key' = DeriveKey("client_pub", received_pair_hello_ack.pubkey)
+    /\ UNCHANGED <<backend_state, relay_state, current_token, active_tokens, used_tokens, backend_ecdh_pub, received_client_pub, backend_shared_key, backend_code, client_code, received_code, code_attempts, device_secret, paired_devices, received_device_id, auth_nonces_used, received_auth_nonce, secret_published, ping_failures, backoff_level, b_active_path, c_active_path, b_dispatcher_path, c_dispatcher_path, monitor_target, lan_signal, relay_bridge, received_pair_hello, received_auth_request, received_lan_verify, received_path_pong, received_pair_confirm, received_pair_complete, received_auth_ok, received_lan_offer, received_lan_confirm, received_path_ping>>
+
+\* client: E2EReady -> ShowCode on recv pair_confirm
+client_E2EReady_to_ShowCode_on_pair_confirm ==
+    /\ client_state = client_E2EReady
+    /\ received_pair_confirm.type = MSG_pair_confirm
+    /\ received_pair_confirm' = [type |-> "none"]
+    /\ client_state' = client_ShowCode
+    /\ client_code' = DeriveCode(received_backend_pub, "client_pub")
+    /\ UNCHANGED <<backend_state, relay_state, current_token, active_tokens, used_tokens, backend_ecdh_pub, received_client_pub, received_backend_pub, backend_shared_key, client_shared_key, backend_code, received_code, code_attempts, device_secret, paired_devices, received_device_id, auth_nonces_used, received_auth_nonce, secret_published, ping_failures, backoff_level, b_active_path, c_active_path, b_dispatcher_path, c_dispatcher_path, monitor_target, lan_signal, relay_bridge, received_pair_hello, received_auth_request, received_lan_verify, received_path_pong, received_pair_hello_ack, received_pair_complete, received_auth_ok, received_lan_offer, received_lan_confirm, received_path_ping>>
+
+\* client: ShowCode -> WaitPairComplete (code_displayed)
+client_ShowCode_to_WaitPairComplete_code_displayed ==
+    /\ client_state = client_ShowCode
+    /\ client_state' = client_WaitPairComplete
+    /\ UNCHANGED <<backend_state, relay_state, current_token, active_tokens, used_tokens, backend_ecdh_pub, received_client_pub, received_backend_pub, backend_shared_key, client_shared_key, backend_code, client_code, received_code, code_attempts, device_secret, paired_devices, received_device_id, auth_nonces_used, received_auth_nonce, secret_published, ping_failures, backoff_level, b_active_path, c_active_path, b_dispatcher_path, c_dispatcher_path, monitor_target, lan_signal, relay_bridge, received_pair_hello, received_auth_request, received_lan_verify, received_path_pong, received_pair_hello_ack, received_pair_confirm, received_pair_complete, received_auth_ok, received_lan_offer, received_lan_confirm, received_path_ping>>
+
+\* client: WaitPairComplete -> Paired on recv pair_complete
+client_WaitPairComplete_to_Paired_on_pair_complete ==
+    /\ client_state = client_WaitPairComplete
+    /\ received_pair_complete.type = MSG_pair_complete
+    /\ received_pair_complete' = [type |-> "none"]
+    /\ client_state' = client_Paired
+    /\ UNCHANGED <<backend_state, relay_state, current_token, active_tokens, used_tokens, backend_ecdh_pub, received_client_pub, received_backend_pub, backend_shared_key, client_shared_key, backend_code, client_code, received_code, code_attempts, device_secret, paired_devices, received_device_id, auth_nonces_used, received_auth_nonce, secret_published, ping_failures, backoff_level, b_active_path, c_active_path, b_dispatcher_path, c_dispatcher_path, monitor_target, lan_signal, relay_bridge, received_pair_hello, received_auth_request, received_lan_verify, received_path_pong, received_pair_hello_ack, received_pair_confirm, received_auth_ok, received_lan_offer, received_lan_confirm, received_path_ping>>
+
+\* client: Paired -> Reconnect (app_launch)
+client_Paired_to_Reconnect_app_launch ==
+    /\ client_state = client_Paired
+    /\ client_state' = client_Reconnect
+    /\ UNCHANGED <<backend_state, relay_state, current_token, active_tokens, used_tokens, backend_ecdh_pub, received_client_pub, received_backend_pub, backend_shared_key, client_shared_key, backend_code, client_code, received_code, code_attempts, device_secret, paired_devices, received_device_id, auth_nonces_used, received_auth_nonce, secret_published, ping_failures, backoff_level, b_active_path, c_active_path, b_dispatcher_path, c_dispatcher_path, monitor_target, lan_signal, relay_bridge, received_pair_hello, received_auth_request, received_lan_verify, received_path_pong, received_pair_hello_ack, received_pair_confirm, received_pair_complete, received_auth_ok, received_lan_offer, received_lan_confirm, received_path_ping>>
+
+\* client: Reconnect -> SendAuth (relay_connected)
+client_Reconnect_to_SendAuth_relay_connected ==
+    /\ client_state = client_Reconnect
+    /\ received_auth_request' = [type |-> MSG_auth_request, device_id |-> "device_1", key |-> client_shared_key, nonce |-> "nonce_1", secret |-> device_secret]
+    /\ client_state' = client_SendAuth
+    /\ UNCHANGED <<backend_state, relay_state, current_token, active_tokens, used_tokens, backend_ecdh_pub, received_client_pub, received_backend_pub, backend_shared_key, client_shared_key, backend_code, client_code, received_code, code_attempts, device_secret, paired_devices, received_device_id, auth_nonces_used, received_auth_nonce, secret_published, ping_failures, backoff_level, b_active_path, c_active_path, b_dispatcher_path, c_dispatcher_path, monitor_target, lan_signal, relay_bridge, received_pair_hello, received_lan_verify, received_path_pong, received_pair_hello_ack, received_pair_confirm, received_pair_complete, received_auth_ok, received_lan_offer, received_lan_confirm, received_path_ping>>
+
+\* client: SendAuth -> SessionActive on recv auth_ok
+client_SendAuth_to_SessionActive_on_auth_ok ==
+    /\ client_state = client_SendAuth
+    /\ received_auth_ok.type = MSG_auth_ok
+    /\ received_auth_ok' = [type |-> "none"]
+    /\ client_state' = client_SessionActive
+    /\ UNCHANGED <<backend_state, relay_state, current_token, active_tokens, used_tokens, backend_ecdh_pub, received_client_pub, received_backend_pub, backend_shared_key, client_shared_key, backend_code, client_code, received_code, code_attempts, device_secret, paired_devices, received_device_id, auth_nonces_used, received_auth_nonce, secret_published, ping_failures, backoff_level, b_active_path, c_active_path, b_dispatcher_path, c_dispatcher_path, monitor_target, lan_signal, relay_bridge, received_pair_hello, received_auth_request, received_lan_verify, received_path_pong, received_pair_hello_ack, received_pair_confirm, received_pair_complete, received_lan_offer, received_lan_confirm, received_path_ping>>
+
+\* client: SessionActive -> RelayConnected (session_established)
+client_SessionActive_to_RelayConnected_session_established ==
+    /\ client_state = client_SessionActive
+    /\ client_state' = client_RelayConnected
+    /\ UNCHANGED <<backend_state, relay_state, current_token, active_tokens, used_tokens, backend_ecdh_pub, received_client_pub, received_backend_pub, backend_shared_key, client_shared_key, backend_code, client_code, received_code, code_attempts, device_secret, paired_devices, received_device_id, auth_nonces_used, received_auth_nonce, secret_published, ping_failures, backoff_level, b_active_path, c_active_path, b_dispatcher_path, c_dispatcher_path, monitor_target, lan_signal, relay_bridge, received_pair_hello, received_auth_request, received_lan_verify, received_path_pong, received_pair_hello_ack, received_pair_confirm, received_pair_complete, received_auth_ok, received_lan_offer, received_lan_confirm, received_path_ping>>
+
+\* client: RelayConnected -> LANConnecting on recv lan_offer [lan_enabled]
+client_RelayConnected_to_LANConnecting_on_lan_offer_lan_enabled ==
+    /\ client_state = client_RelayConnected
+    /\ received_lan_offer.type = MSG_lan_offer
+    /\ TRUE
+    /\ received_lan_offer' = [type |-> "none"]
+    /\ client_state' = client_LANConnecting
+    /\ UNCHANGED <<backend_state, relay_state, current_token, active_tokens, used_tokens, backend_ecdh_pub, received_client_pub, received_backend_pub, backend_shared_key, client_shared_key, backend_code, client_code, received_code, code_attempts, device_secret, paired_devices, received_device_id, auth_nonces_used, received_auth_nonce, secret_published, ping_failures, backoff_level, b_active_path, c_active_path, b_dispatcher_path, c_dispatcher_path, monitor_target, lan_signal, relay_bridge, received_pair_hello, received_auth_request, received_lan_verify, received_path_pong, received_pair_hello_ack, received_pair_confirm, received_pair_complete, received_auth_ok, received_lan_confirm, received_path_ping>>
+
+\* client: RelayConnected -> RelayConnected on recv lan_offer [lan_disabled]
+client_RelayConnected_to_RelayConnected_on_lan_offer_lan_disabled ==
+    /\ client_state = client_RelayConnected
+    /\ received_lan_offer.type = MSG_lan_offer
+    /\ FALSE
+    /\ received_lan_offer' = [type |-> "none"]
+    /\ client_state' = client_RelayConnected
+    /\ UNCHANGED <<backend_state, relay_state, current_token, active_tokens, used_tokens, backend_ecdh_pub, received_client_pub, received_backend_pub, backend_shared_key, client_shared_key, backend_code, client_code, received_code, code_attempts, device_secret, paired_devices, received_device_id, auth_nonces_used, received_auth_nonce, secret_published, ping_failures, backoff_level, b_active_path, c_active_path, b_dispatcher_path, c_dispatcher_path, monitor_target, lan_signal, relay_bridge, received_pair_hello, received_auth_request, received_lan_verify, received_path_pong, received_pair_hello_ack, received_pair_confirm, received_pair_complete, received_auth_ok, received_lan_confirm, received_path_ping>>
+
+\* client: LANConnecting -> LANVerifying (lan_dial_ok)
+client_LANConnecting_to_LANVerifying_lan_dial_ok ==
+    /\ client_state = client_LANConnecting
+    /\ received_lan_verify' = [type |-> MSG_lan_verify, challenge |-> offer_challenge, instance_id |-> instance_id]
+    /\ client_state' = client_LANVerifying
+    /\ UNCHANGED <<backend_state, relay_state, current_token, active_tokens, used_tokens, backend_ecdh_pub, received_client_pub, received_backend_pub, backend_shared_key, client_shared_key, backend_code, client_code, received_code, code_attempts, device_secret, paired_devices, received_device_id, auth_nonces_used, received_auth_nonce, secret_published, ping_failures, backoff_level, b_active_path, c_active_path, b_dispatcher_path, c_dispatcher_path, monitor_target, lan_signal, relay_bridge, received_pair_hello, received_auth_request, received_path_pong, received_pair_hello_ack, received_pair_confirm, received_pair_complete, received_auth_ok, received_lan_offer, received_lan_confirm, received_path_ping>>
+
+\* client: LANConnecting -> RelayConnected (lan_dial_failed)
+client_LANConnecting_to_RelayConnected_lan_dial_failed ==
+    /\ client_state = client_LANConnecting
+    /\ client_state' = client_RelayConnected
+    /\ UNCHANGED <<backend_state, relay_state, current_token, active_tokens, used_tokens, backend_ecdh_pub, received_client_pub, received_backend_pub, backend_shared_key, client_shared_key, backend_code, client_code, received_code, code_attempts, device_secret, paired_devices, received_device_id, auth_nonces_used, received_auth_nonce, secret_published, ping_failures, backoff_level, b_active_path, c_active_path, b_dispatcher_path, c_dispatcher_path, monitor_target, lan_signal, relay_bridge, received_pair_hello, received_auth_request, received_lan_verify, received_path_pong, received_pair_hello_ack, received_pair_confirm, received_pair_complete, received_auth_ok, received_lan_offer, received_lan_confirm, received_path_ping>>
+
+\* client: LANVerifying -> LANActive on recv lan_confirm
+client_LANVerifying_to_LANActive_on_lan_confirm ==
+    /\ client_state = client_LANVerifying
+    /\ received_lan_confirm.type = MSG_lan_confirm
+    /\ received_lan_confirm' = [type |-> "none"]
+    /\ client_state' = client_LANActive
+    /\ c_active_path' = "lan"
+    /\ c_dispatcher_path' = "lan"
+    /\ lan_signal' = "ready"
+    /\ UNCHANGED <<backend_state, relay_state, current_token, active_tokens, used_tokens, backend_ecdh_pub, received_client_pub, received_backend_pub, backend_shared_key, client_shared_key, backend_code, client_code, received_code, code_attempts, device_secret, paired_devices, received_device_id, auth_nonces_used, received_auth_nonce, secret_published, ping_failures, backoff_level, b_active_path, b_dispatcher_path, monitor_target, relay_bridge, received_pair_hello, received_auth_request, received_lan_verify, received_path_pong, received_pair_hello_ack, received_pair_confirm, received_pair_complete, received_auth_ok, received_lan_offer, received_path_ping>>
+
+\* client: LANVerifying -> RelayConnected (verify_timeout)
+client_LANVerifying_to_RelayConnected_verify_timeout ==
+    /\ client_state = client_LANVerifying
+    /\ client_state' = client_RelayConnected
+    /\ c_dispatcher_path' = "relay"
+    /\ UNCHANGED <<backend_state, relay_state, current_token, active_tokens, used_tokens, backend_ecdh_pub, received_client_pub, received_backend_pub, backend_shared_key, client_shared_key, backend_code, client_code, received_code, code_attempts, device_secret, paired_devices, received_device_id, auth_nonces_used, received_auth_nonce, secret_published, ping_failures, backoff_level, b_active_path, c_active_path, b_dispatcher_path, monitor_target, lan_signal, relay_bridge, received_pair_hello, received_auth_request, received_lan_verify, received_path_pong, received_pair_hello_ack, received_pair_confirm, received_pair_complete, received_auth_ok, received_lan_offer, received_lan_confirm, received_path_ping>>
+
+\* client: LANActive -> LANActive on recv path_ping
+client_LANActive_to_LANActive_on_path_ping ==
+    /\ client_state = client_LANActive
+    /\ received_path_ping.type = MSG_path_ping
+    /\ received_path_ping' = [type |-> "none"]
+    /\ received_path_pong' = [type |-> MSG_path_pong]
+    /\ client_state' = client_LANActive
+    /\ UNCHANGED <<backend_state, relay_state, current_token, active_tokens, used_tokens, backend_ecdh_pub, received_client_pub, received_backend_pub, backend_shared_key, client_shared_key, backend_code, client_code, received_code, code_attempts, device_secret, paired_devices, received_device_id, auth_nonces_used, received_auth_nonce, secret_published, ping_failures, backoff_level, b_active_path, c_active_path, b_dispatcher_path, c_dispatcher_path, monitor_target, lan_signal, relay_bridge, received_pair_hello, received_auth_request, received_lan_verify, received_pair_hello_ack, received_pair_confirm, received_pair_complete, received_auth_ok, received_lan_offer, received_lan_confirm>>
+
+\* client: LANActive -> RelayFallback (lan_error)
+client_LANActive_to_RelayFallback_lan_error ==
+    /\ client_state = client_LANActive
+    /\ client_state' = client_RelayFallback
+    /\ c_active_path' = "relay"
+    /\ c_dispatcher_path' = "relay"
+    /\ lan_signal' = "pending"
+    /\ UNCHANGED <<backend_state, relay_state, current_token, active_tokens, used_tokens, backend_ecdh_pub, received_client_pub, received_backend_pub, backend_shared_key, client_shared_key, backend_code, client_code, received_code, code_attempts, device_secret, paired_devices, received_device_id, auth_nonces_used, received_auth_nonce, secret_published, ping_failures, backoff_level, b_active_path, b_dispatcher_path, monitor_target, relay_bridge, received_pair_hello, received_auth_request, received_lan_verify, received_path_pong, received_pair_hello_ack, received_pair_confirm, received_pair_complete, received_auth_ok, received_lan_offer, received_lan_confirm, received_path_ping>>
+
+\* client: RelayFallback -> RelayConnected (relay_ok)
+client_RelayFallback_to_RelayConnected_relay_ok ==
+    /\ client_state = client_RelayFallback
+    /\ client_state' = client_RelayConnected
+    /\ UNCHANGED <<backend_state, relay_state, current_token, active_tokens, used_tokens, backend_ecdh_pub, received_client_pub, received_backend_pub, backend_shared_key, client_shared_key, backend_code, client_code, received_code, code_attempts, device_secret, paired_devices, received_device_id, auth_nonces_used, received_auth_nonce, secret_published, ping_failures, backoff_level, b_active_path, c_active_path, b_dispatcher_path, c_dispatcher_path, monitor_target, lan_signal, relay_bridge, received_pair_hello, received_auth_request, received_lan_verify, received_path_pong, received_pair_hello_ack, received_pair_confirm, received_pair_complete, received_auth_ok, received_lan_offer, received_lan_confirm, received_path_ping>>
+
+\* client: LANActive -> LANConnecting on recv lan_offer [lan_enabled]
+client_LANActive_to_LANConnecting_on_lan_offer_lan_enabled ==
+    /\ client_state = client_LANActive
+    /\ received_lan_offer.type = MSG_lan_offer
+    /\ TRUE
+    /\ received_lan_offer' = [type |-> "none"]
+    /\ client_state' = client_LANConnecting
+    /\ UNCHANGED <<backend_state, relay_state, current_token, active_tokens, used_tokens, backend_ecdh_pub, received_client_pub, received_backend_pub, backend_shared_key, client_shared_key, backend_code, client_code, received_code, code_attempts, device_secret, paired_devices, received_device_id, auth_nonces_used, received_auth_nonce, secret_published, ping_failures, backoff_level, b_active_path, c_active_path, b_dispatcher_path, c_dispatcher_path, monitor_target, lan_signal, relay_bridge, received_pair_hello, received_auth_request, received_lan_verify, received_path_pong, received_pair_hello_ack, received_pair_confirm, received_pair_complete, received_auth_ok, received_lan_confirm, received_path_ping>>
+
+\* client: RelayConnected -> Paired (disconnect)
+client_RelayConnected_to_Paired_disconnect ==
+    /\ client_state = client_RelayConnected
+    /\ client_state' = client_Paired
+    /\ UNCHANGED <<backend_state, relay_state, current_token, active_tokens, used_tokens, backend_ecdh_pub, received_client_pub, received_backend_pub, backend_shared_key, client_shared_key, backend_code, client_code, received_code, code_attempts, device_secret, paired_devices, received_device_id, auth_nonces_used, received_auth_nonce, secret_published, ping_failures, backoff_level, b_active_path, c_active_path, b_dispatcher_path, c_dispatcher_path, monitor_target, lan_signal, relay_bridge, received_pair_hello, received_auth_request, received_lan_verify, received_path_pong, received_pair_hello_ack, received_pair_confirm, received_pair_complete, received_auth_ok, received_lan_offer, received_lan_confirm, received_path_ping>>
+
+
+\* relay: Idle -> BackendRegistered (backend_register)
+relay_Idle_to_BackendRegistered_backend_register ==
+    /\ relay_state = relay_Idle
+    /\ relay_state' = relay_BackendRegistered
+    /\ UNCHANGED <<backend_state, client_state, current_token, active_tokens, used_tokens, backend_ecdh_pub, received_client_pub, received_backend_pub, backend_shared_key, client_shared_key, backend_code, client_code, received_code, code_attempts, device_secret, paired_devices, received_device_id, auth_nonces_used, received_auth_nonce, secret_published, ping_failures, backoff_level, b_active_path, c_active_path, b_dispatcher_path, c_dispatcher_path, monitor_target, lan_signal, relay_bridge, received_pair_hello, received_auth_request, received_lan_verify, received_path_pong, received_pair_hello_ack, received_pair_confirm, received_pair_complete, received_auth_ok, received_lan_offer, received_lan_confirm, received_path_ping>>
+
+\* relay: BackendRegistered -> Bridged (client_connect)
+relay_BackendRegistered_to_Bridged_client_connect ==
+    /\ relay_state = relay_BackendRegistered
+    /\ relay_state' = relay_Bridged
+    /\ relay_bridge' = "active"
+    /\ UNCHANGED <<backend_state, client_state, current_token, active_tokens, used_tokens, backend_ecdh_pub, received_client_pub, received_backend_pub, backend_shared_key, client_shared_key, backend_code, client_code, received_code, code_attempts, device_secret, paired_devices, received_device_id, auth_nonces_used, received_auth_nonce, secret_published, ping_failures, backoff_level, b_active_path, c_active_path, b_dispatcher_path, c_dispatcher_path, monitor_target, lan_signal, received_pair_hello, received_auth_request, received_lan_verify, received_path_pong, received_pair_hello_ack, received_pair_confirm, received_pair_complete, received_auth_ok, received_lan_offer, received_lan_confirm, received_path_ping>>
+
+\* relay: Bridged -> BackendRegistered (client_disconnect)
+relay_Bridged_to_BackendRegistered_client_disconnect ==
+    /\ relay_state = relay_Bridged
+    /\ relay_state' = relay_BackendRegistered
+    /\ relay_bridge' = "idle"
+    /\ UNCHANGED <<backend_state, client_state, current_token, active_tokens, used_tokens, backend_ecdh_pub, received_client_pub, received_backend_pub, backend_shared_key, client_shared_key, backend_code, client_code, received_code, code_attempts, device_secret, paired_devices, received_device_id, auth_nonces_used, received_auth_nonce, secret_published, ping_failures, backoff_level, b_active_path, c_active_path, b_dispatcher_path, c_dispatcher_path, monitor_target, lan_signal, received_pair_hello, received_auth_request, received_lan_verify, received_path_pong, received_pair_hello_ack, received_pair_confirm, received_pair_complete, received_auth_ok, received_lan_offer, received_lan_confirm, received_path_ping>>
+
+\* relay: BackendRegistered -> Idle (backend_disconnect)
+relay_BackendRegistered_to_Idle_backend_disconnect ==
+    /\ relay_state = relay_BackendRegistered
+    /\ relay_state' = relay_Idle
+    /\ UNCHANGED <<backend_state, client_state, current_token, active_tokens, used_tokens, backend_ecdh_pub, received_client_pub, received_backend_pub, backend_shared_key, client_shared_key, backend_code, client_code, received_code, code_attempts, device_secret, paired_devices, received_device_id, auth_nonces_used, received_auth_nonce, secret_published, ping_failures, backoff_level, b_active_path, c_active_path, b_dispatcher_path, c_dispatcher_path, monitor_target, lan_signal, relay_bridge, received_pair_hello, received_auth_request, received_lan_verify, received_path_pong, received_pair_hello_ack, received_pair_confirm, received_pair_complete, received_auth_ok, received_lan_offer, received_lan_confirm, received_path_ping>>
+
+
+Next ==
+    \/ backend_Idle_to_GenerateToken_cli_init_pair
+    \/ backend_GenerateToken_to_RegisterRelay_token_created
+    \/ backend_RegisterRelay_to_WaitingForClient_relay_registered
+    \/ backend_WaitingForClient_to_DeriveSecret_on_pair_hello_token_valid
+    \/ backend_WaitingForClient_to_Idle_on_pair_hello_token_invalid
+    \/ backend_DeriveSecret_to_SendAck_ecdh_complete
+    \/ backend_SendAck_to_WaitingForCode_signal_code_display
+    \/ backend_WaitingForCode_to_ValidateCode_cli_code_entered
+    \/ backend_ValidateCode_to_StorePaired_check_code_code_correct
+    \/ backend_ValidateCode_to_Idle_check_code_code_wrong
+    \/ backend_StorePaired_to_Paired_finalise
+    \/ backend_Paired_to_AuthCheck_on_auth_request
+    \/ backend_AuthCheck_to_SessionActive_verify_device_known
+    \/ backend_AuthCheck_to_Idle_verify_device_unknown
+    \/ backend_SessionActive_to_RelayConnected_session_established
+    \/ backend_RelayConnected_to_LANOffered_lan_server_ready
+    \/ backend_LANOffered_to_LANActive_on_lan_verify_challenge_valid
+    \/ backend_LANOffered_to_RelayConnected_on_lan_verify_challenge_invalid
+    \/ backend_LANOffered_to_RelayBackoff_offer_timeout
+    \/ backend_LANActive_to_LANActive_ping_tick
+    \/ backend_LANActive_to_LANDegraded_ping_timeout
+    \/ backend_LANDegraded_to_LANDegraded_ping_tick
+    \/ backend_LANDegraded_to_LANActive_on_path_pong
+    \/ backend_LANDegraded_to_LANDegraded_ping_timeout_under_max_failures
+    \/ backend_LANDegraded_to_RelayBackoff_ping_timeout_at_max_failures
+    \/ backend_RelayBackoff_to_LANOffered_backoff_expired
+    \/ backend_RelayBackoff_to_LANOffered_lan_server_changed
+    \/ backend_RelayConnected_to_LANOffered_readvertise_tick_lan_server_available
+    \/ backend_RelayConnected_to_Paired_disconnect
+    \/ client_Idle_to_ObtainBackchannelSecret_backchannel_received
+    \/ client_ObtainBackchannelSecret_to_ConnectRelay_secret_parsed
+    \/ client_ConnectRelay_to_GenKeyPair_relay_connected
+    \/ client_GenKeyPair_to_WaitAck_key_pair_generated
+    \/ client_WaitAck_to_E2EReady_on_pair_hello_ack
+    \/ client_E2EReady_to_ShowCode_on_pair_confirm
+    \/ client_ShowCode_to_WaitPairComplete_code_displayed
+    \/ client_WaitPairComplete_to_Paired_on_pair_complete
+    \/ client_Paired_to_Reconnect_app_launch
+    \/ client_Reconnect_to_SendAuth_relay_connected
+    \/ client_SendAuth_to_SessionActive_on_auth_ok
+    \/ client_SessionActive_to_RelayConnected_session_established
+    \/ client_RelayConnected_to_LANConnecting_on_lan_offer_lan_enabled
+    \/ client_RelayConnected_to_RelayConnected_on_lan_offer_lan_disabled
+    \/ client_LANConnecting_to_LANVerifying_lan_dial_ok
+    \/ client_LANConnecting_to_RelayConnected_lan_dial_failed
+    \/ client_LANVerifying_to_LANActive_on_lan_confirm
+    \/ client_LANVerifying_to_RelayConnected_verify_timeout
+    \/ client_LANActive_to_LANActive_on_path_ping
+    \/ client_LANActive_to_RelayFallback_lan_error
+    \/ client_RelayFallback_to_RelayConnected_relay_ok
+    \/ client_LANActive_to_LANConnecting_on_lan_offer_lan_enabled
+    \/ client_RelayConnected_to_Paired_disconnect
+    \/ relay_Idle_to_BackendRegistered_backend_register
+    \/ relay_BackendRegistered_to_Bridged_client_connect
+    \/ relay_Bridged_to_BackendRegistered_client_disconnect
+    \/ relay_BackendRegistered_to_Idle_backend_disconnect
+
+Spec == Init /\ [][Next]_vars /\ WF_vars(Next)
+
+\* ================================================================
+\* Invariants and properties
+\* ================================================================
+
 \* A revoked pairing token is never accepted again
 NoTokenReuse == used_tokens \intersect active_tokens = {}
 \* MitM produces mismatched codes
@@ -1067,7 +694,9 @@ BackendDispatcherMatchesActive == backend_state = backend_LANActive => b_dispatc
 ClientDispatcherMatchesActive == client_state = client_LANActive => c_dispatcher_path = "lan"
 \* Monitor only pings when LAN is active/degraded
 MonitorOnlyWhenLAN == monitor_target = "lan" => backend_state \in {backend_LANActive, backend_LANDegraded}
-\* LAN signal resets on fallback
-LANSignalPendingOnFallback == backend_state = backend_RelayBackoff => lan_signal = "pending"
+\* After fallback, backend eventually re-advertises LAN
+FallbackLeadsToReadvertise == (backend_state = backend_RelayBackoff) ~> (backend_state = backend_LANOffered)
+\* Degraded state eventually resolves (recovery or fallback)
+DegradedLeadsToResolutionOrFallback == (backend_state = backend_LANDegraded) ~> (backend_state \in {backend_LANActive, backend_RelayBackoff})
 
 ====
