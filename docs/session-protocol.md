@@ -36,9 +36,11 @@ Three actors participate across both phases:
 
 ![Transport State Machine](transport.svg)
 
-App I/O transitions (`app_send`, `relay_stream_data`, etc.) are
-inherited from superstates (see [Hierarchical States](#hierarchical-states)).
-Commands emitted by transitions drive the executor.
+Superstates (`Connected`, `LANPath`/`LANDataPath`) are rendered as
+containers. App I/O transitions inherited from superstates appear as
+self-loops on the container boundary — see
+[State Hierarchy](#state-hierarchy). Commands emitted by transitions
+drive the executor.
 
 ### Relay
 
