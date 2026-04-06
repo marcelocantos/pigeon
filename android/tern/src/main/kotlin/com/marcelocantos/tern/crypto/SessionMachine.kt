@@ -36,8 +36,8 @@ enum class BackendState(val value: String) {
     RelayConnected("RelayConnected"),
     LANOffered("LANOffered"),
     LANActive("LANActive"),
-    LANDegraded("LANDegraded"),
-    RelayBackoff("RelayBackoff");
+    RelayBackoff("RelayBackoff"),
+    LANDegraded("LANDegraded");
 }
 
 enum class ClientState(val value: String) {
@@ -244,35 +244,6 @@ object BackendTable {
         Transition("AuthCheck", "SessionActive", "verify", "internal", "device_known", "verify_device", listOf("client" to "auth_ok")),
         Transition("AuthCheck", "Idle", "verify", "internal", "device_unknown", null, emptyList()),
         Transition("SessionActive", "RelayConnected", "session_established", "internal", null, null, emptyList()),
-        Transition("RelayConnected", "RelayConnected", "app_send", "internal", null, null, emptyList()),
-        Transition("RelayConnected", "RelayConnected", "relay_stream_data", "internal", null, null, emptyList()),
-        Transition("LANOffered", "LANOffered", "app_send", "internal", null, null, emptyList()),
-        Transition("LANOffered", "LANOffered", "relay_stream_data", "internal", null, null, emptyList()),
-        Transition("LANActive", "LANActive", "app_send", "internal", null, null, emptyList()),
-        Transition("LANActive", "LANActive", "lan_stream_data", "internal", null, null, emptyList()),
-        Transition("LANActive", "LANActive", "relay_stream_data", "internal", null, null, emptyList()),
-        Transition("LANDegraded", "LANDegraded", "app_send", "internal", null, null, emptyList()),
-        Transition("LANDegraded", "LANDegraded", "lan_stream_data", "internal", null, null, emptyList()),
-        Transition("LANDegraded", "LANDegraded", "relay_stream_data", "internal", null, null, emptyList()),
-        Transition("RelayBackoff", "RelayBackoff", "app_send", "internal", null, null, emptyList()),
-        Transition("RelayBackoff", "RelayBackoff", "relay_stream_data", "internal", null, null, emptyList()),
-        Transition("RelayConnected", "RelayConnected", "relay_stream_error", "internal", null, null, emptyList()),
-        Transition("LANOffered", "LANOffered", "relay_stream_error", "internal", null, null, emptyList()),
-        Transition("LANActive", "LANActive", "relay_stream_error", "internal", null, null, emptyList()),
-        Transition("LANDegraded", "LANDegraded", "relay_stream_error", "internal", null, null, emptyList()),
-        Transition("RelayBackoff", "RelayBackoff", "relay_stream_error", "internal", null, null, emptyList()),
-        Transition("RelayConnected", "RelayConnected", "app_send_datagram", "internal", null, null, emptyList()),
-        Transition("RelayConnected", "RelayConnected", "relay_datagram", "internal", null, null, emptyList()),
-        Transition("LANOffered", "LANOffered", "app_send_datagram", "internal", null, null, emptyList()),
-        Transition("LANOffered", "LANOffered", "relay_datagram", "internal", null, null, emptyList()),
-        Transition("LANActive", "LANActive", "app_send_datagram", "internal", null, null, emptyList()),
-        Transition("LANActive", "LANActive", "lan_datagram", "internal", null, null, emptyList()),
-        Transition("LANActive", "LANActive", "relay_datagram", "internal", null, null, emptyList()),
-        Transition("LANDegraded", "LANDegraded", "app_send_datagram", "internal", null, null, emptyList()),
-        Transition("LANDegraded", "LANDegraded", "lan_datagram", "internal", null, null, emptyList()),
-        Transition("LANDegraded", "LANDegraded", "relay_datagram", "internal", null, null, emptyList()),
-        Transition("RelayBackoff", "RelayBackoff", "app_send_datagram", "internal", null, null, emptyList()),
-        Transition("RelayBackoff", "RelayBackoff", "relay_datagram", "internal", null, null, emptyList()),
         Transition("RelayConnected", "LANOffered", "lan_server_ready", "internal", null, null, listOf("client" to "lan_offer")),
         Transition("LANOffered", "LANActive", "lan_verify", "recv", "challenge_valid", "activate_lan", listOf("client" to "lan_confirm")),
         Transition("LANOffered", "RelayConnected", "lan_verify", "recv", "challenge_invalid", null, emptyList()),
@@ -292,6 +263,35 @@ object BackendTable {
         Transition("LANActive", "RelayBackoff", "app_force_fallback", "internal", null, "fallback_to_relay", emptyList()),
         Transition("LANDegraded", "RelayBackoff", "app_force_fallback", "internal", null, "fallback_to_relay", emptyList()),
         Transition("RelayConnected", "Paired", "disconnect", "internal", null, null, emptyList()),
+        Transition("RelayConnected", "RelayConnected", "app_send", "internal", null, null, emptyList()),
+        Transition("LANOffered", "LANOffered", "app_send", "internal", null, null, emptyList()),
+        Transition("LANActive", "LANActive", "app_send", "internal", null, null, emptyList()),
+        Transition("LANDegraded", "LANDegraded", "app_send", "internal", null, null, emptyList()),
+        Transition("RelayBackoff", "RelayBackoff", "app_send", "internal", null, null, emptyList()),
+        Transition("RelayConnected", "RelayConnected", "relay_stream_data", "internal", null, null, emptyList()),
+        Transition("LANOffered", "LANOffered", "relay_stream_data", "internal", null, null, emptyList()),
+        Transition("LANActive", "LANActive", "relay_stream_data", "internal", null, null, emptyList()),
+        Transition("LANDegraded", "LANDegraded", "relay_stream_data", "internal", null, null, emptyList()),
+        Transition("RelayBackoff", "RelayBackoff", "relay_stream_data", "internal", null, null, emptyList()),
+        Transition("RelayConnected", "RelayConnected", "relay_stream_error", "internal", null, null, emptyList()),
+        Transition("LANOffered", "LANOffered", "relay_stream_error", "internal", null, null, emptyList()),
+        Transition("LANActive", "LANActive", "relay_stream_error", "internal", null, null, emptyList()),
+        Transition("LANDegraded", "LANDegraded", "relay_stream_error", "internal", null, null, emptyList()),
+        Transition("RelayBackoff", "RelayBackoff", "relay_stream_error", "internal", null, null, emptyList()),
+        Transition("RelayConnected", "RelayConnected", "app_send_datagram", "internal", null, null, emptyList()),
+        Transition("LANOffered", "LANOffered", "app_send_datagram", "internal", null, null, emptyList()),
+        Transition("LANActive", "LANActive", "app_send_datagram", "internal", null, null, emptyList()),
+        Transition("LANDegraded", "LANDegraded", "app_send_datagram", "internal", null, null, emptyList()),
+        Transition("RelayBackoff", "RelayBackoff", "app_send_datagram", "internal", null, null, emptyList()),
+        Transition("RelayConnected", "RelayConnected", "relay_datagram", "internal", null, null, emptyList()),
+        Transition("LANOffered", "LANOffered", "relay_datagram", "internal", null, null, emptyList()),
+        Transition("LANActive", "LANActive", "relay_datagram", "internal", null, null, emptyList()),
+        Transition("LANDegraded", "LANDegraded", "relay_datagram", "internal", null, null, emptyList()),
+        Transition("RelayBackoff", "RelayBackoff", "relay_datagram", "internal", null, null, emptyList()),
+        Transition("LANActive", "LANActive", "lan_stream_data", "internal", null, null, emptyList()),
+        Transition("LANDegraded", "LANDegraded", "lan_stream_data", "internal", null, null, emptyList()),
+        Transition("LANActive", "LANActive", "lan_datagram", "internal", null, null, emptyList()),
+        Transition("LANDegraded", "LANDegraded", "lan_datagram", "internal", null, null, emptyList()),
     )
 }
 
@@ -322,33 +322,6 @@ object ClientTable {
         Transition("Reconnect", "SendAuth", "relay_connected", "internal", null, null, listOf("backend" to "auth_request")),
         Transition("SendAuth", "SessionActive", "auth_ok", "recv", null, null, emptyList()),
         Transition("SessionActive", "RelayConnected", "session_established", "internal", null, null, emptyList()),
-        Transition("RelayConnected", "RelayConnected", "app_send", "internal", null, null, emptyList()),
-        Transition("RelayConnected", "RelayConnected", "relay_stream_data", "internal", null, null, emptyList()),
-        Transition("LANConnecting", "LANConnecting", "app_send", "internal", null, null, emptyList()),
-        Transition("LANConnecting", "LANConnecting", "relay_stream_data", "internal", null, null, emptyList()),
-        Transition("LANVerifying", "LANVerifying", "app_send", "internal", null, null, emptyList()),
-        Transition("LANVerifying", "LANVerifying", "relay_stream_data", "internal", null, null, emptyList()),
-        Transition("LANActive", "LANActive", "app_send", "internal", null, null, emptyList()),
-        Transition("LANActive", "LANActive", "lan_stream_data", "internal", null, null, emptyList()),
-        Transition("LANActive", "LANActive", "relay_stream_data", "internal", null, null, emptyList()),
-        Transition("RelayFallback", "RelayFallback", "app_send", "internal", null, null, emptyList()),
-        Transition("RelayFallback", "RelayFallback", "relay_stream_data", "internal", null, null, emptyList()),
-        Transition("RelayConnected", "RelayConnected", "relay_stream_error", "internal", null, null, emptyList()),
-        Transition("LANConnecting", "LANConnecting", "relay_stream_error", "internal", null, null, emptyList()),
-        Transition("LANVerifying", "LANVerifying", "relay_stream_error", "internal", null, null, emptyList()),
-        Transition("LANActive", "LANActive", "relay_stream_error", "internal", null, null, emptyList()),
-        Transition("RelayFallback", "RelayFallback", "relay_stream_error", "internal", null, null, emptyList()),
-        Transition("RelayConnected", "RelayConnected", "app_send_datagram", "internal", null, null, emptyList()),
-        Transition("RelayConnected", "RelayConnected", "relay_datagram", "internal", null, null, emptyList()),
-        Transition("LANConnecting", "LANConnecting", "app_send_datagram", "internal", null, null, emptyList()),
-        Transition("LANConnecting", "LANConnecting", "relay_datagram", "internal", null, null, emptyList()),
-        Transition("LANVerifying", "LANVerifying", "app_send_datagram", "internal", null, null, emptyList()),
-        Transition("LANVerifying", "LANVerifying", "relay_datagram", "internal", null, null, emptyList()),
-        Transition("LANActive", "LANActive", "app_send_datagram", "internal", null, null, emptyList()),
-        Transition("LANActive", "LANActive", "lan_datagram", "internal", null, null, emptyList()),
-        Transition("LANActive", "LANActive", "relay_datagram", "internal", null, null, emptyList()),
-        Transition("RelayFallback", "RelayFallback", "app_send_datagram", "internal", null, null, emptyList()),
-        Transition("RelayFallback", "RelayFallback", "relay_datagram", "internal", null, null, emptyList()),
         Transition("RelayConnected", "LANConnecting", "lan_offer", "recv", "lan_enabled", "dial_lan", emptyList()),
         Transition("RelayConnected", "RelayConnected", "lan_offer", "recv", "lan_disabled", null, emptyList()),
         Transition("LANConnecting", "LANVerifying", "lan_dial_ok", "internal", null, null, listOf("backend" to "lan_verify")),
@@ -364,6 +337,33 @@ object ClientTable {
         Transition("LANVerifying", "RelayConnected", "app_force_fallback", "internal", null, null, emptyList()),
         Transition("LANActive", "RelayConnected", "app_force_fallback", "internal", null, "fallback_to_relay", emptyList()),
         Transition("RelayConnected", "Paired", "disconnect", "internal", null, null, emptyList()),
+        Transition("RelayConnected", "RelayConnected", "app_send", "internal", null, null, emptyList()),
+        Transition("LANConnecting", "LANConnecting", "app_send", "internal", null, null, emptyList()),
+        Transition("LANVerifying", "LANVerifying", "app_send", "internal", null, null, emptyList()),
+        Transition("LANActive", "LANActive", "app_send", "internal", null, null, emptyList()),
+        Transition("RelayFallback", "RelayFallback", "app_send", "internal", null, null, emptyList()),
+        Transition("RelayConnected", "RelayConnected", "relay_stream_data", "internal", null, null, emptyList()),
+        Transition("LANConnecting", "LANConnecting", "relay_stream_data", "internal", null, null, emptyList()),
+        Transition("LANVerifying", "LANVerifying", "relay_stream_data", "internal", null, null, emptyList()),
+        Transition("LANActive", "LANActive", "relay_stream_data", "internal", null, null, emptyList()),
+        Transition("RelayFallback", "RelayFallback", "relay_stream_data", "internal", null, null, emptyList()),
+        Transition("RelayConnected", "RelayConnected", "relay_stream_error", "internal", null, null, emptyList()),
+        Transition("LANConnecting", "LANConnecting", "relay_stream_error", "internal", null, null, emptyList()),
+        Transition("LANVerifying", "LANVerifying", "relay_stream_error", "internal", null, null, emptyList()),
+        Transition("LANActive", "LANActive", "relay_stream_error", "internal", null, null, emptyList()),
+        Transition("RelayFallback", "RelayFallback", "relay_stream_error", "internal", null, null, emptyList()),
+        Transition("RelayConnected", "RelayConnected", "app_send_datagram", "internal", null, null, emptyList()),
+        Transition("LANConnecting", "LANConnecting", "app_send_datagram", "internal", null, null, emptyList()),
+        Transition("LANVerifying", "LANVerifying", "app_send_datagram", "internal", null, null, emptyList()),
+        Transition("LANActive", "LANActive", "app_send_datagram", "internal", null, null, emptyList()),
+        Transition("RelayFallback", "RelayFallback", "app_send_datagram", "internal", null, null, emptyList()),
+        Transition("RelayConnected", "RelayConnected", "relay_datagram", "internal", null, null, emptyList()),
+        Transition("LANConnecting", "LANConnecting", "relay_datagram", "internal", null, null, emptyList()),
+        Transition("LANVerifying", "LANVerifying", "relay_datagram", "internal", null, null, emptyList()),
+        Transition("LANActive", "LANActive", "relay_datagram", "internal", null, null, emptyList()),
+        Transition("RelayFallback", "RelayFallback", "relay_datagram", "internal", null, null, emptyList()),
+        Transition("LANActive", "LANActive", "lan_stream_data", "internal", null, null, emptyList()),
+        Transition("LANActive", "LANActive", "lan_datagram", "internal", null, null, emptyList()),
     )
 }
 
@@ -516,151 +516,6 @@ class BackendMachine {
                     state = BackendState.RelayConnected
                     emptyList()
                 }
-            state == BackendState.RelayConnected && ev == EventID.AppSend ->
-                run {
-                    state = BackendState.RelayConnected
-                    listOf(CmdID.WriteActiveStream)
-                }
-            state == BackendState.RelayConnected && ev == EventID.RelayStreamData ->
-                run {
-                    state = BackendState.RelayConnected
-                    listOf(CmdID.DeliverRecv)
-                }
-            state == BackendState.LANOffered && ev == EventID.AppSend ->
-                run {
-                    state = BackendState.LANOffered
-                    listOf(CmdID.WriteActiveStream)
-                }
-            state == BackendState.LANOffered && ev == EventID.RelayStreamData ->
-                run {
-                    state = BackendState.LANOffered
-                    listOf(CmdID.DeliverRecv)
-                }
-            state == BackendState.LANActive && ev == EventID.AppSend ->
-                run {
-                    state = BackendState.LANActive
-                    listOf(CmdID.WriteActiveStream)
-                }
-            state == BackendState.LANActive && ev == EventID.LanStreamData ->
-                run {
-                    state = BackendState.LANActive
-                    listOf(CmdID.DeliverRecv)
-                }
-            state == BackendState.LANActive && ev == EventID.RelayStreamData ->
-                run {
-                    state = BackendState.LANActive
-                    listOf(CmdID.DeliverRecv)
-                }
-            state == BackendState.LANDegraded && ev == EventID.AppSend ->
-                run {
-                    state = BackendState.LANDegraded
-                    listOf(CmdID.WriteActiveStream)
-                }
-            state == BackendState.LANDegraded && ev == EventID.LanStreamData ->
-                run {
-                    state = BackendState.LANDegraded
-                    listOf(CmdID.DeliverRecv)
-                }
-            state == BackendState.LANDegraded && ev == EventID.RelayStreamData ->
-                run {
-                    state = BackendState.LANDegraded
-                    listOf(CmdID.DeliverRecv)
-                }
-            state == BackendState.RelayBackoff && ev == EventID.AppSend ->
-                run {
-                    state = BackendState.RelayBackoff
-                    listOf(CmdID.WriteActiveStream)
-                }
-            state == BackendState.RelayBackoff && ev == EventID.RelayStreamData ->
-                run {
-                    state = BackendState.RelayBackoff
-                    listOf(CmdID.DeliverRecv)
-                }
-            state == BackendState.RelayConnected && ev == EventID.RelayStreamError ->
-                run {
-                    state = BackendState.RelayConnected
-                    listOf(CmdID.DeliverRecvError)
-                }
-            state == BackendState.LANOffered && ev == EventID.RelayStreamError ->
-                run {
-                    state = BackendState.LANOffered
-                    listOf(CmdID.DeliverRecvError)
-                }
-            state == BackendState.LANActive && ev == EventID.RelayStreamError ->
-                run {
-                    state = BackendState.LANActive
-                    listOf(CmdID.DeliverRecvError)
-                }
-            state == BackendState.LANDegraded && ev == EventID.RelayStreamError ->
-                run {
-                    state = BackendState.LANDegraded
-                    listOf(CmdID.DeliverRecvError)
-                }
-            state == BackendState.RelayBackoff && ev == EventID.RelayStreamError ->
-                run {
-                    state = BackendState.RelayBackoff
-                    listOf(CmdID.DeliverRecvError)
-                }
-            state == BackendState.RelayConnected && ev == EventID.AppSendDatagram ->
-                run {
-                    state = BackendState.RelayConnected
-                    listOf(CmdID.SendActiveDatagram)
-                }
-            state == BackendState.RelayConnected && ev == EventID.RelayDatagram ->
-                run {
-                    state = BackendState.RelayConnected
-                    listOf(CmdID.DeliverRecvDatagram)
-                }
-            state == BackendState.LANOffered && ev == EventID.AppSendDatagram ->
-                run {
-                    state = BackendState.LANOffered
-                    listOf(CmdID.SendActiveDatagram)
-                }
-            state == BackendState.LANOffered && ev == EventID.RelayDatagram ->
-                run {
-                    state = BackendState.LANOffered
-                    listOf(CmdID.DeliverRecvDatagram)
-                }
-            state == BackendState.LANActive && ev == EventID.AppSendDatagram ->
-                run {
-                    state = BackendState.LANActive
-                    listOf(CmdID.SendActiveDatagram)
-                }
-            state == BackendState.LANActive && ev == EventID.LanDatagram ->
-                run {
-                    state = BackendState.LANActive
-                    listOf(CmdID.DeliverRecvDatagram)
-                }
-            state == BackendState.LANActive && ev == EventID.RelayDatagram ->
-                run {
-                    state = BackendState.LANActive
-                    listOf(CmdID.DeliverRecvDatagram)
-                }
-            state == BackendState.LANDegraded && ev == EventID.AppSendDatagram ->
-                run {
-                    state = BackendState.LANDegraded
-                    listOf(CmdID.SendActiveDatagram)
-                }
-            state == BackendState.LANDegraded && ev == EventID.LanDatagram ->
-                run {
-                    state = BackendState.LANDegraded
-                    listOf(CmdID.DeliverRecvDatagram)
-                }
-            state == BackendState.LANDegraded && ev == EventID.RelayDatagram ->
-                run {
-                    state = BackendState.LANDegraded
-                    listOf(CmdID.DeliverRecvDatagram)
-                }
-            state == BackendState.RelayBackoff && ev == EventID.AppSendDatagram ->
-                run {
-                    state = BackendState.RelayBackoff
-                    listOf(CmdID.SendActiveDatagram)
-                }
-            state == BackendState.RelayBackoff && ev == EventID.RelayDatagram ->
-                run {
-                    state = BackendState.RelayBackoff
-                    listOf(CmdID.DeliverRecvDatagram)
-                }
             state == BackendState.RelayConnected && ev == EventID.LanServerReady ->
                 run {
                     state = BackendState.LANOffered
@@ -806,6 +661,151 @@ class BackendMachine {
                     state = BackendState.Paired
                     emptyList()
                 }
+            state == BackendState.RelayConnected && ev == EventID.AppSend ->
+                run {
+                    state = BackendState.RelayConnected
+                    listOf(CmdID.WriteActiveStream)
+                }
+            state == BackendState.LANOffered && ev == EventID.AppSend ->
+                run {
+                    state = BackendState.LANOffered
+                    listOf(CmdID.WriteActiveStream)
+                }
+            state == BackendState.LANActive && ev == EventID.AppSend ->
+                run {
+                    state = BackendState.LANActive
+                    listOf(CmdID.WriteActiveStream)
+                }
+            state == BackendState.LANDegraded && ev == EventID.AppSend ->
+                run {
+                    state = BackendState.LANDegraded
+                    listOf(CmdID.WriteActiveStream)
+                }
+            state == BackendState.RelayBackoff && ev == EventID.AppSend ->
+                run {
+                    state = BackendState.RelayBackoff
+                    listOf(CmdID.WriteActiveStream)
+                }
+            state == BackendState.RelayConnected && ev == EventID.RelayStreamData ->
+                run {
+                    state = BackendState.RelayConnected
+                    listOf(CmdID.DeliverRecv)
+                }
+            state == BackendState.LANOffered && ev == EventID.RelayStreamData ->
+                run {
+                    state = BackendState.LANOffered
+                    listOf(CmdID.DeliverRecv)
+                }
+            state == BackendState.LANActive && ev == EventID.RelayStreamData ->
+                run {
+                    state = BackendState.LANActive
+                    listOf(CmdID.DeliverRecv)
+                }
+            state == BackendState.LANDegraded && ev == EventID.RelayStreamData ->
+                run {
+                    state = BackendState.LANDegraded
+                    listOf(CmdID.DeliverRecv)
+                }
+            state == BackendState.RelayBackoff && ev == EventID.RelayStreamData ->
+                run {
+                    state = BackendState.RelayBackoff
+                    listOf(CmdID.DeliverRecv)
+                }
+            state == BackendState.RelayConnected && ev == EventID.RelayStreamError ->
+                run {
+                    state = BackendState.RelayConnected
+                    listOf(CmdID.DeliverRecvError)
+                }
+            state == BackendState.LANOffered && ev == EventID.RelayStreamError ->
+                run {
+                    state = BackendState.LANOffered
+                    listOf(CmdID.DeliverRecvError)
+                }
+            state == BackendState.LANActive && ev == EventID.RelayStreamError ->
+                run {
+                    state = BackendState.LANActive
+                    listOf(CmdID.DeliverRecvError)
+                }
+            state == BackendState.LANDegraded && ev == EventID.RelayStreamError ->
+                run {
+                    state = BackendState.LANDegraded
+                    listOf(CmdID.DeliverRecvError)
+                }
+            state == BackendState.RelayBackoff && ev == EventID.RelayStreamError ->
+                run {
+                    state = BackendState.RelayBackoff
+                    listOf(CmdID.DeliverRecvError)
+                }
+            state == BackendState.RelayConnected && ev == EventID.AppSendDatagram ->
+                run {
+                    state = BackendState.RelayConnected
+                    listOf(CmdID.SendActiveDatagram)
+                }
+            state == BackendState.LANOffered && ev == EventID.AppSendDatagram ->
+                run {
+                    state = BackendState.LANOffered
+                    listOf(CmdID.SendActiveDatagram)
+                }
+            state == BackendState.LANActive && ev == EventID.AppSendDatagram ->
+                run {
+                    state = BackendState.LANActive
+                    listOf(CmdID.SendActiveDatagram)
+                }
+            state == BackendState.LANDegraded && ev == EventID.AppSendDatagram ->
+                run {
+                    state = BackendState.LANDegraded
+                    listOf(CmdID.SendActiveDatagram)
+                }
+            state == BackendState.RelayBackoff && ev == EventID.AppSendDatagram ->
+                run {
+                    state = BackendState.RelayBackoff
+                    listOf(CmdID.SendActiveDatagram)
+                }
+            state == BackendState.RelayConnected && ev == EventID.RelayDatagram ->
+                run {
+                    state = BackendState.RelayConnected
+                    listOf(CmdID.DeliverRecvDatagram)
+                }
+            state == BackendState.LANOffered && ev == EventID.RelayDatagram ->
+                run {
+                    state = BackendState.LANOffered
+                    listOf(CmdID.DeliverRecvDatagram)
+                }
+            state == BackendState.LANActive && ev == EventID.RelayDatagram ->
+                run {
+                    state = BackendState.LANActive
+                    listOf(CmdID.DeliverRecvDatagram)
+                }
+            state == BackendState.LANDegraded && ev == EventID.RelayDatagram ->
+                run {
+                    state = BackendState.LANDegraded
+                    listOf(CmdID.DeliverRecvDatagram)
+                }
+            state == BackendState.RelayBackoff && ev == EventID.RelayDatagram ->
+                run {
+                    state = BackendState.RelayBackoff
+                    listOf(CmdID.DeliverRecvDatagram)
+                }
+            state == BackendState.LANActive && ev == EventID.LanStreamData ->
+                run {
+                    state = BackendState.LANActive
+                    listOf(CmdID.DeliverRecv)
+                }
+            state == BackendState.LANDegraded && ev == EventID.LanStreamData ->
+                run {
+                    state = BackendState.LANDegraded
+                    listOf(CmdID.DeliverRecv)
+                }
+            state == BackendState.LANActive && ev == EventID.LanDatagram ->
+                run {
+                    state = BackendState.LANActive
+                    listOf(CmdID.DeliverRecvDatagram)
+                }
+            state == BackendState.LANDegraded && ev == EventID.LanDatagram ->
+                run {
+                    state = BackendState.LANDegraded
+                    listOf(CmdID.DeliverRecvDatagram)
+                }
             else -> emptyList()
         }
         return cmds
@@ -893,141 +893,6 @@ class ClientMachine {
                 run {
                     state = ClientState.RelayConnected
                     emptyList()
-                }
-            state == ClientState.RelayConnected && ev == EventID.AppSend ->
-                run {
-                    state = ClientState.RelayConnected
-                    listOf(CmdID.WriteActiveStream)
-                }
-            state == ClientState.RelayConnected && ev == EventID.RelayStreamData ->
-                run {
-                    state = ClientState.RelayConnected
-                    listOf(CmdID.DeliverRecv)
-                }
-            state == ClientState.LANConnecting && ev == EventID.AppSend ->
-                run {
-                    state = ClientState.LANConnecting
-                    listOf(CmdID.WriteActiveStream)
-                }
-            state == ClientState.LANConnecting && ev == EventID.RelayStreamData ->
-                run {
-                    state = ClientState.LANConnecting
-                    listOf(CmdID.DeliverRecv)
-                }
-            state == ClientState.LANVerifying && ev == EventID.AppSend ->
-                run {
-                    state = ClientState.LANVerifying
-                    listOf(CmdID.WriteActiveStream)
-                }
-            state == ClientState.LANVerifying && ev == EventID.RelayStreamData ->
-                run {
-                    state = ClientState.LANVerifying
-                    listOf(CmdID.DeliverRecv)
-                }
-            state == ClientState.LANActive && ev == EventID.AppSend ->
-                run {
-                    state = ClientState.LANActive
-                    listOf(CmdID.WriteActiveStream)
-                }
-            state == ClientState.LANActive && ev == EventID.LanStreamData ->
-                run {
-                    state = ClientState.LANActive
-                    listOf(CmdID.DeliverRecv)
-                }
-            state == ClientState.LANActive && ev == EventID.RelayStreamData ->
-                run {
-                    state = ClientState.LANActive
-                    listOf(CmdID.DeliverRecv)
-                }
-            state == ClientState.RelayFallback && ev == EventID.AppSend ->
-                run {
-                    state = ClientState.RelayFallback
-                    listOf(CmdID.WriteActiveStream)
-                }
-            state == ClientState.RelayFallback && ev == EventID.RelayStreamData ->
-                run {
-                    state = ClientState.RelayFallback
-                    listOf(CmdID.DeliverRecv)
-                }
-            state == ClientState.RelayConnected && ev == EventID.RelayStreamError ->
-                run {
-                    state = ClientState.RelayConnected
-                    listOf(CmdID.DeliverRecvError)
-                }
-            state == ClientState.LANConnecting && ev == EventID.RelayStreamError ->
-                run {
-                    state = ClientState.LANConnecting
-                    listOf(CmdID.DeliverRecvError)
-                }
-            state == ClientState.LANVerifying && ev == EventID.RelayStreamError ->
-                run {
-                    state = ClientState.LANVerifying
-                    listOf(CmdID.DeliverRecvError)
-                }
-            state == ClientState.LANActive && ev == EventID.RelayStreamError ->
-                run {
-                    state = ClientState.LANActive
-                    listOf(CmdID.DeliverRecvError)
-                }
-            state == ClientState.RelayFallback && ev == EventID.RelayStreamError ->
-                run {
-                    state = ClientState.RelayFallback
-                    listOf(CmdID.DeliverRecvError)
-                }
-            state == ClientState.RelayConnected && ev == EventID.AppSendDatagram ->
-                run {
-                    state = ClientState.RelayConnected
-                    listOf(CmdID.SendActiveDatagram)
-                }
-            state == ClientState.RelayConnected && ev == EventID.RelayDatagram ->
-                run {
-                    state = ClientState.RelayConnected
-                    listOf(CmdID.DeliverRecvDatagram)
-                }
-            state == ClientState.LANConnecting && ev == EventID.AppSendDatagram ->
-                run {
-                    state = ClientState.LANConnecting
-                    listOf(CmdID.SendActiveDatagram)
-                }
-            state == ClientState.LANConnecting && ev == EventID.RelayDatagram ->
-                run {
-                    state = ClientState.LANConnecting
-                    listOf(CmdID.DeliverRecvDatagram)
-                }
-            state == ClientState.LANVerifying && ev == EventID.AppSendDatagram ->
-                run {
-                    state = ClientState.LANVerifying
-                    listOf(CmdID.SendActiveDatagram)
-                }
-            state == ClientState.LANVerifying && ev == EventID.RelayDatagram ->
-                run {
-                    state = ClientState.LANVerifying
-                    listOf(CmdID.DeliverRecvDatagram)
-                }
-            state == ClientState.LANActive && ev == EventID.AppSendDatagram ->
-                run {
-                    state = ClientState.LANActive
-                    listOf(CmdID.SendActiveDatagram)
-                }
-            state == ClientState.LANActive && ev == EventID.LanDatagram ->
-                run {
-                    state = ClientState.LANActive
-                    listOf(CmdID.DeliverRecvDatagram)
-                }
-            state == ClientState.LANActive && ev == EventID.RelayDatagram ->
-                run {
-                    state = ClientState.LANActive
-                    listOf(CmdID.DeliverRecvDatagram)
-                }
-            state == ClientState.RelayFallback && ev == EventID.AppSendDatagram ->
-                run {
-                    state = ClientState.RelayFallback
-                    listOf(CmdID.SendActiveDatagram)
-                }
-            state == ClientState.RelayFallback && ev == EventID.RelayDatagram ->
-                run {
-                    state = ClientState.RelayFallback
-                    listOf(CmdID.DeliverRecvDatagram)
                 }
             state == ClientState.RelayConnected && ev == EventID.RecvLanOffer && guards[GuardID.LanEnabled]?.invoke() == true ->
                 run {
@@ -1123,6 +988,141 @@ class ClientMachine {
                 run {
                     state = ClientState.Paired
                     emptyList()
+                }
+            state == ClientState.RelayConnected && ev == EventID.AppSend ->
+                run {
+                    state = ClientState.RelayConnected
+                    listOf(CmdID.WriteActiveStream)
+                }
+            state == ClientState.LANConnecting && ev == EventID.AppSend ->
+                run {
+                    state = ClientState.LANConnecting
+                    listOf(CmdID.WriteActiveStream)
+                }
+            state == ClientState.LANVerifying && ev == EventID.AppSend ->
+                run {
+                    state = ClientState.LANVerifying
+                    listOf(CmdID.WriteActiveStream)
+                }
+            state == ClientState.LANActive && ev == EventID.AppSend ->
+                run {
+                    state = ClientState.LANActive
+                    listOf(CmdID.WriteActiveStream)
+                }
+            state == ClientState.RelayFallback && ev == EventID.AppSend ->
+                run {
+                    state = ClientState.RelayFallback
+                    listOf(CmdID.WriteActiveStream)
+                }
+            state == ClientState.RelayConnected && ev == EventID.RelayStreamData ->
+                run {
+                    state = ClientState.RelayConnected
+                    listOf(CmdID.DeliverRecv)
+                }
+            state == ClientState.LANConnecting && ev == EventID.RelayStreamData ->
+                run {
+                    state = ClientState.LANConnecting
+                    listOf(CmdID.DeliverRecv)
+                }
+            state == ClientState.LANVerifying && ev == EventID.RelayStreamData ->
+                run {
+                    state = ClientState.LANVerifying
+                    listOf(CmdID.DeliverRecv)
+                }
+            state == ClientState.LANActive && ev == EventID.RelayStreamData ->
+                run {
+                    state = ClientState.LANActive
+                    listOf(CmdID.DeliverRecv)
+                }
+            state == ClientState.RelayFallback && ev == EventID.RelayStreamData ->
+                run {
+                    state = ClientState.RelayFallback
+                    listOf(CmdID.DeliverRecv)
+                }
+            state == ClientState.RelayConnected && ev == EventID.RelayStreamError ->
+                run {
+                    state = ClientState.RelayConnected
+                    listOf(CmdID.DeliverRecvError)
+                }
+            state == ClientState.LANConnecting && ev == EventID.RelayStreamError ->
+                run {
+                    state = ClientState.LANConnecting
+                    listOf(CmdID.DeliverRecvError)
+                }
+            state == ClientState.LANVerifying && ev == EventID.RelayStreamError ->
+                run {
+                    state = ClientState.LANVerifying
+                    listOf(CmdID.DeliverRecvError)
+                }
+            state == ClientState.LANActive && ev == EventID.RelayStreamError ->
+                run {
+                    state = ClientState.LANActive
+                    listOf(CmdID.DeliverRecvError)
+                }
+            state == ClientState.RelayFallback && ev == EventID.RelayStreamError ->
+                run {
+                    state = ClientState.RelayFallback
+                    listOf(CmdID.DeliverRecvError)
+                }
+            state == ClientState.RelayConnected && ev == EventID.AppSendDatagram ->
+                run {
+                    state = ClientState.RelayConnected
+                    listOf(CmdID.SendActiveDatagram)
+                }
+            state == ClientState.LANConnecting && ev == EventID.AppSendDatagram ->
+                run {
+                    state = ClientState.LANConnecting
+                    listOf(CmdID.SendActiveDatagram)
+                }
+            state == ClientState.LANVerifying && ev == EventID.AppSendDatagram ->
+                run {
+                    state = ClientState.LANVerifying
+                    listOf(CmdID.SendActiveDatagram)
+                }
+            state == ClientState.LANActive && ev == EventID.AppSendDatagram ->
+                run {
+                    state = ClientState.LANActive
+                    listOf(CmdID.SendActiveDatagram)
+                }
+            state == ClientState.RelayFallback && ev == EventID.AppSendDatagram ->
+                run {
+                    state = ClientState.RelayFallback
+                    listOf(CmdID.SendActiveDatagram)
+                }
+            state == ClientState.RelayConnected && ev == EventID.RelayDatagram ->
+                run {
+                    state = ClientState.RelayConnected
+                    listOf(CmdID.DeliverRecvDatagram)
+                }
+            state == ClientState.LANConnecting && ev == EventID.RelayDatagram ->
+                run {
+                    state = ClientState.LANConnecting
+                    listOf(CmdID.DeliverRecvDatagram)
+                }
+            state == ClientState.LANVerifying && ev == EventID.RelayDatagram ->
+                run {
+                    state = ClientState.LANVerifying
+                    listOf(CmdID.DeliverRecvDatagram)
+                }
+            state == ClientState.LANActive && ev == EventID.RelayDatagram ->
+                run {
+                    state = ClientState.LANActive
+                    listOf(CmdID.DeliverRecvDatagram)
+                }
+            state == ClientState.RelayFallback && ev == EventID.RelayDatagram ->
+                run {
+                    state = ClientState.RelayFallback
+                    listOf(CmdID.DeliverRecvDatagram)
+                }
+            state == ClientState.LANActive && ev == EventID.LanStreamData ->
+                run {
+                    state = ClientState.LANActive
+                    listOf(CmdID.DeliverRecv)
+                }
+            state == ClientState.LANActive && ev == EventID.LanDatagram ->
+                run {
+                    state = ClientState.LANActive
+                    listOf(CmdID.DeliverRecvDatagram)
                 }
             else -> emptyList()
         }
