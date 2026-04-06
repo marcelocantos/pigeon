@@ -10,7 +10,7 @@ The pre-1.0 period (currently v0.x.x) exists to get the interaction surface righ
 
 ## Interaction Surface Catalogue
 
-*Snapshot as of v0.11.0.*
+*Snapshot as of v0.12.0.*
 
 ### Relay API (the binary's external interface)
 
@@ -211,30 +211,81 @@ func UnmarshalPairingRecord(data []byte) (*PairingRecord, error)
 
 ```go
 // Core types
-type Protocol struct {
-    Name         string
-    Actors       []Actor
-    Messages     []Message
-    Vars         []VarDef
-    Guards       []GuardDef
-    Operators    []Operator
-    AdvActions   []AdvAction
-    Properties   []Property
-    ChannelBound int
-    OneShot      bool
-}
-type Actor struct { /* ... */ }
-type Machine struct { /* unexported fields */ }
 type State string
 type MsgType string
 type ActionID string
 type GuardID string
+type EventID string
+type CmdID string
 type TriggerKind int
-type Trigger struct { /* ... */ }
-type Transition struct { /* ... */ }
-type Message struct { /* ... */ }
-type Property struct { /* ... */ }
-type PropertyKind int
+type Trigger struct { Kind TriggerKind; Msg MsgType; Desc string }
+type FairnessKind int // WeakFair, StrongFair
+type PropertyKind int // Invariant, Liveness, LeadsTo
+type VarType string   // VarString, VarInt, VarBool, VarSetString
+type ChannelMode int  // ModeStrict, ModeDatagrams
+
+type Protocol struct {
+    Name         string
+    Actors       []Actor
+    Messages     []Message
+    Events       []EventDef
+    Commands     []CommandDef
+    Structs      []StructDef
+    Vars         []VarDef
+    Guards       []GuardDef
+    Operators    []Operator
+    AdvActions   []AdvAction
+    AdvGuard     string
+    Phases       []Phase
+    WireConsts   []WireConstant
+    Constants    []ConstantDef
+    Properties   []Property
+    ChannelBound int
+    OneShot      bool
+}
+
+type Actor struct {
+    Name        string
+    Initial     State
+    Transitions []Transition
+    StateIndex  map[State]*StateNode
+    Roots       []*StateNode
+}
+
+type Transition struct {
+    From, To State
+    On       Trigger
+    Guard    GuardID
+    Do       ActionID
+    Fairness FairnessKind
+    Sends    []Send
+    Updates  []VarUpdate
+    Emits    []CmdID
+}
+
+// Hierarchy
+type StateNode struct {
+    Name        State
+    Parent      *StateNode
+    Children    []*StateNode
+    Transitions []Transition
+}
+func (*StateNode) IsLeaf() bool
+func (*StateNode) LeafStates() []*StateNode
+func (*StateNode) AncestorChain() []*StateNode
+func (*Actor) FlattenedTransitions() []Transition
+
+// Supporting types
+type EventDef struct { ID EventID; Desc string }
+type CommandDef struct { ID CmdID; Desc string }
+type StructDef struct { Name string; Fields []StructField; Desc string }
+type StructField struct { Name string; Type VarType; Initial, Desc string }
+type VarDef struct { Name string; Type VarType; Initial, Desc string }
+type WireConstant struct { Name string; Value any; Type, Desc, Group string }
+type ConstantDef struct { Name string; Type VarType; Values []string; Desc string }
+type Phase struct { Name string; States []State; Vars []VarDef; Structs []StructDef }
+type Property struct { Name string; Kind PropertyKind; Expr, FromExpr, ToExpr, Desc string }
+type Machine struct { /* unexported fields */ }
 
 // Protocol loading
 func LoadYAML(path string) (*Protocol, error)
@@ -246,7 +297,9 @@ func (*Protocol) Validate() error
 func (*Protocol) ExportGo(w io.Writer, pkgName, funcName string) error
 func (*Protocol) ExportSwift(w io.Writer) error
 func (*Protocol) ExportTLA(w io.Writer) error
+func (*Protocol) ExportTLAPhase(w io.Writer, phase *Phase) error
 func (*Protocol) ExportPlantUML(w io.Writer) error
+func (*Protocol) ExportPlantUMLActors(w io.Writer, title string, actors []string) error
 func (*Protocol) ExportKotlin(w io.Writer) error
 func (*Protocol) ExportTypeScript(w io.Writer) error
 
@@ -255,16 +308,15 @@ func NewMachine(p *Protocol, actorName string) (*Machine, error)
 func (*Machine) RegisterGuard(id GuardID, fn GuardFunc)
 func (*Machine) RegisterAction(id ActionID, fn ActionFunc)
 func (*Machine) HandleMessage(msg MsgType, ctx any) (State, error)
-func (*Machine) Step(ctx any) (State, error)
+func (*Machine) HandleEvent(ev EventID) ([]CmdID, error)
+func (*Machine) Step(ev EventID) (State, error)
 func (*Machine) State() State
-
-// Pairing ceremony state constants (ServerXxx, AppXxx, CLIXxx)
-// ActionID and GuardID constants (ActionSendPairHello, GuardTokenValid, etc.)
-// MsgType constants (MsgPairBegin, MsgPairHello, etc.)
 ```
 
-*Stability: `Machine` API is Stable. Export functions (ExportGo, ExportSwift,
-ExportTLA, ExportPlantUML) are Needs Review — generated output format may evolve.*
+*Stability: `Machine` API is Stable (HandleEvent is the preferred entry point;
+HandleMessage/Step retained for backward compatibility). Export functions are
+Needs Review — generated output format may evolve. Hierarchy types (StateNode,
+FlattenedTransitions) are Needs Review — new in v0.12.0.*
 
 ### `qr/` Go package
 
@@ -357,6 +409,8 @@ func WithPacketHook(fn func(pktNum int, data []byte) Action) Option
   documenting that consumers should define their own protocol YAML.
 - **`protocol.ExportGo` output format** is not yet documented as stable; the
   generated code structure may change if the generator is improved.
+- **Hierarchy API** (`StateNode`, `FlattenedTransitions`) is new in v0.12.0 and
+  may evolve — the PlantUML rendering of hierarchy is not yet complete.
 - **No published Go module docs** until the first tag is pushed (pkg.go.dev
   indexes on tags).
 - **No protocol framework usage example** (`Example_test.go` in `protocol/`).
