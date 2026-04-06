@@ -210,6 +210,7 @@ const (
 	CmdSendLanConfirm CmdID = "send_lan_confirm"
 	CmdDialLan CmdID = "dial_lan"
 	CmdDeliverRecv CmdID = "deliver_recv"
+	CmdDeliverRecvError CmdID = "deliver_recv_error"
 	CmdDeliverRecvDatagram CmdID = "deliver_recv_datagram"
 	CmdStartLanStreamReader CmdID = "start_lan_stream_reader"
 	CmdStopLanStreamReader CmdID = "stop_lan_stream_reader"
@@ -258,6 +259,11 @@ func SessionProtocol() *Protocol {
 				{From: "LANDegraded", To: "LANDegraded", On: Internal("relay_stream_data")},
 				{From: "RelayBackoff", To: "RelayBackoff", On: Internal("app_send")},
 				{From: "RelayBackoff", To: "RelayBackoff", On: Internal("relay_stream_data")},
+				{From: "RelayConnected", To: "RelayConnected", On: Internal("relay_stream_error")},
+				{From: "LANOffered", To: "LANOffered", On: Internal("relay_stream_error")},
+				{From: "LANActive", To: "LANActive", On: Internal("relay_stream_error")},
+				{From: "LANDegraded", To: "LANDegraded", On: Internal("relay_stream_error")},
+				{From: "RelayBackoff", To: "RelayBackoff", On: Internal("relay_stream_error")},
 				{From: "RelayConnected", To: "RelayConnected", On: Internal("app_send_datagram")},
 				{From: "RelayConnected", To: "RelayConnected", On: Internal("relay_datagram")},
 				{From: "LANOffered", To: "LANOffered", On: Internal("app_send_datagram")},
@@ -294,13 +300,13 @@ func SessionProtocol() *Protocol {
 				{From: "Idle", To: "ObtainBackchannelSecret", On: Internal("backchannel_received")},
 				{From: "ObtainBackchannelSecret", To: "ConnectRelay", On: Internal("secret_parsed")},
 				{From: "ConnectRelay", To: "GenKeyPair", On: Internal("relay_connected")},
-				{From: "GenKeyPair", To: "WaitAck", On: Internal("key_pair_generated"), Do: "send_pair_hello", Sends: []Send{{To: "backend", Msg: "pair_hello", Fields: map[string]string{"token": "current_token", "pubkey": "\"client_pub\"", }}, }},
+				{From: "GenKeyPair", To: "WaitAck", On: Internal("key_pair_generated"), Do: "send_pair_hello", Sends: []Send{{To: "backend", Msg: "pair_hello", Fields: map[string]string{"pubkey": "\"client_pub\"", "token": "current_token", }}, }},
 				{From: "WaitAck", To: "E2EReady", On: Recv("pair_hello_ack"), Do: "derive_secret", Updates: []VarUpdate{{Var: "received_backend_pub", Expr: "recv_msg.pubkey"}, {Var: "client_shared_key", Expr: "DeriveKey(\"client_pub\", recv_msg.pubkey)"}, }},
 				{From: "E2EReady", To: "ShowCode", On: Recv("pair_confirm"), Updates: []VarUpdate{{Var: "client_code", Expr: "DeriveCode(received_backend_pub, \"client_pub\")"}, }},
 				{From: "ShowCode", To: "WaitPairComplete", On: Internal("code_displayed")},
 				{From: "WaitPairComplete", To: "Paired", On: Recv("pair_complete"), Do: "store_secret"},
 				{From: "Paired", To: "Reconnect", On: Internal("app_launch")},
-				{From: "Reconnect", To: "SendAuth", On: Internal("relay_connected"), Sends: []Send{{To: "backend", Msg: "auth_request", Fields: map[string]string{"secret": "device_secret", "nonce": "\"nonce_1\"", "key": "client_shared_key", "device_id": "\"device_1\"", }}, }},
+				{From: "Reconnect", To: "SendAuth", On: Internal("relay_connected"), Sends: []Send{{To: "backend", Msg: "auth_request", Fields: map[string]string{"device_id": "\"device_1\"", "secret": "device_secret", "nonce": "\"nonce_1\"", "key": "client_shared_key", }}, }},
 				{From: "SendAuth", To: "SessionActive", On: Recv("auth_ok")},
 				{From: "SessionActive", To: "RelayConnected", On: Internal("session_established")},
 				{From: "RelayConnected", To: "RelayConnected", On: Internal("app_send")},
@@ -314,6 +320,11 @@ func SessionProtocol() *Protocol {
 				{From: "LANActive", To: "LANActive", On: Internal("relay_stream_data")},
 				{From: "RelayFallback", To: "RelayFallback", On: Internal("app_send")},
 				{From: "RelayFallback", To: "RelayFallback", On: Internal("relay_stream_data")},
+				{From: "RelayConnected", To: "RelayConnected", On: Internal("relay_stream_error")},
+				{From: "LANConnecting", To: "LANConnecting", On: Internal("relay_stream_error")},
+				{From: "LANVerifying", To: "LANVerifying", On: Internal("relay_stream_error")},
+				{From: "LANActive", To: "LANActive", On: Internal("relay_stream_error")},
+				{From: "RelayFallback", To: "RelayFallback", On: Internal("relay_stream_error")},
 				{From: "RelayConnected", To: "RelayConnected", On: Internal("app_send_datagram")},
 				{From: "RelayConnected", To: "RelayConnected", On: Internal("relay_datagram")},
 				{From: "LANConnecting", To: "LANConnecting", On: Internal("app_send_datagram")},
@@ -333,6 +344,7 @@ func SessionProtocol() *Protocol {
 				{From: "LANVerifying", To: "RelayConnected", On: Internal("verify_timeout"), Updates: []VarUpdate{{Var: "c_dispatcher_path", Expr: "\"relay\""}, }},
 				{From: "LANActive", To: "LANActive", On: Recv("path_ping"), Sends: []Send{{To: "backend", Msg: "path_pong"}, }},
 				{From: "LANActive", To: "RelayFallback", On: Internal("lan_error"), Do: "fallback_to_relay", Updates: []VarUpdate{{Var: "c_active_path", Expr: "\"relay\""}, {Var: "c_dispatcher_path", Expr: "\"relay\""}, {Var: "lan_signal", Expr: "\"pending\""}, }},
+				{From: "LANActive", To: "RelayFallback", On: Internal("lan_stream_error"), Do: "fallback_to_relay", Updates: []VarUpdate{{Var: "c_active_path", Expr: "\"relay\""}, {Var: "c_dispatcher_path", Expr: "\"relay\""}, {Var: "lan_signal", Expr: "\"pending\""}, }},
 				{From: "RelayFallback", To: "RelayConnected", On: Internal("relay_ok")},
 				{From: "LANActive", To: "LANConnecting", On: Recv("lan_offer"), Guard: "lan_enabled", Do: "dial_lan"},
 				{From: "LANConnecting", To: "RelayConnected", On: Internal("app_force_fallback")},
@@ -690,6 +702,21 @@ func (m *BackendMachine) Step(event EventID) (bool, error) {
 	case m.State == BackendRelayBackoff && event == EventRelayStreamData:
 		m.State = BackendRelayBackoff
 		return true, nil
+	case m.State == BackendRelayConnected && event == EventRelayStreamError:
+		m.State = BackendRelayConnected
+		return true, nil
+	case m.State == BackendLANOffered && event == EventRelayStreamError:
+		m.State = BackendLANOffered
+		return true, nil
+	case m.State == BackendLANActive && event == EventRelayStreamError:
+		m.State = BackendLANActive
+		return true, nil
+	case m.State == BackendLANDegraded && event == EventRelayStreamError:
+		m.State = BackendLANDegraded
+		return true, nil
+	case m.State == BackendRelayBackoff && event == EventRelayStreamError:
+		m.State = BackendRelayBackoff
+		return true, nil
 	case m.State == BackendRelayConnected && event == EventAppSendDatagram:
 		m.State = BackendRelayConnected
 		return true, nil
@@ -978,6 +1005,21 @@ func (m *BackendMachine) HandleEvent(ev EventID) ([]CmdID, error) {
 	case m.State == BackendRelayBackoff && ev == EventRelayStreamData:
 		m.State = BackendRelayBackoff
 		return []CmdID{CmdDeliverRecv}, nil
+	case m.State == BackendRelayConnected && ev == EventRelayStreamError:
+		m.State = BackendRelayConnected
+		return []CmdID{CmdDeliverRecvError}, nil
+	case m.State == BackendLANOffered && ev == EventRelayStreamError:
+		m.State = BackendLANOffered
+		return []CmdID{CmdDeliverRecvError}, nil
+	case m.State == BackendLANActive && ev == EventRelayStreamError:
+		m.State = BackendLANActive
+		return []CmdID{CmdDeliverRecvError}, nil
+	case m.State == BackendLANDegraded && ev == EventRelayStreamError:
+		m.State = BackendLANDegraded
+		return []CmdID{CmdDeliverRecvError}, nil
+	case m.State == BackendRelayBackoff && ev == EventRelayStreamError:
+		m.State = BackendRelayBackoff
+		return []CmdID{CmdDeliverRecvError}, nil
 	case m.State == BackendRelayConnected && ev == EventAppSendDatagram:
 		m.State = BackendRelayConnected
 		return []CmdID{CmdSendActiveDatagram}, nil
@@ -1324,6 +1366,21 @@ func (m *ClientMachine) Step(event EventID) (bool, error) {
 	case m.State == ClientRelayFallback && event == EventRelayStreamData:
 		m.State = ClientRelayFallback
 		return true, nil
+	case m.State == ClientRelayConnected && event == EventRelayStreamError:
+		m.State = ClientRelayConnected
+		return true, nil
+	case m.State == ClientLANConnecting && event == EventRelayStreamError:
+		m.State = ClientLANConnecting
+		return true, nil
+	case m.State == ClientLANVerifying && event == EventRelayStreamError:
+		m.State = ClientLANVerifying
+		return true, nil
+	case m.State == ClientLANActive && event == EventRelayStreamError:
+		m.State = ClientLANActive
+		return true, nil
+	case m.State == ClientRelayFallback && event == EventRelayStreamError:
+		m.State = ClientRelayFallback
+		return true, nil
 	case m.State == ClientRelayConnected && event == EventAppSendDatagram:
 		m.State = ClientRelayConnected
 		return true, nil
@@ -1369,6 +1426,18 @@ func (m *ClientMachine) Step(event EventID) (bool, error) {
 		m.State = ClientRelayConnected
 		return true, nil
 	case m.State == ClientLANActive && event == EventLanError:
+		if fn := m.Actions[ActionFallbackToRelay]; fn != nil {
+			if err := fn(); err != nil { return false, err }
+		}
+		m.CActivePath = "relay"
+		if m.OnChange != nil { m.OnChange("c_active_path") }
+		m.CDispatcherPath = "relay"
+		if m.OnChange != nil { m.OnChange("c_dispatcher_path") }
+		m.LanSignal = "pending"
+		if m.OnChange != nil { m.OnChange("lan_signal") }
+		m.State = ClientRelayFallback
+		return true, nil
+	case m.State == ClientLANActive && event == EventLanStreamError:
 		if fn := m.Actions[ActionFallbackToRelay]; fn != nil {
 			if err := fn(); err != nil { return false, err }
 		}
@@ -1493,6 +1562,21 @@ func (m *ClientMachine) HandleEvent(ev EventID) ([]CmdID, error) {
 	case m.State == ClientRelayFallback && ev == EventRelayStreamData:
 		m.State = ClientRelayFallback
 		return []CmdID{CmdDeliverRecv}, nil
+	case m.State == ClientRelayConnected && ev == EventRelayStreamError:
+		m.State = ClientRelayConnected
+		return []CmdID{CmdDeliverRecvError}, nil
+	case m.State == ClientLANConnecting && ev == EventRelayStreamError:
+		m.State = ClientLANConnecting
+		return []CmdID{CmdDeliverRecvError}, nil
+	case m.State == ClientLANVerifying && ev == EventRelayStreamError:
+		m.State = ClientLANVerifying
+		return []CmdID{CmdDeliverRecvError}, nil
+	case m.State == ClientLANActive && ev == EventRelayStreamError:
+		m.State = ClientLANActive
+		return []CmdID{CmdDeliverRecvError}, nil
+	case m.State == ClientRelayFallback && ev == EventRelayStreamError:
+		m.State = ClientRelayFallback
+		return []CmdID{CmdDeliverRecvError}, nil
 	case m.State == ClientRelayConnected && ev == EventAppSendDatagram:
 		m.State = ClientRelayConnected
 		return []CmdID{CmdSendActiveDatagram}, nil
@@ -1562,6 +1646,18 @@ func (m *ClientMachine) HandleEvent(ev EventID) ([]CmdID, error) {
 		m.State = ClientLANActive
 		return []CmdID{CmdSendPathPong}, nil
 	case m.State == ClientLANActive && ev == EventLanError:
+		if fn := m.Actions[ActionFallbackToRelay]; fn != nil {
+			if err := fn(); err != nil { return nil, err }
+		}
+		m.CActivePath = "relay"
+		if m.OnChange != nil { m.OnChange("c_active_path") }
+		m.CDispatcherPath = "relay"
+		if m.OnChange != nil { m.OnChange("c_dispatcher_path") }
+		m.LanSignal = "pending"
+		if m.OnChange != nil { m.OnChange("lan_signal") }
+		m.State = ClientRelayFallback
+		return []CmdID{CmdStopLanStreamReader, CmdStopLanDgReader, CmdCloseLanPath, CmdResetLanReady}, nil
+	case m.State == ClientLANActive && ev == EventLanStreamError:
 		if fn := m.Actions[ActionFallbackToRelay]; fn != nil {
 			if err := fn(); err != nil { return nil, err }
 		}

@@ -167,6 +167,7 @@ export enum CmdID {
     SendLanConfirm = "send_lan_confirm",
     DialLan = "dial_lan",
     DeliverRecv = "deliver_recv",
+    DeliverRecvError = "deliver_recv_error",
     DeliverRecvDatagram = "deliver_recv_datagram",
     StartLanStreamReader = "start_lan_stream_reader",
     StopLanStreamReader = "stop_lan_stream_reader",
@@ -229,6 +230,11 @@ export const backendTable: ActorTable = {
         { from: "LANDegraded", to: "LANDegraded", on: "relay_stream_data", onKind: "internal" },
         { from: "RelayBackoff", to: "RelayBackoff", on: "app_send", onKind: "internal" },
         { from: "RelayBackoff", to: "RelayBackoff", on: "relay_stream_data", onKind: "internal" },
+        { from: "RelayConnected", to: "RelayConnected", on: "relay_stream_error", onKind: "internal" },
+        { from: "LANOffered", to: "LANOffered", on: "relay_stream_error", onKind: "internal" },
+        { from: "LANActive", to: "LANActive", on: "relay_stream_error", onKind: "internal" },
+        { from: "LANDegraded", to: "LANDegraded", on: "relay_stream_error", onKind: "internal" },
+        { from: "RelayBackoff", to: "RelayBackoff", on: "relay_stream_error", onKind: "internal" },
         { from: "RelayConnected", to: "RelayConnected", on: "app_send_datagram", onKind: "internal" },
         { from: "RelayConnected", to: "RelayConnected", on: "relay_datagram", onKind: "internal" },
         { from: "LANOffered", to: "LANOffered", on: "app_send_datagram", onKind: "internal" },
@@ -290,6 +296,11 @@ export const clientTable: ActorTable = {
         { from: "LANActive", to: "LANActive", on: "relay_stream_data", onKind: "internal" },
         { from: "RelayFallback", to: "RelayFallback", on: "app_send", onKind: "internal" },
         { from: "RelayFallback", to: "RelayFallback", on: "relay_stream_data", onKind: "internal" },
+        { from: "RelayConnected", to: "RelayConnected", on: "relay_stream_error", onKind: "internal" },
+        { from: "LANConnecting", to: "LANConnecting", on: "relay_stream_error", onKind: "internal" },
+        { from: "LANVerifying", to: "LANVerifying", on: "relay_stream_error", onKind: "internal" },
+        { from: "LANActive", to: "LANActive", on: "relay_stream_error", onKind: "internal" },
+        { from: "RelayFallback", to: "RelayFallback", on: "relay_stream_error", onKind: "internal" },
         { from: "RelayConnected", to: "RelayConnected", on: "app_send_datagram", onKind: "internal" },
         { from: "RelayConnected", to: "RelayConnected", on: "relay_datagram", onKind: "internal" },
         { from: "LANConnecting", to: "LANConnecting", on: "app_send_datagram", onKind: "internal" },
@@ -309,6 +320,7 @@ export const clientTable: ActorTable = {
         { from: "LANVerifying", to: "RelayConnected", on: "verify_timeout", onKind: "internal" },
         { from: "LANActive", to: "LANActive", on: "path_ping", onKind: "recv", sends: [{ to: "backend", msg: "path_pong" }] },
         { from: "LANActive", to: "RelayFallback", on: "lan_error", onKind: "internal", action: "fallback_to_relay" },
+        { from: "LANActive", to: "RelayFallback", on: "lan_stream_error", onKind: "internal", action: "fallback_to_relay" },
         { from: "RelayFallback", to: "RelayConnected", on: "relay_ok", onKind: "internal" },
         { from: "LANActive", to: "LANConnecting", on: "lan_offer", onKind: "recv", guard: "lan_enabled", action: "dial_lan" },
         { from: "LANConnecting", to: "RelayConnected", on: "app_force_fallback", onKind: "internal" },
@@ -490,6 +502,26 @@ export class BackendMachine {
             case this.state === BackendState.RelayBackoff && ev === EventID.RelayStreamData: {
                 this.state = BackendState.RelayBackoff;
                 return [CmdID.DeliverRecv];
+            }
+            case this.state === BackendState.RelayConnected && ev === EventID.RelayStreamError: {
+                this.state = BackendState.RelayConnected;
+                return [CmdID.DeliverRecvError];
+            }
+            case this.state === BackendState.LANOffered && ev === EventID.RelayStreamError: {
+                this.state = BackendState.LANOffered;
+                return [CmdID.DeliverRecvError];
+            }
+            case this.state === BackendState.LANActive && ev === EventID.RelayStreamError: {
+                this.state = BackendState.LANActive;
+                return [CmdID.DeliverRecvError];
+            }
+            case this.state === BackendState.LANDegraded && ev === EventID.RelayStreamError: {
+                this.state = BackendState.LANDegraded;
+                return [CmdID.DeliverRecvError];
+            }
+            case this.state === BackendState.RelayBackoff && ev === EventID.RelayStreamError: {
+                this.state = BackendState.RelayBackoff;
+                return [CmdID.DeliverRecvError];
             }
             case this.state === BackendState.RelayConnected && ev === EventID.AppSendDatagram: {
                 this.state = BackendState.RelayConnected;
@@ -786,6 +818,26 @@ export class ClientMachine {
                 this.state = ClientState.RelayFallback;
                 return [CmdID.DeliverRecv];
             }
+            case this.state === ClientState.RelayConnected && ev === EventID.RelayStreamError: {
+                this.state = ClientState.RelayConnected;
+                return [CmdID.DeliverRecvError];
+            }
+            case this.state === ClientState.LANConnecting && ev === EventID.RelayStreamError: {
+                this.state = ClientState.LANConnecting;
+                return [CmdID.DeliverRecvError];
+            }
+            case this.state === ClientState.LANVerifying && ev === EventID.RelayStreamError: {
+                this.state = ClientState.LANVerifying;
+                return [CmdID.DeliverRecvError];
+            }
+            case this.state === ClientState.LANActive && ev === EventID.RelayStreamError: {
+                this.state = ClientState.LANActive;
+                return [CmdID.DeliverRecvError];
+            }
+            case this.state === ClientState.RelayFallback && ev === EventID.RelayStreamError: {
+                this.state = ClientState.RelayFallback;
+                return [CmdID.DeliverRecvError];
+            }
             case this.state === ClientState.RelayConnected && ev === EventID.AppSendDatagram: {
                 this.state = ClientState.RelayConnected;
                 return [CmdID.SendActiveDatagram];
@@ -865,6 +917,14 @@ export class ClientMachine {
                 return [CmdID.SendPathPong];
             }
             case this.state === ClientState.LANActive && ev === EventID.LanError: {
+                this.actions.get(ActionID.FallbackToRelay)?.();
+                this.cActivePath = "relay";
+                this.cDispatcherPath = "relay";
+                this.lanSignal = "pending";
+                this.state = ClientState.RelayFallback;
+                return [CmdID.StopLanStreamReader, CmdID.StopLanDgReader, CmdID.CloseLanPath, CmdID.ResetLanReady];
+            }
+            case this.state === ClientState.LANActive && ev === EventID.LanStreamError: {
                 this.actions.get(ActionID.FallbackToRelay)?.();
                 this.cActivePath = "relay";
                 this.cDispatcherPath = "relay";

@@ -349,11 +349,8 @@ func (e *executor) run() {
 				e.executeCommand(cmd, ev.payload)
 			}
 
-			// Events with no matching transition may still need
-			// direct handling (e.g., stream data delivery when the
-			// machine has no specific transition for this state).
 			if cmds == nil {
-				e.handleUnmatchedEvent(ev)
+				slog.Debug("unmatched event (no transition)", "event", ev.id)
 			}
 
 			// Signal synchronous waiters.
@@ -363,40 +360,6 @@ func (e *executor) run() {
 
 		case <-e.ctx.Done():
 			return
-		}
-	}
-}
-
-// handleUnmatchedEvent handles events that the machine didn't match
-// (no transition from current state for this event). Some events
-// need executor-level handling regardless of machine state.
-func (e *executor) handleUnmatchedEvent(ev event) {
-	switch ev.id {
-	case EventRelayStreamData:
-		// Data arrived on relay — deliver to waiting Recv if any.
-		if sd, ok := ev.payload.(*streamData); ok {
-			e.deliverRecv(sd.data)
-		}
-	case EventLanStreamData:
-		// Data arrived on LAN — deliver to waiting Recv if any.
-		if sd, ok := ev.payload.(*streamData); ok {
-			e.deliverRecv(sd.data)
-		}
-	case EventRelayDatagram:
-		if dd, ok := ev.payload.(*datagramData); ok {
-			e.deliverDatagram(dd.data)
-		}
-	case EventLanDatagram:
-		if dd, ok := ev.payload.(*datagramData); ok {
-			e.deliverDatagram(dd.data)
-		}
-	case EventRelayStreamError:
-		if se, ok := ev.payload.(*streamError); ok {
-			e.deliverRecvError(se.err)
-		}
-	case EventLanStreamError:
-		if se, ok := ev.payload.(*streamError); ok {
-			e.deliverRecvError(se.err)
 		}
 	}
 }
@@ -442,6 +405,11 @@ func (e *executor) executeCommand(cmd CmdID, payload any) {
 	case CmdDeliverRecv:
 		if sd, ok := payload.(*streamData); ok {
 			e.deliverRecv(sd.data)
+		}
+
+	case CmdDeliverRecvError:
+		if se, ok := payload.(*streamError); ok {
+			e.deliverRecvError(se.err)
 		}
 
 	case CmdDeliverRecvDatagram:

@@ -115,6 +115,7 @@ commands:
 
   # Deliver to application.
   deliver_recv: 'deliver received data to blocked Recv() caller'
+  deliver_recv_error: 'deliver error to blocked Recv() caller'
   deliver_recv_datagram: 'deliver received datagram to blocked RecvDatagram() caller'
 
   # Resource lifecycle.
@@ -317,6 +318,27 @@ actors:
         to: RelayBackoff
         on: relay_stream_data
         emits: [deliver_recv]
+      # Relay stream errors — deliver error to any waiting Recv.
+      - from: RelayConnected
+        to: RelayConnected
+        on: relay_stream_error
+        emits: [deliver_recv_error]
+      - from: LANOffered
+        to: LANOffered
+        on: relay_stream_error
+        emits: [deliver_recv_error]
+      - from: LANActive
+        to: LANActive
+        on: relay_stream_error
+        emits: [deliver_recv_error]
+      - from: LANDegraded
+        to: LANDegraded
+        on: relay_stream_error
+        emits: [deliver_recv_error]
+      - from: RelayBackoff
+        to: RelayBackoff
+        on: relay_stream_error
+        emits: [deliver_recv_error]
       # Datagrams:
       - from: RelayConnected
         to: RelayConnected
@@ -729,6 +751,27 @@ actors:
         to: RelayFallback
         on: relay_stream_data
         emits: [deliver_recv]
+      # Relay stream errors — deliver error to any waiting Recv.
+      - from: RelayConnected
+        to: RelayConnected
+        on: relay_stream_error
+        emits: [deliver_recv_error]
+      - from: LANConnecting
+        to: LANConnecting
+        on: relay_stream_error
+        emits: [deliver_recv_error]
+      - from: LANVerifying
+        to: LANVerifying
+        on: relay_stream_error
+        emits: [deliver_recv_error]
+      - from: LANActive
+        to: LANActive
+        on: relay_stream_error
+        emits: [deliver_recv_error]
+      - from: RelayFallback
+        to: RelayFallback
+        on: relay_stream_error
+        emits: [deliver_recv_error]
       # Datagrams:
       - from: RelayConnected
         to: RelayConnected
@@ -833,6 +876,20 @@ actors:
       - from: LANActive
         to: RelayFallback
         on: lan_error
+        do: fallback_to_relay
+        updates:
+          c_active_path: '"relay"'
+          c_dispatcher_path: '"relay"'
+          lan_signal: '"pending"'
+        emits:
+          - stop_lan_stream_reader
+          - stop_lan_dg_reader
+          - close_lan_path
+          - reset_lan_ready
+
+      - from: LANActive
+        to: RelayFallback
+        on: lan_stream_error
         do: fallback_to_relay
         updates:
           c_active_path: '"relay"'
