@@ -124,7 +124,7 @@ func (p *Protocol) ExportTypeScript(w io.Writer) error {
 		fmt.Fprintf(&b, "    initial: %sState.%s,\n", typeName, a.Initial)
 		b.WriteString("    transitions: [\n")
 
-		for _, t := range a.Transitions {
+		for _, t := range a.FlattenedTransitions() {
 			onKind := "internal"
 			onValue := t.On.Desc
 			if t.On.Kind == TriggerRecv {
@@ -163,7 +163,7 @@ func (p *Protocol) ExportTypeScript(w io.Writer) error {
 
 		// Collect vars updated by this actor's transitions.
 		actorVarSet := map[string]bool{}
-		for _, t := range a.Transitions {
+		for _, t := range a.FlattenedTransitions() {
 			for _, u := range t.Updates {
 				actorVarSet[u.Var] = true
 			}
@@ -205,7 +205,7 @@ func (p *Protocol) ExportTypeScript(w io.Writer) error {
 		b.WriteString("    handleEvent(ev: EventID): CmdID[] {\n")
 		b.WriteString("        switch (true) {\n")
 
-		for _, t := range a.Transitions {
+		for _, t := range a.FlattenedTransitions() {
 			// Determine event constant name.
 			var eventID string
 			if t.On.Kind == TriggerRecv {
@@ -289,7 +289,7 @@ func tsCollectEvents(p *Protocol) []string {
 	}
 	// Internal events from transitions.
 	for _, a := range p.Actors {
-		for _, t := range a.Transitions {
+		for _, t := range a.FlattenedTransitions() {
 			if t.On.Kind == TriggerInternal {
 				add(t.On.Desc)
 			}
@@ -297,7 +297,7 @@ func tsCollectEvents(p *Protocol) []string {
 	}
 	// recv_* events.
 	for _, a := range p.Actors {
-		for _, t := range a.Transitions {
+		for _, t := range a.FlattenedTransitions() {
 			if t.On.Kind == TriggerRecv {
 				add("recv_" + string(t.On.Msg))
 			}

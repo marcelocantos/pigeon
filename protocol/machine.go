@@ -63,7 +63,7 @@ func NewMachine(p *Protocol, actorName string) (*Machine, error) {
 		internalIndex: make(map[stateEvent][]Transition),
 	}
 
-	for _, t := range actor.Transitions {
+	for _, t := range actor.FlattenedTransitions() {
 		switch t.On.Kind {
 		case TriggerRecv:
 			key := stateMsg{t.From, t.On.Msg}

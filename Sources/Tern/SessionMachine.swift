@@ -36,8 +36,8 @@ public enum BackendState: String, Sendable {
     case relayConnected = "RelayConnected"
     case lANOffered = "LANOffered"
     case lANActive = "LANActive"
-    case lANDegraded = "LANDegraded"
     case relayBackoff = "RelayBackoff"
+    case lANDegraded = "LANDegraded"
 }
 
 public enum ClientState: String, Sendable {
@@ -236,35 +236,6 @@ public enum SessionProtocol {
         (from: "AuthCheck", to: "SessionActive", on: "verify", onKind: "internal", guard: "device_known", action: "verify_device", sends: [(to: "client", msg: "auth_ok")]),
         (from: "AuthCheck", to: "Idle", on: "verify", onKind: "internal", guard: "device_unknown", action: nil, sends: []),
         (from: "SessionActive", to: "RelayConnected", on: "session_established", onKind: "internal", guard: nil, action: nil, sends: []),
-        (from: "RelayConnected", to: "RelayConnected", on: "app_send", onKind: "internal", guard: nil, action: nil, sends: []),
-        (from: "RelayConnected", to: "RelayConnected", on: "relay_stream_data", onKind: "internal", guard: nil, action: nil, sends: []),
-        (from: "LANOffered", to: "LANOffered", on: "app_send", onKind: "internal", guard: nil, action: nil, sends: []),
-        (from: "LANOffered", to: "LANOffered", on: "relay_stream_data", onKind: "internal", guard: nil, action: nil, sends: []),
-        (from: "LANActive", to: "LANActive", on: "app_send", onKind: "internal", guard: nil, action: nil, sends: []),
-        (from: "LANActive", to: "LANActive", on: "lan_stream_data", onKind: "internal", guard: nil, action: nil, sends: []),
-        (from: "LANActive", to: "LANActive", on: "relay_stream_data", onKind: "internal", guard: nil, action: nil, sends: []),
-        (from: "LANDegraded", to: "LANDegraded", on: "app_send", onKind: "internal", guard: nil, action: nil, sends: []),
-        (from: "LANDegraded", to: "LANDegraded", on: "lan_stream_data", onKind: "internal", guard: nil, action: nil, sends: []),
-        (from: "LANDegraded", to: "LANDegraded", on: "relay_stream_data", onKind: "internal", guard: nil, action: nil, sends: []),
-        (from: "RelayBackoff", to: "RelayBackoff", on: "app_send", onKind: "internal", guard: nil, action: nil, sends: []),
-        (from: "RelayBackoff", to: "RelayBackoff", on: "relay_stream_data", onKind: "internal", guard: nil, action: nil, sends: []),
-        (from: "RelayConnected", to: "RelayConnected", on: "relay_stream_error", onKind: "internal", guard: nil, action: nil, sends: []),
-        (from: "LANOffered", to: "LANOffered", on: "relay_stream_error", onKind: "internal", guard: nil, action: nil, sends: []),
-        (from: "LANActive", to: "LANActive", on: "relay_stream_error", onKind: "internal", guard: nil, action: nil, sends: []),
-        (from: "LANDegraded", to: "LANDegraded", on: "relay_stream_error", onKind: "internal", guard: nil, action: nil, sends: []),
-        (from: "RelayBackoff", to: "RelayBackoff", on: "relay_stream_error", onKind: "internal", guard: nil, action: nil, sends: []),
-        (from: "RelayConnected", to: "RelayConnected", on: "app_send_datagram", onKind: "internal", guard: nil, action: nil, sends: []),
-        (from: "RelayConnected", to: "RelayConnected", on: "relay_datagram", onKind: "internal", guard: nil, action: nil, sends: []),
-        (from: "LANOffered", to: "LANOffered", on: "app_send_datagram", onKind: "internal", guard: nil, action: nil, sends: []),
-        (from: "LANOffered", to: "LANOffered", on: "relay_datagram", onKind: "internal", guard: nil, action: nil, sends: []),
-        (from: "LANActive", to: "LANActive", on: "app_send_datagram", onKind: "internal", guard: nil, action: nil, sends: []),
-        (from: "LANActive", to: "LANActive", on: "lan_datagram", onKind: "internal", guard: nil, action: nil, sends: []),
-        (from: "LANActive", to: "LANActive", on: "relay_datagram", onKind: "internal", guard: nil, action: nil, sends: []),
-        (from: "LANDegraded", to: "LANDegraded", on: "app_send_datagram", onKind: "internal", guard: nil, action: nil, sends: []),
-        (from: "LANDegraded", to: "LANDegraded", on: "lan_datagram", onKind: "internal", guard: nil, action: nil, sends: []),
-        (from: "LANDegraded", to: "LANDegraded", on: "relay_datagram", onKind: "internal", guard: nil, action: nil, sends: []),
-        (from: "RelayBackoff", to: "RelayBackoff", on: "app_send_datagram", onKind: "internal", guard: nil, action: nil, sends: []),
-        (from: "RelayBackoff", to: "RelayBackoff", on: "relay_datagram", onKind: "internal", guard: nil, action: nil, sends: []),
         (from: "RelayConnected", to: "LANOffered", on: "lan_server_ready", onKind: "internal", guard: nil, action: nil, sends: [(to: "client", msg: "lan_offer")]),
         (from: "LANOffered", to: "LANActive", on: "lan_verify", onKind: "recv", guard: "challenge_valid", action: "activate_lan", sends: [(to: "client", msg: "lan_confirm")]),
         (from: "LANOffered", to: "RelayConnected", on: "lan_verify", onKind: "recv", guard: "challenge_invalid", action: nil, sends: []),
@@ -284,6 +255,35 @@ public enum SessionProtocol {
         (from: "LANActive", to: "RelayBackoff", on: "app_force_fallback", onKind: "internal", guard: nil, action: "fallback_to_relay", sends: []),
         (from: "LANDegraded", to: "RelayBackoff", on: "app_force_fallback", onKind: "internal", guard: nil, action: "fallback_to_relay", sends: []),
         (from: "RelayConnected", to: "Paired", on: "disconnect", onKind: "internal", guard: nil, action: nil, sends: []),
+        (from: "RelayConnected", to: "RelayConnected", on: "app_send", onKind: "internal", guard: nil, action: nil, sends: []),
+        (from: "LANOffered", to: "LANOffered", on: "app_send", onKind: "internal", guard: nil, action: nil, sends: []),
+        (from: "LANActive", to: "LANActive", on: "app_send", onKind: "internal", guard: nil, action: nil, sends: []),
+        (from: "LANDegraded", to: "LANDegraded", on: "app_send", onKind: "internal", guard: nil, action: nil, sends: []),
+        (from: "RelayBackoff", to: "RelayBackoff", on: "app_send", onKind: "internal", guard: nil, action: nil, sends: []),
+        (from: "RelayConnected", to: "RelayConnected", on: "relay_stream_data", onKind: "internal", guard: nil, action: nil, sends: []),
+        (from: "LANOffered", to: "LANOffered", on: "relay_stream_data", onKind: "internal", guard: nil, action: nil, sends: []),
+        (from: "LANActive", to: "LANActive", on: "relay_stream_data", onKind: "internal", guard: nil, action: nil, sends: []),
+        (from: "LANDegraded", to: "LANDegraded", on: "relay_stream_data", onKind: "internal", guard: nil, action: nil, sends: []),
+        (from: "RelayBackoff", to: "RelayBackoff", on: "relay_stream_data", onKind: "internal", guard: nil, action: nil, sends: []),
+        (from: "RelayConnected", to: "RelayConnected", on: "relay_stream_error", onKind: "internal", guard: nil, action: nil, sends: []),
+        (from: "LANOffered", to: "LANOffered", on: "relay_stream_error", onKind: "internal", guard: nil, action: nil, sends: []),
+        (from: "LANActive", to: "LANActive", on: "relay_stream_error", onKind: "internal", guard: nil, action: nil, sends: []),
+        (from: "LANDegraded", to: "LANDegraded", on: "relay_stream_error", onKind: "internal", guard: nil, action: nil, sends: []),
+        (from: "RelayBackoff", to: "RelayBackoff", on: "relay_stream_error", onKind: "internal", guard: nil, action: nil, sends: []),
+        (from: "RelayConnected", to: "RelayConnected", on: "app_send_datagram", onKind: "internal", guard: nil, action: nil, sends: []),
+        (from: "LANOffered", to: "LANOffered", on: "app_send_datagram", onKind: "internal", guard: nil, action: nil, sends: []),
+        (from: "LANActive", to: "LANActive", on: "app_send_datagram", onKind: "internal", guard: nil, action: nil, sends: []),
+        (from: "LANDegraded", to: "LANDegraded", on: "app_send_datagram", onKind: "internal", guard: nil, action: nil, sends: []),
+        (from: "RelayBackoff", to: "RelayBackoff", on: "app_send_datagram", onKind: "internal", guard: nil, action: nil, sends: []),
+        (from: "RelayConnected", to: "RelayConnected", on: "relay_datagram", onKind: "internal", guard: nil, action: nil, sends: []),
+        (from: "LANOffered", to: "LANOffered", on: "relay_datagram", onKind: "internal", guard: nil, action: nil, sends: []),
+        (from: "LANActive", to: "LANActive", on: "relay_datagram", onKind: "internal", guard: nil, action: nil, sends: []),
+        (from: "LANDegraded", to: "LANDegraded", on: "relay_datagram", onKind: "internal", guard: nil, action: nil, sends: []),
+        (from: "RelayBackoff", to: "RelayBackoff", on: "relay_datagram", onKind: "internal", guard: nil, action: nil, sends: []),
+        (from: "LANActive", to: "LANActive", on: "lan_stream_data", onKind: "internal", guard: nil, action: nil, sends: []),
+        (from: "LANDegraded", to: "LANDegraded", on: "lan_stream_data", onKind: "internal", guard: nil, action: nil, sends: []),
+        (from: "LANActive", to: "LANActive", on: "lan_datagram", onKind: "internal", guard: nil, action: nil, sends: []),
+        (from: "LANDegraded", to: "LANDegraded", on: "lan_datagram", onKind: "internal", guard: nil, action: nil, sends: []),
     ]
 
     /// client transitions.
@@ -302,33 +302,6 @@ public enum SessionProtocol {
         (from: "Reconnect", to: "SendAuth", on: "relay_connected", onKind: "internal", guard: nil, action: nil, sends: [(to: "backend", msg: "auth_request")]),
         (from: "SendAuth", to: "SessionActive", on: "auth_ok", onKind: "recv", guard: nil, action: nil, sends: []),
         (from: "SessionActive", to: "RelayConnected", on: "session_established", onKind: "internal", guard: nil, action: nil, sends: []),
-        (from: "RelayConnected", to: "RelayConnected", on: "app_send", onKind: "internal", guard: nil, action: nil, sends: []),
-        (from: "RelayConnected", to: "RelayConnected", on: "relay_stream_data", onKind: "internal", guard: nil, action: nil, sends: []),
-        (from: "LANConnecting", to: "LANConnecting", on: "app_send", onKind: "internal", guard: nil, action: nil, sends: []),
-        (from: "LANConnecting", to: "LANConnecting", on: "relay_stream_data", onKind: "internal", guard: nil, action: nil, sends: []),
-        (from: "LANVerifying", to: "LANVerifying", on: "app_send", onKind: "internal", guard: nil, action: nil, sends: []),
-        (from: "LANVerifying", to: "LANVerifying", on: "relay_stream_data", onKind: "internal", guard: nil, action: nil, sends: []),
-        (from: "LANActive", to: "LANActive", on: "app_send", onKind: "internal", guard: nil, action: nil, sends: []),
-        (from: "LANActive", to: "LANActive", on: "lan_stream_data", onKind: "internal", guard: nil, action: nil, sends: []),
-        (from: "LANActive", to: "LANActive", on: "relay_stream_data", onKind: "internal", guard: nil, action: nil, sends: []),
-        (from: "RelayFallback", to: "RelayFallback", on: "app_send", onKind: "internal", guard: nil, action: nil, sends: []),
-        (from: "RelayFallback", to: "RelayFallback", on: "relay_stream_data", onKind: "internal", guard: nil, action: nil, sends: []),
-        (from: "RelayConnected", to: "RelayConnected", on: "relay_stream_error", onKind: "internal", guard: nil, action: nil, sends: []),
-        (from: "LANConnecting", to: "LANConnecting", on: "relay_stream_error", onKind: "internal", guard: nil, action: nil, sends: []),
-        (from: "LANVerifying", to: "LANVerifying", on: "relay_stream_error", onKind: "internal", guard: nil, action: nil, sends: []),
-        (from: "LANActive", to: "LANActive", on: "relay_stream_error", onKind: "internal", guard: nil, action: nil, sends: []),
-        (from: "RelayFallback", to: "RelayFallback", on: "relay_stream_error", onKind: "internal", guard: nil, action: nil, sends: []),
-        (from: "RelayConnected", to: "RelayConnected", on: "app_send_datagram", onKind: "internal", guard: nil, action: nil, sends: []),
-        (from: "RelayConnected", to: "RelayConnected", on: "relay_datagram", onKind: "internal", guard: nil, action: nil, sends: []),
-        (from: "LANConnecting", to: "LANConnecting", on: "app_send_datagram", onKind: "internal", guard: nil, action: nil, sends: []),
-        (from: "LANConnecting", to: "LANConnecting", on: "relay_datagram", onKind: "internal", guard: nil, action: nil, sends: []),
-        (from: "LANVerifying", to: "LANVerifying", on: "app_send_datagram", onKind: "internal", guard: nil, action: nil, sends: []),
-        (from: "LANVerifying", to: "LANVerifying", on: "relay_datagram", onKind: "internal", guard: nil, action: nil, sends: []),
-        (from: "LANActive", to: "LANActive", on: "app_send_datagram", onKind: "internal", guard: nil, action: nil, sends: []),
-        (from: "LANActive", to: "LANActive", on: "lan_datagram", onKind: "internal", guard: nil, action: nil, sends: []),
-        (from: "LANActive", to: "LANActive", on: "relay_datagram", onKind: "internal", guard: nil, action: nil, sends: []),
-        (from: "RelayFallback", to: "RelayFallback", on: "app_send_datagram", onKind: "internal", guard: nil, action: nil, sends: []),
-        (from: "RelayFallback", to: "RelayFallback", on: "relay_datagram", onKind: "internal", guard: nil, action: nil, sends: []),
         (from: "RelayConnected", to: "LANConnecting", on: "lan_offer", onKind: "recv", guard: "lan_enabled", action: "dial_lan", sends: []),
         (from: "RelayConnected", to: "RelayConnected", on: "lan_offer", onKind: "recv", guard: "lan_disabled", action: nil, sends: []),
         (from: "LANConnecting", to: "LANVerifying", on: "lan_dial_ok", onKind: "internal", guard: nil, action: nil, sends: [(to: "backend", msg: "lan_verify")]),
@@ -344,6 +317,33 @@ public enum SessionProtocol {
         (from: "LANVerifying", to: "RelayConnected", on: "app_force_fallback", onKind: "internal", guard: nil, action: nil, sends: []),
         (from: "LANActive", to: "RelayConnected", on: "app_force_fallback", onKind: "internal", guard: nil, action: "fallback_to_relay", sends: []),
         (from: "RelayConnected", to: "Paired", on: "disconnect", onKind: "internal", guard: nil, action: nil, sends: []),
+        (from: "RelayConnected", to: "RelayConnected", on: "app_send", onKind: "internal", guard: nil, action: nil, sends: []),
+        (from: "LANConnecting", to: "LANConnecting", on: "app_send", onKind: "internal", guard: nil, action: nil, sends: []),
+        (from: "LANVerifying", to: "LANVerifying", on: "app_send", onKind: "internal", guard: nil, action: nil, sends: []),
+        (from: "LANActive", to: "LANActive", on: "app_send", onKind: "internal", guard: nil, action: nil, sends: []),
+        (from: "RelayFallback", to: "RelayFallback", on: "app_send", onKind: "internal", guard: nil, action: nil, sends: []),
+        (from: "RelayConnected", to: "RelayConnected", on: "relay_stream_data", onKind: "internal", guard: nil, action: nil, sends: []),
+        (from: "LANConnecting", to: "LANConnecting", on: "relay_stream_data", onKind: "internal", guard: nil, action: nil, sends: []),
+        (from: "LANVerifying", to: "LANVerifying", on: "relay_stream_data", onKind: "internal", guard: nil, action: nil, sends: []),
+        (from: "LANActive", to: "LANActive", on: "relay_stream_data", onKind: "internal", guard: nil, action: nil, sends: []),
+        (from: "RelayFallback", to: "RelayFallback", on: "relay_stream_data", onKind: "internal", guard: nil, action: nil, sends: []),
+        (from: "RelayConnected", to: "RelayConnected", on: "relay_stream_error", onKind: "internal", guard: nil, action: nil, sends: []),
+        (from: "LANConnecting", to: "LANConnecting", on: "relay_stream_error", onKind: "internal", guard: nil, action: nil, sends: []),
+        (from: "LANVerifying", to: "LANVerifying", on: "relay_stream_error", onKind: "internal", guard: nil, action: nil, sends: []),
+        (from: "LANActive", to: "LANActive", on: "relay_stream_error", onKind: "internal", guard: nil, action: nil, sends: []),
+        (from: "RelayFallback", to: "RelayFallback", on: "relay_stream_error", onKind: "internal", guard: nil, action: nil, sends: []),
+        (from: "RelayConnected", to: "RelayConnected", on: "app_send_datagram", onKind: "internal", guard: nil, action: nil, sends: []),
+        (from: "LANConnecting", to: "LANConnecting", on: "app_send_datagram", onKind: "internal", guard: nil, action: nil, sends: []),
+        (from: "LANVerifying", to: "LANVerifying", on: "app_send_datagram", onKind: "internal", guard: nil, action: nil, sends: []),
+        (from: "LANActive", to: "LANActive", on: "app_send_datagram", onKind: "internal", guard: nil, action: nil, sends: []),
+        (from: "RelayFallback", to: "RelayFallback", on: "app_send_datagram", onKind: "internal", guard: nil, action: nil, sends: []),
+        (from: "RelayConnected", to: "RelayConnected", on: "relay_datagram", onKind: "internal", guard: nil, action: nil, sends: []),
+        (from: "LANConnecting", to: "LANConnecting", on: "relay_datagram", onKind: "internal", guard: nil, action: nil, sends: []),
+        (from: "LANVerifying", to: "LANVerifying", on: "relay_datagram", onKind: "internal", guard: nil, action: nil, sends: []),
+        (from: "LANActive", to: "LANActive", on: "relay_datagram", onKind: "internal", guard: nil, action: nil, sends: []),
+        (from: "RelayFallback", to: "RelayFallback", on: "relay_datagram", onKind: "internal", guard: nil, action: nil, sends: []),
+        (from: "LANActive", to: "LANActive", on: "lan_stream_data", onKind: "internal", guard: nil, action: nil, sends: []),
+        (from: "LANActive", to: "LANActive", on: "lan_datagram", onKind: "internal", guard: nil, action: nil, sends: []),
     ]
 
     /// relay transitions.
@@ -480,93 +480,6 @@ public final class BackendMachine: @unchecked Sendable {
         case (.sessionActive, .sessionEstablished):
             state = .relayConnected
             return []
-        case (.relayConnected, .appSend):
-            state = .relayConnected
-            return [.writeActiveStream]
-        case (.relayConnected, .relayStreamData):
-            state = .relayConnected
-            return [.deliverRecv]
-        case (.lANOffered, .appSend):
-            state = .lANOffered
-            return [.writeActiveStream]
-        case (.lANOffered, .relayStreamData):
-            state = .lANOffered
-            return [.deliverRecv]
-        case (.lANActive, .appSend):
-            state = .lANActive
-            return [.writeActiveStream]
-        case (.lANActive, .lanStreamData):
-            state = .lANActive
-            return [.deliverRecv]
-        case (.lANActive, .relayStreamData):
-            state = .lANActive
-            return [.deliverRecv]
-        case (.lANDegraded, .appSend):
-            state = .lANDegraded
-            return [.writeActiveStream]
-        case (.lANDegraded, .lanStreamData):
-            state = .lANDegraded
-            return [.deliverRecv]
-        case (.lANDegraded, .relayStreamData):
-            state = .lANDegraded
-            return [.deliverRecv]
-        case (.relayBackoff, .appSend):
-            state = .relayBackoff
-            return [.writeActiveStream]
-        case (.relayBackoff, .relayStreamData):
-            state = .relayBackoff
-            return [.deliverRecv]
-        case (.relayConnected, .relayStreamError):
-            state = .relayConnected
-            return [.deliverRecvError]
-        case (.lANOffered, .relayStreamError):
-            state = .lANOffered
-            return [.deliverRecvError]
-        case (.lANActive, .relayStreamError):
-            state = .lANActive
-            return [.deliverRecvError]
-        case (.lANDegraded, .relayStreamError):
-            state = .lANDegraded
-            return [.deliverRecvError]
-        case (.relayBackoff, .relayStreamError):
-            state = .relayBackoff
-            return [.deliverRecvError]
-        case (.relayConnected, .appSendDatagram):
-            state = .relayConnected
-            return [.sendActiveDatagram]
-        case (.relayConnected, .relayDatagram):
-            state = .relayConnected
-            return [.deliverRecvDatagram]
-        case (.lANOffered, .appSendDatagram):
-            state = .lANOffered
-            return [.sendActiveDatagram]
-        case (.lANOffered, .relayDatagram):
-            state = .lANOffered
-            return [.deliverRecvDatagram]
-        case (.lANActive, .appSendDatagram):
-            state = .lANActive
-            return [.sendActiveDatagram]
-        case (.lANActive, .lanDatagram):
-            state = .lANActive
-            return [.deliverRecvDatagram]
-        case (.lANActive, .relayDatagram):
-            state = .lANActive
-            return [.deliverRecvDatagram]
-        case (.lANDegraded, .appSendDatagram):
-            state = .lANDegraded
-            return [.sendActiveDatagram]
-        case (.lANDegraded, .lanDatagram):
-            state = .lANDegraded
-            return [.deliverRecvDatagram]
-        case (.lANDegraded, .relayDatagram):
-            state = .lANDegraded
-            return [.deliverRecvDatagram]
-        case (.relayBackoff, .appSendDatagram):
-            state = .relayBackoff
-            return [.sendActiveDatagram]
-        case (.relayBackoff, .relayDatagram):
-            state = .relayBackoff
-            return [.deliverRecvDatagram]
         case (.relayConnected, .lanServerReady):
             state = .lANOffered
             return [.sendLanOffer]
@@ -674,6 +587,93 @@ public final class BackendMachine: @unchecked Sendable {
         case (.relayConnected, .disconnect):
             state = .paired
             return []
+        case (.relayConnected, .appSend):
+            state = .relayConnected
+            return [.writeActiveStream]
+        case (.lANOffered, .appSend):
+            state = .lANOffered
+            return [.writeActiveStream]
+        case (.lANActive, .appSend):
+            state = .lANActive
+            return [.writeActiveStream]
+        case (.lANDegraded, .appSend):
+            state = .lANDegraded
+            return [.writeActiveStream]
+        case (.relayBackoff, .appSend):
+            state = .relayBackoff
+            return [.writeActiveStream]
+        case (.relayConnected, .relayStreamData):
+            state = .relayConnected
+            return [.deliverRecv]
+        case (.lANOffered, .relayStreamData):
+            state = .lANOffered
+            return [.deliverRecv]
+        case (.lANActive, .relayStreamData):
+            state = .lANActive
+            return [.deliverRecv]
+        case (.lANDegraded, .relayStreamData):
+            state = .lANDegraded
+            return [.deliverRecv]
+        case (.relayBackoff, .relayStreamData):
+            state = .relayBackoff
+            return [.deliverRecv]
+        case (.relayConnected, .relayStreamError):
+            state = .relayConnected
+            return [.deliverRecvError]
+        case (.lANOffered, .relayStreamError):
+            state = .lANOffered
+            return [.deliverRecvError]
+        case (.lANActive, .relayStreamError):
+            state = .lANActive
+            return [.deliverRecvError]
+        case (.lANDegraded, .relayStreamError):
+            state = .lANDegraded
+            return [.deliverRecvError]
+        case (.relayBackoff, .relayStreamError):
+            state = .relayBackoff
+            return [.deliverRecvError]
+        case (.relayConnected, .appSendDatagram):
+            state = .relayConnected
+            return [.sendActiveDatagram]
+        case (.lANOffered, .appSendDatagram):
+            state = .lANOffered
+            return [.sendActiveDatagram]
+        case (.lANActive, .appSendDatagram):
+            state = .lANActive
+            return [.sendActiveDatagram]
+        case (.lANDegraded, .appSendDatagram):
+            state = .lANDegraded
+            return [.sendActiveDatagram]
+        case (.relayBackoff, .appSendDatagram):
+            state = .relayBackoff
+            return [.sendActiveDatagram]
+        case (.relayConnected, .relayDatagram):
+            state = .relayConnected
+            return [.deliverRecvDatagram]
+        case (.lANOffered, .relayDatagram):
+            state = .lANOffered
+            return [.deliverRecvDatagram]
+        case (.lANActive, .relayDatagram):
+            state = .lANActive
+            return [.deliverRecvDatagram]
+        case (.lANDegraded, .relayDatagram):
+            state = .lANDegraded
+            return [.deliverRecvDatagram]
+        case (.relayBackoff, .relayDatagram):
+            state = .relayBackoff
+            return [.deliverRecvDatagram]
+        case (.lANActive, .lanStreamData):
+            state = .lANActive
+            return [.deliverRecv]
+        case (.lANDegraded, .lanStreamData):
+            state = .lANDegraded
+            return [.deliverRecv]
+        case (.lANActive, .lanDatagram):
+            state = .lANActive
+            return [.deliverRecvDatagram]
+        case (.lANDegraded, .lanDatagram):
+            state = .lANDegraded
+            return [.deliverRecvDatagram]
         default:
             return []
         }
@@ -859,87 +859,6 @@ public final class ClientMachine: @unchecked Sendable {
         case (.sessionActive, .sessionEstablished):
             state = .relayConnected
             return []
-        case (.relayConnected, .appSend):
-            state = .relayConnected
-            return [.writeActiveStream]
-        case (.relayConnected, .relayStreamData):
-            state = .relayConnected
-            return [.deliverRecv]
-        case (.lANConnecting, .appSend):
-            state = .lANConnecting
-            return [.writeActiveStream]
-        case (.lANConnecting, .relayStreamData):
-            state = .lANConnecting
-            return [.deliverRecv]
-        case (.lANVerifying, .appSend):
-            state = .lANVerifying
-            return [.writeActiveStream]
-        case (.lANVerifying, .relayStreamData):
-            state = .lANVerifying
-            return [.deliverRecv]
-        case (.lANActive, .appSend):
-            state = .lANActive
-            return [.writeActiveStream]
-        case (.lANActive, .lanStreamData):
-            state = .lANActive
-            return [.deliverRecv]
-        case (.lANActive, .relayStreamData):
-            state = .lANActive
-            return [.deliverRecv]
-        case (.relayFallback, .appSend):
-            state = .relayFallback
-            return [.writeActiveStream]
-        case (.relayFallback, .relayStreamData):
-            state = .relayFallback
-            return [.deliverRecv]
-        case (.relayConnected, .relayStreamError):
-            state = .relayConnected
-            return [.deliverRecvError]
-        case (.lANConnecting, .relayStreamError):
-            state = .lANConnecting
-            return [.deliverRecvError]
-        case (.lANVerifying, .relayStreamError):
-            state = .lANVerifying
-            return [.deliverRecvError]
-        case (.lANActive, .relayStreamError):
-            state = .lANActive
-            return [.deliverRecvError]
-        case (.relayFallback, .relayStreamError):
-            state = .relayFallback
-            return [.deliverRecvError]
-        case (.relayConnected, .appSendDatagram):
-            state = .relayConnected
-            return [.sendActiveDatagram]
-        case (.relayConnected, .relayDatagram):
-            state = .relayConnected
-            return [.deliverRecvDatagram]
-        case (.lANConnecting, .appSendDatagram):
-            state = .lANConnecting
-            return [.sendActiveDatagram]
-        case (.lANConnecting, .relayDatagram):
-            state = .lANConnecting
-            return [.deliverRecvDatagram]
-        case (.lANVerifying, .appSendDatagram):
-            state = .lANVerifying
-            return [.sendActiveDatagram]
-        case (.lANVerifying, .relayDatagram):
-            state = .lANVerifying
-            return [.deliverRecvDatagram]
-        case (.lANActive, .appSendDatagram):
-            state = .lANActive
-            return [.sendActiveDatagram]
-        case (.lANActive, .lanDatagram):
-            state = .lANActive
-            return [.deliverRecvDatagram]
-        case (.lANActive, .relayDatagram):
-            state = .lANActive
-            return [.deliverRecvDatagram]
-        case (.relayFallback, .appSendDatagram):
-            state = .relayFallback
-            return [.sendActiveDatagram]
-        case (.relayFallback, .relayDatagram):
-            state = .relayFallback
-            return [.deliverRecvDatagram]
         case (.relayConnected, .recvLanOffer) where guards[.lanEnabled]?() == true:
             try actions[.dialLan]?()
             state = .lANConnecting
@@ -1005,6 +924,87 @@ public final class ClientMachine: @unchecked Sendable {
         case (.relayConnected, .disconnect):
             state = .paired
             return []
+        case (.relayConnected, .appSend):
+            state = .relayConnected
+            return [.writeActiveStream]
+        case (.lANConnecting, .appSend):
+            state = .lANConnecting
+            return [.writeActiveStream]
+        case (.lANVerifying, .appSend):
+            state = .lANVerifying
+            return [.writeActiveStream]
+        case (.lANActive, .appSend):
+            state = .lANActive
+            return [.writeActiveStream]
+        case (.relayFallback, .appSend):
+            state = .relayFallback
+            return [.writeActiveStream]
+        case (.relayConnected, .relayStreamData):
+            state = .relayConnected
+            return [.deliverRecv]
+        case (.lANConnecting, .relayStreamData):
+            state = .lANConnecting
+            return [.deliverRecv]
+        case (.lANVerifying, .relayStreamData):
+            state = .lANVerifying
+            return [.deliverRecv]
+        case (.lANActive, .relayStreamData):
+            state = .lANActive
+            return [.deliverRecv]
+        case (.relayFallback, .relayStreamData):
+            state = .relayFallback
+            return [.deliverRecv]
+        case (.relayConnected, .relayStreamError):
+            state = .relayConnected
+            return [.deliverRecvError]
+        case (.lANConnecting, .relayStreamError):
+            state = .lANConnecting
+            return [.deliverRecvError]
+        case (.lANVerifying, .relayStreamError):
+            state = .lANVerifying
+            return [.deliverRecvError]
+        case (.lANActive, .relayStreamError):
+            state = .lANActive
+            return [.deliverRecvError]
+        case (.relayFallback, .relayStreamError):
+            state = .relayFallback
+            return [.deliverRecvError]
+        case (.relayConnected, .appSendDatagram):
+            state = .relayConnected
+            return [.sendActiveDatagram]
+        case (.lANConnecting, .appSendDatagram):
+            state = .lANConnecting
+            return [.sendActiveDatagram]
+        case (.lANVerifying, .appSendDatagram):
+            state = .lANVerifying
+            return [.sendActiveDatagram]
+        case (.lANActive, .appSendDatagram):
+            state = .lANActive
+            return [.sendActiveDatagram]
+        case (.relayFallback, .appSendDatagram):
+            state = .relayFallback
+            return [.sendActiveDatagram]
+        case (.relayConnected, .relayDatagram):
+            state = .relayConnected
+            return [.deliverRecvDatagram]
+        case (.lANConnecting, .relayDatagram):
+            state = .lANConnecting
+            return [.deliverRecvDatagram]
+        case (.lANVerifying, .relayDatagram):
+            state = .lANVerifying
+            return [.deliverRecvDatagram]
+        case (.lANActive, .relayDatagram):
+            state = .lANActive
+            return [.deliverRecvDatagram]
+        case (.relayFallback, .relayDatagram):
+            state = .relayFallback
+            return [.deliverRecvDatagram]
+        case (.lANActive, .lanStreamData):
+            state = .lANActive
+            return [.deliverRecv]
+        case (.lANActive, .lanDatagram):
+            state = .lANActive
+            return [.deliverRecvDatagram]
         default:
             return []
         }

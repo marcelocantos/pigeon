@@ -48,7 +48,13 @@ type yamlMessage struct {
 }
 
 type yamlActor struct {
-	Initial     string           `yaml:"initial"`
+	Initial     string                  `yaml:"initial"`
+	States      yaml.Node               `yaml:"states"`
+	Transitions []yamlTransition        `yaml:"transitions"`
+}
+
+type yamlStateNode struct {
+	Children    []string         `yaml:"children"`
 	Transitions []yamlTransition `yaml:"transitions"`
 }
 
@@ -194,6 +200,14 @@ func ParseYAML(data []byte) (*Protocol, error) {
 			}
 			actor.Transitions = append(actor.Transitions, t)
 		}
+
+		// Parse optional states: section (hierarchical states).
+		if kv.val.States.Kind == yaml.MappingNode {
+			if err := parseStateHierarchy(&actor, &kv.val.States); err != nil {
+				return nil, fmt.Errorf("actor %s states: %w", kv.key, err)
+			}
+		}
+
 		p.Actors = append(p.Actors, actor)
 	}
 
@@ -454,4 +468,60 @@ func parseOrderedMapString(node *yaml.Node) ([]kv[string], error) {
 		})
 	}
 	return result, nil
+}
+
+// parseStateHierarchy builds the state hierarchy from the YAML states: section.
+func parseStateHierarchy(actor *Actor, node *yaml.Node) error {
+	actor.StateIndex = make(map[State]*StateNode)
+
+	// getOrCreate ensures a StateNode exists for a given name.
+	getOrCreate := func(name State) *StateNode {
+		if n, ok := actor.StateIndex[name]; ok {
+			return n
+		}
+		n := &StateNode{Name: name}
+		actor.StateIndex[name] = n
+		return n
+	}
+
+	// Parse each superstate definition (preserving YAML order).
+	states, err := parseOrderedMap[yamlStateNode](node)
+	if err != nil {
+		return fmt.Errorf("parse states map: %w", err)
+	}
+
+	for _, skv := range states {
+		parent := getOrCreate(State(skv.key))
+
+		for _, childName := range skv.val.Children {
+			child := getOrCreate(State(childName))
+			if child.Parent != nil {
+				return fmt.Errorf("state %s has multiple parents (%s and %s)",
+					childName, child.Parent.Name, parent.Name)
+			}
+			child.Parent = parent
+			parent.Children = append(parent.Children, child)
+		}
+
+		// Parse superstate transitions (self-loops — no from/to).
+		for i, yt := range skv.val.Transitions {
+			t, err := convertTransition(yt)
+			if err != nil {
+				return fmt.Errorf("superstate %s transition %d: %w", skv.key, i, err)
+			}
+			// Superstate transitions have no from/to in YAML; they're
+			// inherited self-loops expanded by FlattenedTransitions.
+			parent.Transitions = append(parent.Transitions, t)
+		}
+	}
+
+	// Build roots: superstates with no parent.
+	for _, skv := range states {
+		node := actor.StateIndex[State(skv.key)]
+		if node.Parent == nil && !node.IsLeaf() {
+			actor.Roots = append(actor.Roots, node)
+		}
+	}
+
+	return nil
 }

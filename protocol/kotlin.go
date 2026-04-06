@@ -145,7 +145,7 @@ func (p *Protocol) ExportKotlin(w io.Writer, pkg string) error {
 		b.WriteString("    )\n\n")
 
 		b.WriteString("    val transitions = listOf(\n")
-		for _, t := range a.Transitions {
+		for _, t := range a.FlattenedTransitions() {
 			onKind := "internal"
 			onValue := t.On.Desc
 			if t.On.Kind == TriggerRecv {
@@ -184,7 +184,7 @@ func (p *Protocol) ExportKotlin(w io.Writer, pkg string) error {
 
 		// Collect vars updated by this actor's transitions.
 		actorVarSet := map[string]bool{}
-		for _, t := range a.Transitions {
+		for _, t := range a.FlattenedTransitions() {
 			for _, u := range t.Updates {
 				actorVarSet[u.Var] = true
 			}
@@ -223,7 +223,7 @@ func (p *Protocol) ExportKotlin(w io.Writer, pkg string) error {
 		b.WriteString("    fun handleEvent(ev: EventID): List<CmdID> {\n")
 		b.WriteString("        val cmds = when {\n")
 
-		for _, t := range a.Transitions {
+		for _, t := range a.FlattenedTransitions() {
 			// Determine event constant.
 			var eventConst string
 			if t.On.Kind == TriggerRecv {
@@ -299,7 +299,7 @@ func collectKotlinEvents(p *Protocol) []string {
 		seen[string(e.ID)] = true
 	}
 	for _, a := range p.Actors {
-		for _, t := range a.Transitions {
+		for _, t := range a.FlattenedTransitions() {
 			if t.On.Kind == TriggerInternal {
 				seen[t.On.Desc] = true
 			} else if t.On.Kind == TriggerRecv {

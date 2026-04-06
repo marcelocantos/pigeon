@@ -10,7 +10,7 @@ import (
 	"strings"
 )
 
-func sortedKeys(m map[string]bool) []string {
+func sortedKeys[V any](m map[string]V) []string {
 	keys := make([]string, 0, len(m))
 	for k := range m {
 		keys = append(keys, k)
@@ -128,7 +128,7 @@ func (p *Protocol) ExportGo(w io.Writer, pkgName, funcName string) error {
 	actions := map[string]bool{}
 	events := map[string]bool{}
 	for _, a := range p.Actors {
-		for _, t := range a.Transitions {
+		for _, t := range a.FlattenedTransitions() {
 			if t.Do != "" {
 				actions[string(t.Do)] = true
 			}
@@ -148,7 +148,7 @@ func (p *Protocol) ExportGo(w io.Writer, pkgName, funcName string) error {
 
 	// Collect message-receipt events (recv X → EventRecvX).
 	for _, a := range p.Actors {
-		for _, t := range a.Transitions {
+		for _, t := range a.FlattenedTransitions() {
 			if t.On.Kind == TriggerRecv {
 				events["recv_"+string(t.On.Msg)] = true
 			}
@@ -221,7 +221,7 @@ func (p *Protocol) ExportGo(w io.Writer, pkgName, funcName string) error {
 	b.WriteString("\t\tActors: []Actor{\n")
 	for _, a := range p.Actors {
 		fmt.Fprintf(&b, "\t\t\t{Name: %q, Initial: %q, Transitions: []Transition{\n", a.Name, a.Initial)
-		for _, t := range a.Transitions {
+		for _, t := range a.FlattenedTransitions() {
 			b.WriteString("\t\t\t\t{")
 			fmt.Fprintf(&b, "From: %q, To: %q, ", t.From, t.To)
 			if t.On.Kind == TriggerRecv {
@@ -241,8 +241,8 @@ func (p *Protocol) ExportGo(w io.Writer, pkgName, funcName string) error {
 					fmt.Fprintf(&b, "{To: %q, Msg: %q", s.To, s.Msg)
 					if len(s.Fields) > 0 {
 						b.WriteString(", Fields: map[string]string{")
-						for k, v := range s.Fields {
-							fmt.Fprintf(&b, "%q: %q, ", k, v)
+						for _, k := range sortedKeys(s.Fields) {
+							fmt.Fprintf(&b, "%q: %q, ", k, s.Fields[k])
 						}
 						b.WriteString("}")
 					}
@@ -337,7 +337,7 @@ func (p *Protocol) ExportGo(w io.Writer, pkgName, funcName string) error {
 
 		// Collect vars updated by this actor's transitions.
 		actorVarSet := map[string]bool{}
-		for _, t := range a.Transitions {
+		for _, t := range a.FlattenedTransitions() {
 			for _, u := range t.Updates {
 				actorVarSet[u.Var] = true
 			}
@@ -388,7 +388,7 @@ func (p *Protocol) ExportGo(w io.Writer, pkgName, funcName string) error {
 		// HandleMessage.
 		fmt.Fprintf(&b, "func (m *%sMachine) HandleMessage(msg MsgType) (bool, error) {\n", prefix)
 		b.WriteString("\tswitch {\n")
-		for _, t := range a.Transitions {
+		for _, t := range a.FlattenedTransitions() {
 			if t.On.Kind != TriggerRecv {
 				continue
 			}
@@ -409,7 +409,7 @@ func (p *Protocol) ExportGo(w io.Writer, pkgName, funcName string) error {
 		// Step — takes an EventID to disambiguate internal transitions.
 		fmt.Fprintf(&b, "func (m *%sMachine) Step(event EventID) (bool, error) {\n", prefix)
 		b.WriteString("\tswitch {\n")
-		for _, t := range a.Transitions {
+		for _, t := range a.FlattenedTransitions() {
 			if t.On.Kind != TriggerInternal {
 				continue
 			}
@@ -431,7 +431,7 @@ func (p *Protocol) ExportGo(w io.Writer, pkgName, funcName string) error {
 		// Maps recv messages to EventRecv* and internal events to Event*.
 		fmt.Fprintf(&b, "func (m *%sMachine) HandleEvent(ev EventID) ([]CmdID, error) {\n", prefix)
 		b.WriteString("\tswitch {\n")
-		for _, t := range a.Transitions {
+		for _, t := range a.FlattenedTransitions() {
 			guard := ""
 			if t.Guard != "" {
 				guard = fmt.Sprintf(" && m.Guards[Guard%s] != nil && m.Guards[Guard%s]()",

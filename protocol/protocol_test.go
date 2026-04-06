@@ -573,6 +573,266 @@ func TestExportTypeScriptStructure(t *testing.T) {
 	}
 }
 
+// Hierarchy tests.
+
+func TestParseHierarchyFromYAML(t *testing.T) {
+	yaml := `
+name: HierTest
+one_shot: true
+channel_bound: 1
+messages: {}
+events:
+  ping: 'ping event'
+  data_in: 'data in'
+  special_in: 'special data in'
+commands:
+  deliver: 'deliver data'
+  deliver_special: 'deliver special'
+  pong: 'send pong'
+actors:
+  server:
+    initial: Idle
+    states:
+      Active:
+        children: [Normal, SubActive]
+        transitions:
+          - {on: data_in, emits: [deliver]}
+      SubActive:
+        children: [Special]
+        transitions:
+          - {on: special_in, emits: [deliver_special]}
+    transitions:
+      - from: Idle
+        to: Normal
+        on: ping
+        emits: [pong]
+vars: {}
+guards: {}
+`
+	p, err := ParseYAML([]byte(yaml))
+	if err != nil {
+		t.Fatalf("ParseYAML: %v", err)
+	}
+
+	a := p.Actors[0]
+
+	// Check hierarchy: Active -> [Normal, SubActive], SubActive -> [Special]
+	// StateIndex: Active, Normal, SubActive, Special = 4 entries
+	if len(a.StateIndex) != 4 {
+		t.Fatalf("expected 4 state nodes, got %d", len(a.StateIndex))
+	}
+	if len(a.Roots) != 1 {
+		t.Fatalf("expected 1 root, got %d", len(a.Roots))
+	}
+	if a.Roots[0].Name != "Active" {
+		t.Fatalf("expected root Active, got %s", a.Roots[0].Name)
+	}
+
+	// Check flattened transitions.
+	flat := a.FlattenedTransitions()
+	// Explicit: Idle->Normal on ping (1)
+	// Active inherited: data_in on Normal and Special (2)
+	// SubActive inherited: special_in on Special (1)
+	// Total: 4
+	if len(flat) != 4 {
+		t.Fatalf("expected 4 flattened transitions, got %d", len(flat))
+	}
+
+	// Verify specific expansions.
+	found := map[string]bool{}
+	for _, tr := range flat {
+		key := string(tr.From) + ":" + tr.On.Desc
+		found[key] = true
+	}
+	for _, want := range []string{
+		"Idle:ping",
+		"Normal:data_in",
+		"Special:data_in",
+		"Special:special_in",
+	} {
+		if !found[want] {
+			t.Errorf("missing expected transition: %s", want)
+		}
+	}
+}
+
+func TestFlattenedTransitionsNoHierarchy(t *testing.T) {
+	a := Actor{
+		Name:    "simple",
+		Initial: "S0",
+		Transitions: []Transition{
+			{From: "S0", To: "S1", On: Internal("go")},
+		},
+	}
+	flat := a.FlattenedTransitions()
+	if len(flat) != 1 {
+		t.Fatalf("expected 1, got %d", len(flat))
+	}
+}
+
+func TestHierarchyMultipleParentsRejected(t *testing.T) {
+	yaml := `
+name: BadHierarchy
+one_shot: true
+channel_bound: 1
+messages: {}
+events: {}
+commands: {}
+actors:
+  a:
+    initial: S0
+    states:
+      Parent1:
+        children: [Child]
+      Parent2:
+        children: [Child]
+    transitions:
+      - {from: S0, to: Child, on: go}
+vars: {}
+guards: {}
+`
+	_, err := ParseYAML([]byte(yaml))
+	if err == nil {
+		t.Fatal("expected error for multiple parents")
+	}
+	if !strings.Contains(err.Error(), "multiple parents") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestMachineHierarchyDispatch(t *testing.T) {
+	p := &Protocol{
+		Name: "HierDispatch",
+		Actors: []Actor{{
+			Name:    "a",
+			Initial: "S1",
+			Transitions: []Transition{
+				// Leaf-level transition.
+				{From: "S1", To: "S2", On: Internal("advance")},
+			},
+			StateIndex: map[State]*StateNode{
+				"Parent": {
+					Name: "Parent",
+					Transitions: []Transition{
+						// Superstate self-loop (will be expanded).
+						{On: Internal("tick")},
+					},
+				},
+				"S1": {Name: "S1"},
+				"S2": {Name: "S2"},
+			},
+			Roots: nil, // will set up below
+		}},
+	}
+	// Wire up hierarchy.
+	parent := p.Actors[0].StateIndex["Parent"]
+	s1 := p.Actors[0].StateIndex["S1"]
+	s2 := p.Actors[0].StateIndex["S2"]
+	parent.Children = []*StateNode{s1, s2}
+	s1.Parent = parent
+	s2.Parent = parent
+	p.Actors[0].Roots = []*StateNode{parent}
+
+	m, err := NewMachine(p, "a")
+	if err != nil {
+		t.Fatalf("NewMachine: %v", err)
+	}
+
+	// "tick" is inherited — should work from S1.
+	if _, err := m.Step("tick", nil); err != nil {
+		t.Fatalf("expected tick to work from S1 via hierarchy: %v", err)
+	}
+	if m.State() != "S1" { // self-loop
+		t.Fatalf("expected S1 after tick, got %s", m.State())
+	}
+
+	// "advance" is a leaf transition S1->S2.
+	if _, err := m.Step("advance", nil); err != nil {
+		t.Fatalf("advance failed: %v", err)
+	}
+	if m.State() != "S2" {
+		t.Fatalf("expected S2, got %s", m.State())
+	}
+
+	// "tick" should also work from S2.
+	if _, err := m.Step("tick", nil); err != nil {
+		t.Fatalf("expected tick to work from S2 via hierarchy: %v", err)
+	}
+}
+
+func TestStateNodeLeafStates(t *testing.T) {
+	grandchild := &StateNode{Name: "GC"}
+	child1 := &StateNode{Name: "C1", Children: []*StateNode{grandchild}}
+	child2 := &StateNode{Name: "C2"}
+	root := &StateNode{Name: "R", Children: []*StateNode{child1, child2}}
+
+	leaves := root.LeafStates()
+	if len(leaves) != 2 {
+		t.Fatalf("expected 2 leaves, got %d", len(leaves))
+	}
+	if leaves[0].Name != "GC" || leaves[1].Name != "C2" {
+		t.Fatalf("unexpected leaves: %v, %v", leaves[0].Name, leaves[1].Name)
+	}
+}
+
+func TestAncestorChain(t *testing.T) {
+	root := &StateNode{Name: "R"}
+	child := &StateNode{Name: "C", Parent: root}
+	grandchild := &StateNode{Name: "GC", Parent: child}
+
+	chain := grandchild.AncestorChain()
+	if len(chain) != 3 {
+		t.Fatalf("expected 3, got %d", len(chain))
+	}
+	if chain[0].Name != "GC" || chain[1].Name != "C" || chain[2].Name != "R" {
+		t.Fatal("wrong ancestor chain order")
+	}
+}
+
+func TestSessionProtocolHierarchy(t *testing.T) {
+	// Verify session.yaml loads and validates with the hierarchy.
+	p, err := LoadYAML("session.yaml")
+	if err != nil {
+		t.Fatalf("LoadYAML: %v", err)
+	}
+	if err := p.Validate(); err != nil {
+		t.Fatalf("Validate: %v", err)
+	}
+
+	// Backend should have hierarchy.
+	var backend *Actor
+	for i := range p.Actors {
+		if p.Actors[i].Name == "backend" {
+			backend = &p.Actors[i]
+			break
+		}
+	}
+	if backend == nil {
+		t.Fatal("backend actor not found")
+	}
+	if len(backend.StateIndex) == 0 {
+		t.Fatal("backend should have state hierarchy")
+	}
+	if _, ok := backend.StateIndex["Connected"]; !ok {
+		t.Fatal("backend missing Connected superstate")
+	}
+
+	// Flattened transitions should include the expanded self-loops.
+	flat := backend.FlattenedTransitions()
+	// Count app_send transitions — should exist for each leaf under Connected.
+	appSendCount := 0
+	for _, tr := range flat {
+		if tr.On.Desc == "app_send" {
+			appSendCount++
+		}
+	}
+	// Connected has children: RelayConnected, LANOffered, LANPath(->LANActive, LANDegraded), RelayBackoff
+	// = 5 leaf states
+	if appSendCount != 5 {
+		t.Fatalf("expected 5 app_send transitions (one per leaf), got %d", appSendCount)
+	}
+}
+
 // Helpers.
 
 func mustHandle(t *testing.T, m *Machine, msg MsgType) {

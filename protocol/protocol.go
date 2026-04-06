@@ -209,11 +209,85 @@ type ConstantDef struct {
 	Desc   string
 }
 
+// StateNode represents a state in the hierarchy. Leaf states have no
+// children. Superstates have children and inherited transitions that
+// apply to all descendants (self-loops).
+type StateNode struct {
+	Name        State
+	Parent      *StateNode
+	Children    []*StateNode
+	Transitions []Transition // inherited by all descendants
+}
+
+// IsLeaf reports whether this state has no children.
+func (n *StateNode) IsLeaf() bool { return len(n.Children) == 0 }
+
+// LeafStates returns all leaf descendants (or self if leaf).
+func (n *StateNode) LeafStates() []*StateNode {
+	if n.IsLeaf() {
+		return []*StateNode{n}
+	}
+	var leaves []*StateNode
+	for _, c := range n.Children {
+		leaves = append(leaves, c.LeafStates()...)
+	}
+	return leaves
+}
+
+// AncestorChain returns [self, parent, grandparent, ...] up to root.
+func (n *StateNode) AncestorChain() []*StateNode {
+	var chain []*StateNode
+	for cur := n; cur != nil; cur = cur.Parent {
+		chain = append(chain, cur)
+	}
+	return chain
+}
+
 // Actor defines one participant in the protocol.
 type Actor struct {
 	Name        string
 	Initial     State
-	Transitions []Transition
+	Transitions []Transition          // leaf-level transitions
+	StateIndex  map[State]*StateNode  // hierarchy (nil = flat)
+	Roots       []*StateNode          // top-level state nodes
+}
+
+// FlattenedTransitions returns all transitions including superstate
+// transitions expanded into explicit per-leaf-state self-loops.
+// The result is suitable for generators that need a flat transition list.
+func (a *Actor) FlattenedTransitions() []Transition {
+	if len(a.StateIndex) == 0 {
+		return a.Transitions
+	}
+
+	// Start with the explicit leaf transitions.
+	result := make([]Transition, len(a.Transitions))
+	copy(result, a.Transitions)
+
+	// Expand each superstate's transitions into leaf self-loops.
+	// Walk the hierarchy in definition order (roots first).
+	var expand func(node *StateNode)
+	expand = func(node *StateNode) {
+		if !node.IsLeaf() {
+			leaves := node.LeafStates()
+			for _, t := range node.Transitions {
+				for _, leaf := range leaves {
+					expanded := t
+					expanded.From = leaf.Name
+					expanded.To = leaf.Name
+					result = append(result, expanded)
+				}
+			}
+			for _, child := range node.Children {
+				expand(child)
+			}
+		}
+	}
+	for _, root := range a.Roots {
+		expand(root)
+	}
+
+	return result
 }
 
 // Protocol is the complete definition of a multi-actor protocol.
@@ -248,7 +322,8 @@ type Protocol struct {
 	OneShot      bool // if true, actors run once then terminate (no loop)
 }
 
-// collectStates returns all unique states for an actor in definition order.
+// collectStates returns all unique leaf states for an actor in definition order.
+// Superstate names are excluded — they are containers, not states.
 func collectStates(a Actor) []State {
 	seen := map[State]bool{}
 	var states []State
@@ -259,7 +334,8 @@ func collectStates(a Actor) []State {
 		}
 	}
 	add(a.Initial)
-	for _, t := range a.Transitions {
+	// Include states from flattened transitions (covers hierarchy).
+	for _, t := range a.FlattenedTransitions() {
 		add(t.From)
 		add(t.To)
 	}
@@ -297,7 +373,17 @@ func (p *Protocol) Validate() error {
 	}
 
 	for _, a := range p.Actors {
-		for _, t := range a.Transitions {
+		// Validate hierarchy consistency.
+		for name, node := range a.StateIndex {
+			for _, child := range node.Children {
+				if child.Parent != node {
+					return fmt.Errorf("actor %s: state %s child %s has wrong parent", a.Name, name, child.Name)
+				}
+			}
+		}
+
+		// Validate both explicit and superstate transitions.
+		for _, t := range a.FlattenedTransitions() {
 			if t.On.Kind == TriggerRecv && !msgTypes[t.On.Msg] {
 				return fmt.Errorf("actor %s: transition %s->%s triggers on undeclared message %s",
 					a.Name, t.From, t.To, t.On.Msg)

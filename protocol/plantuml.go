@@ -55,7 +55,7 @@ func (p *Protocol) ExportPlantUMLActors(w io.Writer, titleSuffix string, actors 
 	// and clutter the diagram.
 	hasInteraction := map[string]bool{}
 	for _, a := range p.Actors {
-		for _, t := range a.Transitions {
+		for _, t := range a.FlattenedTransitions() {
 			if t.On.Kind == TriggerRecv {
 				hasInteraction[a.Name] = true
 			}
@@ -117,7 +117,7 @@ func (p *Protocol) ExportPlantUMLActors(w io.Writer, titleSuffix string, actors 
 
 				// Transitions within this phase (coalesced).
 				var phaseTransitions []Transition
-				for _, t := range a.Transitions {
+				for _, t := range a.FlattenedTransitions() {
 					fromPhase := phaseOf[t.From]
 					toPhase := phaseOf[t.To]
 					if fromPhase == ph.Name && toPhase == ph.Name {
@@ -132,7 +132,7 @@ func (p *Protocol) ExportPlantUMLActors(w io.Writer, titleSuffix string, actors 
 
 			// Cross-phase transitions (coalesced).
 			var crossPhaseTransitions []Transition
-			for _, t := range a.Transitions {
+			for _, t := range a.FlattenedTransitions() {
 				fromPhase := phaseOf[t.From]
 				toPhase := phaseOf[t.To]
 				if fromPhase != toPhase {
@@ -151,7 +151,7 @@ func (p *Protocol) ExportPlantUMLActors(w io.Writer, titleSuffix string, actors 
 		} else {
 			// No phases — flat diagram (coalesced).
 			fmt.Fprintf(&b, "  [*] --> %s_%s\n", alias, sanitisePUML(string(a.Initial)))
-			for _, line := range coalesceTransitions(a.Transitions, alias) {
+			for _, line := range coalesceTransitions(a.FlattenedTransitions(), alias) {
 				fmt.Fprintf(&b, "  %s\n", line)
 			}
 		}
@@ -166,7 +166,7 @@ func (p *Protocol) ExportPlantUMLActors(w io.Writer, titleSuffix string, actors 
 			continue
 		}
 		srcAlias := actorAlias[a.Name]
-		for _, t := range a.Transitions {
+		for _, t := range a.FlattenedTransitions() {
 			for _, s := range t.Sends {
 				if !includeActor(s.To) {
 					continue
@@ -283,7 +283,7 @@ func findRecvState(p *Protocol, actorName string, msg MsgType, alias string) str
 		if a.Name != actorName {
 			continue
 		}
-		for _, t := range a.Transitions {
+		for _, t := range a.FlattenedTransitions() {
 			if t.On.Kind == TriggerRecv && t.On.Msg == msg {
 				return fmt.Sprintf("%s_%s", alias, sanitisePUML(string(t.From)))
 			}

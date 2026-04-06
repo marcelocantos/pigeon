@@ -51,7 +51,7 @@ func (p *Protocol) ExportTLAPhase(w io.Writer, phaseName string) error {
 	}
 	var phaseTransitions []actorTransition
 	for _, a := range p.Actors {
-		for _, t := range a.Transitions {
+		for _, t := range a.FlattenedTransitions() {
 			if len(phaseStates) > 0 {
 				if !phaseStates[t.From] || !phaseStates[t.To] {
 					// Only include transitions that stay within the phase.
@@ -360,7 +360,7 @@ func (p *Protocol) ExportTLAPhase(w io.Writer, phaseName string) error {
 
 	for _, a := range p.Actors {
 		var actorActions []string
-		for _, t := range a.Transitions {
+		for _, t := range a.FlattenedTransitions() {
 			if len(phaseStates) > 0 && (!phaseStates[t.From] || !phaseStates[t.To]) {
 				continue
 			}
@@ -505,7 +505,7 @@ func (p *Protocol) ExportTLAPhase(w io.Writer, phaseName string) error {
 	// from the relationship between commands and state variables.
 	hasCommands := false
 	for _, a := range p.Actors {
-		for _, t := range a.Transitions {
+		for _, t := range a.FlattenedTransitions() {
 			if len(phaseStates) > 0 && (!phaseStates[t.From] || !phaseStates[t.To]) {
 				continue
 			}
@@ -529,7 +529,7 @@ func (p *Protocol) ExportTLAPhase(w io.Writer, phaseName string) error {
 		// Emit one consistency operator per actor showing what commands
 		// each transport state implies when entered.
 		for _, a := range p.Actors {
-			for _, t := range a.Transitions {
+			for _, t := range a.FlattenedTransitions() {
 				if len(phaseStates) > 0 && (!phaseStates[t.From] || !phaseStates[t.To]) {
 					continue
 				}
@@ -571,7 +571,7 @@ func makeActionName(actorName string, t Transition) string {
 }
 
 func isNeighbour(a Actor, s State, phaseStates map[State]bool) bool {
-	for _, t := range a.Transitions {
+	for _, t := range a.FlattenedTransitions() {
 		if t.From == s && phaseStates[t.To] {
 			return true
 		}
@@ -593,7 +593,7 @@ func initialForPhase(a Actor, phase *Phase) State {
 	if phaseStates[a.Initial] {
 		return a.Initial
 	}
-	for _, t := range a.Transitions {
+	for _, t := range a.FlattenedTransitions() {
 		if !phaseStates[t.From] && phaseStates[t.To] {
 			return t.To
 		}

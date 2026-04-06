@@ -117,7 +117,7 @@ func (p *Protocol) ExportSwift(w io.Writer) error {
 		fmt.Fprintf(&b, "    public static let %sTransitions: [(from: String, to: String, on: String, onKind: String, guard: String?, action: String?, sends: [(to: String, msg: String)])] = [\n",
 			strings.ToLower(a.Name[:1])+a.Name[1:])
 
-		for _, t := range a.Transitions {
+		for _, t := range a.FlattenedTransitions() {
 			onKind := "internal"
 			onValue := t.On.Desc
 			if t.On.Kind == TriggerRecv {
@@ -157,7 +157,7 @@ func (p *Protocol) ExportSwift(w io.Writer) error {
 
 		// Collect vars updated by this actor's transitions.
 		actorVarSet := map[string]bool{}
-		for _, t := range a.Transitions {
+		for _, t := range a.FlattenedTransitions() {
 			for _, u := range t.Updates {
 				actorVarSet[u.Var] = true
 			}
@@ -205,7 +205,7 @@ func (p *Protocol) ExportSwift(w io.Writer) error {
 		b.WriteString("    @discardableResult\n")
 		b.WriteString("    public func handleEvent(_ ev: EventID) throws -> [CmdID] {\n")
 		b.WriteString("        switch (state, ev) {\n")
-		for _, t := range a.Transitions {
+		for _, t := range a.FlattenedTransitions() {
 			// Compute EventID case name.
 			var eventCase string
 			if t.On.Kind == TriggerRecv {
@@ -234,7 +234,7 @@ func (p *Protocol) ExportSwift(w io.Writer) error {
 		fmt.Fprintf(&b, "    @discardableResult\n")
 		fmt.Fprintf(&b, "    public func handleMessage(_ msg: MessageType) throws -> %sState? {\n", typeName)
 		b.WriteString("        switch (state, msg) {\n")
-		for _, t := range a.Transitions {
+		for _, t := range a.FlattenedTransitions() {
 			if t.On.Kind != TriggerRecv {
 				continue
 			}
@@ -273,7 +273,7 @@ func (p *Protocol) ExportSwift(w io.Writer) error {
 		fromEventCount := map[State]map[string]bool{} // from → distinct event descs
 		fromOrder := []State{}
 		seenFrom := map[State]bool{}
-		for _, t := range a.Transitions {
+		for _, t := range a.FlattenedTransitions() {
 			if t.On.Kind != TriggerInternal {
 				continue
 			}
@@ -394,7 +394,7 @@ func collectAllEvents(p *Protocol) []string {
 	}
 	// Internal event descriptors.
 	for _, a := range p.Actors {
-		for _, t := range a.Transitions {
+		for _, t := range a.FlattenedTransitions() {
 			if t.On.Kind == TriggerInternal {
 				add(t.On.Desc)
 			}
@@ -402,7 +402,7 @@ func collectAllEvents(p *Protocol) []string {
 	}
 	// recv_* events for message receipts.
 	for _, a := range p.Actors {
-		for _, t := range a.Transitions {
+		for _, t := range a.FlattenedTransitions() {
 			if t.On.Kind == TriggerRecv {
 				add("recv_" + string(t.On.Msg))
 			}
@@ -416,7 +416,7 @@ func collectActions(p *Protocol) []string {
 	seen := map[string]bool{}
 	var result []string
 	for _, a := range p.Actors {
-		for _, t := range a.Transitions {
+		for _, t := range a.FlattenedTransitions() {
 			if t.Do != "" && !seen[string(t.Do)] {
 				seen[string(t.Do)] = true
 				result = append(result, string(t.Do))

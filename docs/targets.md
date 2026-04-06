@@ -219,41 +219,47 @@ Produces:
 
 ---
 
-### 🎯T19 Parallel regions in protocol state machine
+### 🎯T19 Hierarchical state machines in protocol framework
 
-The transport machine mixes two orthogonal concerns in a single flat
-state machine: **path management** (relay → offered → active →
-degraded → backoff) and **data forwarding** (app_send, recv,
-datagrams). Data forwarding self-loops are identical across all path
-states and must be manually replicated every time a path state is
-added.
+The transport machine has ~25 identical data-forwarding self-loops
+per actor because every path state must replicate them. Adding a new
+path state (e.g., STUNConnecting for 🎯T6) requires adding 5+ more
+copies. The root cause is a flat state machine with no inheritance.
 
-**Desired state**: The YAML protocol framework supports parallel
-regions (AND-states / statechart regions). A machine can declare
-independent sub-machines that execute concurrently. The transport
-machine becomes:
+**Desired state**: The YAML protocol framework supports hierarchical
+states (Harel statecharts / UML nested states). A superstate defines
+transitions inherited by all substates. The transport machine uses a
+`Connected` superstate containing all path states, with
+data-forwarding transitions defined once on `Connected`.
 
-- **Path region**: RelayConnected → LANOffered → LANActive →
-  LANDegraded → RelayBackoff (health, fallback, backoff)
-- **DataForwarding region**: always active, routes app_send/recv
-  through the current active path. Defined once.
+**Scope**:
+- YAML gains nested `states:` with `children:` and `transitions:` at
+  each level; substates inherit parent transitions
+- Data model (`protocol.go`): states become a tree; `Actor` carries
+  the hierarchy
+- Runtime (`machine.go`): `HandleEvent` walks up the state hierarchy
+  to find matching transitions (innermost wins)
+- Go generator (`gogen.go`): emit hierarchical dispatch
+- Swift generator (`swift.go`): same
+- TLA+ generator (`tla.go`): flatten hierarchy for model checking
+  (expand inherited transitions into substates)
+- PlantUML generator (`plantuml.go`): emit nested `state` blocks
+- Kotlin generator: same as Swift
+- Transport YAML refactored to use hierarchy — self-loops eliminated
+- Entry/exit actions on superstates (stretch — implement if natural)
 
-**Implications**:
-- YAML gains a `regions:` section under actors, each with its own
-  states and transitions
-- Code generator emits composite state: each region has independent
-  current-state, HandleEvent dispatches to all regions
-- TLA+ generator emits parallel composition (interleaving)
-- PlantUML generator emits `--` region separators inside states
-- Adding new path states (e.g., STUNConnecting for 🎯T6) no longer
-  requires duplicating data-forwarding transitions
-- Backend transport transitions drop from ~60 to ~35
+**Out of scope (for now)**: Parallel regions (AND-states), history
+states. These can be layered on later.
 
 **Forked from**: diagram review during 🎯T18 completion — the
 coalesced self-loops made the redundancy visually obvious.
 
 - **Weight**: 1.25 (value 5 / cost 4)
-- **Status**: not started
+- **Status**: achieved — `StateNode` hierarchy in `protocol.go`,
+  `states:` section in YAML parser, `FlattenedTransitions()` expansion,
+  all generators updated, session.yaml refactored (~50 self-loops
+  eliminated via Connected/LANPath superstates). PlantUML nested
+  rendering deferred as cosmetic follow-up.
 
 ---
 
