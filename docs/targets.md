@@ -219,6 +219,60 @@ tests work without manual machine management.
 
 ---
 
+### 🎯T20 Cross-language E2E test parity
+
+Every language that has a generated state machine and client library
+has automated E2E tests that connect to a real Go relay, exercise the
+full pairing ceremony (ECDH + confirmation code), and exchange
+encrypted messages. Tests run in CI without manual intervention.
+
+- **Weight**: 2.5 (value 5 / cost 2)
+- **Status**: not started
+
+#### 🎯T20.1 Swift E2E integrated into `swift test`
+
+The standalone E2E binary (`e2e/swift/main.swift`) works but is not
+run by `swift test`. Integrate it as an XCTest target that starts a
+Go relay subprocess and exercises register, connect, stream round-trip,
+encrypted round-trip, and confirmation code verification.
+
+- **Weight**: 2.5 (value 5 / cost 2)
+- **Status**: not started (standalone binary exists, needs test target integration)
+
+#### 🎯T20.2 State machine unit tests for Swift/Kotlin/TypeScript
+
+The generated `handleEvent` machines are only tested implicitly through
+relay E2E tests. Each language should have explicit unit tests that
+verify: state transitions for the transport phase (relay → LAN offered
+→ LAN active → degraded → fallback → backoff → re-establish), correct
+command emission per transition, and guard evaluation.
+
+- **Weight**: 1.7 (value 5 / cost 3)
+- **Status**: not started
+
+#### 🎯T20.3 Cross-language confirmation code interop test
+
+A Go backend and each non-Go client (Swift, Kotlin, TypeScript) perform
+a full ECDH key exchange through a live relay and independently derive
+the 6-digit confirmation code. The test asserts both sides compute the
+same code. Currently each language hardcodes "629624" in unit tests but
+no test verifies agreement through an actual relay.
+
+- **Weight**: 2.5 (value 5 / cost 2)
+- **Status**: not started
+- **Depends on**: 🎯T20.1 (Swift), 🎯T20.2 implicitly
+
+#### 🎯T20.4 TypeScript local E2E tests
+
+TypeScript tests currently only run against a live relay (requiring
+PIGEON_TOKEN). Add local E2E tests that start a Go relay subprocess
+(like Kotlin does) so they run in CI without credentials.
+
+- **Weight**: 2.0 (value 4 / cost 2)
+- **Status**: not started
+
+---
+
 ## Achieved
 
 ### 🎯T19 Hierarchical state machines in protocol framework
