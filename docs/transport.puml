@@ -29,24 +29,13 @@ state "backend" as B {
 
   state "Transport" as B_Transport {
     [*] --> B_RelayConnected
-    state "Connected" as B_Connected {
-      state "RelayConnected" as B_RelayConnected
-      state "LANOffered" as B_LANOffered
-      state "RelayBackoff" as B_RelayBackoff
-      state "LANPath" as B_LANPath {
-        state "LANActive" as B_LANActive
-        state "LANDegraded" as B_LANDegraded
-      }
-      B_LANPath --> B_LANPath : lan_stream_data\nlan_datagram
-    }
-    B_Connected --> B_Connected : app_send\nrelay_stream_data\nrelay_stream_error\napp_send_datagram\nrelay_datagram
     B_RelayConnected --> B_LANOffered : lan_server_ready
     B_LANOffered --> B_LANActive : recv lan_verify\n[challenge_valid]\nactivate_lan
     B_LANOffered --> B_RelayConnected : recv lan_verify\n[challenge_invalid]
     B_LANOffered --> B_RelayBackoff : offer_timeout
-    B_LANActive --> B_LANActive : ping_tick
+    B_LANActive --> B_LANActive : ping_tick\napp_send\nrelay_stream_data\nrelay_stream_error\napp_send_datagram\nrelay_datagram\nlan_stream_data\nlan_datagram
     B_LANActive --> B_LANDegraded : ping_timeout
-    B_LANDegraded --> B_LANDegraded : ping_tick
+    B_LANDegraded --> B_LANDegraded : ping_tick\napp_send\nrelay_stream_data\nrelay_stream_error\napp_send_datagram\nrelay_datagram\nlan_stream_data\nlan_datagram
     B_LANActive --> B_RelayBackoff : lan_stream_error\napp_force_fallback\nfallback_to_relay
     B_LANDegraded --> B_RelayBackoff : lan_stream_error\napp_force_fallback\nfallback_to_relay
     B_LANDegraded --> B_LANActive : recv path_pong\nreset_failures
@@ -56,6 +45,9 @@ state "backend" as B {
     B_RelayBackoff --> B_LANOffered : lan_server_changed
     B_RelayConnected --> B_LANOffered : readvertise_tick\n[lan_server_available]
     B_LANOffered --> B_RelayConnected : app_force_fallback
+    B_RelayConnected --> B_RelayConnected : app_send\nrelay_stream_data\nrelay_stream_error\napp_send_datagram\nrelay_datagram
+    B_LANOffered --> B_LANOffered : app_send\nrelay_stream_data\nrelay_stream_error\napp_send_datagram\nrelay_datagram
+    B_RelayBackoff --> B_RelayBackoff : app_send\nrelay_stream_data\nrelay_stream_error\napp_send_datagram\nrelay_datagram
   }
 
   B_SessionActive --> B_RelayConnected : session_established
@@ -80,28 +72,21 @@ state "client" as C {
 
   state "Transport" as C_Transport {
     [*] --> C_RelayConnected
-    state "Connected" as C_Connected {
-      state "RelayConnected" as C_RelayConnected
-      state "LANConnecting" as C_LANConnecting
-      state "LANVerifying" as C_LANVerifying
-      state "RelayFallback" as C_RelayFallback
-      state "LANDataPath" as C_LANDataPath {
-        state "LANActive" as C_LANActive
-      }
-      C_LANDataPath --> C_LANDataPath : lan_stream_data\nlan_datagram
-    }
-    C_Connected --> C_Connected : app_send\nrelay_stream_data\nrelay_stream_error\napp_send_datagram\nrelay_datagram
     C_RelayConnected --> C_LANConnecting : recv lan_offer\n[lan_enabled]\ndial_lan
     C_RelayConnected --> C_RelayConnected : recv lan_offer\n[lan_disabled]
     C_LANConnecting --> C_LANVerifying : lan_dial_ok
     C_LANConnecting --> C_RelayConnected : lan_dial_failed\napp_force_fallback
     C_LANVerifying --> C_LANActive : recv lan_confirm\nactivate_lan
     C_LANVerifying --> C_RelayConnected : verify_timeout\napp_force_fallback
-    C_LANActive --> C_LANActive : recv path_ping
+    C_LANActive --> C_LANActive : recv path_ping\napp_send\nrelay_stream_data\nrelay_stream_error\napp_send_datagram\nrelay_datagram\nlan_stream_data\nlan_datagram
     C_LANActive --> C_RelayFallback : lan_error\nlan_stream_error\nfallback_to_relay
     C_RelayFallback --> C_RelayConnected : relay_ok
     C_LANActive --> C_LANConnecting : recv lan_offer\n[lan_enabled]\ndial_lan
     C_LANActive --> C_RelayConnected : app_force_fallback\nfallback_to_relay
+    C_RelayConnected --> C_RelayConnected : app_send\nrelay_stream_data\nrelay_stream_error\napp_send_datagram\nrelay_datagram
+    C_LANConnecting --> C_LANConnecting : app_send\nrelay_stream_data\nrelay_stream_error\napp_send_datagram\nrelay_datagram
+    C_LANVerifying --> C_LANVerifying : app_send\nrelay_stream_data\nrelay_stream_error\napp_send_datagram\nrelay_datagram
+    C_RelayFallback --> C_RelayFallback : app_send\nrelay_stream_data\nrelay_stream_error\napp_send_datagram\nrelay_datagram
   }
 
   C_SessionActive --> C_RelayConnected : session_established
@@ -118,11 +103,11 @@ B_RelayConnected -[#888,dashed]-> C_RelayConnected : lan_offer\n{addr, challenge
 B_LANOffered -[#888,dashed]-> C_LANVerifying : lan_confirm
 B_LANActive -[#888,dashed]-> C_LANActive : path_ping
 B_LANDegraded -[#888,dashed]-> C_LANActive : path_ping
+B_RelayBackoff -[#888,dashed]-> C_RelayConnected : lan_offer\n{challenge, addr}
 B_RelayBackoff -[#888,dashed]-> C_RelayConnected : lan_offer\n{addr, challenge}
-B_RelayBackoff -[#888,dashed]-> C_RelayConnected : lan_offer\n{addr, challenge}
-B_RelayConnected -[#888,dashed]-> C_RelayConnected : lan_offer\n{addr, challenge}
+B_RelayConnected -[#888,dashed]-> C_RelayConnected : lan_offer\n{challenge, addr}
 C_GenKeyPair -[#888,dashed]-> B_WaitingForClient : pair_hello\n{token, pubkey}
-C_Reconnect -[#888,dashed]-> B_Paired : auth_request\n{nonce, key, device_id, secret}
+C_Reconnect -[#888,dashed]-> B_Paired : auth_request\n{device_id, secret, nonce, key}
 C_LANConnecting -[#888,dashed]-> B_LANOffered : lan_verify\n{challenge, instance_id}
 C_LANActive -[#888,dashed]-> B_LANDegraded : path_pong
 

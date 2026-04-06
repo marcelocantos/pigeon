@@ -115,24 +115,16 @@ func (p *Protocol) ExportPlantUMLActors(w io.Writer, titleSuffix string, actors 
 				}
 				fmt.Fprintf(&b, "    [*] --> %s_%s\n", alias, sanitisePUML(string(initial)))
 
-				// Build set of states in this phase for filtering.
-				phaseStates := map[State]bool{}
-				for _, s := range states {
-					phaseStates[s] = true
-				}
-
-				// Render hierarchy: superstates as containers,
-				// inherited transitions on superstate boundaries.
-				emitHierarchy(&b, a, alias, phaseStates, "    ")
-
-				// Leaf-level transitions within this phase (not inherited).
-				var leafTransitions []Transition
-				for _, t := range a.Transitions {
-					if phaseOf[t.From] == ph.Name && phaseOf[t.To] == ph.Name {
-						leafTransitions = append(leafTransitions, t)
+				// Transitions within this phase (coalesced).
+				var phaseTransitions []Transition
+				for _, t := range a.FlattenedTransitions() {
+					fromPhase := phaseOf[t.From]
+					toPhase := phaseOf[t.To]
+					if fromPhase == ph.Name && toPhase == ph.Name {
+						phaseTransitions = append(phaseTransitions, t)
 					}
 				}
-				for _, line := range coalesceTransitions(leafTransitions, alias) {
+				for _, line := range coalesceTransitions(phaseTransitions, alias) {
 					fmt.Fprintf(&b, "    %s\n", line)
 				}
 				b.WriteString("  }\n\n")
@@ -302,66 +294,4 @@ func findRecvState(p *Protocol, actorName string, msg MsgType, alias string) str
 
 func sanitisePUML(s string) string {
 	return strings.ReplaceAll(s, " ", "_")
-}
-
-// emitHierarchy renders superstates as nested PlantUML containers with
-// their inherited transitions as self-loops on the container boundary.
-// Only nodes whose leaf states intersect phaseStates are rendered.
-func emitHierarchy(b *strings.Builder, a Actor, alias string, phaseStates map[State]bool, indent string) {
-	for _, root := range a.Roots {
-		emitNode(b, root, alias, phaseStates, indent)
-	}
-}
-
-func emitNode(b *strings.Builder, node *StateNode, alias string, phaseStates map[State]bool, indent string) {
-	if node.IsLeaf() {
-		return // leaf states are declared implicitly by transitions
-	}
-
-	// Check if any leaf descendants are in this phase.
-	leaves := node.LeafStates()
-	hasRelevantLeaf := false
-	for _, leaf := range leaves {
-		if phaseStates[leaf.Name] {
-			hasRelevantLeaf = true
-			break
-		}
-	}
-	if !hasRelevantLeaf {
-		return
-	}
-
-	sid := fmt.Sprintf("%s_%s", alias, sanitisePUML(string(node.Name)))
-	fmt.Fprintf(b, "%sstate \"%s\" as %s {\n", indent, string(node.Name), sid)
-
-	// Declare leaf children inside the container so PlantUML
-	// places them visually within the superstate boundary.
-	for _, child := range node.Children {
-		if child.IsLeaf() && phaseStates[child.Name] {
-			cid := fmt.Sprintf("%s_%s", alias, sanitisePUML(string(child.Name)))
-			fmt.Fprintf(b, "%s  state \"%s\" as %s\n", indent, string(child.Name), cid)
-		}
-	}
-
-	// Recurse into non-leaf children.
-	for _, child := range node.Children {
-		emitNode(b, child, alias, phaseStates, indent+"  ")
-	}
-
-	fmt.Fprintf(b, "%s}\n", indent)
-
-	// Emit superstate self-loop transitions (coalesced).
-	// Superstate transitions have no From/To in the YAML, so we
-	// fill them in as self-loops on the superstate name.
-	if len(node.Transitions) > 0 {
-		selfLoops := make([]Transition, len(node.Transitions))
-		for i, t := range node.Transitions {
-			selfLoops[i] = t
-			selfLoops[i].From = node.Name
-			selfLoops[i].To = node.Name
-		}
-		for _, line := range coalesceTransitions(selfLoops, alias) {
-			fmt.Fprintf(b, "%s%s\n", indent, line)
-		}
-	}
 }
