@@ -44,46 +44,6 @@ Commands emitted by transitions drive the executor.
 
 ![Relay State Machine](relay.svg)
 
-## Hierarchical States
-
-States form a tree. A **superstate** groups leaf states and defines
-transitions that all children inherit. `FlattenedTransitions()` expands
-the hierarchy at generation time: every superstate self-loop becomes an
-explicit transition on each leaf descendant. Generators, TLA+, and the
-runtime all consume the flattened table — the hierarchy is a YAML
-authoring convenience, not a runtime concept.
-
-### Transport Hierarchy
-
-```
-backend:
-  Connected                        # superstate
-  ├─ RelayConnected
-  ├─ LANOffered
-  ├─ LANPath                       # sub-superstate
-  │   ├─ LANActive
-  │   └─ LANDegraded
-  └─ RelayBackoff
-
-client:
-  Connected
-  ├─ RelayConnected
-  ├─ LANConnecting
-  ├─ LANVerifying
-  ├─ LANDataPath                   # sub-superstate
-  │   └─ LANActive
-  └─ RelayBackoff
-```
-
-`Connected` inherits the 5 data-forwarding events (`app_send`,
-`relay_stream_data`, `relay_stream_error`, `app_send_datagram`,
-`relay_datagram`) so they're defined once, not replicated across
-every leaf state. `LANPath`/`LANDataPath` adds `lan_stream_data`
-and `lan_datagram` for LAN-capable leaves.
-
-This eliminated ~50 duplicated self-loop transitions from the YAML.
-Generated output is functionally identical.
-
 ## Architecture: Machine as I/O Mediator
 
 The state machine mediates between two event surfaces:
@@ -221,7 +181,71 @@ After pairing, the transport phase manages which network path carries
 traffic. The relay is always connected as a fallback; LAN provides a
 direct low-latency path when both devices are on the same network.
 
-### Flow
+The transport submachine is organised as a hierarchy of superstates.
+A superstate groups leaf states and defines transitions that all its
+children inherit. At generation time, `FlattenedTransitions()` expands
+every inherited transition onto each leaf state. Generators, TLA+, and
+the runtime all consume the flattened table — the hierarchy is a YAML
+authoring convenience, not a runtime concept.
+
+### State Hierarchy
+
+```
+backend:
+  Connected                        # superstate — all path states
+  ├─ RelayConnected
+  ├─ LANOffered
+  ├─ LANPath                       # sub-superstate — LAN-active states
+  │   ├─ LANActive
+  │   └─ LANDegraded
+  └─ RelayBackoff
+
+client:
+  Connected
+  ├─ RelayConnected
+  ├─ LANConnecting
+  ├─ LANVerifying
+  ├─ LANDataPath                   # sub-superstate
+  │   └─ LANActive
+  └─ RelayBackoff
+```
+
+### Connected (superstate)
+
+All leaf states under `Connected` inherit these data-forwarding
+transitions — defined once on the superstate, not replicated per leaf:
+
+```yaml
+Connected:
+  children: [RelayConnected, LANOffered, LANPath, RelayBackoff]
+  transitions:
+    - {on: app_send, emits: [write_active_stream]}
+    - {on: relay_stream_data, emits: [deliver_recv]}
+    - {on: relay_stream_error, emits: [deliver_recv_error]}
+    - {on: app_send_datagram, emits: [send_active_datagram]}
+    - {on: relay_datagram, emits: [deliver_recv_datagram]}
+```
+
+This means every transport state can send and receive data — the app
+never needs to know which path is active. The relay always delivers
+(it carries control messages even when LAN is active).
+
+### LANPath / LANDataPath (sub-superstates)
+
+States where LAN is usable additionally inherit LAN-specific I/O:
+
+```yaml
+LANPath:
+  children: [LANActive, LANDegraded]
+  transitions:
+    - {on: lan_stream_data, emits: [deliver_recv]}
+    - {on: lan_datagram, emits: [deliver_recv_datagram]}
+```
+
+`LANActive` and `LANDegraded` thus handle both relay and LAN data —
+inherited from two levels of the hierarchy.
+
+### LAN Establishment Flow
 
 1. Backend starts a LAN server and sends `lan_offer` via relay
    (includes LAN address + random challenge)
@@ -229,21 +253,9 @@ direct low-latency path when both devices are on the same network.
 3. Client sends `lan_verify` with the challenge echoed back
 4. Backend verifies challenge, sends `lan_confirm`
 5. Both sides switch to the LAN path
-6. Health monitor sends `dgPing` datagrams at fixed intervals
-7. Each ping starts a pong timeout (`start_pong_timeout`); a
-   `dgPong` reply cancels it (`cancel_pong_timeout`)
-8. If the pong timeout fires, `ping_timeout` triggers degradation
-9. If pings fail (3 consecutive), fall back to relay
-10. After fallback, wait with exponential backoff, then re-advertise
-11. If LAN becomes available again, re-establish
 
-### Resource Lifecycle via Commands
-
-Resource management is not inferred from variable diffs. Each
-transition explicitly declares the commands it emits. The executor
-mechanically executes them.
-
-Example: `LANOffered → LANActive` (on `recv lan_verify`):
+The activation transition (`LANOffered → LANActive`) explicitly emits
+the commands that bring up LAN resources:
 
 ```yaml
 emits:
@@ -255,10 +267,16 @@ emits:
   - set_crypto_datagram
 ```
 
-Example: `LANDegraded → RelayBackoff` (on `ping_timeout`, guard
-`at_max_failures`):
+### Health Monitor
+
+Once LAN is active, the health monitor sends `dgPing` datagrams at
+fixed intervals. Each ping emits `start_pong_timeout`; a `dgPong`
+reply emits `cancel_pong_timeout`. If the pong timeout fires,
+`ping_timeout` triggers degradation (`LANActive → LANDegraded`).
+After 3 consecutive failures, fallback:
 
 ```yaml
+# LANDegraded → RelayBackoff (guard: at_max_failures)
 emits:
   - stop_monitor
   - stop_lan_stream_reader
@@ -272,26 +290,12 @@ Every resource start has a corresponding stop. The machine's
 transition table is the single source of truth for when resources
 are created and destroyed.
 
-### App I/O Transitions
+### Force Fallback
 
-Application Send/Recv are self-loop transitions on every transport
-state. The machine routes them to the active path:
-
-```yaml
-- from: LANActive
-  to: LANActive
-  on: app_send
-  emits: [write_active_stream]
-
-- from: LANActive
-  to: LANActive
-  on: lan_stream_data
-  emits: [deliver_recv]
-```
-
-When on relay, `relay_stream_data` delivers. When on LAN, both
-`relay_stream_data` and `lan_stream_data` deliver (relay carries
-control messages even when LAN is active).
+`app_force_fallback` is defined on every LAN-related leaf state,
+each emitting the correct cleanup commands for that state. This
+replaced ad-hoc code that type-asserted the machine and manipulated
+variables directly. One `submitSync(EventAppForceFallback)` call.
 
 ### Backoff Strategy
 
@@ -696,24 +700,16 @@ Five events × five leaf states = 25 transitions per actor, all
 identical. Adding a new event or state required updating every
 combination.
 
-The solution: **hierarchical superstates** (UML statechart
-AND-states). A superstate defines transitions that all its children
-inherit. `Connected` holds the 5 data-forwarding events; `LANPath`
-adds 2 LAN-specific events for its children (`LANActive`,
-`LANDegraded`).
+The solution: **hierarchical superstates.** The Transport section
+above describes the result — `Connected` holds data-forwarding
+events inherited by all path states; `LANPath`/`LANDataPath` adds
+LAN-specific I/O for LAN-capable leaves. ~50 duplicated transitions
+eliminated.
 
-Implementation:
-
-- `StateNode` type with `Parent`, `Children`, and `Transitions` fields
-- YAML parser handles optional `states:` sections with children
-- `FlattenedTransitions()` expands superstate self-loops into
-  explicit transitions on each leaf descendant
-- All generators (Go, Swift, Kotlin, TypeScript, TLA+, PlantUML)
-  consume flattened transitions — the hierarchy is invisible to them
-- Machine runtime indexes the flattened table
-
-This eliminated ~50 duplicated transitions from the YAML while
-producing functionally identical generated output.
+The framework implementation: `StateNode` with `Parent`/`Children`/
+`Transitions` fields, `FlattenedTransitions()` to expand the
+hierarchy, and all generators consuming the flattened table — the
+hierarchy is invisible below the YAML layer.
 
 ### The Current State
 
