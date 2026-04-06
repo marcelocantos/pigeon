@@ -1,19 +1,27 @@
 # Convergence Report
 
-Evaluated: 2026-04-05
+Evaluated: 2026-04-06
 
 ## Standing invariants
 
-- **Tests: FAILING** — `TestHealthMonitorFallback` timed out in CI (last 5 runs all failed). The test expects the health monitor to trigger fallback within 25s after closing the LAN server, but it never fires. This has been failing since at least the "Uniform grey for cross-actor message arrows" commit.
-- **CI: RED** — all 5 recent master pushes failed with the same test.
+- **Tests**: PASSING (test job succeeded on CI run #24001562484)
+- **CI**: FAILING — Deploy to Fly.io fails. Dockerfile missing `COPY protocol/ protocol/` and `COPY qr/ qr/` — the root package now imports these after T18 work (executor.go imports protocol, lan.go imports qr). Tests pass; only the deploy step is broken.
 
 ## Movement
 
-- 🎯T16: not started -> **achieved** (TCP auto_start_machines in fly.toml confirmed; moved to Achieved)
-- 🎯T18: (new target, not started)
+- 🎯T18: close -> **achieved** (moved to Achieved section with full status)
+- 🎯T1, 🎯T5.1, 🎯T6, 🎯T17, 🎯T19: (unchanged)
 - All others: (unchanged)
 
 ## Gap Report
+
+### 🎯T1.8 Jevon imports tern's packages  [weight: 1.7]
+Gap: not started
+v0.9.0 released. Migration in jevon repo still pending. This is external work in the jevon codebase.
+
+### 🎯T5.1 Reorder-tolerant decryption  [weight: 1.7]
+Gap: not started
+No buffering logic in `Channel.Decrypt`. Needed for safe transport cutover.
 
 ### 🎯T1 Tern is a complete library  [weight: 1.7]
 Gap: converging (7/8 sub-targets achieved)
@@ -27,23 +35,15 @@ Gap: converging (7/8 sub-targets achieved)
   [x] 🎯T1.7 E2E integration test — achieved
   [ ] 🎯T1.8 Jevon imports tern's packages — not started
 
-### 🎯T1.8 Jevon imports tern's packages  [weight: 1.7]
-Gap: not started
-v0.9.0 released and tagged. Migration in jevon repo still pending.
-
-### 🎯T5.1 Reorder-tolerant decryption  [weight: 1.7]
-Gap: not started
-No buffering logic in Channel.Decrypt.
-
 ### 🎯T6 Investigate STUN/NAT hole-punching  [weight: 1.5]  (status only)
 Status: not started
 
 ### 🎯T17 Makefile deploy target  [weight: 1.5]  (status only)
 Status: not started
+  Implied: CI deploy broken — Dockerfile needs protocol/ and qr/ directories. Fixing the Dockerfile is a prerequisite for any deploy-related work.
 
-### 🎯T18 State machine mediates all Conn behavior  [weight: 1.25]
-Gap: not started
-Target added. Recent commits (session_gen.go typed state machines, Go export structs) are precursor work but the core integration — machine driving Conn I/O — hasn't begun.
+### 🎯T19 Parallel regions in protocol state machine  [weight: 1.25]  (status only)
+Status: not started
 
 ### 🎯T7 Investigate Bluetooth as proximity oracle  [weight: 1.0]  (status only)
 Status: not started
@@ -79,16 +79,23 @@ Status: not started. Low effective weight.
 
 ## Recommendation
 
-Work on: **Fix TestHealthMonitorFallback (standing invariant violation)**
-Reason: CI has been red for the last 5 master pushes. All convergence is blocked while the test suite fails — no PR can be merged cleanly. The `TestHealthMonitorFallback` test in `pathswitch_test.go:454` expects the health monitor to detect a dead LAN path and fall back to relay within 25s, but the fallback never triggers. This must be fixed before any target work can proceed.
+Work on: **Fix Dockerfile (CI deploy broken)**
+Reason: Standing invariant violation takes priority over all explicit targets. The Dockerfile is missing `COPY protocol/ protocol/` and `COPY qr/ qr/`, causing every deploy to fail. This is a 2-line fix that restores CI to green. After that, the highest-leverage unblocked targets are 🎯T1.8 and 🎯T5.1 (both weight 1.7), followed by 🎯T6 and 🎯T17 (both weight 1.5).
 
 ## Suggested action
 
-Read `pathswitch_test.go` and the health monitor implementation (likely in `pathswitch.go` or `router.go`) to understand why the health monitor isn't detecting the closed LAN server. Check if the health ping interval, failure threshold, or fallback trigger changed in recent commits (the typed state machine generation work may have altered Conn/router behavior). Run the test locally with `-v` to get detailed logs.
+Add the missing COPY lines to the Dockerfile, then push via `/push` to get CI green:
+
+```dockerfile
+COPY protocol/ protocol/
+COPY qr/ qr/
+```
+
+These go after `COPY crypto/ crypto/` and before the `RUN CGO_ENABLED=0 go build` line. After CI is green, proceed with either 🎯T1.8 (jevon migration) or 🎯T5.1 (reorder-tolerant decryption) based on which is more actionable.
 
 <!-- convergence-deps
-evaluated: 2026-04-05T08:00:00Z
-sha: 921c7ae
+evaluated: 2026-04-06T00:00:00Z
+sha: bf9d713
 
 🎯T1:
   gap: close
@@ -108,22 +115,22 @@ sha: 921c7ae
   read:
     - docs/targets.md
 
-🎯T16:
-  gap: achieved
-  assessment: "TCP auto_start_machines confirmed in fly.toml. Moved to Achieved."
-  read:
-    - fly.toml
-    - docs/targets.md
-
-🎯T18:
+🎯T17:
   gap: not started
-  assessment: "Target added. Typed state machine generation is precursor work but core integration not started."
+  assessment: "Not started. CI deploy broken — Dockerfile needs protocol/ and qr/."
+  read:
+    - docs/targets.md
+    - Dockerfile
+
+🎯T8:
+  gap: close
+  assessment: "3/5 sub-targets achieved. T8.4 (TypeScript client) and T8.5 (LAN direct) remain."
   read:
     - docs/targets.md
 
 standing-invariant:
   gap: failing
-  assessment: "TestHealthMonitorFallback times out in CI. 5 consecutive failures on master."
+  assessment: "Tests pass. Deploy fails — Dockerfile missing COPY protocol/ and COPY qr/."
   read:
-    - pathswitch_test.go
+    - Dockerfile
 -->

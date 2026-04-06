@@ -27,9 +27,9 @@ func (p *Protocol) ExportPlantUMLActors(w io.Writer, titleSuffix string, actors 
 	}
 	var b strings.Builder
 
-	diagramName := sanitisePUML(p.Name)
-	if titleSuffix != "" {
-		diagramName += "_" + sanitisePUML(titleSuffix)
+	diagramName := strings.ToLower(sanitisePUML(titleSuffix))
+	if diagramName == "" {
+		diagramName = strings.ToLower(sanitisePUML(p.Name))
 	}
 	b.WriteString("@startuml ")
 	b.WriteString(diagramName)
@@ -50,12 +50,30 @@ func (p *Protocol) ExportPlantUMLActors(w io.Writer, titleSuffix string, actors 
 	}
 	hasPhases := len(p.Phases) > 0
 
+	// Identify actors with cross-actor interactions (sends or receives
+	// messages). Actors that only use internal events are infrastructure
+	// and clutter the diagram.
+	hasInteraction := map[string]bool{}
+	for _, a := range p.Actors {
+		for _, t := range a.Transitions {
+			if t.On.Kind == TriggerRecv {
+				hasInteraction[a.Name] = true
+			}
+			for _, s := range t.Sends {
+				hasInteraction[a.Name] = true
+				hasInteraction[s.To] = true
+			}
+		}
+	}
+
 	// Actor alias mapping.
 	aliases := []string{"B", "C", "R", "D", "E", "F"}
 	actorAlias := make(map[string]string)
 
 	for i, a := range p.Actors {
-		if !includeActor(a.Name) {
+		// When no explicit actor list is given, skip actors that have
+		// no cross-actor interactions (infrastructure-only actors).
+		if !includeActor(a.Name) || (len(actorSet) == 0 && !hasInteraction[a.Name]) {
 			continue
 		}
 		alias := aliases[i%len(aliases)]
@@ -97,28 +115,32 @@ func (p *Protocol) ExportPlantUMLActors(w io.Writer, titleSuffix string, actors 
 				}
 				fmt.Fprintf(&b, "    [*] --> %s_%s\n", alias, sanitisePUML(string(initial)))
 
-				// Transitions within this phase.
+				// Transitions within this phase (coalesced).
+				var phaseTransitions []Transition
 				for _, t := range a.Transitions {
 					fromPhase := phaseOf[t.From]
 					toPhase := phaseOf[t.To]
 					if fromPhase == ph.Name && toPhase == ph.Name {
-						from := fmt.Sprintf("%s_%s", alias, sanitisePUML(string(t.From)))
-						to := fmt.Sprintf("%s_%s", alias, sanitisePUML(string(t.To)))
-						fmt.Fprintf(&b, "    %s %s %s : %s\n", from, transitionStyle(t), to, transitionLabel(t))
+						phaseTransitions = append(phaseTransitions, t)
 					}
+				}
+				for _, line := range coalesceTransitions(phaseTransitions, alias) {
+					fmt.Fprintf(&b, "    %s\n", line)
 				}
 				b.WriteString("  }\n\n")
 			}
 
-			// Cross-phase transitions.
+			// Cross-phase transitions (coalesced).
+			var crossPhaseTransitions []Transition
 			for _, t := range a.Transitions {
 				fromPhase := phaseOf[t.From]
 				toPhase := phaseOf[t.To]
 				if fromPhase != toPhase {
-					from := fmt.Sprintf("%s_%s", alias, sanitisePUML(string(t.From)))
-					to := fmt.Sprintf("%s_%s", alias, sanitisePUML(string(t.To)))
-					fmt.Fprintf(&b, "  %s %s %s : %s\n", from, transitionStyle(t), to, transitionLabel(t))
+					crossPhaseTransitions = append(crossPhaseTransitions, t)
 				}
+			}
+			for _, line := range coalesceTransitions(crossPhaseTransitions, alias) {
+				fmt.Fprintf(&b, "  %s\n", line)
 			}
 
 			// Ungrouped states.
@@ -127,12 +149,10 @@ func (p *Protocol) ExportPlantUMLActors(w io.Writer, titleSuffix string, actors 
 				fmt.Fprintf(&b, "  state %s\n", sid)
 			}
 		} else {
-			// No phases — flat diagram.
+			// No phases — flat diagram (coalesced).
 			fmt.Fprintf(&b, "  [*] --> %s_%s\n", alias, sanitisePUML(string(a.Initial)))
-			for _, t := range a.Transitions {
-				from := fmt.Sprintf("%s_%s", alias, sanitisePUML(string(t.From)))
-				to := fmt.Sprintf("%s_%s", alias, sanitisePUML(string(t.To)))
-				fmt.Fprintf(&b, "  %s %s %s : %s\n", from, transitionStyle(t), to, transitionLabel(t))
+			for _, line := range coalesceTransitions(a.Transitions, alias) {
+				fmt.Fprintf(&b, "  %s\n", line)
 			}
 		}
 
@@ -175,23 +195,79 @@ func (p *Protocol) ExportPlantUMLActors(w io.Writer, titleSuffix string, actors 
 	return err
 }
 
-func transitionLabel(t Transition) string {
-	var parts []string
+// transitionGroupKey returns a key for coalescing transitions that share
+// the same from/to states and qualifiers (guard, action, fairness).
+type transitionGroupKey struct {
+	From, To       string
+	Guard          GuardID
+	Do             ActionID
+	Fairness       FairnessKind
+}
+
+func groupKey(t Transition) transitionGroupKey {
+	return transitionGroupKey{
+		From:     string(t.From),
+		To:       string(t.To),
+		Guard:    t.Guard,
+		Do:       t.Do,
+		Fairness: t.Fairness,
+	}
+}
+
+// triggerName returns the event/message name for a transition trigger.
+func triggerName(t Transition) string {
 	if t.On.Kind == TriggerRecv {
-		parts = append(parts, "recv "+string(t.On.Msg))
-	} else if t.On.Desc != "" {
-		parts = append(parts, t.On.Desc)
+		return "recv " + string(t.On.Msg)
 	}
-	if t.Guard != "" {
-		parts = append(parts, "["+string(t.Guard)+"]")
+	return t.On.Desc
+}
+
+// coalesceTransitions groups transitions by (from, to, guard, do, fairness)
+// and returns one label per group with events stacked vertically.
+func coalesceTransitions(transitions []Transition, alias string) []string {
+	type group struct {
+		key      transitionGroupKey
+		triggers []string
+		style    string
 	}
-	if t.Do != "" {
-		parts = append(parts, string(t.Do))
+	var groups []group
+	index := map[transitionGroupKey]int{}
+
+	for _, t := range transitions {
+		k := groupKey(t)
+		if idx, ok := index[k]; ok {
+			groups[idx].triggers = append(groups[idx].triggers, triggerName(t))
+		} else {
+			index[k] = len(groups)
+			groups = append(groups, group{
+				key:      k,
+				triggers: []string{triggerName(t)},
+				style:    transitionStyle(t),
+			})
+		}
 	}
-	if t.Fairness == StrongFair {
-		parts = append(parts, "«SF»")
+
+	var lines []string
+	for _, g := range groups {
+		from := fmt.Sprintf("%s_%s", alias, sanitisePUML(g.key.From))
+		to := fmt.Sprintf("%s_%s", alias, sanitisePUML(g.key.To))
+
+		// Build label: stacked trigger names, then qualifiers.
+		var parts []string
+		parts = append(parts, g.triggers...)
+		if g.key.Guard != "" {
+			parts = append(parts, "["+string(g.key.Guard)+"]")
+		}
+		if g.key.Do != "" {
+			parts = append(parts, string(g.key.Do))
+		}
+		if g.key.Fairness == StrongFair {
+			parts = append(parts, "«SF»")
+		}
+		label := strings.Join(parts, "\\n")
+		lines = append(lines, fmt.Sprintf("%s %s %s : %s", from, g.style, to, label))
 	}
-	return strings.Join(parts, "\\n")
+	return lines
 }
 
 // transitionStyle returns PlantUML arrow style based on fairness.

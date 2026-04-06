@@ -80,6 +80,26 @@ func (p *Protocol) ExportTypeScript(w io.Writer) error {
 		b.WriteString("}\n\n")
 	}
 
+	// Wire constants.
+	if len(p.WireConsts) > 0 {
+		b.WriteString("/** Protocol wire constants shared across all platforms. */\n")
+		b.WriteString("export const Wire = {\n")
+		for _, wc := range p.WireConsts {
+			name := tsConstName(wc.Name)
+			switch wc.Type {
+			case "byte":
+				fmt.Fprintf(&b, "    %s: 0x%02X,\n", name, wireInt(wc.Value))
+			case "int":
+				fmt.Fprintf(&b, "    %s: %d,\n", name, wireInt(wc.Value))
+			case "duration_ms":
+				fmt.Fprintf(&b, "    %s: %d, // ms\n", name, wireInt(wc.Value))
+			case "string":
+				fmt.Fprintf(&b, "    %s: %q,\n", name, wc.Value)
+			}
+		}
+		b.WriteString("} as const;\n\n")
+	}
+
 	// Transition table interface.
 	b.WriteString("export interface Transition {\n")
 	b.WriteString("    readonly from: string;\n")
@@ -338,6 +358,10 @@ func tsSimpleLiteral(expr string) (string, bool) {
 }
 
 // tsVarFieldName converts a snake_case var name to camelCase for TypeScript.
+func tsConstName(s string) string {
+	return strings.ToUpper(s)
+}
+
 func tsVarFieldName(name string) string {
 	parts := strings.Split(name, "_")
 	if len(parts) == 0 {

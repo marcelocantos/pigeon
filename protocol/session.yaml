@@ -22,6 +22,49 @@ name: Session
 one_shot: false
 channel_bound: 3
 
+# Protocol wire constants — shared across all platforms.
+# Protogen generates these as typed constants in Go, Swift, Kotlin, and TypeScript.
+wire_constants:
+  # Datagram frame types (first byte of each datagram).
+  - {name: dg_conn_whole,    value: 0x00, type: byte, group: datagram_framing, desc: 'conn-level single-frame datagram'}
+  - {name: dg_ping,          value: 0x10, type: byte, group: datagram_framing, desc: 'health ping on direct path'}
+  - {name: dg_pong,          value: 0x11, type: byte, group: datagram_framing, desc: 'health pong on direct path'}
+  - {name: dg_conn_fragment, value: 0x40, type: byte, group: datagram_framing, desc: 'conn-level multi-frame datagram'}
+  - {name: dg_chan_whole,     value: 0x80, type: byte, group: datagram_framing, desc: 'channel single-frame datagram'}
+  - {name: dg_chan_fragment,  value: 0xC0, type: byte, group: datagram_framing, desc: 'channel multi-frame datagram'}
+
+  # Datagram structure sizes.
+  - {name: frag_header_size, value: 8, type: int, group: datagram_framing, desc: 'fragment header: msgID(4) + fragIdx(2) + totalFrags(2)'}
+  - {name: chan_id_size,     value: 2, type: int, group: datagram_framing, desc: 'channel ID prefix size in bytes'}
+
+  # Datagram limits.
+  - {name: max_datagram_payload, value: 1200, type: int, group: datagram_limits, desc: 'max payload per QUIC datagram (bytes)'}
+  - {name: fragment_timeout_ms,  value: 5000, type: duration_ms, group: datagram_limits, desc: 'fragment reassembly timeout'}
+
+  # Internal message types (first byte of encrypted stream plaintext).
+  - {name: frame_app,       value: 0x00, type: byte, group: message_framing, desc: 'application data'}
+  - {name: frame_lan_offer, value: 0x01, type: byte, group: message_framing, desc: 'LAN address exchange'}
+  - {name: frame_cutover,   value: 0x02, type: byte, group: message_framing, desc: 'transport cutover marker'}
+
+  # Stream message framing.
+  - {name: max_message_size,    value: 1048576, type: int, group: message_framing, desc: 'max stream message size (1 MiB)'}
+  - {name: length_prefix_size,  value: 4, type: int, group: message_framing, desc: 'big-endian length prefix size'}
+
+  # Health monitoring.
+  - {name: ping_interval_ms,    value: 5000, type: duration_ms, group: health, desc: 'health ping interval'}
+  - {name: pong_timeout_ms,     value: 4000, type: duration_ms, group: health, desc: 'pong reply timeout'}
+  - {name: max_ping_failures,   value: 3, type: int, group: health, desc: 'consecutive failures before fallback'}
+  - {name: max_backoff_level,   value: 5, type: int, group: health, desc: 'exponential backoff cap'}
+
+  # Channel key derivation info strings.
+  - {name: stream_channel_opener_suffix, value: ':o2a', type: string, group: channel_keys, desc: 'HKDF info suffix for opener→acceptor stream key'}
+  - {name: stream_channel_accept_suffix, value: ':a2o', type: string, group: channel_keys, desc: 'HKDF info suffix for acceptor→opener stream key'}
+  - {name: dg_channel_send_suffix,       value: ':dg:send', type: string, group: channel_keys, desc: 'HKDF info suffix for datagram send key'}
+  - {name: dg_channel_recv_suffix,       value: ':dg:recv', type: string, group: channel_keys, desc: 'HKDF info suffix for datagram recv key'}
+
+  # Channel ID derivation.
+  - {name: channel_id_hash_multiplier, value: 31, type: int, group: channel_keys, desc: 'hash multiplier for channel name → uint16 ID'}
+
 messages:
   # --- Phase 1: Pairing ---
   pair_hello:
@@ -82,6 +125,7 @@ events:
   app_send_datagram: 'application wants to send a datagram'
   app_recv_datagram: 'application wants to receive a datagram'
   app_close: 'application wants to close the connection'
+  app_force_fallback: 'application requests immediate fallback to relay'
 
   # --- Phase 2: Transport (I/O surface) ---
   relay_stream_data: 'data received on relay stream'
@@ -114,6 +158,7 @@ commands:
 
   # Deliver to application.
   deliver_recv: 'deliver received data to blocked Recv() caller'
+  deliver_recv_error: 'deliver error to blocked Recv() caller'
   deliver_recv_datagram: 'deliver received datagram to blocked RecvDatagram() caller'
 
   # Resource lifecycle.
@@ -123,6 +168,8 @@ commands:
   stop_lan_dg_reader: 'stop LAN datagram reader goroutine'
   start_monitor: 'start health ping timer for direct path'
   stop_monitor: 'stop health ping timer'
+  start_pong_timeout: 'start timer expecting pong reply'
+  cancel_pong_timeout: 'cancel pong reply timer (pong received)'
   start_backoff_timer: 'start exponential backoff timer'
   close_lan_path: 'close the LAN path resources'
 
@@ -314,6 +361,27 @@ actors:
         to: RelayBackoff
         on: relay_stream_data
         emits: [deliver_recv]
+      # Relay stream errors — deliver error to any waiting Recv.
+      - from: RelayConnected
+        to: RelayConnected
+        on: relay_stream_error
+        emits: [deliver_recv_error]
+      - from: LANOffered
+        to: LANOffered
+        on: relay_stream_error
+        emits: [deliver_recv_error]
+      - from: LANActive
+        to: LANActive
+        on: relay_stream_error
+        emits: [deliver_recv_error]
+      - from: LANDegraded
+        to: LANDegraded
+        on: relay_stream_error
+        emits: [deliver_recv_error]
+      - from: RelayBackoff
+        to: RelayBackoff
+        on: relay_stream_error
+        emits: [deliver_recv_error]
       # Datagrams:
       - from: RelayConnected
         to: RelayConnected
@@ -417,7 +485,7 @@ actors:
         sends:
           - to: client
             msg: path_ping
-        emits: [send_path_ping]
+        emits: [send_path_ping, start_pong_timeout]
 
       - from: LANActive
         to: LANDegraded
@@ -431,7 +499,7 @@ actors:
         sends:
           - to: client
             msg: path_ping
-        emits: [send_path_ping]
+        emits: [send_path_ping, start_pong_timeout]
 
       # LAN stream error triggers immediate fallback (no degradation).
       - from: LANActive
@@ -478,6 +546,7 @@ actors:
         do: reset_failures
         updates:
           ping_failures: '0'
+        emits: [cancel_pong_timeout]
 
       - from: LANDegraded
         to: LANDegraded
@@ -542,6 +611,54 @@ actors:
               addr: lan_addr
               challenge: challenge_bytes
         emits: [send_lan_offer]
+
+      # Force fallback from any LAN state to relay.
+      - from: LANOffered
+        to: RelayConnected
+        on: app_force_fallback
+        updates:
+          lan_signal: '"pending"'
+        emits: [reset_lan_ready]
+
+      - from: LANActive
+        to: RelayBackoff
+        on: app_force_fallback
+        do: fallback_to_relay
+        updates:
+          backoff_level: 'Min(backoff_level + 1, max_backoff_level)'
+          b_active_path: '"relay"'
+          b_dispatcher_path: '"relay"'
+          monitor_target: '"none"'
+          lan_signal: '"pending"'
+          ping_failures: '0'
+        emits:
+          - stop_monitor
+          - cancel_pong_timeout
+          - stop_lan_stream_reader
+          - stop_lan_dg_reader
+          - close_lan_path
+          - reset_lan_ready
+          - start_backoff_timer
+
+      - from: LANDegraded
+        to: RelayBackoff
+        on: app_force_fallback
+        do: fallback_to_relay
+        updates:
+          backoff_level: 'Min(backoff_level + 1, max_backoff_level)'
+          b_active_path: '"relay"'
+          b_dispatcher_path: '"relay"'
+          monitor_target: '"none"'
+          lan_signal: '"pending"'
+          ping_failures: '0'
+        emits:
+          - stop_monitor
+          - cancel_pong_timeout
+          - stop_lan_stream_reader
+          - stop_lan_dg_reader
+          - close_lan_path
+          - reset_lan_ready
+          - start_backoff_timer
 
       # Re-enter pairing on disconnect.
       - from: RelayConnected
@@ -677,6 +794,27 @@ actors:
         to: RelayFallback
         on: relay_stream_data
         emits: [deliver_recv]
+      # Relay stream errors — deliver error to any waiting Recv.
+      - from: RelayConnected
+        to: RelayConnected
+        on: relay_stream_error
+        emits: [deliver_recv_error]
+      - from: LANConnecting
+        to: LANConnecting
+        on: relay_stream_error
+        emits: [deliver_recv_error]
+      - from: LANVerifying
+        to: LANVerifying
+        on: relay_stream_error
+        emits: [deliver_recv_error]
+      - from: LANActive
+        to: LANActive
+        on: relay_stream_error
+        emits: [deliver_recv_error]
+      - from: RelayFallback
+        to: RelayFallback
+        on: relay_stream_error
+        emits: [deliver_recv_error]
       # Datagrams:
       - from: RelayConnected
         to: RelayConnected
@@ -792,6 +930,20 @@ actors:
           - close_lan_path
           - reset_lan_ready
 
+      - from: LANActive
+        to: RelayFallback
+        on: lan_stream_error
+        do: fallback_to_relay
+        updates:
+          c_active_path: '"relay"'
+          c_dispatcher_path: '"relay"'
+          lan_signal: '"pending"'
+        emits:
+          - stop_lan_stream_reader
+          - stop_lan_dg_reader
+          - close_lan_path
+          - reset_lan_ready
+
       - from: RelayFallback
         to: RelayConnected
         on: relay_ok
@@ -806,6 +958,35 @@ actors:
           - stop_lan_dg_reader
           - close_lan_path
           - dial_lan
+
+      # Force fallback from any LAN state to relay.
+      - from: LANConnecting
+        to: RelayConnected
+        on: app_force_fallback
+
+      - from: LANVerifying
+        to: RelayConnected
+        on: app_force_fallback
+        updates:
+          c_dispatcher_path: '"relay"'
+        emits:
+          - stop_lan_stream_reader
+          - stop_lan_dg_reader
+          - close_lan_path
+
+      - from: LANActive
+        to: RelayConnected
+        on: app_force_fallback
+        do: fallback_to_relay
+        updates:
+          c_active_path: '"relay"'
+          c_dispatcher_path: '"relay"'
+          lan_signal: '"pending"'
+        emits:
+          - stop_lan_stream_reader
+          - stop_lan_dg_reader
+          - close_lan_path
+          - reset_lan_ready
 
       # Re-enter pairing on disconnect.
       - from: RelayConnected

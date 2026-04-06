@@ -30,15 +30,19 @@ Three actors participate across both phases:
 | **client** | The mobile device. Scans QR, connects via relay, dials LAN when offered. |
 | **relay** | The intermediary server. Bridges traffic between backend and client. Permanent baseline — never closes while the session is active. |
 
-## State Machine Diagram
+## State Machine Diagrams
 
-![Session State Machine](session.svg)
+### Transport (backend + client)
 
-All actors' states are grouped by phase (Pairing, Transport), with
-cross-phase transitions at the `SessionActive → RelayConnected`
-boundary. App I/O transitions (`app_send`, `relay_stream_data`, etc.)
-are self-loops on transport states. Commands emitted by transitions
+![Transport State Machine](transport.svg)
+
+App I/O transitions (`app_send`, `relay_stream_data`, etc.) are
+self-loops on transport states. Commands emitted by transitions
 drive the executor.
+
+### Relay
+
+![Relay State Machine](relay.svg)
 
 ## Architecture: Machine as I/O Mediator
 

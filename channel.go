@@ -157,36 +157,37 @@ func (dc *DatagramChannel) Send(data []byte) error {
 		payload = dc.ch.Encrypt(data)
 	}
 
-	chanPrefix := make([]byte, chanIDSize)
+	chanPrefix := make([]byte, ChanIdSize)
 	binary.BigEndian.PutUint16(chanPrefix, dc.id)
 
+	p := dc.conn.exec.activePath()
+	maxPayload := dc.conn.exec.maxDgPayload
+
 	// Does it fit in a single datagram?
-	if 1+chanIDSize+len(payload) <= dc.conn.maxDgPayload {
-		frame := make([]byte, 1+chanIDSize+len(payload))
-		frame[0] = dgChanWhole
+	if 1+ChanIdSize+len(payload) <= maxPayload {
+		frame := make([]byte, 1+ChanIdSize+len(payload))
+		frame[0] = DgChanWhole
 		copy(frame[1:], chanPrefix)
-		copy(frame[1+chanIDSize:], payload)
-		return dc.conn.active().dg.SendDatagram(frame)
+		copy(frame[1+ChanIdSize:], payload)
+		return p.dg.SendDatagram(frame)
 	}
 
 	// Fragment it.
 	msgID := nextMsgID.Add(1)
-	return sendFragmented(dc.conn.active().dg, payload, dc.conn.maxDgPayload, msgID, dgChanFragment, chanPrefix)
+	return sendFragmented(p.dg, payload, maxPayload, msgID, DgChanFragment, chanPrefix)
 }
 
 // Recv receives the next datagram on this channel. Blocks until a
 // datagram with this channel's ID arrives.
 func (dc *DatagramChannel) Recv(ctx context.Context) ([]byte, error) {
-	for {
-		data, err := dc.conn.recvTaggedDatagram(ctx, dc.id)
-		if err != nil {
-			return nil, err
-		}
-		if dc.ch != nil {
-			return dc.ch.Decrypt(data)
-		}
-		return data, nil
+	data, err := dc.conn.exec.recvChannelDatagram(ctx, dc.id)
+	if err != nil {
+		return nil, err
 	}
+	if dc.ch != nil {
+		return dc.ch.Decrypt(data)
+	}
+	return data, nil
 }
 
 // DatagramChannel creates or returns a named datagram channel. Both
@@ -197,8 +198,6 @@ func (dc *DatagramChannel) Recv(ctx context.Context) ([]byte, error) {
 // Unlike streaming channels, there is no open/accept — both sides
 // create the channel by name and it works immediately.
 func (c *Conn) DatagramChannel(name string) *DatagramChannel {
-	c.ensureDispatcher()
-
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
@@ -213,13 +212,8 @@ func (c *Conn) DatagramChannel(name string) *DatagramChannel {
 
 	var ch *crypto.Channel
 	if c.pairingRecord != nil {
-		sendInfo := []byte(name + ":dg:o2a")
-		recvInfo := []byte(name + ":dg:a2o")
-		// For datagram channels, both sides use the same direction keys
-		// because there's no opener/accepter distinction. Use sorted
-		// name-based derivation instead.
-		sendInfo = []byte(name + ":dg:send")
-		recvInfo = []byte(name + ":dg:recv")
+		sendInfo := []byte(name + ":dg:send")
+		recvInfo := []byte(name + ":dg:recv")
 		ch, _ = c.pairingRecord.DeriveChannel(sendInfo, recvInfo)
 		if ch != nil {
 			ch.SetMode(crypto.ModeDatagrams)

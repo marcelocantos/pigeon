@@ -101,6 +101,7 @@ enum class ActionID(val value: String) {
 
 enum class EventID(val value: String) {
     AppClose("app_close"),
+    AppForceFallback("app_force_fallback"),
     AppLaunch("app_launch"),
     AppRecv("app_recv"),
     AppRecvDatagram("app_recv_datagram"),
@@ -168,6 +169,7 @@ enum class CmdID(val value: String) {
     SendLanConfirm("send_lan_confirm"),
     DialLan("dial_lan"),
     DeliverRecv("deliver_recv"),
+    DeliverRecvError("deliver_recv_error"),
     DeliverRecvDatagram("deliver_recv_datagram"),
     StartLanStreamReader("start_lan_stream_reader"),
     StopLanStreamReader("stop_lan_stream_reader"),
@@ -175,11 +177,41 @@ enum class CmdID(val value: String) {
     StopLanDgReader("stop_lan_dg_reader"),
     StartMonitor("start_monitor"),
     StopMonitor("stop_monitor"),
+    StartPongTimeout("start_pong_timeout"),
+    CancelPongTimeout("cancel_pong_timeout"),
     StartBackoffTimer("start_backoff_timer"),
     CloseLanPath("close_lan_path"),
     SignalLanReady("signal_lan_ready"),
     ResetLanReady("reset_lan_ready"),
     SetCryptoDatagram("set_crypto_datagram");
+}
+
+/** Protocol wire constants shared across all platforms. */
+object Wire {
+    const val DG_CONN_WHOLE: Byte = 0x00.toByte()
+    const val DG_PING: Byte = 0x10.toByte()
+    const val DG_PONG: Byte = 0x11.toByte()
+    const val DG_CONN_FRAGMENT: Byte = 0x40.toByte()
+    const val DG_CHAN_WHOLE: Byte = 0x80.toByte()
+    const val DG_CHAN_FRAGMENT: Byte = 0xC0.toByte()
+    const val FRAG_HEADER_SIZE = 8
+    const val CHAN_ID_SIZE = 2
+    const val MAX_DATAGRAM_PAYLOAD = 1200
+    const val FRAGMENT_TIMEOUT_MS = 5000L // ms
+    const val FRAME_APP: Byte = 0x00.toByte()
+    const val FRAME_LAN_OFFER: Byte = 0x01.toByte()
+    const val FRAME_CUTOVER: Byte = 0x02.toByte()
+    const val MAX_MESSAGE_SIZE = 1048576
+    const val LENGTH_PREFIX_SIZE = 4
+    const val PING_INTERVAL_MS = 5000L // ms
+    const val PONG_TIMEOUT_MS = 4000L // ms
+    const val MAX_PING_FAILURES = 3
+    const val MAX_BACKOFF_LEVEL = 5
+    const val STREAM_CHANNEL_OPENER_SUFFIX = ":o2a"
+    const val STREAM_CHANNEL_ACCEPT_SUFFIX = ":a2o"
+    const val DG_CHANNEL_SEND_SUFFIX = ":dg:send"
+    const val DG_CHANNEL_RECV_SUFFIX = ":dg:recv"
+    const val CHANNEL_ID_HASH_MULTIPLIER = 31
 }
 
 /** backend transition table. */
@@ -224,6 +256,11 @@ object BackendTable {
         Transition("LANDegraded", "LANDegraded", "relay_stream_data", "internal", null, null, emptyList()),
         Transition("RelayBackoff", "RelayBackoff", "app_send", "internal", null, null, emptyList()),
         Transition("RelayBackoff", "RelayBackoff", "relay_stream_data", "internal", null, null, emptyList()),
+        Transition("RelayConnected", "RelayConnected", "relay_stream_error", "internal", null, null, emptyList()),
+        Transition("LANOffered", "LANOffered", "relay_stream_error", "internal", null, null, emptyList()),
+        Transition("LANActive", "LANActive", "relay_stream_error", "internal", null, null, emptyList()),
+        Transition("LANDegraded", "LANDegraded", "relay_stream_error", "internal", null, null, emptyList()),
+        Transition("RelayBackoff", "RelayBackoff", "relay_stream_error", "internal", null, null, emptyList()),
         Transition("RelayConnected", "RelayConnected", "app_send_datagram", "internal", null, null, emptyList()),
         Transition("RelayConnected", "RelayConnected", "relay_datagram", "internal", null, null, emptyList()),
         Transition("LANOffered", "LANOffered", "app_send_datagram", "internal", null, null, emptyList()),
@@ -251,6 +288,9 @@ object BackendTable {
         Transition("RelayBackoff", "LANOffered", "backoff_expired", "internal", null, null, listOf("client" to "lan_offer")),
         Transition("RelayBackoff", "LANOffered", "lan_server_changed", "internal", null, null, listOf("client" to "lan_offer")),
         Transition("RelayConnected", "LANOffered", "readvertise_tick", "internal", "lan_server_available", null, listOf("client" to "lan_offer")),
+        Transition("LANOffered", "RelayConnected", "app_force_fallback", "internal", null, null, emptyList()),
+        Transition("LANActive", "RelayBackoff", "app_force_fallback", "internal", null, "fallback_to_relay", emptyList()),
+        Transition("LANDegraded", "RelayBackoff", "app_force_fallback", "internal", null, "fallback_to_relay", emptyList()),
         Transition("RelayConnected", "Paired", "disconnect", "internal", null, null, emptyList()),
     )
 }
@@ -293,6 +333,11 @@ object ClientTable {
         Transition("LANActive", "LANActive", "relay_stream_data", "internal", null, null, emptyList()),
         Transition("RelayFallback", "RelayFallback", "app_send", "internal", null, null, emptyList()),
         Transition("RelayFallback", "RelayFallback", "relay_stream_data", "internal", null, null, emptyList()),
+        Transition("RelayConnected", "RelayConnected", "relay_stream_error", "internal", null, null, emptyList()),
+        Transition("LANConnecting", "LANConnecting", "relay_stream_error", "internal", null, null, emptyList()),
+        Transition("LANVerifying", "LANVerifying", "relay_stream_error", "internal", null, null, emptyList()),
+        Transition("LANActive", "LANActive", "relay_stream_error", "internal", null, null, emptyList()),
+        Transition("RelayFallback", "RelayFallback", "relay_stream_error", "internal", null, null, emptyList()),
         Transition("RelayConnected", "RelayConnected", "app_send_datagram", "internal", null, null, emptyList()),
         Transition("RelayConnected", "RelayConnected", "relay_datagram", "internal", null, null, emptyList()),
         Transition("LANConnecting", "LANConnecting", "app_send_datagram", "internal", null, null, emptyList()),
@@ -312,8 +357,12 @@ object ClientTable {
         Transition("LANVerifying", "RelayConnected", "verify_timeout", "internal", null, null, emptyList()),
         Transition("LANActive", "LANActive", "path_ping", "recv", null, null, listOf("backend" to "path_pong")),
         Transition("LANActive", "RelayFallback", "lan_error", "internal", null, "fallback_to_relay", emptyList()),
+        Transition("LANActive", "RelayFallback", "lan_stream_error", "internal", null, "fallback_to_relay", emptyList()),
         Transition("RelayFallback", "RelayConnected", "relay_ok", "internal", null, null, emptyList()),
         Transition("LANActive", "LANConnecting", "lan_offer", "recv", "lan_enabled", "dial_lan", emptyList()),
+        Transition("LANConnecting", "RelayConnected", "app_force_fallback", "internal", null, null, emptyList()),
+        Transition("LANVerifying", "RelayConnected", "app_force_fallback", "internal", null, null, emptyList()),
+        Transition("LANActive", "RelayConnected", "app_force_fallback", "internal", null, "fallback_to_relay", emptyList()),
         Transition("RelayConnected", "Paired", "disconnect", "internal", null, null, emptyList()),
     )
 }
@@ -527,6 +576,31 @@ class BackendMachine {
                     state = BackendState.RelayBackoff
                     listOf(CmdID.DeliverRecv)
                 }
+            state == BackendState.RelayConnected && ev == EventID.RelayStreamError ->
+                run {
+                    state = BackendState.RelayConnected
+                    listOf(CmdID.DeliverRecvError)
+                }
+            state == BackendState.LANOffered && ev == EventID.RelayStreamError ->
+                run {
+                    state = BackendState.LANOffered
+                    listOf(CmdID.DeliverRecvError)
+                }
+            state == BackendState.LANActive && ev == EventID.RelayStreamError ->
+                run {
+                    state = BackendState.LANActive
+                    listOf(CmdID.DeliverRecvError)
+                }
+            state == BackendState.LANDegraded && ev == EventID.RelayStreamError ->
+                run {
+                    state = BackendState.LANDegraded
+                    listOf(CmdID.DeliverRecvError)
+                }
+            state == BackendState.RelayBackoff && ev == EventID.RelayStreamError ->
+                run {
+                    state = BackendState.RelayBackoff
+                    listOf(CmdID.DeliverRecvError)
+                }
             state == BackendState.RelayConnected && ev == EventID.AppSendDatagram ->
                 run {
                     state = BackendState.RelayConnected
@@ -619,7 +693,7 @@ class BackendMachine {
             state == BackendState.LANActive && ev == EventID.PingTick ->
                 run {
                     state = BackendState.LANActive
-                    listOf(CmdID.SendPathPing)
+                    listOf(CmdID.SendPathPing, CmdID.StartPongTimeout)
                 }
             state == BackendState.LANActive && ev == EventID.PingTimeout ->
                 run {
@@ -630,7 +704,7 @@ class BackendMachine {
             state == BackendState.LANDegraded && ev == EventID.PingTick ->
                 run {
                     state = BackendState.LANDegraded
-                    listOf(CmdID.SendPathPing)
+                    listOf(CmdID.SendPathPing, CmdID.StartPongTimeout)
                 }
             state == BackendState.LANActive && ev == EventID.LanStreamError ->
                 run {
@@ -661,7 +735,7 @@ class BackendMachine {
                     actions[ActionID.ResetFailures]?.invoke()
                     pingFailures = 0
                     state = BackendState.LANActive
-                    emptyList()
+                    listOf(CmdID.CancelPongTimeout)
                 }
             state == BackendState.LANDegraded && ev == EventID.PingTimeout && guards[GuardID.UnderMaxFailures]?.invoke() == true ->
                 run {
@@ -696,6 +770,36 @@ class BackendMachine {
                 run {
                     state = BackendState.LANOffered
                     listOf(CmdID.SendLanOffer)
+                }
+            state == BackendState.LANOffered && ev == EventID.AppForceFallback ->
+                run {
+                    lanSignal = "pending"
+                    state = BackendState.RelayConnected
+                    listOf(CmdID.ResetLanReady)
+                }
+            state == BackendState.LANActive && ev == EventID.AppForceFallback ->
+                run {
+                    actions[ActionID.FallbackToRelay]?.invoke()
+                    // backoff_level: Min(backoff_level + 1, max_backoff_level) (set by action)
+                    bActivePath = "relay"
+                    bDispatcherPath = "relay"
+                    monitorTarget = "none"
+                    lanSignal = "pending"
+                    pingFailures = 0
+                    state = BackendState.RelayBackoff
+                    listOf(CmdID.StopMonitor, CmdID.CancelPongTimeout, CmdID.StopLanStreamReader, CmdID.StopLanDgReader, CmdID.CloseLanPath, CmdID.ResetLanReady, CmdID.StartBackoffTimer)
+                }
+            state == BackendState.LANDegraded && ev == EventID.AppForceFallback ->
+                run {
+                    actions[ActionID.FallbackToRelay]?.invoke()
+                    // backoff_level: Min(backoff_level + 1, max_backoff_level) (set by action)
+                    bActivePath = "relay"
+                    bDispatcherPath = "relay"
+                    monitorTarget = "none"
+                    lanSignal = "pending"
+                    pingFailures = 0
+                    state = BackendState.RelayBackoff
+                    listOf(CmdID.StopMonitor, CmdID.CancelPongTimeout, CmdID.StopLanStreamReader, CmdID.StopLanDgReader, CmdID.CloseLanPath, CmdID.ResetLanReady, CmdID.StartBackoffTimer)
                 }
             state == BackendState.RelayConnected && ev == EventID.Disconnect ->
                 run {
@@ -845,6 +949,31 @@ class ClientMachine {
                     state = ClientState.RelayFallback
                     listOf(CmdID.DeliverRecv)
                 }
+            state == ClientState.RelayConnected && ev == EventID.RelayStreamError ->
+                run {
+                    state = ClientState.RelayConnected
+                    listOf(CmdID.DeliverRecvError)
+                }
+            state == ClientState.LANConnecting && ev == EventID.RelayStreamError ->
+                run {
+                    state = ClientState.LANConnecting
+                    listOf(CmdID.DeliverRecvError)
+                }
+            state == ClientState.LANVerifying && ev == EventID.RelayStreamError ->
+                run {
+                    state = ClientState.LANVerifying
+                    listOf(CmdID.DeliverRecvError)
+                }
+            state == ClientState.LANActive && ev == EventID.RelayStreamError ->
+                run {
+                    state = ClientState.LANActive
+                    listOf(CmdID.DeliverRecvError)
+                }
+            state == ClientState.RelayFallback && ev == EventID.RelayStreamError ->
+                run {
+                    state = ClientState.RelayFallback
+                    listOf(CmdID.DeliverRecvError)
+                }
             state == ClientState.RelayConnected && ev == EventID.AppSendDatagram ->
                 run {
                     state = ClientState.RelayConnected
@@ -950,6 +1079,15 @@ class ClientMachine {
                     state = ClientState.RelayFallback
                     listOf(CmdID.StopLanStreamReader, CmdID.StopLanDgReader, CmdID.CloseLanPath, CmdID.ResetLanReady)
                 }
+            state == ClientState.LANActive && ev == EventID.LanStreamError ->
+                run {
+                    actions[ActionID.FallbackToRelay]?.invoke()
+                    cActivePath = "relay"
+                    cDispatcherPath = "relay"
+                    lanSignal = "pending"
+                    state = ClientState.RelayFallback
+                    listOf(CmdID.StopLanStreamReader, CmdID.StopLanDgReader, CmdID.CloseLanPath, CmdID.ResetLanReady)
+                }
             state == ClientState.RelayFallback && ev == EventID.RelayOk ->
                 run {
                     state = ClientState.RelayConnected
@@ -960,6 +1098,26 @@ class ClientMachine {
                     actions[ActionID.DialLan]?.invoke()
                     state = ClientState.LANConnecting
                     listOf(CmdID.StopLanStreamReader, CmdID.StopLanDgReader, CmdID.CloseLanPath, CmdID.DialLan)
+                }
+            state == ClientState.LANConnecting && ev == EventID.AppForceFallback ->
+                run {
+                    state = ClientState.RelayConnected
+                    emptyList()
+                }
+            state == ClientState.LANVerifying && ev == EventID.AppForceFallback ->
+                run {
+                    cDispatcherPath = "relay"
+                    state = ClientState.RelayConnected
+                    listOf(CmdID.StopLanStreamReader, CmdID.StopLanDgReader, CmdID.CloseLanPath)
+                }
+            state == ClientState.LANActive && ev == EventID.AppForceFallback ->
+                run {
+                    actions[ActionID.FallbackToRelay]?.invoke()
+                    cActivePath = "relay"
+                    cDispatcherPath = "relay"
+                    lanSignal = "pending"
+                    state = ClientState.RelayConnected
+                    listOf(CmdID.StopLanStreamReader, CmdID.StopLanDgReader, CmdID.CloseLanPath, CmdID.ResetLanReady)
                 }
             state == ClientState.RelayConnected && ev == EventID.Disconnect ->
                 run {

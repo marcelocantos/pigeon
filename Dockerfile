@@ -4,6 +4,8 @@ COPY go.mod go.sum ./
 RUN go mod download
 COPY *.go agents-guide.md ./
 COPY crypto/ crypto/
+COPY protocol/ protocol/
+COPY qr/ qr/
 COPY cmd/tern/ cmd/tern/
 RUN CGO_ENABLED=0 go build -o /tern ./cmd/tern
 

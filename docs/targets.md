@@ -36,11 +36,14 @@ of transport.
 
 #### 🎯T5.1 Reorder-tolerant decryption
 
-`Channel.Decrypt` buffers out-of-order sequence numbers instead of
-rejecting them. Required for safe transport cutover.
+`Channel.Decrypt` accepts out-of-order sequence numbers on lossy
+transports. `ModeDatagrams` allows gaps (forward jumps) while
+rejecting replays. Required for safe transport cutover.
 
 - **Weight**: 1.7 (value 5 / cost 3)
-- **Status**: not started
+- **Status**: achieved — `ModeDatagrams` in `crypto/crypto.go` accepts
+  gaps and rejects replays. `NewDatagramChannel` convenience constructor.
+  Full test coverage including reorder, replay, and 50% packet loss.
 
 #### 🎯T5.2 LAN discovery via relay
 
@@ -50,7 +53,6 @@ connection to the peer's local address using a self-signed certificate.
 
 - **Weight**: 1.0 (value 5 / cost 5)
 - **Status**: not started
-- **Depends on**: 🎯T5.1
 
 #### 🎯T5.3 Cutover protocol
 
@@ -61,7 +63,7 @@ closes the old transport after receiving `CUTOVER`.
 
 - **Weight**: 1.0 (value 5 / cost 5)
 - **Status**: not started
-- **Depends on**: 🎯T5.1, 🎯T10
+- **Depends on**: 🎯T10
 
 #### 🎯T5.4 Transport-agnostic Conn
 
@@ -217,74 +219,41 @@ Produces:
 
 ---
 
----
+### 🎯T19 Parallel regions in protocol state machine
 
-### 🎯T18 State machine mediates all Conn behavior
+The transport machine mixes two orthogonal concerns in a single flat
+state machine: **path management** (relay → offered → active →
+degraded → backoff) and **data forwarding** (app_send, recv,
+datagrams). Data forwarding self-loops are identical across all path
+states and must be manually replicated every time a path state is
+added.
 
-The session state machine is the sole mediator between the application
-layer (Send, Recv, OpenChannel, Close) and the I/O layer (socket
-read/write, connection error, timeout, datagram arrival). Application
-calls become events into the machine; I/O completions become events
-into the machine; the machine emits I/O commands. No ad-hoc Go logic
-decides when to switch paths, restart dispatchers, drain queues, or
-retry reads — the machine's transition table defines all of that.
+**Desired state**: The YAML protocol framework supports parallel
+regions (AND-states / statechart regions). A machine can declare
+independent sub-machines that execute concurrently. The transport
+machine becomes:
 
-**Current state**: The generated `BackendMachine`/`ClientMachine`
-model protocol state transitions (LAN offer → verify → active →
-degrade → fallback → backoff → re-offer). But Conn still has ad-hoc
-Go code for I/O lifecycle: `Recv` decides to retry on a dead stream,
-`OnChange` handlers infer dispatcher restarts from variable changes,
-goroutines independently manage health monitoring. The machine
-declares what state the system should be in; the executor guesses
-how to get there.
-
-**Desired state**: The machine framework supports two event surfaces:
-- **Top (application)**: `app_send`, `app_recv`, `app_open_channel`,
-  `app_close` — caller intent
-- **Bottom (I/O)**: `relay_bytes_received`, `lan_bytes_received`,
-  `lan_connection_error`, `ping_timeout`, `datagram_arrived` — I/O
-  completions
-
-The machine's transition table maps (state × event) → (new state ×
-actions × I/O commands). The executor is a thin event loop: wait for
-events from either surface, feed to machine, execute commands. All
-resource lifecycle (dispatcher binding, stream reader binding, queue
-draining, monitor start/stop) is expressed as states and transitions,
-not executor-side inference.
+- **Path region**: RelayConnected → LANOffered → LANActive →
+  LANDegraded → RelayBackoff (health, fallback, backoff)
+- **DataForwarding region**: always active, routes app_send/recv
+  through the current active path. Defined once.
 
 **Implications**:
-- The YAML spec gains I/O event types and I/O command types alongside
-  the existing message types
-- The code generator emits a richer machine with command output, not
-  just state + variable updates
-- `Conn` becomes a thin wrapper: event loop + registered I/O
-  handlers, no protocol logic
-- Goroutines exist only for blocking I/O (socket reads), not for
-  state management decisions
-- TLA+ verification covers the full behavior, not just the protocol
-  subset
+- YAML gains a `regions:` section under actors, each with its own
+  states and transitions
+- Code generator emits composite state: each region has independent
+  current-state, HandleEvent dispatches to all regions
+- TLA+ generator emits parallel composition (interleaving)
+- PlantUML generator emits `--` region separators inside states
+- Adding new path states (e.g., STUNConnecting for 🎯T6) no longer
+  requires duplicating data-forwarding transitions
+- Backend transport transitions drop from ~60 to ~35
 
-**Forked from**: attempt to wire generated machines into Conn
-(stashed as `git stash` on master). The wiring attempt revealed that
-variable-change callbacks (`OnChange`) are the wrong abstraction —
-the machine should drive behavior through transitions, not variable
-diffs. The stash contains two independently useful changes that
-should be cherry-picked:
-1. `Step(event EventID)` — fixes unreachable cases in generated
-   `Step()` when multiple internal transitions share the same From
-   state. Includes `EventID` type, generated event constants, and
-   updated generic `Machine.Step`.
-2. `protogen --root-pkg=tern` — generates session_gen.go into the
-   tern package (avoiding redeclaration conflicts with the legacy
-   pairingceremony_gen.go in protocol/).
+**Forked from**: diagram review during 🎯T18 completion — the
+coalesced self-loops made the redundancy visually obvious.
 
 - **Weight**: 1.25 (value 5 / cost 4)
-- **Status**: core complete (Phases 0-7). pathRouter deleted. Conn
-  delegates all I/O to executor. Machine's HandleEvent returns
-  explicit commands. Events/commands declared in YAML. All integration
-  tests pass. Remaining: TLA+ generator for events/commands (Phase 8),
-  OpenChannel/DatagramChannel migration, TestHealthMonitorFallback
-  (skipped — machine-driven monitor replaces ad-hoc goroutine).
+- **Status**: not started
 
 ---
 
@@ -327,6 +296,14 @@ tests work without manual machine management.
 
 - **Weight**: 1 (value 1 / cost 1)
 - **Status**: done — DatagramChannel with CRC16 demux and fragmentation support
+
+### 🎯T18 State machine mediates all Conn behavior
+
+- **Weight**: 1 (value 1 / cost 1)
+- **Status**: done — Machine drives all I/O via events/commands. Executor
+  is a thin event loop. TLA+ emits EVT_*/CMD_* constants. Health monitor
+  detects stale LAN via pong timeout. DatagramChannel routed through
+  executor. All legacy Conn dispatch removed.
 
 ### 🎯T13 Certmagic storage alignment
 

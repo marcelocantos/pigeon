@@ -107,6 +107,26 @@ func (p *Protocol) ExportKotlin(w io.Writer, pkg string) error {
 		b.WriteString("}\n\n")
 	}
 
+	// Wire constants.
+	if len(p.WireConsts) > 0 {
+		b.WriteString("/** Protocol wire constants shared across all platforms. */\n")
+		b.WriteString("object Wire {\n")
+		for _, wc := range p.WireConsts {
+			name := kotlinConstName(wc.Name)
+			switch wc.Type {
+			case "byte":
+				fmt.Fprintf(&b, "    const val %s: Byte = 0x%02X.toByte()\n", name, wireInt(wc.Value))
+			case "int":
+				fmt.Fprintf(&b, "    const val %s = %d\n", name, wireInt(wc.Value))
+			case "duration_ms":
+				fmt.Fprintf(&b, "    const val %s = %dL // ms\n", name, wireInt(wc.Value))
+			case "string":
+				fmt.Fprintf(&b, "    const val %s = %q\n", name, wc.Value)
+			}
+		}
+		b.WriteString("}\n\n")
+	}
+
 	// Transition table per actor.
 	for _, a := range p.Actors {
 		typeName := kotlinTypeName(a.Name)
@@ -363,6 +383,10 @@ func kotlinCamelCase(s string) string {
 		}
 	}
 	return string(result)
+}
+
+func kotlinConstName(s string) string {
+	return strings.ToUpper(s)
 }
 
 func kotlinTypeName(name string) string {

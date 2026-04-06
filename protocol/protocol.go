@@ -189,6 +189,16 @@ type Property struct {
 	Desc     string // human-readable description
 }
 
+// WireConstant defines a protocol constant shared across all platforms.
+// These are emitted as typed constants/enums in every generated language.
+type WireConstant struct {
+	Name  string
+	Value any    // int, float64, string, or bool
+	Type  string // "int", "byte", "duration_ms", "string"
+	Desc  string
+	Group string // optional grouping key (e.g., "datagram_framing")
+}
+
 // ConstantDef defines a parameterised constant for model checking.
 // TLC substitutes values from the set to verify the protocol works
 // for all possible values, not just one hardcoded scenario.
@@ -231,7 +241,8 @@ type Protocol struct {
 	AdvActions   []AdvAction  // adversary capabilities beyond Dolev-Yao
 	AdvGuard     string       // TLA+ expression gating the adversary (empty = always active)
 	Phases       []Phase      // named groupings of states for diagramming and TLA+ splitting
-	Constants    []ConstantDef // parameterised constants for model checking
+	WireConsts   []WireConstant // protocol constants emitted in all languages
+	Constants    []ConstantDef  // parameterised constants for model checking
 	Properties   []Property
 	ChannelBound int // max messages per channel (0 = unbounded)
 	OneShot      bool // if true, actors run once then terminate (no loop)

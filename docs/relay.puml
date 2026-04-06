@@ -1,0 +1,25 @@
+@startuml relay
+!theme plain
+skinparam backgroundColor white
+skinparam state {
+  BackgroundColor #f8f8f8
+  BorderColor #888
+}
+
+title Session — Relay
+
+state "relay" as R {
+  state "Pairing" as R_Pairing {
+    [*] --> R_Idle
+  }
+
+  R_Idle --> R_BackendRegistered : backend_register
+  R_BackendRegistered --> R_Idle : backend_disconnect
+  state R_BackendRegistered
+  state R_Bridged
+}
+
+' === Cross-actor interactions ===
+
+
+@enduml

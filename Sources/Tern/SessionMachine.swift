@@ -105,6 +105,7 @@ public enum EventID: String, Sendable {
     case appSendDatagram = "app_send_datagram"
     case appRecvDatagram = "app_recv_datagram"
     case appClose = "app_close"
+    case appForceFallback = "app_force_fallback"
     case relayStreamData = "relay_stream_data"
     case relayStreamError = "relay_stream_error"
     case relayDatagram = "relay_datagram"
@@ -168,6 +169,7 @@ public enum CmdID: String, Sendable {
     case sendLanConfirm = "send_lan_confirm"
     case dialLan = "dial_lan"
     case deliverRecv = "deliver_recv"
+    case deliverRecvError = "deliver_recv_error"
     case deliverRecvDatagram = "deliver_recv_datagram"
     case startLanStreamReader = "start_lan_stream_reader"
     case stopLanStreamReader = "stop_lan_stream_reader"
@@ -175,11 +177,41 @@ public enum CmdID: String, Sendable {
     case stopLanDgReader = "stop_lan_dg_reader"
     case startMonitor = "start_monitor"
     case stopMonitor = "stop_monitor"
+    case startPongTimeout = "start_pong_timeout"
+    case cancelPongTimeout = "cancel_pong_timeout"
     case startBackoffTimer = "start_backoff_timer"
     case closeLanPath = "close_lan_path"
     case signalLanReady = "signal_lan_ready"
     case resetLanReady = "reset_lan_ready"
     case setCryptoDatagram = "set_crypto_datagram"
+}
+
+/// Protocol wire constants shared across all platforms.
+public enum SessionWire {
+    public static let dgConnWhole: UInt8 = 0x00
+    public static let dgPing: UInt8 = 0x10
+    public static let dgPong: UInt8 = 0x11
+    public static let dgConnFragment: UInt8 = 0x40
+    public static let dgChanWhole: UInt8 = 0x80
+    public static let dgChanFragment: UInt8 = 0xC0
+    public static let fragHeaderSize = 8
+    public static let chanIdSize = 2
+    public static let maxDatagramPayload = 1200
+    public static let fragmentTimeoutMs = 5000 // ms
+    public static let frameApp: UInt8 = 0x00
+    public static let frameLanOffer: UInt8 = 0x01
+    public static let frameCutover: UInt8 = 0x02
+    public static let maxMessageSize = 1048576
+    public static let lengthPrefixSize = 4
+    public static let pingIntervalMs = 5000 // ms
+    public static let pongTimeoutMs = 4000 // ms
+    public static let maxPingFailures = 3
+    public static let maxBackoffLevel = 5
+    public static let streamChannelOpenerSuffix = ":o2a"
+    public static let streamChannelAcceptSuffix = ":a2o"
+    public static let dgChannelSendSuffix = ":dg:send"
+    public static let dgChannelRecvSuffix = ":dg:recv"
+    public static let channelIdHashMultiplier = 31
 }
 
 /// The protocol transition table. Fed to Machine for execution.
@@ -216,6 +248,11 @@ public enum SessionProtocol {
         (from: "LANDegraded", to: "LANDegraded", on: "relay_stream_data", onKind: "internal", guard: nil, action: nil, sends: []),
         (from: "RelayBackoff", to: "RelayBackoff", on: "app_send", onKind: "internal", guard: nil, action: nil, sends: []),
         (from: "RelayBackoff", to: "RelayBackoff", on: "relay_stream_data", onKind: "internal", guard: nil, action: nil, sends: []),
+        (from: "RelayConnected", to: "RelayConnected", on: "relay_stream_error", onKind: "internal", guard: nil, action: nil, sends: []),
+        (from: "LANOffered", to: "LANOffered", on: "relay_stream_error", onKind: "internal", guard: nil, action: nil, sends: []),
+        (from: "LANActive", to: "LANActive", on: "relay_stream_error", onKind: "internal", guard: nil, action: nil, sends: []),
+        (from: "LANDegraded", to: "LANDegraded", on: "relay_stream_error", onKind: "internal", guard: nil, action: nil, sends: []),
+        (from: "RelayBackoff", to: "RelayBackoff", on: "relay_stream_error", onKind: "internal", guard: nil, action: nil, sends: []),
         (from: "RelayConnected", to: "RelayConnected", on: "app_send_datagram", onKind: "internal", guard: nil, action: nil, sends: []),
         (from: "RelayConnected", to: "RelayConnected", on: "relay_datagram", onKind: "internal", guard: nil, action: nil, sends: []),
         (from: "LANOffered", to: "LANOffered", on: "app_send_datagram", onKind: "internal", guard: nil, action: nil, sends: []),
@@ -243,6 +280,9 @@ public enum SessionProtocol {
         (from: "RelayBackoff", to: "LANOffered", on: "backoff_expired", onKind: "internal", guard: nil, action: nil, sends: [(to: "client", msg: "lan_offer")]),
         (from: "RelayBackoff", to: "LANOffered", on: "lan_server_changed", onKind: "internal", guard: nil, action: nil, sends: [(to: "client", msg: "lan_offer")]),
         (from: "RelayConnected", to: "LANOffered", on: "readvertise_tick", onKind: "internal", guard: "lan_server_available", action: nil, sends: [(to: "client", msg: "lan_offer")]),
+        (from: "LANOffered", to: "RelayConnected", on: "app_force_fallback", onKind: "internal", guard: nil, action: nil, sends: []),
+        (from: "LANActive", to: "RelayBackoff", on: "app_force_fallback", onKind: "internal", guard: nil, action: "fallback_to_relay", sends: []),
+        (from: "LANDegraded", to: "RelayBackoff", on: "app_force_fallback", onKind: "internal", guard: nil, action: "fallback_to_relay", sends: []),
         (from: "RelayConnected", to: "Paired", on: "disconnect", onKind: "internal", guard: nil, action: nil, sends: []),
     ]
 
@@ -273,6 +313,11 @@ public enum SessionProtocol {
         (from: "LANActive", to: "LANActive", on: "relay_stream_data", onKind: "internal", guard: nil, action: nil, sends: []),
         (from: "RelayFallback", to: "RelayFallback", on: "app_send", onKind: "internal", guard: nil, action: nil, sends: []),
         (from: "RelayFallback", to: "RelayFallback", on: "relay_stream_data", onKind: "internal", guard: nil, action: nil, sends: []),
+        (from: "RelayConnected", to: "RelayConnected", on: "relay_stream_error", onKind: "internal", guard: nil, action: nil, sends: []),
+        (from: "LANConnecting", to: "LANConnecting", on: "relay_stream_error", onKind: "internal", guard: nil, action: nil, sends: []),
+        (from: "LANVerifying", to: "LANVerifying", on: "relay_stream_error", onKind: "internal", guard: nil, action: nil, sends: []),
+        (from: "LANActive", to: "LANActive", on: "relay_stream_error", onKind: "internal", guard: nil, action: nil, sends: []),
+        (from: "RelayFallback", to: "RelayFallback", on: "relay_stream_error", onKind: "internal", guard: nil, action: nil, sends: []),
         (from: "RelayConnected", to: "RelayConnected", on: "app_send_datagram", onKind: "internal", guard: nil, action: nil, sends: []),
         (from: "RelayConnected", to: "RelayConnected", on: "relay_datagram", onKind: "internal", guard: nil, action: nil, sends: []),
         (from: "LANConnecting", to: "LANConnecting", on: "app_send_datagram", onKind: "internal", guard: nil, action: nil, sends: []),
@@ -292,8 +337,12 @@ public enum SessionProtocol {
         (from: "LANVerifying", to: "RelayConnected", on: "verify_timeout", onKind: "internal", guard: nil, action: nil, sends: []),
         (from: "LANActive", to: "LANActive", on: "path_ping", onKind: "recv", guard: nil, action: nil, sends: [(to: "backend", msg: "path_pong")]),
         (from: "LANActive", to: "RelayFallback", on: "lan_error", onKind: "internal", guard: nil, action: "fallback_to_relay", sends: []),
+        (from: "LANActive", to: "RelayFallback", on: "lan_stream_error", onKind: "internal", guard: nil, action: "fallback_to_relay", sends: []),
         (from: "RelayFallback", to: "RelayConnected", on: "relay_ok", onKind: "internal", guard: nil, action: nil, sends: []),
         (from: "LANActive", to: "LANConnecting", on: "lan_offer", onKind: "recv", guard: "lan_enabled", action: "dial_lan", sends: []),
+        (from: "LANConnecting", to: "RelayConnected", on: "app_force_fallback", onKind: "internal", guard: nil, action: nil, sends: []),
+        (from: "LANVerifying", to: "RelayConnected", on: "app_force_fallback", onKind: "internal", guard: nil, action: nil, sends: []),
+        (from: "LANActive", to: "RelayConnected", on: "app_force_fallback", onKind: "internal", guard: nil, action: "fallback_to_relay", sends: []),
         (from: "RelayConnected", to: "Paired", on: "disconnect", onKind: "internal", guard: nil, action: nil, sends: []),
     ]
 
@@ -467,6 +516,21 @@ public final class BackendMachine: @unchecked Sendable {
         case (.relayBackoff, .relayStreamData):
             state = .relayBackoff
             return [.deliverRecv]
+        case (.relayConnected, .relayStreamError):
+            state = .relayConnected
+            return [.deliverRecvError]
+        case (.lANOffered, .relayStreamError):
+            state = .lANOffered
+            return [.deliverRecvError]
+        case (.lANActive, .relayStreamError):
+            state = .lANActive
+            return [.deliverRecvError]
+        case (.lANDegraded, .relayStreamError):
+            state = .lANDegraded
+            return [.deliverRecvError]
+        case (.relayBackoff, .relayStreamError):
+            state = .relayBackoff
+            return [.deliverRecvError]
         case (.relayConnected, .appSendDatagram):
             state = .relayConnected
             return [.sendActiveDatagram]
@@ -526,14 +590,14 @@ public final class BackendMachine: @unchecked Sendable {
             return [.resetLanReady, .startBackoffTimer]
         case (.lANActive, .pingTick):
             state = .lANActive
-            return [.sendPathPing]
+            return [.sendPathPing, .startPongTimeout]
         case (.lANActive, .pingTimeout):
             pingFailures = 1
             state = .lANDegraded
             return []
         case (.lANDegraded, .pingTick):
             state = .lANDegraded
-            return [.sendPathPing]
+            return [.sendPathPing, .startPongTimeout]
         case (.lANActive, .lanStreamError):
             try actions[.fallbackToRelay]?()
             // backoff_level: Min(backoff_level + 1, max_backoff_level) (set by action)
@@ -558,7 +622,7 @@ public final class BackendMachine: @unchecked Sendable {
             try actions[.resetFailures]?()
             pingFailures = 0
             state = .lANActive
-            return []
+            return [.cancelPongTimeout]
         case (.lANDegraded, .pingTimeout) where guards[.underMaxFailures]?() == true:
             // ping_failures: ping_failures + 1 (set by action)
             state = .lANDegraded
@@ -583,6 +647,30 @@ public final class BackendMachine: @unchecked Sendable {
         case (.relayConnected, .readvertiseTick) where guards[.lanServerAvailable]?() == true:
             state = .lANOffered
             return [.sendLanOffer]
+        case (.lANOffered, .appForceFallback):
+            lanSignal = "pending"
+            state = .relayConnected
+            return [.resetLanReady]
+        case (.lANActive, .appForceFallback):
+            try actions[.fallbackToRelay]?()
+            // backoff_level: Min(backoff_level + 1, max_backoff_level) (set by action)
+            bActivePath = "relay"
+            bDispatcherPath = "relay"
+            monitorTarget = "none"
+            lanSignal = "pending"
+            pingFailures = 0
+            state = .relayBackoff
+            return [.stopMonitor, .cancelPongTimeout, .stopLanStreamReader, .stopLanDgReader, .closeLanPath, .resetLanReady, .startBackoffTimer]
+        case (.lANDegraded, .appForceFallback):
+            try actions[.fallbackToRelay]?()
+            // backoff_level: Min(backoff_level + 1, max_backoff_level) (set by action)
+            bActivePath = "relay"
+            bDispatcherPath = "relay"
+            monitorTarget = "none"
+            lanSignal = "pending"
+            pingFailures = 0
+            state = .relayBackoff
+            return [.stopMonitor, .cancelPongTimeout, .stopLanStreamReader, .stopLanDgReader, .closeLanPath, .resetLanReady, .startBackoffTimer]
         case (.relayConnected, .disconnect):
             state = .paired
             return []
@@ -804,6 +892,21 @@ public final class ClientMachine: @unchecked Sendable {
         case (.relayFallback, .relayStreamData):
             state = .relayFallback
             return [.deliverRecv]
+        case (.relayConnected, .relayStreamError):
+            state = .relayConnected
+            return [.deliverRecvError]
+        case (.lANConnecting, .relayStreamError):
+            state = .lANConnecting
+            return [.deliverRecvError]
+        case (.lANVerifying, .relayStreamError):
+            state = .lANVerifying
+            return [.deliverRecvError]
+        case (.lANActive, .relayStreamError):
+            state = .lANActive
+            return [.deliverRecvError]
+        case (.relayFallback, .relayStreamError):
+            state = .relayFallback
+            return [.deliverRecvError]
         case (.relayConnected, .appSendDatagram):
             state = .relayConnected
             return [.sendActiveDatagram]
@@ -871,6 +974,13 @@ public final class ClientMachine: @unchecked Sendable {
             lanSignal = "pending"
             state = .relayFallback
             return [.stopLanStreamReader, .stopLanDgReader, .closeLanPath, .resetLanReady]
+        case (.lANActive, .lanStreamError):
+            try actions[.fallbackToRelay]?()
+            cActivePath = "relay"
+            cDispatcherPath = "relay"
+            lanSignal = "pending"
+            state = .relayFallback
+            return [.stopLanStreamReader, .stopLanDgReader, .closeLanPath, .resetLanReady]
         case (.relayFallback, .relayOk):
             state = .relayConnected
             return []
@@ -878,6 +988,20 @@ public final class ClientMachine: @unchecked Sendable {
             try actions[.dialLan]?()
             state = .lANConnecting
             return [.stopLanStreamReader, .stopLanDgReader, .closeLanPath, .dialLan]
+        case (.lANConnecting, .appForceFallback):
+            state = .relayConnected
+            return []
+        case (.lANVerifying, .appForceFallback):
+            cDispatcherPath = "relay"
+            state = .relayConnected
+            return [.stopLanStreamReader, .stopLanDgReader, .closeLanPath]
+        case (.lANActive, .appForceFallback):
+            try actions[.fallbackToRelay]?()
+            cActivePath = "relay"
+            cDispatcherPath = "relay"
+            lanSignal = "pending"
+            state = .relayConnected
+            return [.stopLanStreamReader, .stopLanDgReader, .closeLanPath, .resetLanReady]
         case (.relayConnected, .disconnect):
             state = .paired
             return []

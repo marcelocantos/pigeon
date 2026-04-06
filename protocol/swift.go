@@ -82,6 +82,26 @@ func (p *Protocol) ExportSwift(w io.Writer) error {
 		b.WriteString("}\n\n")
 	}
 
+	// Wire constants.
+	if len(p.WireConsts) > 0 {
+		b.WriteString("/// Protocol wire constants shared across all platforms.\n")
+		fmt.Fprintf(&b, "public enum %sWire {\n", swiftTypeName(p.Name))
+		for _, wc := range p.WireConsts {
+			name := swiftCase(wc.Name)
+			switch wc.Type {
+			case "byte":
+				fmt.Fprintf(&b, "    public static let %s: UInt8 = 0x%02X\n", name, wireInt(wc.Value))
+			case "int":
+				fmt.Fprintf(&b, "    public static let %s = %d\n", name, wireInt(wc.Value))
+			case "duration_ms":
+				fmt.Fprintf(&b, "    public static let %s = %d // ms\n", name, wireInt(wc.Value))
+			case "string":
+				fmt.Fprintf(&b, "    public static let %s = %q\n", name, wc.Value)
+			}
+		}
+		b.WriteString("}\n\n")
+	}
+
 	// Protocol table as a static struct.
 	b.WriteString("/// The protocol transition table. Fed to Machine for execution.\n")
 	fmt.Fprintf(&b, "public enum %sProtocol {\n", swiftTypeName(p.Name))

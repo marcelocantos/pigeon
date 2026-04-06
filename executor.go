@@ -45,6 +45,12 @@ type dgRecvResult struct {
 	err  error
 }
 
+// chanDgRecvRequest is the payload for channel datagram recv waiters.
+type chanDgRecvRequest struct {
+	chanID uint16
+	result chan dgRecvResult
+}
+
 // streamData is the payload for relay/LAN stream data events.
 type streamData struct {
 	data []byte
@@ -105,11 +111,9 @@ type executor struct {
 	dgRecvWaiters []chan dgRecvResult
 	dgRecvBuffer  [][]byte
 
-	// Legacy datagram channel routing (until DatagramChannel migrates
-	// to the executor). The callback routes channel-tagged datagrams.
-	routeChannelDatagram func(id uint16, payload []byte)
-	// Drain legacy channel queues on path switch.
-	drainChannelQueues func()
+	// Per-channel datagram routing.
+	chanDgWaiters map[uint16][]chan dgRecvResult
+	chanDgBuffers map[uint16][][]byte
 
 	// Encryption (executor-level, not machine-level).
 	channel   *crypto.Channel
@@ -130,6 +134,11 @@ type executor struct {
 	// Timers managed by the executor.
 	monitorCancel  context.CancelFunc
 	backoffCancel  context.CancelFunc
+	pongCancel     context.CancelFunc // cancelled when pong received
+
+	// Configurable timing (defaults set in newExecutor).
+	pingInterval time.Duration // how often to send health pings
+	pongTimeout  time.Duration // how long to wait for a pong reply
 
 	// LAN reader cancellation.
 	lanStreamCancel context.CancelFunc
@@ -159,14 +168,18 @@ func newExecutor(
 	}()
 
 	e := &executor{
-		machine:      machine,
-		events:       make(chan event, 64),
-		relay:        relay,
-		lanReady:     make(chan struct{}),
-		reasm:        newReassembler(DefaultFragmentTimeout, done),
-		maxDgPayload: DefaultMaxDatagramPayload,
-		ctx:          ctx,
-		cancel:       cancel,
+		machine:       machine,
+		events:        make(chan event, 64),
+		relay:         relay,
+		lanReady:      make(chan struct{}),
+		chanDgWaiters: make(map[uint16][]chan dgRecvResult),
+		chanDgBuffers: make(map[uint16][][]byte),
+		reasm:         newReassembler(DefaultFragmentTimeout, done),
+		maxDgPayload:  MaxDatagramPayload,
+		pingInterval:  time.Duration(PingIntervalMs) * time.Millisecond,
+		pongTimeout:   time.Duration(PongTimeoutMs) * time.Millisecond,
+		ctx:           ctx,
+		cancel:        cancel,
 	}
 
 	// Start relay readers — they run for the lifetime of the connection.
@@ -283,12 +296,23 @@ func (e *executor) run() {
 				continue
 			}
 			if ev.id == EventAppRecvDatagram {
-				if ch, ok := ev.payload.(chan dgRecvResult); ok {
+				switch p := ev.payload.(type) {
+				case chan dgRecvResult:
+					// Conn-level datagram recv.
 					if len(e.dgRecvBuffer) > 0 {
-						ch <- dgRecvResult{data: e.dgRecvBuffer[0]}
+						p <- dgRecvResult{data: e.dgRecvBuffer[0]}
 						e.dgRecvBuffer = e.dgRecvBuffer[1:]
 					} else {
-						e.dgRecvWaiters = append(e.dgRecvWaiters, ch)
+						e.dgRecvWaiters = append(e.dgRecvWaiters, p)
+					}
+				case *chanDgRecvRequest:
+					// Per-channel datagram recv.
+					id := p.chanID
+					if buf := e.chanDgBuffers[id]; len(buf) > 0 {
+						p.result <- dgRecvResult{data: buf[0]}
+						e.chanDgBuffers[id] = buf[1:]
+					} else {
+						e.chanDgWaiters[id] = append(e.chanDgWaiters[id], p.result)
 					}
 				}
 				if ev.done != nil {
@@ -325,11 +349,8 @@ func (e *executor) run() {
 				e.executeCommand(cmd, ev.payload)
 			}
 
-			// Events with no matching transition may still need
-			// direct handling (e.g., stream data delivery when the
-			// machine has no specific transition for this state).
 			if cmds == nil {
-				e.handleUnmatchedEvent(ev)
+				slog.Debug("unmatched event (no transition)", "event", ev.id)
 			}
 
 			// Signal synchronous waiters.
@@ -343,40 +364,6 @@ func (e *executor) run() {
 	}
 }
 
-// handleUnmatchedEvent handles events that the machine didn't match
-// (no transition from current state for this event). Some events
-// need executor-level handling regardless of machine state.
-func (e *executor) handleUnmatchedEvent(ev event) {
-	switch ev.id {
-	case EventRelayStreamData:
-		// Data arrived on relay — deliver to waiting Recv if any.
-		if sd, ok := ev.payload.(*streamData); ok {
-			e.deliverRecv(sd.data)
-		}
-	case EventLanStreamData:
-		// Data arrived on LAN — deliver to waiting Recv if any.
-		if sd, ok := ev.payload.(*streamData); ok {
-			e.deliverRecv(sd.data)
-		}
-	case EventRelayDatagram:
-		if dd, ok := ev.payload.(*datagramData); ok {
-			e.deliverDatagram(dd.data)
-		}
-	case EventLanDatagram:
-		if dd, ok := ev.payload.(*datagramData); ok {
-			e.deliverDatagram(dd.data)
-		}
-	case EventRelayStreamError:
-		if se, ok := ev.payload.(*streamError); ok {
-			e.deliverRecvError(se.err)
-		}
-	case EventLanStreamError:
-		if se, ok := ev.payload.(*streamError); ok {
-			e.deliverRecvError(se.err)
-		}
-	}
-}
-
 // executeCommand carries out a single command from the machine.
 func (e *executor) executeCommand(cmd CmdID, payload any) {
 	switch cmd {
@@ -386,7 +373,7 @@ func (e *executor) executeCommand(cmd CmdID, payload any) {
 			var msg []byte
 			if e.channel != nil {
 				framed := make([]byte, 1+len(req.data))
-				framed[0] = msgApp
+				framed[0] = FrameApp
 				copy(framed[1:], req.data)
 				msg = e.channel.Encrypt(framed)
 			} else {
@@ -406,18 +393,23 @@ func (e *executor) executeCommand(cmd CmdID, payload any) {
 			// Single datagram or fragment.
 			if 1+len(data) <= e.maxDgPayload {
 				frame := make([]byte, 1+len(data))
-				frame[0] = dgConnWhole
+				frame[0] = DgConnWhole
 				copy(frame[1:], data)
 				req.done <- p.dg.SendDatagram(frame)
 			} else {
 				msgID := nextMsgID.Add(1)
-				req.done <- sendFragmented(p.dg, data, e.maxDgPayload, msgID, dgConnFragment, nil)
+				req.done <- sendFragmented(p.dg, data, e.maxDgPayload, msgID, DgConnFragment, nil)
 			}
 		}
 
 	case CmdDeliverRecv:
 		if sd, ok := payload.(*streamData); ok {
 			e.deliverRecv(sd.data)
+		}
+
+	case CmdDeliverRecvError:
+		if se, ok := payload.(*streamError); ok {
+			e.deliverRecvError(se.err)
 		}
 
 	case CmdDeliverRecvDatagram:
@@ -428,13 +420,13 @@ func (e *executor) executeCommand(cmd CmdID, payload any) {
 	case CmdSendPathPing:
 		p := e.activePath()
 		if p.dg != nil {
-			p.dg.SendDatagram([]byte{dgConnWhole})
+			p.dg.SendDatagram([]byte{DgPing})
 		}
 
 	case CmdSendPathPong:
 		p := e.activePath()
 		if p.dg != nil {
-			p.dg.SendDatagram([]byte{dgConnWhole})
+			p.dg.SendDatagram([]byte{DgPong})
 		}
 
 	case CmdSendLanOffer:
@@ -491,6 +483,26 @@ func (e *executor) executeCommand(cmd CmdID, payload any) {
 			e.monitorCancel = nil
 		}
 
+	case CmdStartPongTimeout:
+		if e.pongCancel != nil {
+			e.pongCancel()
+		}
+		ctx, cancel := context.WithCancel(e.ctx)
+		e.pongCancel = cancel
+		go func() {
+			select {
+			case <-time.After(e.pongTimeout):
+				e.submit(event{id: EventPingTimeout})
+			case <-ctx.Done():
+			}
+		}()
+
+	case CmdCancelPongTimeout:
+		if e.pongCancel != nil {
+			e.pongCancel()
+			e.pongCancel = nil
+		}
+
 	case CmdStartBackoffTimer:
 		ctx, cancel := context.WithCancel(e.ctx)
 		e.backoffCancel = cancel
@@ -503,8 +515,8 @@ func (e *executor) executeCommand(cmd CmdID, payload any) {
 		}
 		// Drain stale datagram buffers from the old path.
 		e.dgRecvBuffer = nil
-		if e.drainChannelQueues != nil {
-			e.drainChannelQueues()
+		for id := range e.chanDgBuffers {
+			e.chanDgBuffers[id] = nil
 		}
 
 	case CmdSignalLanReady:
@@ -567,7 +579,13 @@ func (e *executor) processDatagram(raw []byte) {
 	}
 
 	switch raw[0] {
-	case dgConnWhole:
+	case DgPing:
+		e.submit(event{id: EventRecvPathPing})
+		return
+	case DgPong:
+		e.submit(event{id: EventRecvPathPong})
+		return
+	case DgConnWhole:
 		payload := raw[1:]
 		if e.dgChannel != nil {
 			decrypted, err := e.dgChannel.Decrypt(payload)
@@ -579,14 +597,14 @@ func (e *executor) processDatagram(raw []byte) {
 		}
 		e.deliverDatagram(payload)
 
-	case dgConnFragment:
-		if len(raw) < 1+fragHeaderSize {
+	case DgConnFragment:
+		if len(raw) < 1+FragHeaderSize {
 			return
 		}
 		msgID := binary.BigEndian.Uint32(raw[1:5])
 		fragIdx := int(binary.BigEndian.Uint16(raw[5:7]))
 		totalFrags := int(binary.BigEndian.Uint16(raw[7:9]))
-		chunk := raw[1+fragHeaderSize:]
+		chunk := raw[1+FragHeaderSize:]
 		if totalFrags < 2 || fragIdx >= totalFrags {
 			return
 		}
@@ -604,26 +622,24 @@ func (e *executor) processDatagram(raw []byte) {
 		}
 		e.deliverDatagram(assembled)
 
-	case dgChanWhole:
-		if len(raw) < 1+chanIDSize {
+	case DgChanWhole:
+		if len(raw) < 1+ChanIdSize {
 			return
 		}
 		id := binary.BigEndian.Uint16(raw[1:3])
-		payload := raw[1+chanIDSize:]
-		if e.routeChannelDatagram != nil {
-			e.routeChannelDatagram(id, payload)
-		}
+		payload := raw[1+ChanIdSize:]
+		e.deliverChannelDatagram(id, payload)
 
-	case dgChanFragment:
-		if len(raw) < 1+chanIDSize+fragHeaderSize {
+	case DgChanFragment:
+		if len(raw) < 1+ChanIdSize+FragHeaderSize {
 			return
 		}
 		id := binary.BigEndian.Uint16(raw[1:3])
-		off := 1 + chanIDSize
+		off := 1 + ChanIdSize
 		msgID := binary.BigEndian.Uint32(raw[off : off+4])
 		fragIdx := int(binary.BigEndian.Uint16(raw[off+4 : off+6]))
 		totalFrags := int(binary.BigEndian.Uint16(raw[off+6 : off+8]))
-		chunk := raw[off+fragHeaderSize:]
+		chunk := raw[off+FragHeaderSize:]
 		if totalFrags < 2 || fragIdx >= totalFrags {
 			return
 		}
@@ -631,9 +647,7 @@ func (e *executor) processDatagram(raw []byte) {
 		if assembled == nil {
 			return
 		}
-		if e.routeChannelDatagram != nil {
-			e.routeChannelDatagram(id, assembled)
-		}
+		e.deliverChannelDatagram(id, assembled)
 
 	default:
 		// Unknown frame type — discard.
@@ -649,6 +663,33 @@ func (e *executor) deliverDatagram(data []byte) {
 		w <- dgRecvResult{data: data}
 	} else {
 		e.dgRecvBuffer = append(e.dgRecvBuffer, data)
+	}
+}
+
+// deliverChannelDatagram sends data to a waiting channel datagram
+// receiver, or buffers it if no waiter is registered.
+func (e *executor) deliverChannelDatagram(id uint16, data []byte) {
+	if ws := e.chanDgWaiters[id]; len(ws) > 0 {
+		w := ws[0]
+		e.chanDgWaiters[id] = ws[1:]
+		w <- dgRecvResult{data: data}
+	} else {
+		e.chanDgBuffers[id] = append(e.chanDgBuffers[id], data)
+	}
+}
+
+// recvChannelDatagram registers a waiter for the next datagram on the
+// given channel ID. Delivers immediately from the buffer if available.
+func (e *executor) recvChannelDatagram(ctx context.Context, id uint16) ([]byte, error) {
+	result := make(chan dgRecvResult, 1)
+	e.submit(event{id: EventAppRecvDatagram, payload: &chanDgRecvRequest{chanID: id, result: result}})
+	select {
+	case r := <-result:
+		return r.data, r.err
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	case <-e.ctx.Done():
+		return nil, e.ctx.Err()
 	}
 }
 
@@ -680,9 +721,9 @@ func (e *executor) streamReader(ctx context.Context, p *path, dataEvent, errorEv
 			}
 			// Demux control messages vs application data.
 			switch plaintext[0] {
-			case msgApp:
+			case FrameApp:
 				e.submit(event{id: dataEvent, payload: &streamData{data: plaintext[1:]}})
-			case msgLANOffer:
+			case FrameLanOffer:
 				var offer lanOffer
 				if err := json.Unmarshal(plaintext[1:], &offer); err != nil {
 					slog.Warn("bad LAN offer", "err", err)
@@ -691,7 +732,7 @@ func (e *executor) streamReader(ctx context.Context, p *path, dataEvent, errorEv
 				e.submit(event{id: EventRecvLanOffer, payload: &lanOfferData{
 					addr: offer.Addr, challenge: offer.Challenge,
 				}})
-			case msgCutover:
+			case FrameCutover:
 				slog.Debug("received cutover marker")
 			default:
 				slog.Warn("discarding unknown message type", "type", plaintext[0])
@@ -720,7 +761,7 @@ func (e *executor) datagramReader(ctx context.Context, p *path, dataEvent EventI
 
 // monitorLoop sends ping events at fixed intervals.
 func (e *executor) monitorLoop(ctx context.Context) {
-	ticker := time.NewTicker(5 * time.Second)
+	ticker := time.NewTicker(e.pingInterval)
 	defer ticker.Stop()
 
 	for {
@@ -794,7 +835,7 @@ func (e *executor) sendLANOffer() error {
 	}
 
 	// Send the offer as a control message via the relay stream.
-	return e.sendControl(msgLANOffer, offer)
+	return e.sendControl(FrameLanOffer, offer)
 }
 
 // sendControl writes a framed control message on the relay stream.

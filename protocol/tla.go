@@ -73,6 +73,22 @@ func (p *Protocol) ExportTLAPhase(w io.Writer, phaseName string) error {
 		}
 	}
 
+	// Collect events and commands actually used in phase transitions.
+	usedEvents := map[EventID]bool{}
+	usedCmds := map[CmdID]bool{}
+	for _, at := range phaseTransitions {
+		// The trigger event: either an internal event ID or a recv message event.
+		if at.transition.On.Kind == TriggerInternal && at.transition.On.Desc != "" {
+			usedEvents[EventID(at.transition.On.Desc)] = true
+		}
+		if at.transition.On.Kind == TriggerRecv {
+			usedEvents[EventID("recv_"+string(at.transition.On.Msg))] = true
+		}
+		for _, cmd := range at.transition.Emits {
+			usedCmds[cmd] = true
+		}
+	}
+
 	// Channel elimination: instead of channel sequences, each receivable
 	// message type becomes a struct variable. Senders write directly to
 	// the struct; receivers guard on it and clear it after processing.
@@ -125,6 +141,34 @@ func (p *Protocol) ExportTLAPhase(w io.Writer, phaseName string) error {
 		fmt.Fprintf(&b, "MSG_%s == \"%s\"\n", sanitiseTLA(string(m.Type)), m.Type)
 	}
 	if emittedMsgs {
+		b.WriteString("\n")
+	}
+
+	// --- Event constants (only events used in phase transitions) ---
+	if len(usedEvents) > 0 {
+		var sortedEvts []string
+		for e := range usedEvents {
+			sortedEvts = append(sortedEvts, string(e))
+		}
+		sort.Strings(sortedEvts)
+		b.WriteString("\\* Event types\n")
+		for _, e := range sortedEvts {
+			fmt.Fprintf(&b, "EVT_%s == \"%s\"\n", sanitiseTLA(e), e)
+		}
+		b.WriteString("\n")
+	}
+
+	// --- Command constants (only commands emitted in phase transitions) ---
+	if len(usedCmds) > 0 {
+		var sortedCmds []string
+		for c := range usedCmds {
+			sortedCmds = append(sortedCmds, string(c))
+		}
+		sort.Strings(sortedCmds)
+		b.WriteString("\\* Command types\n")
+		for _, c := range sortedCmds {
+			fmt.Fprintf(&b, "CMD_%s == \"%s\"\n", sanitiseTLA(c), c)
+		}
 		b.WriteString("\n")
 	}
 
@@ -417,7 +461,7 @@ func (p *Protocol) ExportTLAPhase(w io.Writer, phaseName string) error {
 					if i > 0 {
 						b.WriteString(", ")
 					}
-					fmt.Fprintf(&b, "\"%s\"", cmd)
+					fmt.Fprintf(&b, "CMD_%s", sanitiseTLA(string(cmd)))
 				}
 				b.WriteString("}\n\n")
 			}
@@ -493,9 +537,13 @@ func (p *Protocol) ExportTLAPhase(w io.Writer, phaseName string) error {
 					continue
 				}
 				actionName := makeActionName(a.Name, t)
+				cmds := make([]string, len(t.Emits))
+				for i, c := range t.Emits {
+					cmds[i] = "CMD_" + sanitiseTLA(string(c))
+				}
 				fmt.Fprintf(&b, "\\* %s emits: %s\n",
 					actionName,
-					strings.Join(cmdStrings(t.Emits), ", "))
+					strings.Join(cmds, ", "))
 			}
 		}
 	}
@@ -504,14 +552,6 @@ func (p *Protocol) ExportTLAPhase(w io.Writer, phaseName string) error {
 
 	_, err := io.WriteString(w, b.String())
 	return err
-}
-
-func cmdStrings(cmds []CmdID) []string {
-	out := make([]string, len(cmds))
-	for i, c := range cmds {
-		out[i] = string(c)
-	}
-	return out
 }
 
 func makeActionName(actorName string, t Transition) string {

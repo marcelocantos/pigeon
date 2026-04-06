@@ -6,21 +6,11 @@ package tern
 import (
 	"context"
 	"crypto/tls"
-	"encoding/binary"
 	"io"
 	"sync"
 	"time"
 
 	"github.com/marcelocantos/tern/crypto"
-)
-
-// Internal message types — first byte of encrypted plaintext.
-// These are invisible to callers; only application messages are delivered.
-// Retained for future use (LAN upgrade over WebTransport).
-const (
-	msgApp      byte = 0x00 // application message
-	msgLANOffer byte = 0x01 // LAN address exchange (reserved)
-	msgCutover  byte = 0x02 // transport cutover marker (reserved)
 )
 
 // datagrammer provides unreliable datagram send/receive.
@@ -70,15 +60,8 @@ type Conn struct {
 	// PairingRecord for deriving per-channel encryption keys.
 	pairingRecord *crypto.PairingRecord
 
-	// Datagram channel dispatch (legacy — migrating to executor).
-	dgChannels  map[uint16]*DatagramChannel
-	dgIncoming  map[uint16]chan []byte // per-channel datagram queues
-	connDg      chan []byte            // conn-level datagram queue
-	dgDispatch  sync.Once             // starts dispatcher once
-
-	// Fragment reassembly (legacy — executor has its own).
-	reasm        *reassembler
-	maxDgPayload int
+	// Datagram channel cache (keyed by channel ID).
+	dgChannels map[uint16]*DatagramChannel
 
 	// LAN upgrade config.
 	lanServer  *LANServer
@@ -139,37 +122,12 @@ func newConn(stream io.ReadWriteCloser, dg datagrammer, closer io.Closer, opener
 	exec := newExecutor(ctx, cancel, machine, relay)
 	exec.instanceID = instanceID
 
-	// Legacy reassembler for old code paths still using Conn directly.
-	done := make(chan struct{})
-	go func() {
-		<-ctx.Done()
-		close(done)
-	}()
-
-	c := &Conn{
-		instanceID:   instanceID,
-		exec:         exec,
-		reasm:        newReassembler(DefaultFragmentTimeout, done),
-		maxDgPayload: DefaultMaxDatagramPayload,
-		ctx:          ctx,
-		cancel:       cancel,
+	return &Conn{
+		instanceID: instanceID,
+		exec:       exec,
+		ctx:        ctx,
+		cancel:     cancel,
 	}
-
-	// Wire legacy datagram channel routing through the executor.
-	exec.routeChannelDatagram = func(id uint16, payload []byte) {
-		c.routeToChannel(id, payload)
-	}
-	exec.drainChannelQueues = func() {
-		c.mu.Lock()
-		for _, ch := range c.dgIncoming {
-			for len(ch) > 0 {
-				<-ch
-			}
-		}
-		c.mu.Unlock()
-	}
-
-	return c
 }
 
 // SetPairingRecord stores a PairingRecord for deriving per-channel
@@ -191,50 +149,6 @@ func (c *Conn) acceptStream(ctx context.Context) (io.ReadWriteCloser, error) {
 		return nil, io.ErrClosedPipe
 	}
 	return p.acceptor.AcceptStream(ctx)
-}
-
-// datagramDispatcher reads datagrams from the QUIC connection and
-// routes them: conn-level datagrams go to the connDg queue, channel-
-// tagged datagrams go to the appropriate channel queue. Handles both
-// whole and fragmented datagrams.
-func (c *Conn) datagramDispatcher() {
-	for {
-		payload, chanID, err := c.recvRawDatagram(c.ctx)
-		if err != nil {
-			return
-		}
-		if chanID >= 0 {
-			c.routeToChannel(uint16(chanID), payload)
-		} else {
-			select {
-			case c.connDg <- payload:
-			default:
-			}
-		}
-	}
-}
-
-// recvTaggedDatagram receives the next datagram for a specific channel ID.
-func (c *Conn) recvTaggedDatagram(ctx context.Context, id uint16) ([]byte, error) {
-	c.mu.Lock()
-	ch, ok := c.dgIncoming[id]
-	if !ok {
-		if c.dgIncoming == nil {
-			c.dgIncoming = make(map[uint16]chan []byte)
-		}
-		ch = make(chan []byte, 64)
-		c.dgIncoming[id] = ch
-	}
-	c.mu.Unlock()
-
-	select {
-	case data := <-ch:
-		return data, nil
-	case <-ctx.Done():
-		return nil, ctx.Err()
-	case <-c.ctx.Done():
-		return nil, c.ctx.Err()
-	}
 }
 
 // OpenStream opens a new bidirectional stream on the underlying QUIC
@@ -316,8 +230,6 @@ func (c *Conn) Recv(ctx context.Context) ([]byte, error) {
 // SendDatagram sends an unreliable datagram to the peer. The executor
 // handles encryption, framing, and fragmentation.
 func (c *Conn) SendDatagram(data []byte) error {
-	// Sync payload limit to executor (legacy field may be overridden by tests).
-	c.exec.maxDgPayload = c.maxDgPayload
 	return c.exec.sendDatagram(data)
 }
 
@@ -325,109 +237,6 @@ func (c *Conn) SendDatagram(data []byte) error {
 // handles reassembly, decryption, and channel demux.
 func (c *Conn) RecvDatagram(ctx context.Context) ([]byte, error) {
 	return c.exec.recvDatagram(ctx)
-}
-
-func (c *Conn) decryptDatagram(payload []byte) ([]byte, error) {
-	c.mu.Lock()
-	ch := c.dgChannel
-	c.mu.Unlock()
-	if ch != nil {
-		return ch.Decrypt(payload)
-	}
-	return payload, nil
-}
-
-func (c *Conn) ensureDispatcher() {
-	c.dgDispatch.Do(func() {
-		c.connDg = make(chan []byte, 64)
-		go c.datagramDispatcher()
-	})
-}
-
-// recvRawDatagram reads one logical datagram from the QUIC layer,
-// handling framing and fragment reassembly. Returns the payload and
-// the channel ID (-1 for conn-level datagrams).
-func (c *Conn) recvRawDatagram(ctx context.Context) (payload []byte, chanID int, err error) {
-	for {
-		data, err := c.active().dg.ReceiveDatagram(ctx)
-		if err != nil {
-			return nil, -1, err
-		}
-		if len(data) == 0 {
-			continue
-		}
-
-		switch data[0] {
-		case dgConnWhole:
-			return data[1:], -1, nil
-
-		case dgConnFragment:
-			if len(data) < 1+fragHeaderSize {
-				continue
-			}
-			msgID := binary.BigEndian.Uint32(data[1:5])
-			fragIdx := int(binary.BigEndian.Uint16(data[5:7]))
-			totalFrags := int(binary.BigEndian.Uint16(data[7:9]))
-			chunk := data[1+fragHeaderSize:]
-			if totalFrags < 2 || fragIdx >= totalFrags {
-				continue
-			}
-			assembled := c.reasm.feed(msgID, fragIdx, totalFrags, chunk)
-			if assembled == nil {
-				continue
-			}
-			return assembled, -1, nil
-
-		case dgChanWhole:
-			if len(data) < 1+chanIDSize {
-				continue
-			}
-			id := int(binary.BigEndian.Uint16(data[1:3]))
-			return data[1+chanIDSize:], id, nil
-
-		case dgChanFragment:
-			if len(data) < 1+chanIDSize+fragHeaderSize {
-				continue
-			}
-			id := int(binary.BigEndian.Uint16(data[1:3]))
-			off := 1 + chanIDSize
-			msgID := binary.BigEndian.Uint32(data[off : off+4])
-			fragIdx := int(binary.BigEndian.Uint16(data[off+4 : off+6]))
-			totalFrags := int(binary.BigEndian.Uint16(data[off+6 : off+8]))
-			chunk := data[off+fragHeaderSize:]
-			if totalFrags < 2 || fragIdx >= totalFrags {
-				continue
-			}
-			assembled := c.reasm.feed(msgID, fragIdx, totalFrags, chunk)
-			if assembled == nil {
-				continue
-			}
-			return assembled, id, nil
-
-		default:
-			continue
-		}
-	}
-}
-
-// routeToChannel delivers a datagram payload to the named channel's queue.
-func (c *Conn) routeToChannel(id uint16, payload []byte) {
-	c.mu.Lock()
-	ch, ok := c.dgIncoming[id]
-	if !ok {
-		if c.dgIncoming == nil {
-			c.dgIncoming = make(map[uint16]chan []byte)
-		}
-		ch = make(chan []byte, 64)
-		c.dgIncoming[id] = ch
-	}
-	c.mu.Unlock()
-
-	select {
-	case ch <- payload:
-	default:
-		// Drop if full (datagram semantics).
-	}
 }
 
 // Close gracefully closes the session.
@@ -443,29 +252,11 @@ func (c *Conn) Close() error {
 	return relay.closer.Close()
 }
 
-// fallbackToRelay forces a fallback from the direct path to relay.
-// Submits events to the executor and waits for each to be processed.
+// fallbackToRelay forces an immediate fallback from the direct path
+// to relay. The machine handles this via app_force_fallback transitions
+// from any LAN-related state.
 func (c *Conn) fallbackToRelay() {
-	switch m := c.exec.machine.(type) {
-	case *BackendMachine:
-		switch m.State {
-		case BackendLANActive:
-			c.exec.submitSync(event{id: EventPingTimeout})
-			m.PingFailures = 2
-			c.exec.submitSync(event{id: EventPingTimeout})
-		case BackendLANDegraded:
-			m.PingFailures = 2
-			c.exec.submitSync(event{id: EventPingTimeout})
-		case BackendLANOffered:
-			c.exec.submitSync(event{id: EventOfferTimeout})
-		}
-	case *ClientMachine:
-		switch m.State {
-		case ClientLANActive:
-			c.exec.submitSync(event{id: EventLanError})
-			c.exec.submitSync(event{id: EventRelayOk})
-		}
-	}
+	c.exec.submitSync(event{id: EventAppForceFallback})
 }
 
 // isDirectActive returns true if the direct path is active.
