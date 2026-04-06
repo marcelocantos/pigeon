@@ -217,6 +217,44 @@ Produces:
 
 ---
 
+### 🎯T19 Parallel regions in protocol state machine
+
+The transport machine mixes two orthogonal concerns in a single flat
+state machine: **path management** (relay → offered → active →
+degraded → backoff) and **data forwarding** (app_send, recv,
+datagrams). Data forwarding self-loops are identical across all path
+states and must be manually replicated every time a path state is
+added.
+
+**Desired state**: The YAML protocol framework supports parallel
+regions (AND-states / statechart regions). A machine can declare
+independent sub-machines that execute concurrently. The transport
+machine becomes:
+
+- **Path region**: RelayConnected → LANOffered → LANActive →
+  LANDegraded → RelayBackoff (health, fallback, backoff)
+- **DataForwarding region**: always active, routes app_send/recv
+  through the current active path. Defined once.
+
+**Implications**:
+- YAML gains a `regions:` section under actors, each with its own
+  states and transitions
+- Code generator emits composite state: each region has independent
+  current-state, HandleEvent dispatches to all regions
+- TLA+ generator emits parallel composition (interleaving)
+- PlantUML generator emits `--` region separators inside states
+- Adding new path states (e.g., STUNConnecting for 🎯T6) no longer
+  requires duplicating data-forwarding transitions
+- Backend transport transitions drop from ~60 to ~35
+
+**Forked from**: diagram review during 🎯T18 completion — the
+coalesced self-loops made the redundancy visually obvious.
+
+- **Weight**: 1.25 (value 5 / cost 4)
+- **Status**: not started
+
+---
+
 ### 🎯T17 Makefile deploy target
 
 `make deploy` that deploys to Fly.io, starts the machine, and waits
