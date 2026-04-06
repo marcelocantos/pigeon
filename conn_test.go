@@ -177,7 +177,7 @@ func localRelayWT(t *testing.T) relayEnv {
 	}
 }
 
-// liveRelay returns a relayEnv for tern.fly.dev if PIGEON_TOKEN is set.
+// liveRelay returns a relayEnv for pigeon.fly.dev if PIGEON_TOKEN is set.
 // Skips the test otherwise. Uses WebTransport since the live relay may
 // not yet have a raw QUIC port.
 func liveRelay(t *testing.T) relayEnv {
@@ -188,7 +188,7 @@ func liveRelay(t *testing.T) relayEnv {
 	}
 
 	env := relayEnv{
-		url: "https://tern.fly.dev:443",
+		url: "https://pigeon.fly.dev:443",
 		cfg: Config{
 			Token:        token,
 			WebTransport: true,
@@ -319,7 +319,7 @@ func liveRelayEnv() (token, url string) {
 	if token == "" {
 		return "", ""
 	}
-	return token, "https://tern.fly.dev:443"
+	return token, "https://pigeon.fly.dev:443"
 }
 
 // localRelayB is localRelay for benchmarks.
@@ -1078,7 +1078,7 @@ func TestQUICUnknownHandshake(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
-	clientTLS := &tls.Config{RootCAs: pool, NextProtos: []string{ternALPN}}
+	clientTLS := &tls.Config{RootCAs: pool, NextProtos: []string{pigeonALPN}}
 	conn, err := quic.DialAddr(ctx, addr, clientTLS, &quic.Config{EnableDatagrams: true})
 	if err != nil {
 		t.Fatal("dial:", err)
@@ -1127,7 +1127,7 @@ func TestQUICInvalidInstanceIDConnect(t *testing.T) {
 	defer cancel()
 
 	// Connect with a too-long instance ID (>64 chars).
-	clientTLS := &tls.Config{RootCAs: pool, NextProtos: []string{ternALPN}}
+	clientTLS := &tls.Config{RootCAs: pool, NextProtos: []string{pigeonALPN}}
 	conn, err := quic.DialAddr(ctx, addr, clientTLS, &quic.Config{EnableDatagrams: true})
 	if err != nil {
 		t.Fatal("dial:", err)
@@ -1159,8 +1159,8 @@ func TestQuicTLSConfigNil(t *testing.T) {
 	if cfg == nil {
 		t.Fatal("expected non-nil config")
 	}
-	if len(cfg.NextProtos) == 0 || cfg.NextProtos[0] != ternALPN {
-		t.Fatalf("expected ALPN %q, got %v", ternALPN, cfg.NextProtos)
+	if len(cfg.NextProtos) == 0 || cfg.NextProtos[0] != pigeonALPN {
+		t.Fatalf("expected ALPN %q, got %v", pigeonALPN, cfg.NextProtos)
 	}
 }
 
@@ -1172,8 +1172,8 @@ func TestQuicTLSConfigWithExisting(t *testing.T) {
 	if !cfg.InsecureSkipVerify {
 		t.Fatal("expected InsecureSkipVerify to be cloned")
 	}
-	if len(cfg.NextProtos) == 0 || cfg.NextProtos[0] != ternALPN {
-		t.Fatalf("expected ALPN %q, got %v", ternALPN, cfg.NextProtos)
+	if len(cfg.NextProtos) == 0 || cfg.NextProtos[0] != pigeonALPN {
+		t.Fatalf("expected ALPN %q, got %v", pigeonALPN, cfg.NextProtos)
 	}
 	// Verify original was not mutated.
 	if len(orig.NextProtos) != 0 {
@@ -1859,7 +1859,7 @@ func TestQUICHandshakeDroppedConnection(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
-	clientTLS := &tls.Config{RootCAs: pool, NextProtos: []string{ternALPN}}
+	clientTLS := &tls.Config{RootCAs: pool, NextProtos: []string{pigeonALPN}}
 
 	// Scenario 1: Connect and immediately close without opening a stream.
 	// This exercises the "accept stream failed" path.
@@ -1910,7 +1910,7 @@ func TestQUICRegisterWriteIDFails(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
-	clientTLS := &tls.Config{RootCAs: pool, NextProtos: []string{ternALPN}}
+	clientTLS := &tls.Config{RootCAs: pool, NextProtos: []string{pigeonALPN}}
 	conn, err := quic.DialAddr(ctx, addr, clientTLS, &quic.Config{EnableDatagrams: true})
 	if err != nil {
 		t.Fatal("dial:", err)
@@ -1949,7 +1949,7 @@ func TestConnectToOccupiedInstanceViaQUICRaw(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
-	clientTLS := &tls.Config{RootCAs: pool, NextProtos: []string{ternALPN}}
+	clientTLS := &tls.Config{RootCAs: pool, NextProtos: []string{pigeonALPN}}
 
 	// Register a backend.
 	conn1, err := quic.DialAddr(ctx, addr, clientTLS, &quic.Config{EnableDatagrams: true})

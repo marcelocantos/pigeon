@@ -11,20 +11,20 @@ import (
 	"testing"
 	"time"
 
-	pigeon "github.com/marcelocantos/pigeon"
+	"github.com/marcelocantos/pigeon"
 	"github.com/marcelocantos/pigeon/crypto"
 )
 
 // TestE2EPairingAndEncryptedRelay_WT exercises the full stack via WebTransport.
 func TestE2EPairingAndEncryptedRelay_WT(t *testing.T) {
 	url, tlsConfig := startTestRelay(t, "")
-	runE2EPairingTest(t, url, tern.Config{TLS: tlsConfig, WebTransport: true})
+	runE2EPairingTest(t, url, pigeon.Config{TLS: tlsConfig, WebTransport: true})
 }
 
 // TestE2EPairingAndEncryptedRelay_QUIC exercises the full stack via raw QUIC.
 func TestE2EPairingAndEncryptedRelay_QUIC(t *testing.T) {
 	tr := startTestRelayWithQUIC(t, "")
-	runE2EPairingTest(t, tr.wtURL, tern.Config{TLS: tr.tlsConfig, QUICPort: tr.quicPort})
+	runE2EPairingTest(t, tr.wtURL, pigeon.Config{TLS: tr.tlsConfig, QUICPort: tr.quicPort})
 }
 
 // TestE2ECrossProtocol exercises QUIC backend + WebTransport client.
@@ -34,7 +34,7 @@ func TestE2ECrossProtocol(t *testing.T) {
 	defer cancel()
 
 	// Backend registers via raw QUIC.
-	backend, err := tern.Register(ctx, tr.wtURL, tern.Config{
+	backend, err := pigeon.Register(ctx, tr.wtURL, pigeon.Config{
 		TLS:      tr.tlsConfig,
 		QUICPort: tr.quicPort,
 	})
@@ -44,7 +44,7 @@ func TestE2ECrossProtocol(t *testing.T) {
 	defer backend.CloseNow()
 
 	// Client connects via WebTransport.
-	client, err := tern.Connect(ctx, tr.wtURL, backend.InstanceID(), tern.Config{
+	client, err := pigeon.Connect(ctx, tr.wtURL, backend.InstanceID(), pigeon.Config{
 		TLS:          tr.tlsConfig,
 		WebTransport: true,
 	})
@@ -86,13 +86,13 @@ func TestE2ECrossProtocol(t *testing.T) {
 //  4. Encrypted channel established
 //  5. Encrypted messages flow bidirectionally
 //  6. Relay sees only ciphertext
-func runE2EPairingTest(t *testing.T, relayURL string, cfg tern.Config) {
+func runE2EPairingTest(t *testing.T, relayURL string, cfg pigeon.Config) {
 	t.Helper()
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
 
 	// Backend registers via relay package.
-	backend, err := tern.Register(ctx, relayURL, cfg)
+	backend, err := pigeon.Register(ctx, relayURL, cfg)
 	if err != nil {
 		t.Fatalf("backend register: %v", err)
 	}
@@ -100,7 +100,7 @@ func runE2EPairingTest(t *testing.T, relayURL string, cfg tern.Config) {
 	t.Logf("Backend registered as %s", backend.InstanceID())
 
 	// Client connects via relay package.
-	client, err := tern.Connect(ctx, relayURL, backend.InstanceID(), cfg)
+	client, err := pigeon.Connect(ctx, relayURL, backend.InstanceID(), cfg)
 	if err != nil {
 		t.Fatalf("client connect: %v", err)
 	}

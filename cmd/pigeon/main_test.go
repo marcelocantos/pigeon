@@ -16,7 +16,7 @@ import (
 	"testing"
 	"time"
 
-	pigeon "github.com/marcelocantos/pigeon"
+	"github.com/marcelocantos/pigeon"
 )
 
 // testCert creates a self-signed TLS certificate and CA pool for testing.
@@ -73,7 +73,7 @@ func startTestRelay(t *testing.T, token string) (string, *tls.Config) {
 	cert, pool := testCert(t)
 	tlsCfg := &tls.Config{Certificates: []tls.Certificate{cert}}
 
-	srv, err := tern.NewWebTransportServer("127.0.0.1:0", tlsCfg, token)
+	srv, err := pigeon.NewWebTransportServer("127.0.0.1:0", tlsCfg, token)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -107,7 +107,7 @@ func startTestRelayWithQUIC(t *testing.T, token string) testRelay {
 	cert, pool := testCert(t)
 	tlsCfg := &tls.Config{Certificates: []tls.Certificate{cert}}
 
-	srv, err := tern.NewWebTransportServer("127.0.0.1:0", tlsCfg, token)
+	srv, err := pigeon.NewWebTransportServer("127.0.0.1:0", tlsCfg, token)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -120,7 +120,7 @@ func startTestRelayWithQUIC(t *testing.T, token string) testRelay {
 	t.Cleanup(func() { srv.Close() })
 
 	// Start raw QUIC server sharing the same hub.
-	qsrv := tern.NewQUICServer("127.0.0.1:0", tlsCfg, token, srv.Hub())
+	qsrv := pigeon.NewQUICServer("127.0.0.1:0", tlsCfg, token, srv.Hub())
 	qConn, err := net.ListenUDP("udp", &net.UDPAddr{IP: net.IPv4(127, 0, 0, 1)})
 	if err != nil {
 		t.Fatal(err)
@@ -143,7 +143,7 @@ func TestRegisterAssignsID(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
-	backend, err := tern.Register(ctx, url, tern.Config{TLS: tlsConfig, WebTransport: true})
+	backend, err := pigeon.Register(ctx, url, pigeon.Config{TLS: tlsConfig, WebTransport: true})
 	if err != nil {
 		t.Fatal("register:", err)
 	}
@@ -160,7 +160,7 @@ func TestRegisterAssignsID_QUIC(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
-	backend, err := tern.Register(ctx, tr.wtURL, tern.Config{
+	backend, err := pigeon.Register(ctx, tr.wtURL, pigeon.Config{
 		TLS:      tr.tlsConfig,
 		QUICPort: tr.quicPort,
 	})
@@ -180,13 +180,13 @@ func TestBidirectionalBridge(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
-	backend, err := tern.Register(ctx, url, tern.Config{TLS: tlsConfig, WebTransport: true})
+	backend, err := pigeon.Register(ctx, url, pigeon.Config{TLS: tlsConfig, WebTransport: true})
 	if err != nil {
 		t.Fatal("register:", err)
 	}
 	defer backend.CloseNow()
 
-	client, err := tern.Connect(ctx, url, backend.InstanceID(), tern.Config{TLS: tlsConfig, WebTransport: true})
+	client, err := pigeon.Connect(ctx, url, backend.InstanceID(), pigeon.Config{TLS: tlsConfig, WebTransport: true})
 	if err != nil {
 		t.Fatal("connect:", err)
 	}
@@ -224,7 +224,7 @@ func TestBidirectionalBridge_QUIC(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
-	backend, err := tern.Register(ctx, tr.wtURL, tern.Config{
+	backend, err := pigeon.Register(ctx, tr.wtURL, pigeon.Config{
 		TLS:      tr.tlsConfig,
 		QUICPort: tr.quicPort,
 	})
@@ -233,7 +233,7 @@ func TestBidirectionalBridge_QUIC(t *testing.T) {
 	}
 	defer backend.CloseNow()
 
-	client, err := tern.Connect(ctx, tr.wtURL, backend.InstanceID(), tern.Config{
+	client, err := pigeon.Connect(ctx, tr.wtURL, backend.InstanceID(), pigeon.Config{
 		TLS:      tr.tlsConfig,
 		QUICPort: tr.quicPort,
 	})
@@ -276,7 +276,7 @@ func TestCrossProtocolBridge(t *testing.T) {
 	defer cancel()
 
 	// Backend registers via raw QUIC.
-	backend, err := tern.Register(ctx, tr.wtURL, tern.Config{
+	backend, err := pigeon.Register(ctx, tr.wtURL, pigeon.Config{
 		TLS:      tr.tlsConfig,
 		QUICPort: tr.quicPort,
 	})
@@ -286,7 +286,7 @@ func TestCrossProtocolBridge(t *testing.T) {
 	defer backend.CloseNow()
 
 	// Client connects via WebTransport.
-	client, err := tern.Connect(ctx, tr.wtURL, backend.InstanceID(), tern.Config{
+	client, err := pigeon.Connect(ctx, tr.wtURL, backend.InstanceID(), pigeon.Config{
 		TLS:          tr.tlsConfig,
 		WebTransport: true,
 	})
@@ -325,13 +325,13 @@ func TestDatagramForwarding(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
-	backend, err := tern.Register(ctx, url, tern.Config{TLS: tlsConfig, WebTransport: true})
+	backend, err := pigeon.Register(ctx, url, pigeon.Config{TLS: tlsConfig, WebTransport: true})
 	if err != nil {
 		t.Fatal("register:", err)
 	}
 	defer backend.CloseNow()
 
-	client, err := tern.Connect(ctx, url, backend.InstanceID(), tern.Config{TLS: tlsConfig, WebTransport: true})
+	client, err := pigeon.Connect(ctx, url, backend.InstanceID(), pigeon.Config{TLS: tlsConfig, WebTransport: true})
 	if err != nil {
 		t.Fatal("connect:", err)
 	}
@@ -369,7 +369,7 @@ func TestDatagramForwarding_QUIC(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
-	backend, err := tern.Register(ctx, tr.wtURL, tern.Config{
+	backend, err := pigeon.Register(ctx, tr.wtURL, pigeon.Config{
 		TLS:      tr.tlsConfig,
 		QUICPort: tr.quicPort,
 	})
@@ -378,7 +378,7 @@ func TestDatagramForwarding_QUIC(t *testing.T) {
 	}
 	defer backend.CloseNow()
 
-	client, err := tern.Connect(ctx, tr.wtURL, backend.InstanceID(), tern.Config{
+	client, err := pigeon.Connect(ctx, tr.wtURL, backend.InstanceID(), pigeon.Config{
 		TLS:      tr.tlsConfig,
 		QUICPort: tr.quicPort,
 	})
@@ -420,19 +420,19 @@ func TestTokenAuth(t *testing.T) {
 	defer cancel()
 
 	// No token -> should fail.
-	_, err := tern.Register(ctx, url, tern.Config{TLS: tlsConfig, WebTransport: true})
+	_, err := pigeon.Register(ctx, url, pigeon.Config{TLS: tlsConfig, WebTransport: true})
 	if err == nil {
 		t.Fatal("expected error without token")
 	}
 
 	// Wrong token -> should fail.
-	_, err = tern.Register(ctx, url, tern.Config{TLS: tlsConfig, Token: "wrong", WebTransport: true})
+	_, err = pigeon.Register(ctx, url, pigeon.Config{TLS: tlsConfig, Token: "wrong", WebTransport: true})
 	if err == nil {
 		t.Fatal("expected error with wrong token")
 	}
 
 	// Correct token -> should succeed.
-	backend, err := tern.Register(ctx, url, tern.Config{TLS: tlsConfig, Token: "secret-token", WebTransport: true})
+	backend, err := pigeon.Register(ctx, url, pigeon.Config{TLS: tlsConfig, Token: "secret-token", WebTransport: true})
 	if err != nil {
 		t.Fatal("register with token:", err)
 	}
@@ -449,7 +449,7 @@ func TestTokenAuth_QUIC(t *testing.T) {
 	defer cancel()
 
 	// No token -> should fail.
-	_, err := tern.Register(ctx, tr.wtURL, tern.Config{
+	_, err := pigeon.Register(ctx, tr.wtURL, pigeon.Config{
 		TLS:      tr.tlsConfig,
 		QUICPort: tr.quicPort,
 	})
@@ -458,7 +458,7 @@ func TestTokenAuth_QUIC(t *testing.T) {
 	}
 
 	// Wrong token -> should fail.
-	_, err = tern.Register(ctx, tr.wtURL, tern.Config{
+	_, err = pigeon.Register(ctx, tr.wtURL, pigeon.Config{
 		TLS:      tr.tlsConfig,
 		QUICPort: tr.quicPort,
 		Token:    "wrong",
@@ -468,7 +468,7 @@ func TestTokenAuth_QUIC(t *testing.T) {
 	}
 
 	// Correct token -> should succeed.
-	backend, err := tern.Register(ctx, tr.wtURL, tern.Config{
+	backend, err := pigeon.Register(ctx, tr.wtURL, pigeon.Config{
 		TLS:      tr.tlsConfig,
 		QUICPort: tr.quicPort,
 		Token:    "secret-token",
@@ -488,21 +488,21 @@ func TestSecondClientRejected(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
-	backend, err := tern.Register(ctx, url, tern.Config{TLS: tlsConfig, WebTransport: true})
+	backend, err := pigeon.Register(ctx, url, pigeon.Config{TLS: tlsConfig, WebTransport: true})
 	if err != nil {
 		t.Fatal("register:", err)
 	}
 	defer backend.CloseNow()
 
 	// First client connects.
-	client1, err := tern.Connect(ctx, url, backend.InstanceID(), tern.Config{TLS: tlsConfig, WebTransport: true})
+	client1, err := pigeon.Connect(ctx, url, backend.InstanceID(), pigeon.Config{TLS: tlsConfig, WebTransport: true})
 	if err != nil {
 		t.Fatal("connect first:", err)
 	}
 	defer client1.CloseNow()
 
 	// Second client should be rejected.
-	_, err = tern.Connect(ctx, url, backend.InstanceID(), tern.Config{TLS: tlsConfig, WebTransport: true})
+	_, err = pigeon.Connect(ctx, url, backend.InstanceID(), pigeon.Config{TLS: tlsConfig, WebTransport: true})
 	if err == nil {
 		t.Fatal("expected error for second client")
 	}
