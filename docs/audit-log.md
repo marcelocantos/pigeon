@@ -74,3 +74,8 @@ maintenance activities. Append-only — newest entries at the bottom.
 
 - **Commit**: `7ad9b9c`
 - **Outcome**: Released v0.13.0. Project renamed from tern to pigeon. GitHub repo, Go module, Swift/Kotlin/TypeScript packages, ALPN protocol, env vars, Fly.io app, all documentation updated. Homebrew formula updated to pigeon.
+
+## 2026-04-07 — /release v0.14.0
+
+- **Commit**: `56b9224`
+- **Outcome**: Released v0.14.0. Fly.io app migrated from tern to carrier-pigeon.fly.dev. Homebrew formula updated.
