@@ -69,3 +69,8 @@ maintenance activities. Append-only — newest entries at the bottom.
 
 - **Commit**: `4ba3ca0`
 - **Outcome**: Released v0.12.0 (darwin-arm64, linux-amd64, linux-arm64). Major release: machine-driven executor (🎯T18), hierarchical state machines (🎯T19), TLA+ rewrite with channel elimination, unified session protocol, wire constants, session protocol design doc. Homebrew formula updated.
+
+## 2026-04-06 — /release v0.13.0
+
+- **Commit**: `7ad9b9c`
+- **Outcome**: Released v0.13.0. Project renamed from tern to pigeon. GitHub repo, Go module, Swift/Kotlin/TypeScript packages, ALPN protocol, env vars, Fly.io app, all documentation updated. Homebrew formula updated to pigeon.
