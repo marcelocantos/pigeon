@@ -64,3 +64,8 @@ maintenance activities. Append-only — newest entries at the bottom.
 
 - **Commit**: `70b55e6`
 - **Outcome**: Released v0.5.0. Renamed Swift and Kotlin packages from TernCrypto/TernRelay to just Tern (single package per platform). Added convergence targets T12-T17.
+
+## 2026-04-06 — /release v0.12.0
+
+- **Commit**: `4ba3ca0`
+- **Outcome**: Released v0.12.0 (darwin-arm64, linux-amd64, linux-arm64). Major release: machine-driven executor (🎯T18), hierarchical state machines (🎯T19), TLA+ rewrite with channel elimination, unified session protocol, wire constants, session protocol design doc. Homebrew formula updated.
