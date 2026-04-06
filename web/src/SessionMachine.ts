@@ -184,6 +184,34 @@ export enum CmdID {
     SetCryptoDatagram = "set_crypto_datagram",
 }
 
+/** Protocol wire constants shared across all platforms. */
+export const Wire = {
+    DG_CONN_WHOLE: 0x00,
+    DG_PING: 0x10,
+    DG_PONG: 0x11,
+    DG_CONN_FRAGMENT: 0x40,
+    DG_CHAN_WHOLE: 0x80,
+    DG_CHAN_FRAGMENT: 0xC0,
+    FRAG_HEADER_SIZE: 8,
+    CHAN_ID_SIZE: 2,
+    MAX_DATAGRAM_PAYLOAD: 1200,
+    FRAGMENT_TIMEOUT_MS: 5000, // ms
+    FRAME_APP: 0x00,
+    FRAME_LAN_OFFER: 0x01,
+    FRAME_CUTOVER: 0x02,
+    MAX_MESSAGE_SIZE: 1048576,
+    LENGTH_PREFIX_SIZE: 4,
+    PING_INTERVAL_MS: 5000, // ms
+    PONG_TIMEOUT_MS: 4000, // ms
+    MAX_PING_FAILURES: 3,
+    MAX_BACKOFF_LEVEL: 5,
+    STREAM_CHANNEL_OPENER_SUFFIX: ":o2a",
+    STREAM_CHANNEL_ACCEPT_SUFFIX: ":a2o",
+    DG_CHANNEL_SEND_SUFFIX: ":dg:send",
+    DG_CHANNEL_RECV_SUFFIX: ":dg:recv",
+    CHANNEL_ID_HASH_MULTIPLIER: 31,
+} as const;
+
 export interface Transition {
     readonly from: string;
     readonly to: string;

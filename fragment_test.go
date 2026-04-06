@@ -135,12 +135,12 @@ func TestDatagramFragmentTimeout(t *testing.T) {
 
 	// Manually send fragments for a 3-fragment message, but omit fragment 1.
 	for _, idx := range []int{0, 2} {
-		frame := make([]byte, 1+fragHeaderSize+10)
-		frame[0] = dgConnFragment
+		frame := make([]byte, 1+FragHeaderSize+10)
+		frame[0] = DgConnFragment
 		putUint32BE(frame[1:5], 42)
 		putUint16BE(frame[5:7], uint16(idx))
 		putUint16BE(frame[7:9], 3)
-		copy(frame[1+fragHeaderSize:], []byte("payload..."))
+		copy(frame[1+FragHeaderSize:], []byte("payload..."))
 		ch <- frame
 	}
 

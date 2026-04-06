@@ -13,15 +13,6 @@ import (
 	"github.com/marcelocantos/tern/crypto"
 )
 
-// Internal message types — first byte of encrypted plaintext.
-// These are invisible to callers; only application messages are delivered.
-// Retained for future use (LAN upgrade over WebTransport).
-const (
-	msgApp      byte = 0x00 // application message
-	msgLANOffer byte = 0x01 // LAN address exchange (reserved)
-	msgCutover  byte = 0x02 // transport cutover marker (reserved)
-)
-
 // datagrammer provides unreliable datagram send/receive.
 type datagrammer interface {
 	SendDatagram([]byte) error

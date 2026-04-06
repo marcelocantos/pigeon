@@ -274,7 +274,7 @@ func TestExecutorSendRecvDatagram(t *testing.T) {
 
 	// Read the raw datagram from the "remote" side and verify framing.
 	raw := <-remoteDg.in
-	if len(raw) < 2 || raw[0] != dgConnWhole {
+	if len(raw) < 2 || raw[0] != DgConnWhole {
 		t.Fatalf("bad frame: %x", raw)
 	}
 	if string(raw[1:]) != "dgtest" {
@@ -283,7 +283,7 @@ func TestExecutorSendRecvDatagram(t *testing.T) {
 
 	// Now test recv: send a framed datagram from the remote side.
 	frame := make([]byte, 1+len("dgback"))
-	frame[0] = dgConnWhole
+	frame[0] = DgConnWhole
 	copy(frame[1:], "dgback")
 	localDg.in <- frame
 

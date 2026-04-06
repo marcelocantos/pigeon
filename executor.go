@@ -175,9 +175,9 @@ func newExecutor(
 		chanDgWaiters: make(map[uint16][]chan dgRecvResult),
 		chanDgBuffers: make(map[uint16][][]byte),
 		reasm:         newReassembler(DefaultFragmentTimeout, done),
-		maxDgPayload:  DefaultMaxDatagramPayload,
-		pingInterval:  5 * time.Second,
-		pongTimeout:   4 * time.Second,
+		maxDgPayload:  MaxDatagramPayload,
+		pingInterval:  time.Duration(PingIntervalMs) * time.Millisecond,
+		pongTimeout:   time.Duration(PongTimeoutMs) * time.Millisecond,
 		ctx:           ctx,
 		cancel:        cancel,
 	}
@@ -373,7 +373,7 @@ func (e *executor) executeCommand(cmd CmdID, payload any) {
 			var msg []byte
 			if e.channel != nil {
 				framed := make([]byte, 1+len(req.data))
-				framed[0] = msgApp
+				framed[0] = FrameApp
 				copy(framed[1:], req.data)
 				msg = e.channel.Encrypt(framed)
 			} else {
@@ -393,12 +393,12 @@ func (e *executor) executeCommand(cmd CmdID, payload any) {
 			// Single datagram or fragment.
 			if 1+len(data) <= e.maxDgPayload {
 				frame := make([]byte, 1+len(data))
-				frame[0] = dgConnWhole
+				frame[0] = DgConnWhole
 				copy(frame[1:], data)
 				req.done <- p.dg.SendDatagram(frame)
 			} else {
 				msgID := nextMsgID.Add(1)
-				req.done <- sendFragmented(p.dg, data, e.maxDgPayload, msgID, dgConnFragment, nil)
+				req.done <- sendFragmented(p.dg, data, e.maxDgPayload, msgID, DgConnFragment, nil)
 			}
 		}
 
@@ -420,13 +420,13 @@ func (e *executor) executeCommand(cmd CmdID, payload any) {
 	case CmdSendPathPing:
 		p := e.activePath()
 		if p.dg != nil {
-			p.dg.SendDatagram([]byte{dgPing})
+			p.dg.SendDatagram([]byte{DgPing})
 		}
 
 	case CmdSendPathPong:
 		p := e.activePath()
 		if p.dg != nil {
-			p.dg.SendDatagram([]byte{dgPong})
+			p.dg.SendDatagram([]byte{DgPong})
 		}
 
 	case CmdSendLanOffer:
@@ -579,13 +579,13 @@ func (e *executor) processDatagram(raw []byte) {
 	}
 
 	switch raw[0] {
-	case dgPing:
+	case DgPing:
 		e.submit(event{id: EventRecvPathPing})
 		return
-	case dgPong:
+	case DgPong:
 		e.submit(event{id: EventRecvPathPong})
 		return
-	case dgConnWhole:
+	case DgConnWhole:
 		payload := raw[1:]
 		if e.dgChannel != nil {
 			decrypted, err := e.dgChannel.Decrypt(payload)
@@ -597,14 +597,14 @@ func (e *executor) processDatagram(raw []byte) {
 		}
 		e.deliverDatagram(payload)
 
-	case dgConnFragment:
-		if len(raw) < 1+fragHeaderSize {
+	case DgConnFragment:
+		if len(raw) < 1+FragHeaderSize {
 			return
 		}
 		msgID := binary.BigEndian.Uint32(raw[1:5])
 		fragIdx := int(binary.BigEndian.Uint16(raw[5:7]))
 		totalFrags := int(binary.BigEndian.Uint16(raw[7:9]))
-		chunk := raw[1+fragHeaderSize:]
+		chunk := raw[1+FragHeaderSize:]
 		if totalFrags < 2 || fragIdx >= totalFrags {
 			return
 		}
@@ -622,24 +622,24 @@ func (e *executor) processDatagram(raw []byte) {
 		}
 		e.deliverDatagram(assembled)
 
-	case dgChanWhole:
-		if len(raw) < 1+chanIDSize {
+	case DgChanWhole:
+		if len(raw) < 1+ChanIdSize {
 			return
 		}
 		id := binary.BigEndian.Uint16(raw[1:3])
-		payload := raw[1+chanIDSize:]
+		payload := raw[1+ChanIdSize:]
 		e.deliverChannelDatagram(id, payload)
 
-	case dgChanFragment:
-		if len(raw) < 1+chanIDSize+fragHeaderSize {
+	case DgChanFragment:
+		if len(raw) < 1+ChanIdSize+FragHeaderSize {
 			return
 		}
 		id := binary.BigEndian.Uint16(raw[1:3])
-		off := 1 + chanIDSize
+		off := 1 + ChanIdSize
 		msgID := binary.BigEndian.Uint32(raw[off : off+4])
 		fragIdx := int(binary.BigEndian.Uint16(raw[off+4 : off+6]))
 		totalFrags := int(binary.BigEndian.Uint16(raw[off+6 : off+8]))
-		chunk := raw[off+fragHeaderSize:]
+		chunk := raw[off+FragHeaderSize:]
 		if totalFrags < 2 || fragIdx >= totalFrags {
 			return
 		}
@@ -721,9 +721,9 @@ func (e *executor) streamReader(ctx context.Context, p *path, dataEvent, errorEv
 			}
 			// Demux control messages vs application data.
 			switch plaintext[0] {
-			case msgApp:
+			case FrameApp:
 				e.submit(event{id: dataEvent, payload: &streamData{data: plaintext[1:]}})
-			case msgLANOffer:
+			case FrameLanOffer:
 				var offer lanOffer
 				if err := json.Unmarshal(plaintext[1:], &offer); err != nil {
 					slog.Warn("bad LAN offer", "err", err)
@@ -732,7 +732,7 @@ func (e *executor) streamReader(ctx context.Context, p *path, dataEvent, errorEv
 				e.submit(event{id: EventRecvLanOffer, payload: &lanOfferData{
 					addr: offer.Addr, challenge: offer.Challenge,
 				}})
-			case msgCutover:
+			case FrameCutover:
 				slog.Debug("received cutover marker")
 			default:
 				slog.Warn("discarding unknown message type", "type", plaintext[0])
@@ -835,7 +835,7 @@ func (e *executor) sendLANOffer() error {
 	}
 
 	// Send the offer as a control message via the relay stream.
-	return e.sendControl(msgLANOffer, offer)
+	return e.sendControl(FrameLanOffer, offer)
 }
 
 // sendControl writes a framed control message on the relay stream.

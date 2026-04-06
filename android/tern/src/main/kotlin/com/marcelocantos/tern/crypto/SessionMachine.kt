@@ -186,6 +186,34 @@ enum class CmdID(val value: String) {
     SetCryptoDatagram("set_crypto_datagram");
 }
 
+/** Protocol wire constants shared across all platforms. */
+object Wire {
+    const val DG_CONN_WHOLE: Byte = 0x00.toByte()
+    const val DG_PING: Byte = 0x10.toByte()
+    const val DG_PONG: Byte = 0x11.toByte()
+    const val DG_CONN_FRAGMENT: Byte = 0x40.toByte()
+    const val DG_CHAN_WHOLE: Byte = 0x80.toByte()
+    const val DG_CHAN_FRAGMENT: Byte = 0xC0.toByte()
+    const val FRAG_HEADER_SIZE = 8
+    const val CHAN_ID_SIZE = 2
+    const val MAX_DATAGRAM_PAYLOAD = 1200
+    const val FRAGMENT_TIMEOUT_MS = 5000L // ms
+    const val FRAME_APP: Byte = 0x00.toByte()
+    const val FRAME_LAN_OFFER: Byte = 0x01.toByte()
+    const val FRAME_CUTOVER: Byte = 0x02.toByte()
+    const val MAX_MESSAGE_SIZE = 1048576
+    const val LENGTH_PREFIX_SIZE = 4
+    const val PING_INTERVAL_MS = 5000L // ms
+    const val PONG_TIMEOUT_MS = 4000L // ms
+    const val MAX_PING_FAILURES = 3
+    const val MAX_BACKOFF_LEVEL = 5
+    const val STREAM_CHANNEL_OPENER_SUFFIX = ":o2a"
+    const val STREAM_CHANNEL_ACCEPT_SUFFIX = ":a2o"
+    const val DG_CHANNEL_SEND_SUFFIX = ":dg:send"
+    const val DG_CHANNEL_RECV_SUFFIX = ":dg:recv"
+    const val CHANNEL_ID_HASH_MULTIPLIER = 31
+}
+
 /** backend transition table. */
 object BackendTable {
     val initial = BackendState.Idle

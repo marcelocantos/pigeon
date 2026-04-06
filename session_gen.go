@@ -227,6 +227,51 @@ const (
 	CmdSetCryptoDatagram CmdID = "set_crypto_datagram"
 )
 
+// Wire constants — protocol-level values shared across all platforms.
+// DatagramFraming
+const (
+	DgConnWhole byte = 0x00 // conn-level single-frame datagram
+	DgPing byte = 0x10 // health ping on direct path
+	DgPong byte = 0x11 // health pong on direct path
+	DgConnFragment byte = 0x40 // conn-level multi-frame datagram
+	DgChanWhole byte = 0x80 // channel single-frame datagram
+	DgChanFragment byte = 0xC0 // channel multi-frame datagram
+	FragHeaderSize = 8 // fragment header: msgID(4) + fragIdx(2) + totalFrags(2)
+	ChanIdSize = 2 // channel ID prefix size in bytes
+)
+
+// DatagramLimits
+const (
+	MaxDatagramPayload = 1200 // max payload per QUIC datagram (bytes)
+	FragmentTimeoutMs = 5000 // ms // fragment reassembly timeout
+)
+
+// MessageFraming
+const (
+	FrameApp byte = 0x00 // application data
+	FrameLanOffer byte = 0x01 // LAN address exchange
+	FrameCutover byte = 0x02 // transport cutover marker
+	MaxMessageSize = 1048576 // max stream message size (1 MiB)
+	LengthPrefixSize = 4 // big-endian length prefix size
+)
+
+// Health
+const (
+	PingIntervalMs = 5000 // ms // health ping interval
+	PongTimeoutMs = 4000 // ms // pong reply timeout
+	MaxPingFailures = 3 // consecutive failures before fallback
+	MaxBackoffLevel = 5 // exponential backoff cap
+)
+
+// ChannelKeys
+const (
+	StreamChannelOpenerSuffix = ":o2a" // HKDF info suffix for opener→acceptor stream key
+	StreamChannelAcceptSuffix = ":a2o" // HKDF info suffix for acceptor→opener stream key
+	DgChannelSendSuffix = ":dg:send" // HKDF info suffix for datagram send key
+	DgChannelRecvSuffix = ":dg:recv" // HKDF info suffix for datagram recv key
+	ChannelIdHashMultiplier = 31 // hash multiplier for channel name → uint16 ID
+)
+
 func SessionProtocol() *Protocol {
 	return &Protocol{
 		Name: "Session",
@@ -300,13 +345,13 @@ func SessionProtocol() *Protocol {
 				{From: "Idle", To: "ObtainBackchannelSecret", On: Internal("backchannel_received")},
 				{From: "ObtainBackchannelSecret", To: "ConnectRelay", On: Internal("secret_parsed")},
 				{From: "ConnectRelay", To: "GenKeyPair", On: Internal("relay_connected")},
-				{From: "GenKeyPair", To: "WaitAck", On: Internal("key_pair_generated"), Do: "send_pair_hello", Sends: []Send{{To: "backend", Msg: "pair_hello", Fields: map[string]string{"pubkey": "\"client_pub\"", "token": "current_token", }}, }},
+				{From: "GenKeyPair", To: "WaitAck", On: Internal("key_pair_generated"), Do: "send_pair_hello", Sends: []Send{{To: "backend", Msg: "pair_hello", Fields: map[string]string{"token": "current_token", "pubkey": "\"client_pub\"", }}, }},
 				{From: "WaitAck", To: "E2EReady", On: Recv("pair_hello_ack"), Do: "derive_secret", Updates: []VarUpdate{{Var: "received_backend_pub", Expr: "recv_msg.pubkey"}, {Var: "client_shared_key", Expr: "DeriveKey(\"client_pub\", recv_msg.pubkey)"}, }},
 				{From: "E2EReady", To: "ShowCode", On: Recv("pair_confirm"), Updates: []VarUpdate{{Var: "client_code", Expr: "DeriveCode(received_backend_pub, \"client_pub\")"}, }},
 				{From: "ShowCode", To: "WaitPairComplete", On: Internal("code_displayed")},
 				{From: "WaitPairComplete", To: "Paired", On: Recv("pair_complete"), Do: "store_secret"},
 				{From: "Paired", To: "Reconnect", On: Internal("app_launch")},
-				{From: "Reconnect", To: "SendAuth", On: Internal("relay_connected"), Sends: []Send{{To: "backend", Msg: "auth_request", Fields: map[string]string{"device_id": "\"device_1\"", "secret": "device_secret", "nonce": "\"nonce_1\"", "key": "client_shared_key", }}, }},
+				{From: "Reconnect", To: "SendAuth", On: Internal("relay_connected"), Sends: []Send{{To: "backend", Msg: "auth_request", Fields: map[string]string{"nonce": "\"nonce_1\"", "key": "client_shared_key", "device_id": "\"device_1\"", "secret": "device_secret", }}, }},
 				{From: "SendAuth", To: "SessionActive", On: Recv("auth_ok")},
 				{From: "SessionActive", To: "RelayConnected", On: Internal("session_established")},
 				{From: "RelayConnected", To: "RelayConnected", On: Internal("app_send")},

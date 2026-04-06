@@ -186,6 +186,34 @@ public enum CmdID: String, Sendable {
     case setCryptoDatagram = "set_crypto_datagram"
 }
 
+/// Protocol wire constants shared across all platforms.
+public enum SessionWire {
+    public static let dgConnWhole: UInt8 = 0x00
+    public static let dgPing: UInt8 = 0x10
+    public static let dgPong: UInt8 = 0x11
+    public static let dgConnFragment: UInt8 = 0x40
+    public static let dgChanWhole: UInt8 = 0x80
+    public static let dgChanFragment: UInt8 = 0xC0
+    public static let fragHeaderSize = 8
+    public static let chanIdSize = 2
+    public static let maxDatagramPayload = 1200
+    public static let fragmentTimeoutMs = 5000 // ms
+    public static let frameApp: UInt8 = 0x00
+    public static let frameLanOffer: UInt8 = 0x01
+    public static let frameCutover: UInt8 = 0x02
+    public static let maxMessageSize = 1048576
+    public static let lengthPrefixSize = 4
+    public static let pingIntervalMs = 5000 // ms
+    public static let pongTimeoutMs = 4000 // ms
+    public static let maxPingFailures = 3
+    public static let maxBackoffLevel = 5
+    public static let streamChannelOpenerSuffix = ":o2a"
+    public static let streamChannelAcceptSuffix = ":a2o"
+    public static let dgChannelSendSuffix = ":dg:send"
+    public static let dgChannelRecvSuffix = ":dg:recv"
+    public static let channelIdHashMultiplier = 31
+}
+
 /// The protocol transition table. Fed to Machine for execution.
 public enum SessionProtocol {
 

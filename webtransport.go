@@ -24,8 +24,8 @@ import (
 	"github.com/quic-go/webtransport-go"
 )
 
-// maxMessageSize is the maximum message size for relay frames.
-const maxMessageSize = 1 << 20 // 1 MiB
+// maxMessageSize aliases the generated wire constant for relay message frames.
+const maxMessageSize = MaxMessageSize
 
 // wtSession wraps a WebTransport session to implement relaySession.
 type wtSession struct {

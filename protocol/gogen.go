@@ -177,6 +177,41 @@ func (p *Protocol) ExportGo(w io.Writer, pkgName, funcName string) error {
 		b.WriteString(")\n\n")
 	}
 
+	// Wire constants — protocol constants for all platforms.
+	if len(p.WireConsts) > 0 {
+		b.WriteString("// Wire constants — protocol-level values shared across all platforms.\n")
+		// Group constants.
+		lastGroup := ""
+		for _, wc := range p.WireConsts {
+			if wc.Group != lastGroup {
+				if lastGroup != "" {
+					b.WriteString(")\n\n")
+				}
+				fmt.Fprintf(&b, "// %s\n", goCamel(wc.Group))
+				b.WriteString("const (\n")
+				lastGroup = wc.Group
+			}
+			name := goCamel(wc.Name)
+			switch wc.Type {
+			case "byte":
+				fmt.Fprintf(&b, "\t%s byte = 0x%02X", name, wireInt(wc.Value))
+			case "int":
+				fmt.Fprintf(&b, "\t%s = %d", name, wireInt(wc.Value))
+			case "duration_ms":
+				fmt.Fprintf(&b, "\t%s = %d // ms", name, wireInt(wc.Value))
+			case "string":
+				fmt.Fprintf(&b, "\t%s = %q", name, wc.Value)
+			}
+			if wc.Desc != "" {
+				fmt.Fprintf(&b, " // %s", wc.Desc)
+			}
+			b.WriteString("\n")
+		}
+		if lastGroup != "" {
+			b.WriteString(")\n\n")
+		}
+	}
+
 	// --- Protocol table literal ---
 
 	fmt.Fprintf(&b, "func %s() *Protocol {\n", funcName)
@@ -491,6 +526,18 @@ func writeGoEventTransitionBody(b *strings.Builder, t Transition, stateType stri
 		b.WriteString("}, nil\n")
 	} else {
 		b.WriteString("\t\treturn nil, nil\n")
+	}
+}
+
+// wireInt extracts an integer from a YAML value that may be int or float64.
+func wireInt(v any) int {
+	switch n := v.(type) {
+	case int:
+		return n
+	case float64:
+		return int(n)
+	default:
+		return 0
 	}
 }
 

@@ -157,24 +157,24 @@ func (dc *DatagramChannel) Send(data []byte) error {
 		payload = dc.ch.Encrypt(data)
 	}
 
-	chanPrefix := make([]byte, chanIDSize)
+	chanPrefix := make([]byte, ChanIdSize)
 	binary.BigEndian.PutUint16(chanPrefix, dc.id)
 
 	p := dc.conn.exec.activePath()
 	maxPayload := dc.conn.exec.maxDgPayload
 
 	// Does it fit in a single datagram?
-	if 1+chanIDSize+len(payload) <= maxPayload {
-		frame := make([]byte, 1+chanIDSize+len(payload))
-		frame[0] = dgChanWhole
+	if 1+ChanIdSize+len(payload) <= maxPayload {
+		frame := make([]byte, 1+ChanIdSize+len(payload))
+		frame[0] = DgChanWhole
 		copy(frame[1:], chanPrefix)
-		copy(frame[1+chanIDSize:], payload)
+		copy(frame[1+ChanIdSize:], payload)
 		return p.dg.SendDatagram(frame)
 	}
 
 	// Fragment it.
 	msgID := nextMsgID.Add(1)
-	return sendFragmented(p.dg, payload, maxPayload, msgID, dgChanFragment, chanPrefix)
+	return sendFragmented(p.dg, payload, maxPayload, msgID, DgChanFragment, chanPrefix)
 }
 
 // Recv receives the next datagram on this channel. Blocks until a

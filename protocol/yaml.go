@@ -24,12 +24,21 @@ type yamlProtocol struct {
 	Guards       yaml.Node                  `yaml:"guards"`
 	Operators    yaml.Node                  `yaml:"operators"`
 	Phases       yaml.Node                  `yaml:"phases"`
+	WireConsts   []yamlWireConstant          `yaml:"wire_constants"`
 	Constants    []yamlConstant             `yaml:"constants"`
 	AdvGuard     string                     `yaml:"adversary_guard"`
 	Adversary    []yamlAdvAction            `yaml:"adversary"`
 	Properties   []yamlProperty             `yaml:"properties"`
 	ChannelBound int                        `yaml:"channel_bound"`
 	OneShot      bool                       `yaml:"one_shot"`
+}
+
+type yamlWireConstant struct {
+	Name  string `yaml:"name"`
+	Value any    `yaml:"value"`
+	Type  string `yaml:"type"`  // "byte", "int", "duration_ms", "string"
+	Desc  string `yaml:"desc"`
+	Group string `yaml:"group"` // optional grouping
 }
 
 type yamlMessage struct {
@@ -117,6 +126,17 @@ func ParseYAML(data []byte) (*Protocol, error) {
 		Name:         yp.Name,
 		ChannelBound: yp.ChannelBound,
 		OneShot:      yp.OneShot,
+	}
+
+	// Wire constants — protocol constants for all platforms.
+	for _, ywc := range yp.WireConsts {
+		p.WireConsts = append(p.WireConsts, WireConstant{
+			Name:  ywc.Name,
+			Value: ywc.Value,
+			Type:  ywc.Type,
+			Desc:  ywc.Desc,
+			Group: ywc.Group,
+		})
 	}
 
 	// Events — declared event types.

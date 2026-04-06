@@ -27,24 +27,8 @@ var ErrDatagramTooLarge = errors.New("datagram too large to fragment")
 //	[0:4]  message ID      (uint32, monotonic per sender)
 //	[4:6]  fragment index  (uint16, 0-based)
 //	[6:8]  total fragments (uint16, >= 2)
-const (
-	dgConnWhole    byte = 0x00
-	dgConnFragment byte = 0x40
-	dgChanWhole    byte = 0x80
-	dgChanFragment byte = 0xC0
-	dgPing         byte = 0x10 // health ping on direct path
-	dgPong         byte = 0x11 // health pong on direct path
-	fragHeaderSize      = 8
-	chanIDSize          = 2
-)
-
-// DefaultFragmentTimeout is how long the receiver waits for all
-// fragments of a message before discarding the partial assembly.
-const DefaultFragmentTimeout = 5 * time.Second
-
-// DefaultMaxDatagramPayload is the maximum payload per QUIC datagram.
-// QUIC typically supports ~1200 bytes; we use a conservative default.
-const DefaultMaxDatagramPayload = 1200
+// DefaultFragmentTimeout converts the wire constant to a Go duration.
+var DefaultFragmentTimeout = time.Duration(FragmentTimeoutMs) * time.Millisecond
 
 // reassembler tracks in-flight fragment assemblies for a connection.
 type reassembler struct {
@@ -138,7 +122,7 @@ func (r *reassembler) cleanupLoop() {
 // For channel fragments, extraPrefix contains the 2-byte channel ID
 // inserted between the prefix byte and the fragment header.
 func sendFragmented(dg datagrammer, data []byte, maxPayload int, msgID uint32, prefix byte, extraPrefix []byte) error {
-	overhead := 1 + len(extraPrefix) + fragHeaderSize
+	overhead := 1 + len(extraPrefix) + FragHeaderSize
 	maxChunk := maxPayload - overhead
 	if maxChunk <= 0 {
 		maxChunk = 1
@@ -165,7 +149,7 @@ func sendFragmented(dg datagrammer, data []byte, maxPayload int, msgID uint32, p
 		binary.BigEndian.PutUint32(frame[off:off+4], msgID)
 		binary.BigEndian.PutUint16(frame[off+4:off+6], uint16(i))
 		binary.BigEndian.PutUint16(frame[off+6:off+8], uint16(total))
-		copy(frame[off+fragHeaderSize:], chunk)
+		copy(frame[off+FragHeaderSize:], chunk)
 
 		if err := dg.SendDatagram(frame); err != nil {
 			return err
