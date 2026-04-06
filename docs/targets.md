@@ -36,11 +36,14 @@ of transport.
 
 #### 🎯T5.1 Reorder-tolerant decryption
 
-`Channel.Decrypt` buffers out-of-order sequence numbers instead of
-rejecting them. Required for safe transport cutover.
+`Channel.Decrypt` accepts out-of-order sequence numbers on lossy
+transports. `ModeDatagrams` allows gaps (forward jumps) while
+rejecting replays. Required for safe transport cutover.
 
 - **Weight**: 1.7 (value 5 / cost 3)
-- **Status**: not started
+- **Status**: achieved — `ModeDatagrams` in `crypto/crypto.go` accepts
+  gaps and rejects replays. `NewDatagramChannel` convenience constructor.
+  Full test coverage including reorder, replay, and 50% packet loss.
 
 #### 🎯T5.2 LAN discovery via relay
 
@@ -50,7 +53,6 @@ connection to the peer's local address using a self-signed certificate.
 
 - **Weight**: 1.0 (value 5 / cost 5)
 - **Status**: not started
-- **Depends on**: 🎯T5.1
 
 #### 🎯T5.3 Cutover protocol
 
@@ -61,7 +63,7 @@ closes the old transport after receiving `CUTOVER`.
 
 - **Weight**: 1.0 (value 5 / cost 5)
 - **Status**: not started
-- **Depends on**: 🎯T5.1, 🎯T10
+- **Depends on**: 🎯T10
 
 #### 🎯T5.4 Transport-agnostic Conn
 
