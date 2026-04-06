@@ -1,24 +1,31 @@
 # Convergence Report
 
-Evaluated: 2026-04-06
+Evaluated: 2026-04-07
 
 ## Standing invariants
 
-- **Tests**: PASSING (CI run #24020825119 succeeded)
-- **CI**: GREEN — all jobs passing on master
+- **Tests**: PASSING (CI tests job succeeded on master)
+- **CI**: PARTIAL — tests green, **deploy failing** (Fly.io `FLY_API_TOKEN` unauthorized since rename to carrier-pigeon). Not a code issue — needs token rotation in GitHub secrets.
 
 ## Movement
 
-- 🎯T19: not started -> **achieved** (hierarchical state machines landed in #3)
-- 🎯T5.1: not started -> **achieved** (was already done, now confirmed and moved to Achieved)
-- Standing invariant: FAILING -> **GREEN** (Dockerfile fixed in #2, `COPY protocol/` and `COPY qr/` added)
+- 🎯T20: (new) — added with sub-targets T20.1-T20.4
 - 🎯T1, 🎯T1.8, 🎯T5, 🎯T6, 🎯T7, 🎯T8, 🎯T10, 🎯T14, 🎯T15, 🎯T17: (unchanged)
 
 ## Gap Report
 
-### 🎯T1.8 Jevon imports tern's packages  [weight: 1.7]
+### 🎯T20 Cross-language E2E test parity  [weight: 2.5]
 Gap: not started
-v0.9.0 released. Migration in jevon repo still pending. This is external work in the jevon codebase — requires tagging tern and updating jevon's imports.
+Parent target. 0/4 sub-targets achieved. Swift standalone E2E binary exists but is not in `swift test`. Kotlin has local E2E tests (PigeonConnE2ETest starts relay subprocess). TypeScript E2E requires live relay + TERN_TOKEN. No state machine unit tests in any non-Go language.
+
+  [ ] 🎯T20.1 Swift E2E integrated into `swift test` — not started: standalone `e2e/swift/main.swift` exists, Package.swift has `PigeonTests` target but no relay E2E test target
+  [ ] 🎯T20.2 State machine unit tests for Swift/Kotlin/TypeScript — not started
+  [ ] 🎯T20.3 Cross-language confirmation code interop test — not started (blocked on 🎯T20.1, 🎯T20.2)
+  [ ] 🎯T20.4 TypeScript local E2E tests — not started: `relay.e2e.ts` exists but requires TERN_TOKEN, no local relay subprocess
+
+### 🎯T1.8 Jevon imports pigeon's packages  [weight: 1.7]
+Gap: not started
+v0.14.0 released. Migration in jevon repo still pending — requires updating jevon's imports to pigeon packages.
 
 ### 🎯T6 Investigate STUN/NAT hole-punching  [weight: 1.5]
 Gap: not started
@@ -26,9 +33,9 @@ Pure research target. No code or investigation artifacts exist yet.
 
 ### 🎯T17 Makefile deploy target  [weight: 1.5]
 Gap: not started
-No Makefile deploy target exists. CI deploy is working now (standing invariant fixed), so this is unblocked infrastructure work.
+No Makefile deploy target exists. Note: deploy is currently broken (Fly.io auth) — fixing that is a prerequisite.
 
-### 🎯T1 Tern is a complete library  [weight: 1.7]
+### 🎯T1 Pigeon is a complete library  [weight: 1.7]
 Gap: converging (7/8 sub-targets achieved)
 
   [x] 🎯T1.1 Crypto library — achieved
@@ -38,7 +45,7 @@ Gap: converging (7/8 sub-targets achieved)
   [x] 🎯T1.5 QR helper — achieved
   [x] 🎯T1.6 Swift package — achieved
   [x] 🎯T1.7 E2E integration test — achieved
-  [ ] 🎯T1.8 Jevon imports tern's packages — not started
+  [ ] 🎯T1.8 Jevon imports pigeon's packages — not started
 
 ### 🎯T8 WebTransport relay  [weight: 1.0]
 Gap: converging (3/5 sub-targets achieved)
@@ -71,22 +78,23 @@ Status: not started. Low effective weight — blocks 🎯T5.3 but expensive rela
 
 ### Blocked targets
 
+- 🎯T20.3 Cross-language confirmation code interop test — blocked on 🎯T20.1, 🎯T20.2
 - 🎯T5.3 Cutover protocol — blocked on 🎯T10
 - 🎯T5.4 Transport-agnostic Conn — blocked on 🎯T5.2, 🎯T5.3
 - 🎯T8.5 LAN direct WebTransport — blocked on 🎯T8.4
 
 ## Recommendation
 
-Work on: **🎯T1.8 Jevon imports tern's packages**
-Reason: Highest effective weight (1.7) among unblocked targets. 🎯T5.1 is now achieved, and 🎯T19 is done — the library is mature. Completing the jevon migration closes 🎯T1 (the top-level "complete library" target). This is the highest-leverage next step to realize the value of all the library work done so far.
+Work on: **🎯T20.1 Swift E2E integrated into `swift test`**
+Reason: Highest effective weight (2.5) among unblocked leaf targets. The standalone E2E binary (`e2e/swift/main.swift`) already proves the Swift QUIC path works — this is packaging it as an XCTest target that starts a Go relay subprocess. Low cost, high value, and unblocks 🎯T20.3 (cross-language confirmation code interop).
 
 ## Suggested action
 
-Tag and push a new pigeon release if needed, then open a branch in the jevon repo to replace `internal/crypto/`, `internal/protocol/`, `internal/qr/`, and `cmd/protogen/` with imports from tern. Update the iOS app to use the `Tern` SPM package. Use `/push` to drive the PR workflow in both repos.
+Add a new test target in `Package.swift` (e.g., `PigeonRelayE2ETests`) that depends on `Pigeon`. Create a test file that starts a Go relay subprocess (`go run ./cmd/pigeon`), runs the register/connect/stream/crypto round-trip tests from `e2e/swift/main.swift`, and tears down the subprocess. Use `Process` to manage the relay lifecycle. Use `/push` to drive the PR workflow.
 
 <!-- convergence-deps
-evaluated: 2026-04-06T00:00:00Z
-sha: 6ee9e4f
+evaluated: 2026-04-07T00:00:00Z
+sha: e27b3c0
 
 🎯T1:
   gap: close
@@ -96,7 +104,7 @@ sha: 6ee9e4f
 
 🎯T1.8:
   gap: not started
-  assessment: "v0.9.0 released. Jevon migration pending — requires tagging tern and updating imports."
+  assessment: "v0.14.0 released. Jevon migration pending."
   read:
     - docs/targets.md
 
@@ -106,13 +114,6 @@ sha: 6ee9e4f
   read:
     - docs/targets.md
 
-🎯T5.1:
-  gap: achieved
-  assessment: "ModeDatagrams implemented with full test coverage."
-  read:
-    - crypto/crypto.go
-    - crypto/crypto_test.go
-
 🎯T6:
   gap: not started
   assessment: "No investigation artifacts exist."
@@ -121,17 +122,9 @@ sha: 6ee9e4f
 
 🎯T17:
   gap: not started
-  assessment: "No Makefile deploy target. CI deploy now working after Dockerfile fix."
+  assessment: "No Makefile deploy target. Deploy currently broken (Fly.io auth)."
   read:
     - docs/targets.md
-    - Dockerfile
-
-🎯T19:
-  gap: achieved
-  assessment: "Hierarchical state machines landed. All generators updated, session.yaml refactored."
-  read:
-    - protocol/protocol.go
-    - protocol/session.yaml
 
 🎯T8:
   gap: significant
@@ -139,9 +132,44 @@ sha: 6ee9e4f
   read:
     - docs/targets.md
 
-standing-invariant:
-  gap: green
-  assessment: "Tests pass. CI green. Dockerfile fixed."
+🎯T20:
+  gap: not started
+  assessment: "0/4 sub-targets achieved. Swift standalone binary exists but not in swift test. Kotlin has local E2E. TypeScript needs live relay."
   read:
-    - Dockerfile
+    - docs/targets.md
+    - e2e/swift/main.swift
+    - web/src/relay.e2e.ts
+    - Package.swift
+    - android/pigeon/src/test/kotlin/com/marcelocantos/pigeon/relay/PigeonConnE2ETest.kt
+
+🎯T20.1:
+  gap: not started
+  assessment: "Standalone e2e/swift/main.swift exists with full test coverage. Package.swift has PigeonTests but no relay E2E test target."
+  read:
+    - e2e/swift/main.swift
+    - Package.swift
+
+🎯T20.2:
+  gap: not started
+  assessment: "No state machine unit tests in any non-Go language."
+  read:
+    - docs/targets.md
+
+🎯T20.3:
+  gap: not started
+  assessment: "Blocked on T20.1 and T20.2. No cross-language confirmation code interop test exists."
+  read:
+    - docs/targets.md
+
+🎯T20.4:
+  gap: not started
+  assessment: "relay.e2e.ts exists but skips when TERN_TOKEN not set. No local relay subprocess like Kotlin has."
+  read:
+    - web/src/relay.e2e.ts
+
+standing-invariant:
+  gap: partial
+  assessment: "Tests pass. Deploy failing — Fly.io FLY_API_TOKEN unauthorized after app rename to carrier-pigeon."
+  read:
+    - .github/workflows/ci.yml
 -->
