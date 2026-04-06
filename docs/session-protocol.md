@@ -355,16 +355,16 @@ The YAML spec is the single source of truth. `protogen` generates:
 | Output | What's generated |
 |---|---|
 | **Go** | Typed machine structs with `HandleEvent(ev) → []CmdID`. Event/command/state/message/guard/action constants. Generic `Machine` executor in `machine.go`. |
-| **Swift** | State/message enum constants. Typed machines TBD. |
-| **Kotlin** | State/message enum constants. Typed machines TBD. |
-| **TypeScript** | State/message enum constants. Typed machines TBD. |
+| **Swift** | Typed machines with `handleEvent(ev) → [CmdID]`. EventID/CmdID/state/message enums. Wire constants. |
+| **Kotlin** | Typed machines with `handleEvent(ev) → List<CmdID>`. EventID/CmdID/state/message enums. Wire constants. |
+| **TypeScript** | Typed machines with `handleEvent(ev) → CmdID[]`. EventID/CmdID/state/message enums. Wire constants. |
 | **TLA+** | Pure TLA+ spec (named actions, UNCHANGED, no PlusCal). Phase-aware export. |
 | **PlantUML** | Separate transport + relay diagrams. Arrow coalescing for shared qualifiers. |
 
-The Go generator emits `HandleEvent` — a unified entry point that
-maps `(state, event, guards) → (new state, variable updates, commands)`.
-This replaces the earlier `HandleMessage`/`Step` split. The other
-language generators will follow the same pattern.
+All four language generators emit `handleEvent` — a unified entry
+point that maps `(state, event, guards) → (new state, variable
+updates, commands)`. Go additionally retains `HandleMessage`/`Step`
+for backward compatibility.
 
 All generators consume `FlattenedTransitions()` — the hierarchy is
 resolved once during YAML parsing and generators see only leaf-state
@@ -731,7 +731,7 @@ hierarchy is invisible below the YAML layer.
 | Properties | Invariants, liveness, leads-to | 14 total (6 security + 8 transport) |
 | TLA+ generation | Pure TLA+, channel-free | 121 states, <1s |
 | Go code generation | `HandleEvent` + typed machines | Event/command/state constants |
-| Other languages | Enum constants (machines TBD) | Swift, Kotlin, TypeScript |
+| Other languages | `handleEvent` + typed machines | Swift, Kotlin, TypeScript |
 | Executor | Thin event loop in `executor.go` | Conn delegates all I/O, zero state logic |
 | PlantUML | Separate transport + relay diagrams | Arrow coalescing, hierarchy rendering |
 
