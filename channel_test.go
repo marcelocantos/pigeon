@@ -836,8 +836,10 @@ func TestSendAndCloseRace(t *testing.T) {
 	wg.Wait()
 
 	// Backend should eventually get an error on recv.
+	drainCtx, drainCancel := context.WithTimeout(ctx, 30*time.Second)
+	defer drainCancel()
 	for {
-		_, err := b.Recv(ctx)
+		_, err := b.Recv(drainCtx)
 		if err != nil {
 			break
 		}
