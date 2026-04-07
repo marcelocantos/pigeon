@@ -12,6 +12,7 @@ import (
 	"net"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/quic-go/quic-go"
 )
@@ -109,7 +110,11 @@ func (s *QUICServer) ServeWithTLS(conn net.PacketConn, tlsConfig *tls.Config) er
 	serverTLS.NextProtos = []string{pigeonALPN}
 
 	tr := &quic.Transport{Conn: conn}
-	ln, err := tr.Listen(serverTLS, &quic.Config{EnableDatagrams: true})
+	ln, err := tr.Listen(serverTLS, &quic.Config{
+		EnableDatagrams: true,
+		MaxIdleTimeout:  60 * time.Second,
+		KeepAlivePeriod: 10 * time.Second,
+	})
 	if err != nil {
 		return fmt.Errorf("quic listen: %w", err)
 	}

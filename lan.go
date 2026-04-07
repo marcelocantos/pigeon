@@ -79,6 +79,8 @@ func NewLANServer(addr string, tlsConfig *tls.Config) (*LANServer, error) {
 
 	listener, err := quic.ListenAddr(addr, tlsConfig, &quic.Config{
 		EnableDatagrams: true,
+		MaxIdleTimeout:  60 * time.Second,
+		KeepAlivePeriod: 10 * time.Second,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("LAN listen: %w", err)

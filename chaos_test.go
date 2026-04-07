@@ -328,7 +328,6 @@ func TestChaosMultiPair(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), duration+30*time.Second)
 	defer cancel()
 
-	deadline := time.Now().Add(duration)
 	done := make(chan struct{})
 
 	// Connect all pairs first (no chaos yet).
@@ -351,10 +350,14 @@ func TestChaosMultiPair(t *testing.T) {
 	}
 	t.Logf("all %d pairs connected, starting chaos", numPairs)
 
+	// Set deadline AFTER connecting pairs so connection time doesn't eat
+	// into the chaos duration.
+	deadline := time.Now().Add(duration)
+
 	// Now start chaos controller.
-	var switches int64
+	var switches atomic.Int64
 	go func() {
-		switches = chaosController(proxy, deadline, done)
+		switches.Store(chaosController(proxy, deadline, done))
 	}()
 
 	// Run workloads.
@@ -375,7 +378,7 @@ func TestChaosMultiPair(t *testing.T) {
 	proxyStats := proxy.GetStats()
 
 	t.Logf("=== Multi-pair chaos results (%v, %d pairs) ===", duration, numPairs)
-	t.Logf("Scenarios: %d switches", switches)
+	t.Logf("Scenarios: %d switches", switches.Load())
 	for i, s := range allStats {
 		if s != nil {
 			reportPairStats(t, fmt.Sprintf("pair-%d", i), s)

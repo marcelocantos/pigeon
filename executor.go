@@ -881,6 +881,8 @@ func (e *executor) dialLAN() {
 
 	conn, err := quic.DialAddr(ctx, offer.addr, tlsConfig, &quic.Config{
 		EnableDatagrams: true,
+		MaxIdleTimeout:  60 * time.Second,
+		KeepAlivePeriod: 10 * time.Second,
 	})
 	if err != nil {
 		slog.Debug("LAN dial failed", "addr", offer.addr, "err", err)

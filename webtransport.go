@@ -174,6 +174,8 @@ func NewWebTransportServerWithHub(addr string, tlsConfig *tls.Config, token stri
 			EnableDatagrams: true,
 			QUICConfig: &quic.Config{
 				EnableDatagrams: true,
+				MaxIdleTimeout:  60 * time.Second,
+				KeepAlivePeriod: 10 * time.Second,
 			},
 		},
 		CheckOrigin: func(r *http.Request) bool { return true },

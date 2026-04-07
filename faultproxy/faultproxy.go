@@ -205,10 +205,12 @@ func (p *Proxy) PacketCount() int {
 	return int(p.pktCount.Load())
 }
 
-// UpdateProfile atomically replaces the fault profile. This allows
-// changing fault parameters mid-test.
+// UpdateProfile atomically replaces the fault profile. The profile is
+// reset to zero before applying options, so callers get exactly the
+// faults they specify — previous faults don't accumulate.
 func (p *Proxy) UpdateProfile(opts ...Option) {
 	p.mu.Lock()
+	p.profile = Profile{}
 	for _, o := range opts {
 		o(&p.profile)
 	}

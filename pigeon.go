@@ -185,7 +185,11 @@ func registerQUIC(ctx context.Context, relayURL string, c Config) (*Conn, error)
 		return nil, err
 	}
 
-	conn, err := quic.DialAddr(ctx, addr, quicTLSConfig(c), &quic.Config{EnableDatagrams: true})
+	conn, err := quic.DialAddr(ctx, addr, quicTLSConfig(c), &quic.Config{
+		EnableDatagrams: true,
+		MaxIdleTimeout:  60 * time.Second,
+		KeepAlivePeriod: 10 * time.Second,
+	})
 	if err != nil {
 		return nil, fmt.Errorf("register: quic dial: %w", err)
 	}
@@ -223,7 +227,11 @@ func connectQUIC(ctx context.Context, relayURL, instanceID string, c Config) (*C
 		return nil, err
 	}
 
-	conn, err := quic.DialAddr(ctx, addr, quicTLSConfig(c), &quic.Config{EnableDatagrams: true})
+	conn, err := quic.DialAddr(ctx, addr, quicTLSConfig(c), &quic.Config{
+		EnableDatagrams: true,
+		MaxIdleTimeout:  60 * time.Second,
+		KeepAlivePeriod: 10 * time.Second,
+	})
 	if err != nil {
 		return nil, fmt.Errorf("connect to %s: quic dial: %w", instanceID, err)
 	}
