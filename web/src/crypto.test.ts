@@ -38,7 +38,7 @@ describe("E2EChannel", () => {
     // Create a matching channel for the other side
     const ch2 = await E2EChannel.fromSharedKey(key, true);
 
-    const plaintext = new TextEncoder().encode("hello, tern!");
+    const plaintext = new TextEncoder().encode("hello, pigeon!");
     const encrypted = await ch.encrypt(plaintext);
     const decrypted = await ch2.decrypt(encrypted);
 

@@ -39,192 +39,192 @@ var (
 
 var _ frozen.Set[string] // suppress unused import
 
-// backend states.
+// SessionProtocol backend states.
 const (
-	BackendIdle State = "Idle"
-	BackendGenerateToken State = "GenerateToken"
-	BackendRegisterRelay State = "RegisterRelay"
-	BackendWaitingForClient State = "WaitingForClient"
-	BackendDeriveSecret State = "DeriveSecret"
-	BackendSendAck State = "SendAck"
-	BackendWaitingForCode State = "WaitingForCode"
-	BackendValidateCode State = "ValidateCode"
-	BackendStorePaired State = "StorePaired"
-	BackendPaired State = "Paired"
-	BackendAuthCheck State = "AuthCheck"
-	BackendSessionActive State = "SessionActive"
-	BackendRelayConnected State = "RelayConnected"
-	BackendLANOffered State = "LANOffered"
-	BackendLANActive State = "LANActive"
-	BackendRelayBackoff State = "RelayBackoff"
-	BackendLANDegraded State = "LANDegraded"
+	SessionProtocolBackendIdle State = "Idle"
+	SessionProtocolBackendGenerateToken State = "GenerateToken"
+	SessionProtocolBackendRegisterRelay State = "RegisterRelay"
+	SessionProtocolBackendWaitingForClient State = "WaitingForClient"
+	SessionProtocolBackendDeriveSecret State = "DeriveSecret"
+	SessionProtocolBackendSendAck State = "SendAck"
+	SessionProtocolBackendWaitingForCode State = "WaitingForCode"
+	SessionProtocolBackendValidateCode State = "ValidateCode"
+	SessionProtocolBackendStorePaired State = "StorePaired"
+	SessionProtocolBackendPaired State = "Paired"
+	SessionProtocolBackendAuthCheck State = "AuthCheck"
+	SessionProtocolBackendSessionActive State = "SessionActive"
+	SessionProtocolBackendRelayConnected State = "RelayConnected"
+	SessionProtocolBackendLANOffered State = "LANOffered"
+	SessionProtocolBackendLANActive State = "LANActive"
+	SessionProtocolBackendRelayBackoff State = "RelayBackoff"
+	SessionProtocolBackendLANDegraded State = "LANDegraded"
 )
 
-// client states.
+// SessionProtocol client states.
 const (
-	ClientIdle State = "Idle"
-	ClientObtainBackchannelSecret State = "ObtainBackchannelSecret"
-	ClientConnectRelay State = "ConnectRelay"
-	ClientGenKeyPair State = "GenKeyPair"
-	ClientWaitAck State = "WaitAck"
-	ClientE2EReady State = "E2EReady"
-	ClientShowCode State = "ShowCode"
-	ClientWaitPairComplete State = "WaitPairComplete"
-	ClientPaired State = "Paired"
-	ClientReconnect State = "Reconnect"
-	ClientSendAuth State = "SendAuth"
-	ClientSessionActive State = "SessionActive"
-	ClientRelayConnected State = "RelayConnected"
-	ClientLANConnecting State = "LANConnecting"
-	ClientLANVerifying State = "LANVerifying"
-	ClientLANActive State = "LANActive"
-	ClientRelayFallback State = "RelayFallback"
+	SessionProtocolClientIdle State = "Idle"
+	SessionProtocolClientObtainBackchannelSecret State = "ObtainBackchannelSecret"
+	SessionProtocolClientConnectRelay State = "ConnectRelay"
+	SessionProtocolClientGenKeyPair State = "GenKeyPair"
+	SessionProtocolClientWaitAck State = "WaitAck"
+	SessionProtocolClientE2EReady State = "E2EReady"
+	SessionProtocolClientShowCode State = "ShowCode"
+	SessionProtocolClientWaitPairComplete State = "WaitPairComplete"
+	SessionProtocolClientPaired State = "Paired"
+	SessionProtocolClientReconnect State = "Reconnect"
+	SessionProtocolClientSendAuth State = "SendAuth"
+	SessionProtocolClientSessionActive State = "SessionActive"
+	SessionProtocolClientRelayConnected State = "RelayConnected"
+	SessionProtocolClientLANConnecting State = "LANConnecting"
+	SessionProtocolClientLANVerifying State = "LANVerifying"
+	SessionProtocolClientLANActive State = "LANActive"
+	SessionProtocolClientRelayFallback State = "RelayFallback"
 )
 
-// relay states.
+// SessionProtocol relay states.
 const (
-	RelayIdle State = "Idle"
-	RelayBackendRegistered State = "BackendRegistered"
-	RelayBridged State = "Bridged"
+	SessionProtocolRelayIdle State = "Idle"
+	SessionProtocolRelayBackendRegistered State = "BackendRegistered"
+	SessionProtocolRelayBridged State = "Bridged"
 )
 
-// Message types.
+// SessionProtocol message types.
 const (
-	MsgPairHello MsgType = "pair_hello"
-	MsgPairHelloAck MsgType = "pair_hello_ack"
-	MsgPairConfirm MsgType = "pair_confirm"
-	MsgPairComplete MsgType = "pair_complete"
-	MsgAuthRequest MsgType = "auth_request"
-	MsgAuthOk MsgType = "auth_ok"
-	MsgLanOffer MsgType = "lan_offer"
-	MsgLanVerify MsgType = "lan_verify"
-	MsgLanConfirm MsgType = "lan_confirm"
-	MsgPathPing MsgType = "path_ping"
-	MsgPathPong MsgType = "path_pong"
+	SessionProtocolMsgPairHello MsgType = "pair_hello"
+	SessionProtocolMsgPairHelloAck MsgType = "pair_hello_ack"
+	SessionProtocolMsgPairConfirm MsgType = "pair_confirm"
+	SessionProtocolMsgPairComplete MsgType = "pair_complete"
+	SessionProtocolMsgAuthRequest MsgType = "auth_request"
+	SessionProtocolMsgAuthOk MsgType = "auth_ok"
+	SessionProtocolMsgLanOffer MsgType = "lan_offer"
+	SessionProtocolMsgLanVerify MsgType = "lan_verify"
+	SessionProtocolMsgLanConfirm MsgType = "lan_confirm"
+	SessionProtocolMsgPathPing MsgType = "path_ping"
+	SessionProtocolMsgPathPong MsgType = "path_pong"
 )
 
-// Guards.
+// SessionProtocol guards.
 const (
-	GuardTokenValid GuardID = "token_valid"
-	GuardTokenInvalid GuardID = "token_invalid"
-	GuardCodeCorrect GuardID = "code_correct"
-	GuardCodeWrong GuardID = "code_wrong"
-	GuardDeviceKnown GuardID = "device_known"
-	GuardDeviceUnknown GuardID = "device_unknown"
-	GuardNonceFresh GuardID = "nonce_fresh"
-	GuardChallengeValid GuardID = "challenge_valid"
-	GuardChallengeInvalid GuardID = "challenge_invalid"
-	GuardLanEnabled GuardID = "lan_enabled"
-	GuardLanDisabled GuardID = "lan_disabled"
-	GuardLanServerAvailable GuardID = "lan_server_available"
-	GuardUnderMaxFailures GuardID = "under_max_failures"
-	GuardAtMaxFailures GuardID = "at_max_failures"
+	SessionProtocolGuardTokenValid GuardID = "token_valid"
+	SessionProtocolGuardTokenInvalid GuardID = "token_invalid"
+	SessionProtocolGuardCodeCorrect GuardID = "code_correct"
+	SessionProtocolGuardCodeWrong GuardID = "code_wrong"
+	SessionProtocolGuardDeviceKnown GuardID = "device_known"
+	SessionProtocolGuardDeviceUnknown GuardID = "device_unknown"
+	SessionProtocolGuardNonceFresh GuardID = "nonce_fresh"
+	SessionProtocolGuardChallengeValid GuardID = "challenge_valid"
+	SessionProtocolGuardChallengeInvalid GuardID = "challenge_invalid"
+	SessionProtocolGuardLanEnabled GuardID = "lan_enabled"
+	SessionProtocolGuardLanDisabled GuardID = "lan_disabled"
+	SessionProtocolGuardLanServerAvailable GuardID = "lan_server_available"
+	SessionProtocolGuardUnderMaxFailures GuardID = "under_max_failures"
+	SessionProtocolGuardAtMaxFailures GuardID = "at_max_failures"
 )
 
-// Actions.
+// SessionProtocol actions.
 const (
-	ActionActivateLan ActionID = "activate_lan"
-	ActionBridgeStreams ActionID = "bridge_streams"
-	ActionDeriveSecret ActionID = "derive_secret"
-	ActionDialLan ActionID = "dial_lan"
-	ActionFallbackToRelay ActionID = "fallback_to_relay"
-	ActionGenerateToken ActionID = "generate_token"
-	ActionRegisterRelay ActionID = "register_relay"
-	ActionResetFailures ActionID = "reset_failures"
-	ActionSendPairHello ActionID = "send_pair_hello"
-	ActionStoreDevice ActionID = "store_device"
-	ActionStoreSecret ActionID = "store_secret"
-	ActionUnbridge ActionID = "unbridge"
-	ActionVerifyDevice ActionID = "verify_device"
+	SessionProtocolActionActivateLan ActionID = "activate_lan"
+	SessionProtocolActionBridgeStreams ActionID = "bridge_streams"
+	SessionProtocolActionDeriveSecret ActionID = "derive_secret"
+	SessionProtocolActionDialLan ActionID = "dial_lan"
+	SessionProtocolActionFallbackToRelay ActionID = "fallback_to_relay"
+	SessionProtocolActionGenerateToken ActionID = "generate_token"
+	SessionProtocolActionRegisterRelay ActionID = "register_relay"
+	SessionProtocolActionResetFailures ActionID = "reset_failures"
+	SessionProtocolActionSendPairHello ActionID = "send_pair_hello"
+	SessionProtocolActionStoreDevice ActionID = "store_device"
+	SessionProtocolActionStoreSecret ActionID = "store_secret"
+	SessionProtocolActionUnbridge ActionID = "unbridge"
+	SessionProtocolActionVerifyDevice ActionID = "verify_device"
 )
 
-// Events.
+// SessionProtocol events.
 const (
-	EventAppClose EventID = "app_close"
-	EventAppForceFallback EventID = "app_force_fallback"
-	EventAppLaunch EventID = "app_launch"
-	EventAppRecv EventID = "app_recv"
-	EventAppRecvDatagram EventID = "app_recv_datagram"
-	EventAppSend EventID = "app_send"
-	EventAppSendDatagram EventID = "app_send_datagram"
-	EventBackchannelReceived EventID = "backchannel_received"
-	EventBackendDisconnect EventID = "backend_disconnect"
-	EventBackendRegister EventID = "backend_register"
-	EventBackoffExpired EventID = "backoff_expired"
-	EventCheckCode EventID = "check_code"
-	EventCliCodeEntered EventID = "cli_code_entered"
-	EventCliInitPair EventID = "cli_init_pair"
-	EventClientConnect EventID = "client_connect"
-	EventClientDisconnect EventID = "client_disconnect"
-	EventCodeDisplayed EventID = "code_displayed"
-	EventDisconnect EventID = "disconnect"
-	EventEcdhComplete EventID = "ecdh_complete"
-	EventFinalise EventID = "finalise"
-	EventKeyPairGenerated EventID = "key_pair_generated"
-	EventLanDatagram EventID = "lan_datagram"
-	EventLanDialFailed EventID = "lan_dial_failed"
-	EventLanDialOk EventID = "lan_dial_ok"
-	EventLanError EventID = "lan_error"
-	EventLanServerChanged EventID = "lan_server_changed"
-	EventLanServerReady EventID = "lan_server_ready"
-	EventLanStreamData EventID = "lan_stream_data"
-	EventLanStreamError EventID = "lan_stream_error"
-	EventLanVerifyOk EventID = "lan_verify_ok"
-	EventOfferTimeout EventID = "offer_timeout"
-	EventPingTick EventID = "ping_tick"
-	EventPingTimeout EventID = "ping_timeout"
-	EventReadvertiseTick EventID = "readvertise_tick"
-	EventRecvAuthOk EventID = "recv_auth_ok"
-	EventRecvAuthRequest EventID = "recv_auth_request"
-	EventRecvLanConfirm EventID = "recv_lan_confirm"
-	EventRecvLanOffer EventID = "recv_lan_offer"
-	EventRecvLanVerify EventID = "recv_lan_verify"
-	EventRecvPairComplete EventID = "recv_pair_complete"
-	EventRecvPairConfirm EventID = "recv_pair_confirm"
-	EventRecvPairHello EventID = "recv_pair_hello"
-	EventRecvPairHelloAck EventID = "recv_pair_hello_ack"
-	EventRecvPathPing EventID = "recv_path_ping"
-	EventRecvPathPong EventID = "recv_path_pong"
-	EventRelayConnected EventID = "relay_connected"
-	EventRelayDatagram EventID = "relay_datagram"
-	EventRelayOk EventID = "relay_ok"
-	EventRelayRegistered EventID = "relay_registered"
-	EventRelayStreamData EventID = "relay_stream_data"
-	EventRelayStreamError EventID = "relay_stream_error"
-	EventSecretParsed EventID = "secret_parsed"
-	EventSessionEstablished EventID = "session_established"
-	EventSignalCodeDisplay EventID = "signal_code_display"
-	EventTokenCreated EventID = "token_created"
-	EventVerify EventID = "verify"
-	EventVerifyTimeout EventID = "verify_timeout"
+	SessionProtocolEventAppClose EventID = "app_close"
+	SessionProtocolEventAppForceFallback EventID = "app_force_fallback"
+	SessionProtocolEventAppLaunch EventID = "app_launch"
+	SessionProtocolEventAppRecv EventID = "app_recv"
+	SessionProtocolEventAppRecvDatagram EventID = "app_recv_datagram"
+	SessionProtocolEventAppSend EventID = "app_send"
+	SessionProtocolEventAppSendDatagram EventID = "app_send_datagram"
+	SessionProtocolEventBackchannelReceived EventID = "backchannel_received"
+	SessionProtocolEventBackendDisconnect EventID = "backend_disconnect"
+	SessionProtocolEventBackendRegister EventID = "backend_register"
+	SessionProtocolEventBackoffExpired EventID = "backoff_expired"
+	SessionProtocolEventCheckCode EventID = "check_code"
+	SessionProtocolEventCliCodeEntered EventID = "cli_code_entered"
+	SessionProtocolEventCliInitPair EventID = "cli_init_pair"
+	SessionProtocolEventClientConnect EventID = "client_connect"
+	SessionProtocolEventClientDisconnect EventID = "client_disconnect"
+	SessionProtocolEventCodeDisplayed EventID = "code_displayed"
+	SessionProtocolEventDisconnect EventID = "disconnect"
+	SessionProtocolEventEcdhComplete EventID = "ecdh_complete"
+	SessionProtocolEventFinalise EventID = "finalise"
+	SessionProtocolEventKeyPairGenerated EventID = "key_pair_generated"
+	SessionProtocolEventLanDatagram EventID = "lan_datagram"
+	SessionProtocolEventLanDialFailed EventID = "lan_dial_failed"
+	SessionProtocolEventLanDialOk EventID = "lan_dial_ok"
+	SessionProtocolEventLanError EventID = "lan_error"
+	SessionProtocolEventLanServerChanged EventID = "lan_server_changed"
+	SessionProtocolEventLanServerReady EventID = "lan_server_ready"
+	SessionProtocolEventLanStreamData EventID = "lan_stream_data"
+	SessionProtocolEventLanStreamError EventID = "lan_stream_error"
+	SessionProtocolEventLanVerifyOk EventID = "lan_verify_ok"
+	SessionProtocolEventOfferTimeout EventID = "offer_timeout"
+	SessionProtocolEventPingTick EventID = "ping_tick"
+	SessionProtocolEventPingTimeout EventID = "ping_timeout"
+	SessionProtocolEventReadvertiseTick EventID = "readvertise_tick"
+	SessionProtocolEventRecvAuthOk EventID = "recv_auth_ok"
+	SessionProtocolEventRecvAuthRequest EventID = "recv_auth_request"
+	SessionProtocolEventRecvLanConfirm EventID = "recv_lan_confirm"
+	SessionProtocolEventRecvLanOffer EventID = "recv_lan_offer"
+	SessionProtocolEventRecvLanVerify EventID = "recv_lan_verify"
+	SessionProtocolEventRecvPairComplete EventID = "recv_pair_complete"
+	SessionProtocolEventRecvPairConfirm EventID = "recv_pair_confirm"
+	SessionProtocolEventRecvPairHello EventID = "recv_pair_hello"
+	SessionProtocolEventRecvPairHelloAck EventID = "recv_pair_hello_ack"
+	SessionProtocolEventRecvPathPing EventID = "recv_path_ping"
+	SessionProtocolEventRecvPathPong EventID = "recv_path_pong"
+	SessionProtocolEventRelayConnected EventID = "relay_connected"
+	SessionProtocolEventRelayDatagram EventID = "relay_datagram"
+	SessionProtocolEventRelayOk EventID = "relay_ok"
+	SessionProtocolEventRelayRegistered EventID = "relay_registered"
+	SessionProtocolEventRelayStreamData EventID = "relay_stream_data"
+	SessionProtocolEventRelayStreamError EventID = "relay_stream_error"
+	SessionProtocolEventSecretParsed EventID = "secret_parsed"
+	SessionProtocolEventSessionEstablished EventID = "session_established"
+	SessionProtocolEventSignalCodeDisplay EventID = "signal_code_display"
+	SessionProtocolEventTokenCreated EventID = "token_created"
+	SessionProtocolEventVerify EventID = "verify"
+	SessionProtocolEventVerifyTimeout EventID = "verify_timeout"
 )
 
-// Commands.
+// SessionProtocol commands.
 const (
-	CmdWriteActiveStream CmdID = "write_active_stream"
-	CmdSendActiveDatagram CmdID = "send_active_datagram"
-	CmdSendPathPing CmdID = "send_path_ping"
-	CmdSendPathPong CmdID = "send_path_pong"
-	CmdSendLanOffer CmdID = "send_lan_offer"
-	CmdSendLanVerify CmdID = "send_lan_verify"
-	CmdSendLanConfirm CmdID = "send_lan_confirm"
-	CmdDialLan CmdID = "dial_lan"
-	CmdDeliverRecv CmdID = "deliver_recv"
-	CmdDeliverRecvError CmdID = "deliver_recv_error"
-	CmdDeliverRecvDatagram CmdID = "deliver_recv_datagram"
-	CmdStartLanStreamReader CmdID = "start_lan_stream_reader"
-	CmdStopLanStreamReader CmdID = "stop_lan_stream_reader"
-	CmdStartLanDgReader CmdID = "start_lan_dg_reader"
-	CmdStopLanDgReader CmdID = "stop_lan_dg_reader"
-	CmdStartMonitor CmdID = "start_monitor"
-	CmdStopMonitor CmdID = "stop_monitor"
-	CmdStartPongTimeout CmdID = "start_pong_timeout"
-	CmdCancelPongTimeout CmdID = "cancel_pong_timeout"
-	CmdStartBackoffTimer CmdID = "start_backoff_timer"
-	CmdCloseLanPath CmdID = "close_lan_path"
-	CmdSignalLanReady CmdID = "signal_lan_ready"
-	CmdResetLanReady CmdID = "reset_lan_ready"
-	CmdSetCryptoDatagram CmdID = "set_crypto_datagram"
+	SessionProtocolCmdWriteActiveStream CmdID = "write_active_stream"
+	SessionProtocolCmdSendActiveDatagram CmdID = "send_active_datagram"
+	SessionProtocolCmdSendPathPing CmdID = "send_path_ping"
+	SessionProtocolCmdSendPathPong CmdID = "send_path_pong"
+	SessionProtocolCmdSendLanOffer CmdID = "send_lan_offer"
+	SessionProtocolCmdSendLanVerify CmdID = "send_lan_verify"
+	SessionProtocolCmdSendLanConfirm CmdID = "send_lan_confirm"
+	SessionProtocolCmdDialLan CmdID = "dial_lan"
+	SessionProtocolCmdDeliverRecv CmdID = "deliver_recv"
+	SessionProtocolCmdDeliverRecvError CmdID = "deliver_recv_error"
+	SessionProtocolCmdDeliverRecvDatagram CmdID = "deliver_recv_datagram"
+	SessionProtocolCmdStartLanStreamReader CmdID = "start_lan_stream_reader"
+	SessionProtocolCmdStopLanStreamReader CmdID = "stop_lan_stream_reader"
+	SessionProtocolCmdStartLanDgReader CmdID = "start_lan_dg_reader"
+	SessionProtocolCmdStopLanDgReader CmdID = "stop_lan_dg_reader"
+	SessionProtocolCmdStartMonitor CmdID = "start_monitor"
+	SessionProtocolCmdStopMonitor CmdID = "stop_monitor"
+	SessionProtocolCmdStartPongTimeout CmdID = "start_pong_timeout"
+	SessionProtocolCmdCancelPongTimeout CmdID = "cancel_pong_timeout"
+	SessionProtocolCmdStartBackoffTimer CmdID = "start_backoff_timer"
+	SessionProtocolCmdCloseLanPath CmdID = "close_lan_path"
+	SessionProtocolCmdSignalLanReady CmdID = "signal_lan_ready"
+	SessionProtocolCmdResetLanReady CmdID = "reset_lan_ready"
+	SessionProtocolCmdSetCryptoDatagram CmdID = "set_crypto_datagram"
 )
 
 // Wire constants — protocol-level values shared across all platforms.
@@ -538,8 +538,8 @@ type ClientPathState struct {
 	DispatcherPath string // datagram dispatcher binding
 }
 
-// BackendMachine is the generated state machine for the backend actor.
-type BackendMachine struct {
+// SessionProtocolBackendMachine is the generated state machine for the backend actor.
+type SessionProtocolBackendMachine struct {
 	State State
 	CurrentToken string // pairing token currently in play
 	ActiveTokens frozen.Set[string] // set of valid (non-revoked) tokens
@@ -568,9 +568,9 @@ type BackendMachine struct {
 	OnChange func(varName string)
 }
 
-func NewBackendMachine() *BackendMachine {
-	return &BackendMachine{
-		State: BackendIdle,
+func NewSessionProtocolBackendMachine() *SessionProtocolBackendMachine {
+	return &SessionProtocolBackendMachine{
+		State: SessionProtocolBackendIdle,
 		CurrentToken: "none",
 		BackendEcdhPub: "none",
 		ReceivedClientPub: "none",
@@ -593,10 +593,10 @@ func NewBackendMachine() *BackendMachine {
 	}
 }
 
-func (m *BackendMachine) HandleMessage(msg MsgType) (bool, error) {
+func (m *SessionProtocolBackendMachine) HandleMessage(msg MsgType) (bool, error) {
 	switch {
-	case m.State == BackendWaitingForClient && msg == MsgPairHello && m.Guards[GuardTokenValid] != nil && m.Guards[GuardTokenValid]():
-		if fn := m.Actions[ActionDeriveSecret]; fn != nil {
+	case m.State == SessionProtocolBackendWaitingForClient && msg == SessionProtocolMsgPairHello && m.Guards[SessionProtocolGuardTokenValid] != nil && m.Guards[SessionProtocolGuardTokenValid]():
+		if fn := m.Actions[SessionProtocolActionDeriveSecret]; fn != nil {
 			if err := fn(); err != nil { return false, err }
 		}
 		// received_client_pub: recv_msg.pubkey (set by action)
@@ -604,18 +604,18 @@ func (m *BackendMachine) HandleMessage(msg MsgType) (bool, error) {
 		if m.OnChange != nil { m.OnChange("backend_ecdh_pub") }
 		// backend_shared_key: DeriveKey("backend_pub", recv_msg.pubkey) (set by action)
 		// backend_code: DeriveCode("backend_pub", recv_msg.pubkey) (set by action)
-		m.State = BackendDeriveSecret
+		m.State = SessionProtocolBackendDeriveSecret
 		return true, nil
-	case m.State == BackendWaitingForClient && msg == MsgPairHello && m.Guards[GuardTokenInvalid] != nil && m.Guards[GuardTokenInvalid]():
-		m.State = BackendIdle
+	case m.State == SessionProtocolBackendWaitingForClient && msg == SessionProtocolMsgPairHello && m.Guards[SessionProtocolGuardTokenInvalid] != nil && m.Guards[SessionProtocolGuardTokenInvalid]():
+		m.State = SessionProtocolBackendIdle
 		return true, nil
-	case m.State == BackendPaired && msg == MsgAuthRequest:
+	case m.State == SessionProtocolBackendPaired && msg == SessionProtocolMsgAuthRequest:
 		// received_device_id: recv_msg.device_id (set by action)
 		// received_auth_nonce: recv_msg.nonce (set by action)
-		m.State = BackendAuthCheck
+		m.State = SessionProtocolBackendAuthCheck
 		return true, nil
-	case m.State == BackendLANOffered && msg == MsgLanVerify && m.Guards[GuardChallengeValid] != nil && m.Guards[GuardChallengeValid]():
-		if fn := m.Actions[ActionActivateLan]; fn != nil {
+	case m.State == SessionProtocolBackendLANOffered && msg == SessionProtocolMsgLanVerify && m.Guards[SessionProtocolGuardChallengeValid] != nil && m.Guards[SessionProtocolGuardChallengeValid]():
+		if fn := m.Actions[SessionProtocolActionActivateLan]; fn != nil {
 			if err := fn(); err != nil { return false, err }
 		}
 		m.PingFailures = 0
@@ -630,65 +630,65 @@ func (m *BackendMachine) HandleMessage(msg MsgType) (bool, error) {
 		if m.OnChange != nil { m.OnChange("monitor_target") }
 		m.LanSignal = "ready"
 		if m.OnChange != nil { m.OnChange("lan_signal") }
-		m.State = BackendLANActive
+		m.State = SessionProtocolBackendLANActive
 		return true, nil
-	case m.State == BackendLANOffered && msg == MsgLanVerify && m.Guards[GuardChallengeInvalid] != nil && m.Guards[GuardChallengeInvalid]():
-		m.State = BackendRelayConnected
+	case m.State == SessionProtocolBackendLANOffered && msg == SessionProtocolMsgLanVerify && m.Guards[SessionProtocolGuardChallengeInvalid] != nil && m.Guards[SessionProtocolGuardChallengeInvalid]():
+		m.State = SessionProtocolBackendRelayConnected
 		return true, nil
-	case m.State == BackendLANDegraded && msg == MsgPathPong:
-		if fn := m.Actions[ActionResetFailures]; fn != nil {
+	case m.State == SessionProtocolBackendLANDegraded && msg == SessionProtocolMsgPathPong:
+		if fn := m.Actions[SessionProtocolActionResetFailures]; fn != nil {
 			if err := fn(); err != nil { return false, err }
 		}
 		m.PingFailures = 0
 		if m.OnChange != nil { m.OnChange("ping_failures") }
-		m.State = BackendLANActive
+		m.State = SessionProtocolBackendLANActive
 		return true, nil
 	}
 	return false, nil
 }
 
-func (m *BackendMachine) Step(event EventID) (bool, error) {
+func (m *SessionProtocolBackendMachine) Step(event EventID) (bool, error) {
 	switch {
-	case m.State == BackendIdle && event == EventCliInitPair:
-		if fn := m.Actions[ActionGenerateToken]; fn != nil {
+	case m.State == SessionProtocolBackendIdle && event == SessionProtocolEventCliInitPair:
+		if fn := m.Actions[SessionProtocolActionGenerateToken]; fn != nil {
 			if err := fn(); err != nil { return false, err }
 		}
 		m.CurrentToken = "tok_1"
 		if m.OnChange != nil { m.OnChange("current_token") }
 		// active_tokens: active_tokens \union {"tok_1"} (set by action)
-		m.State = BackendGenerateToken
+		m.State = SessionProtocolBackendGenerateToken
 		return true, nil
-	case m.State == BackendGenerateToken && event == EventTokenCreated:
-		if fn := m.Actions[ActionRegisterRelay]; fn != nil {
+	case m.State == SessionProtocolBackendGenerateToken && event == SessionProtocolEventTokenCreated:
+		if fn := m.Actions[SessionProtocolActionRegisterRelay]; fn != nil {
 			if err := fn(); err != nil { return false, err }
 		}
-		m.State = BackendRegisterRelay
+		m.State = SessionProtocolBackendRegisterRelay
 		return true, nil
-	case m.State == BackendRegisterRelay && event == EventRelayRegistered:
+	case m.State == SessionProtocolBackendRegisterRelay && event == SessionProtocolEventRelayRegistered:
 		m.SecretPublished = true
 		if m.OnChange != nil { m.OnChange("secret_published") }
-		m.State = BackendWaitingForClient
+		m.State = SessionProtocolBackendWaitingForClient
 		return true, nil
-	case m.State == BackendDeriveSecret && event == EventEcdhComplete:
-		m.State = BackendSendAck
+	case m.State == SessionProtocolBackendDeriveSecret && event == SessionProtocolEventEcdhComplete:
+		m.State = SessionProtocolBackendSendAck
 		return true, nil
-	case m.State == BackendSendAck && event == EventSignalCodeDisplay:
-		m.State = BackendWaitingForCode
+	case m.State == SessionProtocolBackendSendAck && event == SessionProtocolEventSignalCodeDisplay:
+		m.State = SessionProtocolBackendWaitingForCode
 		return true, nil
-	case m.State == BackendWaitingForCode && event == EventCliCodeEntered:
+	case m.State == SessionProtocolBackendWaitingForCode && event == SessionProtocolEventCliCodeEntered:
 		// received_code: cli_entered_code (set by action)
-		m.State = BackendValidateCode
+		m.State = SessionProtocolBackendValidateCode
 		return true, nil
-	case m.State == BackendValidateCode && event == EventCheckCode && m.Guards[GuardCodeCorrect] != nil && m.Guards[GuardCodeCorrect]():
-		m.State = BackendStorePaired
+	case m.State == SessionProtocolBackendValidateCode && event == SessionProtocolEventCheckCode && m.Guards[SessionProtocolGuardCodeCorrect] != nil && m.Guards[SessionProtocolGuardCodeCorrect]():
+		m.State = SessionProtocolBackendStorePaired
 		return true, nil
-	case m.State == BackendValidateCode && event == EventCheckCode && m.Guards[GuardCodeWrong] != nil && m.Guards[GuardCodeWrong]():
+	case m.State == SessionProtocolBackendValidateCode && event == SessionProtocolEventCheckCode && m.Guards[SessionProtocolGuardCodeWrong] != nil && m.Guards[SessionProtocolGuardCodeWrong]():
 		m.CodeAttempts = m.CodeAttempts + 1
 		if m.OnChange != nil { m.OnChange("code_attempts") }
-		m.State = BackendIdle
+		m.State = SessionProtocolBackendIdle
 		return true, nil
-	case m.State == BackendStorePaired && event == EventFinalise:
-		if fn := m.Actions[ActionStoreDevice]; fn != nil {
+	case m.State == SessionProtocolBackendStorePaired && event == SessionProtocolEventFinalise:
+		if fn := m.Actions[SessionProtocolActionStoreDevice]; fn != nil {
 			if err := fn(); err != nil { return false, err }
 		}
 		m.DeviceSecret = "dev_secret_1"
@@ -696,43 +696,43 @@ func (m *BackendMachine) Step(event EventID) (bool, error) {
 		// paired_devices: paired_devices \union {"device_1"} (set by action)
 		// active_tokens: active_tokens \ {current_token} (set by action)
 		// used_tokens: used_tokens \union {current_token} (set by action)
-		m.State = BackendPaired
+		m.State = SessionProtocolBackendPaired
 		return true, nil
-	case m.State == BackendAuthCheck && event == EventVerify && m.Guards[GuardDeviceKnown] != nil && m.Guards[GuardDeviceKnown]():
-		if fn := m.Actions[ActionVerifyDevice]; fn != nil {
+	case m.State == SessionProtocolBackendAuthCheck && event == SessionProtocolEventVerify && m.Guards[SessionProtocolGuardDeviceKnown] != nil && m.Guards[SessionProtocolGuardDeviceKnown]():
+		if fn := m.Actions[SessionProtocolActionVerifyDevice]; fn != nil {
 			if err := fn(); err != nil { return false, err }
 		}
 		// auth_nonces_used: auth_nonces_used \union {received_auth_nonce} (set by action)
-		m.State = BackendSessionActive
+		m.State = SessionProtocolBackendSessionActive
 		return true, nil
-	case m.State == BackendAuthCheck && event == EventVerify && m.Guards[GuardDeviceUnknown] != nil && m.Guards[GuardDeviceUnknown]():
-		m.State = BackendIdle
+	case m.State == SessionProtocolBackendAuthCheck && event == SessionProtocolEventVerify && m.Guards[SessionProtocolGuardDeviceUnknown] != nil && m.Guards[SessionProtocolGuardDeviceUnknown]():
+		m.State = SessionProtocolBackendIdle
 		return true, nil
-	case m.State == BackendSessionActive && event == EventSessionEstablished:
-		m.State = BackendRelayConnected
+	case m.State == SessionProtocolBackendSessionActive && event == SessionProtocolEventSessionEstablished:
+		m.State = SessionProtocolBackendRelayConnected
 		return true, nil
-	case m.State == BackendRelayConnected && event == EventLanServerReady:
-		m.State = BackendLANOffered
+	case m.State == SessionProtocolBackendRelayConnected && event == SessionProtocolEventLanServerReady:
+		m.State = SessionProtocolBackendLANOffered
 		return true, nil
-	case m.State == BackendLANOffered && event == EventOfferTimeout:
+	case m.State == SessionProtocolBackendLANOffered && event == SessionProtocolEventOfferTimeout:
 		// backoff_level: Min(backoff_level + 1, max_backoff_level) (set by action)
 		m.LanSignal = "pending"
 		if m.OnChange != nil { m.OnChange("lan_signal") }
-		m.State = BackendRelayBackoff
+		m.State = SessionProtocolBackendRelayBackoff
 		return true, nil
-	case m.State == BackendLANActive && event == EventPingTick:
-		m.State = BackendLANActive
+	case m.State == SessionProtocolBackendLANActive && event == SessionProtocolEventPingTick:
+		m.State = SessionProtocolBackendLANActive
 		return true, nil
-	case m.State == BackendLANActive && event == EventPingTimeout:
+	case m.State == SessionProtocolBackendLANActive && event == SessionProtocolEventPingTimeout:
 		m.PingFailures = 1
 		if m.OnChange != nil { m.OnChange("ping_failures") }
-		m.State = BackendLANDegraded
+		m.State = SessionProtocolBackendLANDegraded
 		return true, nil
-	case m.State == BackendLANDegraded && event == EventPingTick:
-		m.State = BackendLANDegraded
+	case m.State == SessionProtocolBackendLANDegraded && event == SessionProtocolEventPingTick:
+		m.State = SessionProtocolBackendLANDegraded
 		return true, nil
-	case m.State == BackendLANActive && event == EventLanStreamError:
-		if fn := m.Actions[ActionFallbackToRelay]; fn != nil {
+	case m.State == SessionProtocolBackendLANActive && event == SessionProtocolEventLanStreamError:
+		if fn := m.Actions[SessionProtocolActionFallbackToRelay]; fn != nil {
 			if err := fn(); err != nil { return false, err }
 		}
 		// backoff_level: Min(backoff_level + 1, max_backoff_level) (set by action)
@@ -746,10 +746,10 @@ func (m *BackendMachine) Step(event EventID) (bool, error) {
 		if m.OnChange != nil { m.OnChange("lan_signal") }
 		m.PingFailures = 0
 		if m.OnChange != nil { m.OnChange("ping_failures") }
-		m.State = BackendRelayBackoff
+		m.State = SessionProtocolBackendRelayBackoff
 		return true, nil
-	case m.State == BackendLANDegraded && event == EventLanStreamError:
-		if fn := m.Actions[ActionFallbackToRelay]; fn != nil {
+	case m.State == SessionProtocolBackendLANDegraded && event == SessionProtocolEventLanStreamError:
+		if fn := m.Actions[SessionProtocolActionFallbackToRelay]; fn != nil {
 			if err := fn(); err != nil { return false, err }
 		}
 		// backoff_level: Min(backoff_level + 1, max_backoff_level) (set by action)
@@ -763,15 +763,15 @@ func (m *BackendMachine) Step(event EventID) (bool, error) {
 		if m.OnChange != nil { m.OnChange("lan_signal") }
 		m.PingFailures = 0
 		if m.OnChange != nil { m.OnChange("ping_failures") }
-		m.State = BackendRelayBackoff
+		m.State = SessionProtocolBackendRelayBackoff
 		return true, nil
-	case m.State == BackendLANDegraded && event == EventPingTimeout && m.Guards[GuardUnderMaxFailures] != nil && m.Guards[GuardUnderMaxFailures]():
+	case m.State == SessionProtocolBackendLANDegraded && event == SessionProtocolEventPingTimeout && m.Guards[SessionProtocolGuardUnderMaxFailures] != nil && m.Guards[SessionProtocolGuardUnderMaxFailures]():
 		m.PingFailures = m.PingFailures + 1
 		if m.OnChange != nil { m.OnChange("ping_failures") }
-		m.State = BackendLANDegraded
+		m.State = SessionProtocolBackendLANDegraded
 		return true, nil
-	case m.State == BackendLANDegraded && event == EventPingTimeout && m.Guards[GuardAtMaxFailures] != nil && m.Guards[GuardAtMaxFailures]():
-		if fn := m.Actions[ActionFallbackToRelay]; fn != nil {
+	case m.State == SessionProtocolBackendLANDegraded && event == SessionProtocolEventPingTimeout && m.Guards[SessionProtocolGuardAtMaxFailures] != nil && m.Guards[SessionProtocolGuardAtMaxFailures]():
+		if fn := m.Actions[SessionProtocolActionFallbackToRelay]; fn != nil {
 			if err := fn(); err != nil { return false, err }
 		}
 		// backoff_level: Min(backoff_level + 1, max_backoff_level) (set by action)
@@ -785,26 +785,26 @@ func (m *BackendMachine) Step(event EventID) (bool, error) {
 		if m.OnChange != nil { m.OnChange("lan_signal") }
 		m.PingFailures = 0
 		if m.OnChange != nil { m.OnChange("ping_failures") }
-		m.State = BackendRelayBackoff
+		m.State = SessionProtocolBackendRelayBackoff
 		return true, nil
-	case m.State == BackendRelayBackoff && event == EventBackoffExpired:
-		m.State = BackendLANOffered
+	case m.State == SessionProtocolBackendRelayBackoff && event == SessionProtocolEventBackoffExpired:
+		m.State = SessionProtocolBackendLANOffered
 		return true, nil
-	case m.State == BackendRelayBackoff && event == EventLanServerChanged:
+	case m.State == SessionProtocolBackendRelayBackoff && event == SessionProtocolEventLanServerChanged:
 		m.BackoffLevel = 0
 		if m.OnChange != nil { m.OnChange("backoff_level") }
-		m.State = BackendLANOffered
+		m.State = SessionProtocolBackendLANOffered
 		return true, nil
-	case m.State == BackendRelayConnected && event == EventReadvertiseTick && m.Guards[GuardLanServerAvailable] != nil && m.Guards[GuardLanServerAvailable]():
-		m.State = BackendLANOffered
+	case m.State == SessionProtocolBackendRelayConnected && event == SessionProtocolEventReadvertiseTick && m.Guards[SessionProtocolGuardLanServerAvailable] != nil && m.Guards[SessionProtocolGuardLanServerAvailable]():
+		m.State = SessionProtocolBackendLANOffered
 		return true, nil
-	case m.State == BackendLANOffered && event == EventAppForceFallback:
+	case m.State == SessionProtocolBackendLANOffered && event == SessionProtocolEventAppForceFallback:
 		m.LanSignal = "pending"
 		if m.OnChange != nil { m.OnChange("lan_signal") }
-		m.State = BackendRelayConnected
+		m.State = SessionProtocolBackendRelayConnected
 		return true, nil
-	case m.State == BackendLANActive && event == EventAppForceFallback:
-		if fn := m.Actions[ActionFallbackToRelay]; fn != nil {
+	case m.State == SessionProtocolBackendLANActive && event == SessionProtocolEventAppForceFallback:
+		if fn := m.Actions[SessionProtocolActionFallbackToRelay]; fn != nil {
 			if err := fn(); err != nil { return false, err }
 		}
 		// backoff_level: Min(backoff_level + 1, max_backoff_level) (set by action)
@@ -818,10 +818,10 @@ func (m *BackendMachine) Step(event EventID) (bool, error) {
 		if m.OnChange != nil { m.OnChange("lan_signal") }
 		m.PingFailures = 0
 		if m.OnChange != nil { m.OnChange("ping_failures") }
-		m.State = BackendRelayBackoff
+		m.State = SessionProtocolBackendRelayBackoff
 		return true, nil
-	case m.State == BackendLANDegraded && event == EventAppForceFallback:
-		if fn := m.Actions[ActionFallbackToRelay]; fn != nil {
+	case m.State == SessionProtocolBackendLANDegraded && event == SessionProtocolEventAppForceFallback:
+		if fn := m.Actions[SessionProtocolActionFallbackToRelay]; fn != nil {
 			if err := fn(); err != nil { return false, err }
 		}
 		// backoff_level: Min(backoff_level + 1, max_backoff_level) (set by action)
@@ -835,126 +835,126 @@ func (m *BackendMachine) Step(event EventID) (bool, error) {
 		if m.OnChange != nil { m.OnChange("lan_signal") }
 		m.PingFailures = 0
 		if m.OnChange != nil { m.OnChange("ping_failures") }
-		m.State = BackendRelayBackoff
+		m.State = SessionProtocolBackendRelayBackoff
 		return true, nil
-	case m.State == BackendRelayConnected && event == EventDisconnect:
-		m.State = BackendPaired
+	case m.State == SessionProtocolBackendRelayConnected && event == SessionProtocolEventDisconnect:
+		m.State = SessionProtocolBackendPaired
 		return true, nil
-	case m.State == BackendRelayConnected && event == EventAppSend:
-		m.State = BackendRelayConnected
+	case m.State == SessionProtocolBackendRelayConnected && event == SessionProtocolEventAppSend:
+		m.State = SessionProtocolBackendRelayConnected
 		return true, nil
-	case m.State == BackendLANOffered && event == EventAppSend:
-		m.State = BackendLANOffered
+	case m.State == SessionProtocolBackendLANOffered && event == SessionProtocolEventAppSend:
+		m.State = SessionProtocolBackendLANOffered
 		return true, nil
-	case m.State == BackendLANActive && event == EventAppSend:
-		m.State = BackendLANActive
+	case m.State == SessionProtocolBackendLANActive && event == SessionProtocolEventAppSend:
+		m.State = SessionProtocolBackendLANActive
 		return true, nil
-	case m.State == BackendLANDegraded && event == EventAppSend:
-		m.State = BackendLANDegraded
+	case m.State == SessionProtocolBackendLANDegraded && event == SessionProtocolEventAppSend:
+		m.State = SessionProtocolBackendLANDegraded
 		return true, nil
-	case m.State == BackendRelayBackoff && event == EventAppSend:
-		m.State = BackendRelayBackoff
+	case m.State == SessionProtocolBackendRelayBackoff && event == SessionProtocolEventAppSend:
+		m.State = SessionProtocolBackendRelayBackoff
 		return true, nil
-	case m.State == BackendRelayConnected && event == EventRelayStreamData:
-		m.State = BackendRelayConnected
+	case m.State == SessionProtocolBackendRelayConnected && event == SessionProtocolEventRelayStreamData:
+		m.State = SessionProtocolBackendRelayConnected
 		return true, nil
-	case m.State == BackendLANOffered && event == EventRelayStreamData:
-		m.State = BackendLANOffered
+	case m.State == SessionProtocolBackendLANOffered && event == SessionProtocolEventRelayStreamData:
+		m.State = SessionProtocolBackendLANOffered
 		return true, nil
-	case m.State == BackendLANActive && event == EventRelayStreamData:
-		m.State = BackendLANActive
+	case m.State == SessionProtocolBackendLANActive && event == SessionProtocolEventRelayStreamData:
+		m.State = SessionProtocolBackendLANActive
 		return true, nil
-	case m.State == BackendLANDegraded && event == EventRelayStreamData:
-		m.State = BackendLANDegraded
+	case m.State == SessionProtocolBackendLANDegraded && event == SessionProtocolEventRelayStreamData:
+		m.State = SessionProtocolBackendLANDegraded
 		return true, nil
-	case m.State == BackendRelayBackoff && event == EventRelayStreamData:
-		m.State = BackendRelayBackoff
+	case m.State == SessionProtocolBackendRelayBackoff && event == SessionProtocolEventRelayStreamData:
+		m.State = SessionProtocolBackendRelayBackoff
 		return true, nil
-	case m.State == BackendRelayConnected && event == EventRelayStreamError:
-		m.State = BackendRelayConnected
+	case m.State == SessionProtocolBackendRelayConnected && event == SessionProtocolEventRelayStreamError:
+		m.State = SessionProtocolBackendRelayConnected
 		return true, nil
-	case m.State == BackendLANOffered && event == EventRelayStreamError:
-		m.State = BackendLANOffered
+	case m.State == SessionProtocolBackendLANOffered && event == SessionProtocolEventRelayStreamError:
+		m.State = SessionProtocolBackendLANOffered
 		return true, nil
-	case m.State == BackendLANActive && event == EventRelayStreamError:
-		m.State = BackendLANActive
+	case m.State == SessionProtocolBackendLANActive && event == SessionProtocolEventRelayStreamError:
+		m.State = SessionProtocolBackendLANActive
 		return true, nil
-	case m.State == BackendLANDegraded && event == EventRelayStreamError:
-		m.State = BackendLANDegraded
+	case m.State == SessionProtocolBackendLANDegraded && event == SessionProtocolEventRelayStreamError:
+		m.State = SessionProtocolBackendLANDegraded
 		return true, nil
-	case m.State == BackendRelayBackoff && event == EventRelayStreamError:
-		m.State = BackendRelayBackoff
+	case m.State == SessionProtocolBackendRelayBackoff && event == SessionProtocolEventRelayStreamError:
+		m.State = SessionProtocolBackendRelayBackoff
 		return true, nil
-	case m.State == BackendRelayConnected && event == EventAppSendDatagram:
-		m.State = BackendRelayConnected
+	case m.State == SessionProtocolBackendRelayConnected && event == SessionProtocolEventAppSendDatagram:
+		m.State = SessionProtocolBackendRelayConnected
 		return true, nil
-	case m.State == BackendLANOffered && event == EventAppSendDatagram:
-		m.State = BackendLANOffered
+	case m.State == SessionProtocolBackendLANOffered && event == SessionProtocolEventAppSendDatagram:
+		m.State = SessionProtocolBackendLANOffered
 		return true, nil
-	case m.State == BackendLANActive && event == EventAppSendDatagram:
-		m.State = BackendLANActive
+	case m.State == SessionProtocolBackendLANActive && event == SessionProtocolEventAppSendDatagram:
+		m.State = SessionProtocolBackendLANActive
 		return true, nil
-	case m.State == BackendLANDegraded && event == EventAppSendDatagram:
-		m.State = BackendLANDegraded
+	case m.State == SessionProtocolBackendLANDegraded && event == SessionProtocolEventAppSendDatagram:
+		m.State = SessionProtocolBackendLANDegraded
 		return true, nil
-	case m.State == BackendRelayBackoff && event == EventAppSendDatagram:
-		m.State = BackendRelayBackoff
+	case m.State == SessionProtocolBackendRelayBackoff && event == SessionProtocolEventAppSendDatagram:
+		m.State = SessionProtocolBackendRelayBackoff
 		return true, nil
-	case m.State == BackendRelayConnected && event == EventRelayDatagram:
-		m.State = BackendRelayConnected
+	case m.State == SessionProtocolBackendRelayConnected && event == SessionProtocolEventRelayDatagram:
+		m.State = SessionProtocolBackendRelayConnected
 		return true, nil
-	case m.State == BackendLANOffered && event == EventRelayDatagram:
-		m.State = BackendLANOffered
+	case m.State == SessionProtocolBackendLANOffered && event == SessionProtocolEventRelayDatagram:
+		m.State = SessionProtocolBackendLANOffered
 		return true, nil
-	case m.State == BackendLANActive && event == EventRelayDatagram:
-		m.State = BackendLANActive
+	case m.State == SessionProtocolBackendLANActive && event == SessionProtocolEventRelayDatagram:
+		m.State = SessionProtocolBackendLANActive
 		return true, nil
-	case m.State == BackendLANDegraded && event == EventRelayDatagram:
-		m.State = BackendLANDegraded
+	case m.State == SessionProtocolBackendLANDegraded && event == SessionProtocolEventRelayDatagram:
+		m.State = SessionProtocolBackendLANDegraded
 		return true, nil
-	case m.State == BackendRelayBackoff && event == EventRelayDatagram:
-		m.State = BackendRelayBackoff
+	case m.State == SessionProtocolBackendRelayBackoff && event == SessionProtocolEventRelayDatagram:
+		m.State = SessionProtocolBackendRelayBackoff
 		return true, nil
-	case m.State == BackendLANActive && event == EventLanStreamData:
-		m.State = BackendLANActive
+	case m.State == SessionProtocolBackendLANActive && event == SessionProtocolEventLanStreamData:
+		m.State = SessionProtocolBackendLANActive
 		return true, nil
-	case m.State == BackendLANDegraded && event == EventLanStreamData:
-		m.State = BackendLANDegraded
+	case m.State == SessionProtocolBackendLANDegraded && event == SessionProtocolEventLanStreamData:
+		m.State = SessionProtocolBackendLANDegraded
 		return true, nil
-	case m.State == BackendLANActive && event == EventLanDatagram:
-		m.State = BackendLANActive
+	case m.State == SessionProtocolBackendLANActive && event == SessionProtocolEventLanDatagram:
+		m.State = SessionProtocolBackendLANActive
 		return true, nil
-	case m.State == BackendLANDegraded && event == EventLanDatagram:
-		m.State = BackendLANDegraded
+	case m.State == SessionProtocolBackendLANDegraded && event == SessionProtocolEventLanDatagram:
+		m.State = SessionProtocolBackendLANDegraded
 		return true, nil
 	}
 	return false, nil
 }
 
-func (m *BackendMachine) HandleEvent(ev EventID) ([]CmdID, error) {
+func (m *SessionProtocolBackendMachine) HandleEvent(ev EventID) ([]CmdID, error) {
 	switch {
-	case m.State == BackendIdle && ev == EventCliInitPair:
-		if fn := m.Actions[ActionGenerateToken]; fn != nil {
+	case m.State == SessionProtocolBackendIdle && ev == SessionProtocolEventCliInitPair:
+		if fn := m.Actions[SessionProtocolActionGenerateToken]; fn != nil {
 			if err := fn(); err != nil { return nil, err }
 		}
 		m.CurrentToken = "tok_1"
 		if m.OnChange != nil { m.OnChange("current_token") }
 		// active_tokens: active_tokens \union {"tok_1"} (set by action)
-		m.State = BackendGenerateToken
+		m.State = SessionProtocolBackendGenerateToken
 		return nil, nil
-	case m.State == BackendGenerateToken && ev == EventTokenCreated:
-		if fn := m.Actions[ActionRegisterRelay]; fn != nil {
+	case m.State == SessionProtocolBackendGenerateToken && ev == SessionProtocolEventTokenCreated:
+		if fn := m.Actions[SessionProtocolActionRegisterRelay]; fn != nil {
 			if err := fn(); err != nil { return nil, err }
 		}
-		m.State = BackendRegisterRelay
+		m.State = SessionProtocolBackendRegisterRelay
 		return nil, nil
-	case m.State == BackendRegisterRelay && ev == EventRelayRegistered:
+	case m.State == SessionProtocolBackendRegisterRelay && ev == SessionProtocolEventRelayRegistered:
 		m.SecretPublished = true
 		if m.OnChange != nil { m.OnChange("secret_published") }
-		m.State = BackendWaitingForClient
+		m.State = SessionProtocolBackendWaitingForClient
 		return nil, nil
-	case m.State == BackendWaitingForClient && ev == EventRecvPairHello && m.Guards[GuardTokenValid] != nil && m.Guards[GuardTokenValid]():
-		if fn := m.Actions[ActionDeriveSecret]; fn != nil {
+	case m.State == SessionProtocolBackendWaitingForClient && ev == SessionProtocolEventRecvPairHello && m.Guards[SessionProtocolGuardTokenValid] != nil && m.Guards[SessionProtocolGuardTokenValid]():
+		if fn := m.Actions[SessionProtocolActionDeriveSecret]; fn != nil {
 			if err := fn(); err != nil { return nil, err }
 		}
 		// received_client_pub: recv_msg.pubkey (set by action)
@@ -962,31 +962,31 @@ func (m *BackendMachine) HandleEvent(ev EventID) ([]CmdID, error) {
 		if m.OnChange != nil { m.OnChange("backend_ecdh_pub") }
 		// backend_shared_key: DeriveKey("backend_pub", recv_msg.pubkey) (set by action)
 		// backend_code: DeriveCode("backend_pub", recv_msg.pubkey) (set by action)
-		m.State = BackendDeriveSecret
+		m.State = SessionProtocolBackendDeriveSecret
 		return nil, nil
-	case m.State == BackendWaitingForClient && ev == EventRecvPairHello && m.Guards[GuardTokenInvalid] != nil && m.Guards[GuardTokenInvalid]():
-		m.State = BackendIdle
+	case m.State == SessionProtocolBackendWaitingForClient && ev == SessionProtocolEventRecvPairHello && m.Guards[SessionProtocolGuardTokenInvalid] != nil && m.Guards[SessionProtocolGuardTokenInvalid]():
+		m.State = SessionProtocolBackendIdle
 		return nil, nil
-	case m.State == BackendDeriveSecret && ev == EventEcdhComplete:
-		m.State = BackendSendAck
+	case m.State == SessionProtocolBackendDeriveSecret && ev == SessionProtocolEventEcdhComplete:
+		m.State = SessionProtocolBackendSendAck
 		return nil, nil
-	case m.State == BackendSendAck && ev == EventSignalCodeDisplay:
-		m.State = BackendWaitingForCode
+	case m.State == SessionProtocolBackendSendAck && ev == SessionProtocolEventSignalCodeDisplay:
+		m.State = SessionProtocolBackendWaitingForCode
 		return nil, nil
-	case m.State == BackendWaitingForCode && ev == EventCliCodeEntered:
+	case m.State == SessionProtocolBackendWaitingForCode && ev == SessionProtocolEventCliCodeEntered:
 		// received_code: cli_entered_code (set by action)
-		m.State = BackendValidateCode
+		m.State = SessionProtocolBackendValidateCode
 		return nil, nil
-	case m.State == BackendValidateCode && ev == EventCheckCode && m.Guards[GuardCodeCorrect] != nil && m.Guards[GuardCodeCorrect]():
-		m.State = BackendStorePaired
+	case m.State == SessionProtocolBackendValidateCode && ev == SessionProtocolEventCheckCode && m.Guards[SessionProtocolGuardCodeCorrect] != nil && m.Guards[SessionProtocolGuardCodeCorrect]():
+		m.State = SessionProtocolBackendStorePaired
 		return nil, nil
-	case m.State == BackendValidateCode && ev == EventCheckCode && m.Guards[GuardCodeWrong] != nil && m.Guards[GuardCodeWrong]():
+	case m.State == SessionProtocolBackendValidateCode && ev == SessionProtocolEventCheckCode && m.Guards[SessionProtocolGuardCodeWrong] != nil && m.Guards[SessionProtocolGuardCodeWrong]():
 		m.CodeAttempts = m.CodeAttempts + 1
 		if m.OnChange != nil { m.OnChange("code_attempts") }
-		m.State = BackendIdle
+		m.State = SessionProtocolBackendIdle
 		return nil, nil
-	case m.State == BackendStorePaired && ev == EventFinalise:
-		if fn := m.Actions[ActionStoreDevice]; fn != nil {
+	case m.State == SessionProtocolBackendStorePaired && ev == SessionProtocolEventFinalise:
+		if fn := m.Actions[SessionProtocolActionStoreDevice]; fn != nil {
 			if err := fn(); err != nil { return nil, err }
 		}
 		m.DeviceSecret = "dev_secret_1"
@@ -994,31 +994,31 @@ func (m *BackendMachine) HandleEvent(ev EventID) ([]CmdID, error) {
 		// paired_devices: paired_devices \union {"device_1"} (set by action)
 		// active_tokens: active_tokens \ {current_token} (set by action)
 		// used_tokens: used_tokens \union {current_token} (set by action)
-		m.State = BackendPaired
+		m.State = SessionProtocolBackendPaired
 		return nil, nil
-	case m.State == BackendPaired && ev == EventRecvAuthRequest:
+	case m.State == SessionProtocolBackendPaired && ev == SessionProtocolEventRecvAuthRequest:
 		// received_device_id: recv_msg.device_id (set by action)
 		// received_auth_nonce: recv_msg.nonce (set by action)
-		m.State = BackendAuthCheck
+		m.State = SessionProtocolBackendAuthCheck
 		return nil, nil
-	case m.State == BackendAuthCheck && ev == EventVerify && m.Guards[GuardDeviceKnown] != nil && m.Guards[GuardDeviceKnown]():
-		if fn := m.Actions[ActionVerifyDevice]; fn != nil {
+	case m.State == SessionProtocolBackendAuthCheck && ev == SessionProtocolEventVerify && m.Guards[SessionProtocolGuardDeviceKnown] != nil && m.Guards[SessionProtocolGuardDeviceKnown]():
+		if fn := m.Actions[SessionProtocolActionVerifyDevice]; fn != nil {
 			if err := fn(); err != nil { return nil, err }
 		}
 		// auth_nonces_used: auth_nonces_used \union {received_auth_nonce} (set by action)
-		m.State = BackendSessionActive
+		m.State = SessionProtocolBackendSessionActive
 		return nil, nil
-	case m.State == BackendAuthCheck && ev == EventVerify && m.Guards[GuardDeviceUnknown] != nil && m.Guards[GuardDeviceUnknown]():
-		m.State = BackendIdle
+	case m.State == SessionProtocolBackendAuthCheck && ev == SessionProtocolEventVerify && m.Guards[SessionProtocolGuardDeviceUnknown] != nil && m.Guards[SessionProtocolGuardDeviceUnknown]():
+		m.State = SessionProtocolBackendIdle
 		return nil, nil
-	case m.State == BackendSessionActive && ev == EventSessionEstablished:
-		m.State = BackendRelayConnected
+	case m.State == SessionProtocolBackendSessionActive && ev == SessionProtocolEventSessionEstablished:
+		m.State = SessionProtocolBackendRelayConnected
 		return nil, nil
-	case m.State == BackendRelayConnected && ev == EventLanServerReady:
-		m.State = BackendLANOffered
-		return []CmdID{CmdSendLanOffer}, nil
-	case m.State == BackendLANOffered && ev == EventRecvLanVerify && m.Guards[GuardChallengeValid] != nil && m.Guards[GuardChallengeValid]():
-		if fn := m.Actions[ActionActivateLan]; fn != nil {
+	case m.State == SessionProtocolBackendRelayConnected && ev == SessionProtocolEventLanServerReady:
+		m.State = SessionProtocolBackendLANOffered
+		return []CmdID{SessionProtocolCmdSendLanOffer}, nil
+	case m.State == SessionProtocolBackendLANOffered && ev == SessionProtocolEventRecvLanVerify && m.Guards[SessionProtocolGuardChallengeValid] != nil && m.Guards[SessionProtocolGuardChallengeValid]():
+		if fn := m.Actions[SessionProtocolActionActivateLan]; fn != nil {
 			if err := fn(); err != nil { return nil, err }
 		}
 		m.PingFailures = 0
@@ -1033,30 +1033,30 @@ func (m *BackendMachine) HandleEvent(ev EventID) ([]CmdID, error) {
 		if m.OnChange != nil { m.OnChange("monitor_target") }
 		m.LanSignal = "ready"
 		if m.OnChange != nil { m.OnChange("lan_signal") }
-		m.State = BackendLANActive
-		return []CmdID{CmdSendLanConfirm, CmdStartLanStreamReader, CmdStartLanDgReader, CmdStartMonitor, CmdSignalLanReady, CmdSetCryptoDatagram}, nil
-	case m.State == BackendLANOffered && ev == EventRecvLanVerify && m.Guards[GuardChallengeInvalid] != nil && m.Guards[GuardChallengeInvalid]():
-		m.State = BackendRelayConnected
+		m.State = SessionProtocolBackendLANActive
+		return []CmdID{SessionProtocolCmdSendLanConfirm, SessionProtocolCmdStartLanStreamReader, SessionProtocolCmdStartLanDgReader, SessionProtocolCmdStartMonitor, SessionProtocolCmdSignalLanReady, SessionProtocolCmdSetCryptoDatagram}, nil
+	case m.State == SessionProtocolBackendLANOffered && ev == SessionProtocolEventRecvLanVerify && m.Guards[SessionProtocolGuardChallengeInvalid] != nil && m.Guards[SessionProtocolGuardChallengeInvalid]():
+		m.State = SessionProtocolBackendRelayConnected
 		return nil, nil
-	case m.State == BackendLANOffered && ev == EventOfferTimeout:
+	case m.State == SessionProtocolBackendLANOffered && ev == SessionProtocolEventOfferTimeout:
 		// backoff_level: Min(backoff_level + 1, max_backoff_level) (set by action)
 		m.LanSignal = "pending"
 		if m.OnChange != nil { m.OnChange("lan_signal") }
-		m.State = BackendRelayBackoff
-		return []CmdID{CmdResetLanReady, CmdStartBackoffTimer}, nil
-	case m.State == BackendLANActive && ev == EventPingTick:
-		m.State = BackendLANActive
-		return []CmdID{CmdSendPathPing, CmdStartPongTimeout}, nil
-	case m.State == BackendLANActive && ev == EventPingTimeout:
+		m.State = SessionProtocolBackendRelayBackoff
+		return []CmdID{SessionProtocolCmdResetLanReady, SessionProtocolCmdStartBackoffTimer}, nil
+	case m.State == SessionProtocolBackendLANActive && ev == SessionProtocolEventPingTick:
+		m.State = SessionProtocolBackendLANActive
+		return []CmdID{SessionProtocolCmdSendPathPing, SessionProtocolCmdStartPongTimeout}, nil
+	case m.State == SessionProtocolBackendLANActive && ev == SessionProtocolEventPingTimeout:
 		m.PingFailures = 1
 		if m.OnChange != nil { m.OnChange("ping_failures") }
-		m.State = BackendLANDegraded
+		m.State = SessionProtocolBackendLANDegraded
 		return nil, nil
-	case m.State == BackendLANDegraded && ev == EventPingTick:
-		m.State = BackendLANDegraded
-		return []CmdID{CmdSendPathPing, CmdStartPongTimeout}, nil
-	case m.State == BackendLANActive && ev == EventLanStreamError:
-		if fn := m.Actions[ActionFallbackToRelay]; fn != nil {
+	case m.State == SessionProtocolBackendLANDegraded && ev == SessionProtocolEventPingTick:
+		m.State = SessionProtocolBackendLANDegraded
+		return []CmdID{SessionProtocolCmdSendPathPing, SessionProtocolCmdStartPongTimeout}, nil
+	case m.State == SessionProtocolBackendLANActive && ev == SessionProtocolEventLanStreamError:
+		if fn := m.Actions[SessionProtocolActionFallbackToRelay]; fn != nil {
 			if err := fn(); err != nil { return nil, err }
 		}
 		// backoff_level: Min(backoff_level + 1, max_backoff_level) (set by action)
@@ -1070,10 +1070,10 @@ func (m *BackendMachine) HandleEvent(ev EventID) ([]CmdID, error) {
 		if m.OnChange != nil { m.OnChange("lan_signal") }
 		m.PingFailures = 0
 		if m.OnChange != nil { m.OnChange("ping_failures") }
-		m.State = BackendRelayBackoff
-		return []CmdID{CmdStopMonitor, CmdStopLanStreamReader, CmdStopLanDgReader, CmdCloseLanPath, CmdResetLanReady, CmdStartBackoffTimer}, nil
-	case m.State == BackendLANDegraded && ev == EventLanStreamError:
-		if fn := m.Actions[ActionFallbackToRelay]; fn != nil {
+		m.State = SessionProtocolBackendRelayBackoff
+		return []CmdID{SessionProtocolCmdStopMonitor, SessionProtocolCmdStopLanStreamReader, SessionProtocolCmdStopLanDgReader, SessionProtocolCmdCloseLanPath, SessionProtocolCmdResetLanReady, SessionProtocolCmdStartBackoffTimer}, nil
+	case m.State == SessionProtocolBackendLANDegraded && ev == SessionProtocolEventLanStreamError:
+		if fn := m.Actions[SessionProtocolActionFallbackToRelay]; fn != nil {
 			if err := fn(); err != nil { return nil, err }
 		}
 		// backoff_level: Min(backoff_level + 1, max_backoff_level) (set by action)
@@ -1087,23 +1087,23 @@ func (m *BackendMachine) HandleEvent(ev EventID) ([]CmdID, error) {
 		if m.OnChange != nil { m.OnChange("lan_signal") }
 		m.PingFailures = 0
 		if m.OnChange != nil { m.OnChange("ping_failures") }
-		m.State = BackendRelayBackoff
-		return []CmdID{CmdStopMonitor, CmdStopLanStreamReader, CmdStopLanDgReader, CmdCloseLanPath, CmdResetLanReady, CmdStartBackoffTimer}, nil
-	case m.State == BackendLANDegraded && ev == EventRecvPathPong:
-		if fn := m.Actions[ActionResetFailures]; fn != nil {
+		m.State = SessionProtocolBackendRelayBackoff
+		return []CmdID{SessionProtocolCmdStopMonitor, SessionProtocolCmdStopLanStreamReader, SessionProtocolCmdStopLanDgReader, SessionProtocolCmdCloseLanPath, SessionProtocolCmdResetLanReady, SessionProtocolCmdStartBackoffTimer}, nil
+	case m.State == SessionProtocolBackendLANDegraded && ev == SessionProtocolEventRecvPathPong:
+		if fn := m.Actions[SessionProtocolActionResetFailures]; fn != nil {
 			if err := fn(); err != nil { return nil, err }
 		}
 		m.PingFailures = 0
 		if m.OnChange != nil { m.OnChange("ping_failures") }
-		m.State = BackendLANActive
-		return []CmdID{CmdCancelPongTimeout}, nil
-	case m.State == BackendLANDegraded && ev == EventPingTimeout && m.Guards[GuardUnderMaxFailures] != nil && m.Guards[GuardUnderMaxFailures]():
+		m.State = SessionProtocolBackendLANActive
+		return []CmdID{SessionProtocolCmdCancelPongTimeout}, nil
+	case m.State == SessionProtocolBackendLANDegraded && ev == SessionProtocolEventPingTimeout && m.Guards[SessionProtocolGuardUnderMaxFailures] != nil && m.Guards[SessionProtocolGuardUnderMaxFailures]():
 		m.PingFailures = m.PingFailures + 1
 		if m.OnChange != nil { m.OnChange("ping_failures") }
-		m.State = BackendLANDegraded
+		m.State = SessionProtocolBackendLANDegraded
 		return nil, nil
-	case m.State == BackendLANDegraded && ev == EventPingTimeout && m.Guards[GuardAtMaxFailures] != nil && m.Guards[GuardAtMaxFailures]():
-		if fn := m.Actions[ActionFallbackToRelay]; fn != nil {
+	case m.State == SessionProtocolBackendLANDegraded && ev == SessionProtocolEventPingTimeout && m.Guards[SessionProtocolGuardAtMaxFailures] != nil && m.Guards[SessionProtocolGuardAtMaxFailures]():
+		if fn := m.Actions[SessionProtocolActionFallbackToRelay]; fn != nil {
 			if err := fn(); err != nil { return nil, err }
 		}
 		// backoff_level: Min(backoff_level + 1, max_backoff_level) (set by action)
@@ -1117,26 +1117,26 @@ func (m *BackendMachine) HandleEvent(ev EventID) ([]CmdID, error) {
 		if m.OnChange != nil { m.OnChange("lan_signal") }
 		m.PingFailures = 0
 		if m.OnChange != nil { m.OnChange("ping_failures") }
-		m.State = BackendRelayBackoff
-		return []CmdID{CmdStopMonitor, CmdStopLanStreamReader, CmdStopLanDgReader, CmdCloseLanPath, CmdResetLanReady, CmdStartBackoffTimer}, nil
-	case m.State == BackendRelayBackoff && ev == EventBackoffExpired:
-		m.State = BackendLANOffered
-		return []CmdID{CmdSendLanOffer}, nil
-	case m.State == BackendRelayBackoff && ev == EventLanServerChanged:
+		m.State = SessionProtocolBackendRelayBackoff
+		return []CmdID{SessionProtocolCmdStopMonitor, SessionProtocolCmdStopLanStreamReader, SessionProtocolCmdStopLanDgReader, SessionProtocolCmdCloseLanPath, SessionProtocolCmdResetLanReady, SessionProtocolCmdStartBackoffTimer}, nil
+	case m.State == SessionProtocolBackendRelayBackoff && ev == SessionProtocolEventBackoffExpired:
+		m.State = SessionProtocolBackendLANOffered
+		return []CmdID{SessionProtocolCmdSendLanOffer}, nil
+	case m.State == SessionProtocolBackendRelayBackoff && ev == SessionProtocolEventLanServerChanged:
 		m.BackoffLevel = 0
 		if m.OnChange != nil { m.OnChange("backoff_level") }
-		m.State = BackendLANOffered
-		return []CmdID{CmdSendLanOffer}, nil
-	case m.State == BackendRelayConnected && ev == EventReadvertiseTick && m.Guards[GuardLanServerAvailable] != nil && m.Guards[GuardLanServerAvailable]():
-		m.State = BackendLANOffered
-		return []CmdID{CmdSendLanOffer}, nil
-	case m.State == BackendLANOffered && ev == EventAppForceFallback:
+		m.State = SessionProtocolBackendLANOffered
+		return []CmdID{SessionProtocolCmdSendLanOffer}, nil
+	case m.State == SessionProtocolBackendRelayConnected && ev == SessionProtocolEventReadvertiseTick && m.Guards[SessionProtocolGuardLanServerAvailable] != nil && m.Guards[SessionProtocolGuardLanServerAvailable]():
+		m.State = SessionProtocolBackendLANOffered
+		return []CmdID{SessionProtocolCmdSendLanOffer}, nil
+	case m.State == SessionProtocolBackendLANOffered && ev == SessionProtocolEventAppForceFallback:
 		m.LanSignal = "pending"
 		if m.OnChange != nil { m.OnChange("lan_signal") }
-		m.State = BackendRelayConnected
-		return []CmdID{CmdResetLanReady}, nil
-	case m.State == BackendLANActive && ev == EventAppForceFallback:
-		if fn := m.Actions[ActionFallbackToRelay]; fn != nil {
+		m.State = SessionProtocolBackendRelayConnected
+		return []CmdID{SessionProtocolCmdResetLanReady}, nil
+	case m.State == SessionProtocolBackendLANActive && ev == SessionProtocolEventAppForceFallback:
+		if fn := m.Actions[SessionProtocolActionFallbackToRelay]; fn != nil {
 			if err := fn(); err != nil { return nil, err }
 		}
 		// backoff_level: Min(backoff_level + 1, max_backoff_level) (set by action)
@@ -1150,10 +1150,10 @@ func (m *BackendMachine) HandleEvent(ev EventID) ([]CmdID, error) {
 		if m.OnChange != nil { m.OnChange("lan_signal") }
 		m.PingFailures = 0
 		if m.OnChange != nil { m.OnChange("ping_failures") }
-		m.State = BackendRelayBackoff
-		return []CmdID{CmdStopMonitor, CmdCancelPongTimeout, CmdStopLanStreamReader, CmdStopLanDgReader, CmdCloseLanPath, CmdResetLanReady, CmdStartBackoffTimer}, nil
-	case m.State == BackendLANDegraded && ev == EventAppForceFallback:
-		if fn := m.Actions[ActionFallbackToRelay]; fn != nil {
+		m.State = SessionProtocolBackendRelayBackoff
+		return []CmdID{SessionProtocolCmdStopMonitor, SessionProtocolCmdCancelPongTimeout, SessionProtocolCmdStopLanStreamReader, SessionProtocolCmdStopLanDgReader, SessionProtocolCmdCloseLanPath, SessionProtocolCmdResetLanReady, SessionProtocolCmdStartBackoffTimer}, nil
+	case m.State == SessionProtocolBackendLANDegraded && ev == SessionProtocolEventAppForceFallback:
+		if fn := m.Actions[SessionProtocolActionFallbackToRelay]; fn != nil {
 			if err := fn(); err != nil { return nil, err }
 		}
 		// backoff_level: Min(backoff_level + 1, max_backoff_level) (set by action)
@@ -1167,104 +1167,104 @@ func (m *BackendMachine) HandleEvent(ev EventID) ([]CmdID, error) {
 		if m.OnChange != nil { m.OnChange("lan_signal") }
 		m.PingFailures = 0
 		if m.OnChange != nil { m.OnChange("ping_failures") }
-		m.State = BackendRelayBackoff
-		return []CmdID{CmdStopMonitor, CmdCancelPongTimeout, CmdStopLanStreamReader, CmdStopLanDgReader, CmdCloseLanPath, CmdResetLanReady, CmdStartBackoffTimer}, nil
-	case m.State == BackendRelayConnected && ev == EventDisconnect:
-		m.State = BackendPaired
+		m.State = SessionProtocolBackendRelayBackoff
+		return []CmdID{SessionProtocolCmdStopMonitor, SessionProtocolCmdCancelPongTimeout, SessionProtocolCmdStopLanStreamReader, SessionProtocolCmdStopLanDgReader, SessionProtocolCmdCloseLanPath, SessionProtocolCmdResetLanReady, SessionProtocolCmdStartBackoffTimer}, nil
+	case m.State == SessionProtocolBackendRelayConnected && ev == SessionProtocolEventDisconnect:
+		m.State = SessionProtocolBackendPaired
 		return nil, nil
-	case m.State == BackendRelayConnected && ev == EventAppSend:
-		m.State = BackendRelayConnected
-		return []CmdID{CmdWriteActiveStream}, nil
-	case m.State == BackendLANOffered && ev == EventAppSend:
-		m.State = BackendLANOffered
-		return []CmdID{CmdWriteActiveStream}, nil
-	case m.State == BackendLANActive && ev == EventAppSend:
-		m.State = BackendLANActive
-		return []CmdID{CmdWriteActiveStream}, nil
-	case m.State == BackendLANDegraded && ev == EventAppSend:
-		m.State = BackendLANDegraded
-		return []CmdID{CmdWriteActiveStream}, nil
-	case m.State == BackendRelayBackoff && ev == EventAppSend:
-		m.State = BackendRelayBackoff
-		return []CmdID{CmdWriteActiveStream}, nil
-	case m.State == BackendRelayConnected && ev == EventRelayStreamData:
-		m.State = BackendRelayConnected
-		return []CmdID{CmdDeliverRecv}, nil
-	case m.State == BackendLANOffered && ev == EventRelayStreamData:
-		m.State = BackendLANOffered
-		return []CmdID{CmdDeliverRecv}, nil
-	case m.State == BackendLANActive && ev == EventRelayStreamData:
-		m.State = BackendLANActive
-		return []CmdID{CmdDeliverRecv}, nil
-	case m.State == BackendLANDegraded && ev == EventRelayStreamData:
-		m.State = BackendLANDegraded
-		return []CmdID{CmdDeliverRecv}, nil
-	case m.State == BackendRelayBackoff && ev == EventRelayStreamData:
-		m.State = BackendRelayBackoff
-		return []CmdID{CmdDeliverRecv}, nil
-	case m.State == BackendRelayConnected && ev == EventRelayStreamError:
-		m.State = BackendRelayConnected
-		return []CmdID{CmdDeliverRecvError}, nil
-	case m.State == BackendLANOffered && ev == EventRelayStreamError:
-		m.State = BackendLANOffered
-		return []CmdID{CmdDeliverRecvError}, nil
-	case m.State == BackendLANActive && ev == EventRelayStreamError:
-		m.State = BackendLANActive
-		return []CmdID{CmdDeliverRecvError}, nil
-	case m.State == BackendLANDegraded && ev == EventRelayStreamError:
-		m.State = BackendLANDegraded
-		return []CmdID{CmdDeliverRecvError}, nil
-	case m.State == BackendRelayBackoff && ev == EventRelayStreamError:
-		m.State = BackendRelayBackoff
-		return []CmdID{CmdDeliverRecvError}, nil
-	case m.State == BackendRelayConnected && ev == EventAppSendDatagram:
-		m.State = BackendRelayConnected
-		return []CmdID{CmdSendActiveDatagram}, nil
-	case m.State == BackendLANOffered && ev == EventAppSendDatagram:
-		m.State = BackendLANOffered
-		return []CmdID{CmdSendActiveDatagram}, nil
-	case m.State == BackendLANActive && ev == EventAppSendDatagram:
-		m.State = BackendLANActive
-		return []CmdID{CmdSendActiveDatagram}, nil
-	case m.State == BackendLANDegraded && ev == EventAppSendDatagram:
-		m.State = BackendLANDegraded
-		return []CmdID{CmdSendActiveDatagram}, nil
-	case m.State == BackendRelayBackoff && ev == EventAppSendDatagram:
-		m.State = BackendRelayBackoff
-		return []CmdID{CmdSendActiveDatagram}, nil
-	case m.State == BackendRelayConnected && ev == EventRelayDatagram:
-		m.State = BackendRelayConnected
-		return []CmdID{CmdDeliverRecvDatagram}, nil
-	case m.State == BackendLANOffered && ev == EventRelayDatagram:
-		m.State = BackendLANOffered
-		return []CmdID{CmdDeliverRecvDatagram}, nil
-	case m.State == BackendLANActive && ev == EventRelayDatagram:
-		m.State = BackendLANActive
-		return []CmdID{CmdDeliverRecvDatagram}, nil
-	case m.State == BackendLANDegraded && ev == EventRelayDatagram:
-		m.State = BackendLANDegraded
-		return []CmdID{CmdDeliverRecvDatagram}, nil
-	case m.State == BackendRelayBackoff && ev == EventRelayDatagram:
-		m.State = BackendRelayBackoff
-		return []CmdID{CmdDeliverRecvDatagram}, nil
-	case m.State == BackendLANActive && ev == EventLanStreamData:
-		m.State = BackendLANActive
-		return []CmdID{CmdDeliverRecv}, nil
-	case m.State == BackendLANDegraded && ev == EventLanStreamData:
-		m.State = BackendLANDegraded
-		return []CmdID{CmdDeliverRecv}, nil
-	case m.State == BackendLANActive && ev == EventLanDatagram:
-		m.State = BackendLANActive
-		return []CmdID{CmdDeliverRecvDatagram}, nil
-	case m.State == BackendLANDegraded && ev == EventLanDatagram:
-		m.State = BackendLANDegraded
-		return []CmdID{CmdDeliverRecvDatagram}, nil
+	case m.State == SessionProtocolBackendRelayConnected && ev == SessionProtocolEventAppSend:
+		m.State = SessionProtocolBackendRelayConnected
+		return []CmdID{SessionProtocolCmdWriteActiveStream}, nil
+	case m.State == SessionProtocolBackendLANOffered && ev == SessionProtocolEventAppSend:
+		m.State = SessionProtocolBackendLANOffered
+		return []CmdID{SessionProtocolCmdWriteActiveStream}, nil
+	case m.State == SessionProtocolBackendLANActive && ev == SessionProtocolEventAppSend:
+		m.State = SessionProtocolBackendLANActive
+		return []CmdID{SessionProtocolCmdWriteActiveStream}, nil
+	case m.State == SessionProtocolBackendLANDegraded && ev == SessionProtocolEventAppSend:
+		m.State = SessionProtocolBackendLANDegraded
+		return []CmdID{SessionProtocolCmdWriteActiveStream}, nil
+	case m.State == SessionProtocolBackendRelayBackoff && ev == SessionProtocolEventAppSend:
+		m.State = SessionProtocolBackendRelayBackoff
+		return []CmdID{SessionProtocolCmdWriteActiveStream}, nil
+	case m.State == SessionProtocolBackendRelayConnected && ev == SessionProtocolEventRelayStreamData:
+		m.State = SessionProtocolBackendRelayConnected
+		return []CmdID{SessionProtocolCmdDeliverRecv}, nil
+	case m.State == SessionProtocolBackendLANOffered && ev == SessionProtocolEventRelayStreamData:
+		m.State = SessionProtocolBackendLANOffered
+		return []CmdID{SessionProtocolCmdDeliverRecv}, nil
+	case m.State == SessionProtocolBackendLANActive && ev == SessionProtocolEventRelayStreamData:
+		m.State = SessionProtocolBackendLANActive
+		return []CmdID{SessionProtocolCmdDeliverRecv}, nil
+	case m.State == SessionProtocolBackendLANDegraded && ev == SessionProtocolEventRelayStreamData:
+		m.State = SessionProtocolBackendLANDegraded
+		return []CmdID{SessionProtocolCmdDeliverRecv}, nil
+	case m.State == SessionProtocolBackendRelayBackoff && ev == SessionProtocolEventRelayStreamData:
+		m.State = SessionProtocolBackendRelayBackoff
+		return []CmdID{SessionProtocolCmdDeliverRecv}, nil
+	case m.State == SessionProtocolBackendRelayConnected && ev == SessionProtocolEventRelayStreamError:
+		m.State = SessionProtocolBackendRelayConnected
+		return []CmdID{SessionProtocolCmdDeliverRecvError}, nil
+	case m.State == SessionProtocolBackendLANOffered && ev == SessionProtocolEventRelayStreamError:
+		m.State = SessionProtocolBackendLANOffered
+		return []CmdID{SessionProtocolCmdDeliverRecvError}, nil
+	case m.State == SessionProtocolBackendLANActive && ev == SessionProtocolEventRelayStreamError:
+		m.State = SessionProtocolBackendLANActive
+		return []CmdID{SessionProtocolCmdDeliverRecvError}, nil
+	case m.State == SessionProtocolBackendLANDegraded && ev == SessionProtocolEventRelayStreamError:
+		m.State = SessionProtocolBackendLANDegraded
+		return []CmdID{SessionProtocolCmdDeliverRecvError}, nil
+	case m.State == SessionProtocolBackendRelayBackoff && ev == SessionProtocolEventRelayStreamError:
+		m.State = SessionProtocolBackendRelayBackoff
+		return []CmdID{SessionProtocolCmdDeliverRecvError}, nil
+	case m.State == SessionProtocolBackendRelayConnected && ev == SessionProtocolEventAppSendDatagram:
+		m.State = SessionProtocolBackendRelayConnected
+		return []CmdID{SessionProtocolCmdSendActiveDatagram}, nil
+	case m.State == SessionProtocolBackendLANOffered && ev == SessionProtocolEventAppSendDatagram:
+		m.State = SessionProtocolBackendLANOffered
+		return []CmdID{SessionProtocolCmdSendActiveDatagram}, nil
+	case m.State == SessionProtocolBackendLANActive && ev == SessionProtocolEventAppSendDatagram:
+		m.State = SessionProtocolBackendLANActive
+		return []CmdID{SessionProtocolCmdSendActiveDatagram}, nil
+	case m.State == SessionProtocolBackendLANDegraded && ev == SessionProtocolEventAppSendDatagram:
+		m.State = SessionProtocolBackendLANDegraded
+		return []CmdID{SessionProtocolCmdSendActiveDatagram}, nil
+	case m.State == SessionProtocolBackendRelayBackoff && ev == SessionProtocolEventAppSendDatagram:
+		m.State = SessionProtocolBackendRelayBackoff
+		return []CmdID{SessionProtocolCmdSendActiveDatagram}, nil
+	case m.State == SessionProtocolBackendRelayConnected && ev == SessionProtocolEventRelayDatagram:
+		m.State = SessionProtocolBackendRelayConnected
+		return []CmdID{SessionProtocolCmdDeliverRecvDatagram}, nil
+	case m.State == SessionProtocolBackendLANOffered && ev == SessionProtocolEventRelayDatagram:
+		m.State = SessionProtocolBackendLANOffered
+		return []CmdID{SessionProtocolCmdDeliverRecvDatagram}, nil
+	case m.State == SessionProtocolBackendLANActive && ev == SessionProtocolEventRelayDatagram:
+		m.State = SessionProtocolBackendLANActive
+		return []CmdID{SessionProtocolCmdDeliverRecvDatagram}, nil
+	case m.State == SessionProtocolBackendLANDegraded && ev == SessionProtocolEventRelayDatagram:
+		m.State = SessionProtocolBackendLANDegraded
+		return []CmdID{SessionProtocolCmdDeliverRecvDatagram}, nil
+	case m.State == SessionProtocolBackendRelayBackoff && ev == SessionProtocolEventRelayDatagram:
+		m.State = SessionProtocolBackendRelayBackoff
+		return []CmdID{SessionProtocolCmdDeliverRecvDatagram}, nil
+	case m.State == SessionProtocolBackendLANActive && ev == SessionProtocolEventLanStreamData:
+		m.State = SessionProtocolBackendLANActive
+		return []CmdID{SessionProtocolCmdDeliverRecv}, nil
+	case m.State == SessionProtocolBackendLANDegraded && ev == SessionProtocolEventLanStreamData:
+		m.State = SessionProtocolBackendLANDegraded
+		return []CmdID{SessionProtocolCmdDeliverRecv}, nil
+	case m.State == SessionProtocolBackendLANActive && ev == SessionProtocolEventLanDatagram:
+		m.State = SessionProtocolBackendLANActive
+		return []CmdID{SessionProtocolCmdDeliverRecvDatagram}, nil
+	case m.State == SessionProtocolBackendLANDegraded && ev == SessionProtocolEventLanDatagram:
+		m.State = SessionProtocolBackendLANDegraded
+		return []CmdID{SessionProtocolCmdDeliverRecvDatagram}, nil
 	}
 	return nil, nil
 }
 
-// ClientMachine is the generated state machine for the client actor.
-type ClientMachine struct {
+// SessionProtocolClientMachine is the generated state machine for the client actor.
+type SessionProtocolClientMachine struct {
 	State State
 	ReceivedBackendPub string // pubkey client received in pair_hello_ack
 	ClientSharedKey string // ECDH key derived by client
@@ -1278,9 +1278,9 @@ type ClientMachine struct {
 	OnChange func(varName string)
 }
 
-func NewClientMachine() *ClientMachine {
-	return &ClientMachine{
-		State: ClientIdle,
+func NewSessionProtocolClientMachine() *SessionProtocolClientMachine {
+	return &SessionProtocolClientMachine{
+		State: SessionProtocolClientIdle,
 		ReceivedBackendPub: "none",
 		ClientSharedKey: "",
 		ClientCode: "",
@@ -1292,40 +1292,40 @@ func NewClientMachine() *ClientMachine {
 	}
 }
 
-func (m *ClientMachine) HandleMessage(msg MsgType) (bool, error) {
+func (m *SessionProtocolClientMachine) HandleMessage(msg MsgType) (bool, error) {
 	switch {
-	case m.State == ClientWaitAck && msg == MsgPairHelloAck:
-		if fn := m.Actions[ActionDeriveSecret]; fn != nil {
+	case m.State == SessionProtocolClientWaitAck && msg == SessionProtocolMsgPairHelloAck:
+		if fn := m.Actions[SessionProtocolActionDeriveSecret]; fn != nil {
 			if err := fn(); err != nil { return false, err }
 		}
 		// received_backend_pub: recv_msg.pubkey (set by action)
 		// client_shared_key: DeriveKey("client_pub", recv_msg.pubkey) (set by action)
-		m.State = ClientE2EReady
+		m.State = SessionProtocolClientE2EReady
 		return true, nil
-	case m.State == ClientE2EReady && msg == MsgPairConfirm:
+	case m.State == SessionProtocolClientE2EReady && msg == SessionProtocolMsgPairConfirm:
 		// client_code: DeriveCode(received_backend_pub, "client_pub") (set by action)
-		m.State = ClientShowCode
+		m.State = SessionProtocolClientShowCode
 		return true, nil
-	case m.State == ClientWaitPairComplete && msg == MsgPairComplete:
-		if fn := m.Actions[ActionStoreSecret]; fn != nil {
+	case m.State == SessionProtocolClientWaitPairComplete && msg == SessionProtocolMsgPairComplete:
+		if fn := m.Actions[SessionProtocolActionStoreSecret]; fn != nil {
 			if err := fn(); err != nil { return false, err }
 		}
-		m.State = ClientPaired
+		m.State = SessionProtocolClientPaired
 		return true, nil
-	case m.State == ClientSendAuth && msg == MsgAuthOk:
-		m.State = ClientSessionActive
+	case m.State == SessionProtocolClientSendAuth && msg == SessionProtocolMsgAuthOk:
+		m.State = SessionProtocolClientSessionActive
 		return true, nil
-	case m.State == ClientRelayConnected && msg == MsgLanOffer && m.Guards[GuardLanEnabled] != nil && m.Guards[GuardLanEnabled]():
-		if fn := m.Actions[ActionDialLan]; fn != nil {
+	case m.State == SessionProtocolClientRelayConnected && msg == SessionProtocolMsgLanOffer && m.Guards[SessionProtocolGuardLanEnabled] != nil && m.Guards[SessionProtocolGuardLanEnabled]():
+		if fn := m.Actions[SessionProtocolActionDialLan]; fn != nil {
 			if err := fn(); err != nil { return false, err }
 		}
-		m.State = ClientLANConnecting
+		m.State = SessionProtocolClientLANConnecting
 		return true, nil
-	case m.State == ClientRelayConnected && msg == MsgLanOffer && m.Guards[GuardLanDisabled] != nil && m.Guards[GuardLanDisabled]():
-		m.State = ClientRelayConnected
+	case m.State == SessionProtocolClientRelayConnected && msg == SessionProtocolMsgLanOffer && m.Guards[SessionProtocolGuardLanDisabled] != nil && m.Guards[SessionProtocolGuardLanDisabled]():
+		m.State = SessionProtocolClientRelayConnected
 		return true, nil
-	case m.State == ClientLANVerifying && msg == MsgLanConfirm:
-		if fn := m.Actions[ActionActivateLan]; fn != nil {
+	case m.State == SessionProtocolClientLANVerifying && msg == SessionProtocolMsgLanConfirm:
+		if fn := m.Actions[SessionProtocolActionActivateLan]; fn != nil {
 			if err := fn(); err != nil { return false, err }
 		}
 		m.CActivePath = "lan"
@@ -1334,75 +1334,63 @@ func (m *ClientMachine) HandleMessage(msg MsgType) (bool, error) {
 		if m.OnChange != nil { m.OnChange("c_dispatcher_path") }
 		m.LanSignal = "ready"
 		if m.OnChange != nil { m.OnChange("lan_signal") }
-		m.State = ClientLANActive
+		m.State = SessionProtocolClientLANActive
 		return true, nil
-	case m.State == ClientLANActive && msg == MsgPathPing:
-		m.State = ClientLANActive
+	case m.State == SessionProtocolClientLANActive && msg == SessionProtocolMsgPathPing:
+		m.State = SessionProtocolClientLANActive
 		return true, nil
-	case m.State == ClientLANActive && msg == MsgLanOffer && m.Guards[GuardLanEnabled] != nil && m.Guards[GuardLanEnabled]():
-		if fn := m.Actions[ActionDialLan]; fn != nil {
+	case m.State == SessionProtocolClientLANActive && msg == SessionProtocolMsgLanOffer && m.Guards[SessionProtocolGuardLanEnabled] != nil && m.Guards[SessionProtocolGuardLanEnabled]():
+		if fn := m.Actions[SessionProtocolActionDialLan]; fn != nil {
 			if err := fn(); err != nil { return false, err }
 		}
-		m.State = ClientLANConnecting
+		m.State = SessionProtocolClientLANConnecting
 		return true, nil
 	}
 	return false, nil
 }
 
-func (m *ClientMachine) Step(event EventID) (bool, error) {
+func (m *SessionProtocolClientMachine) Step(event EventID) (bool, error) {
 	switch {
-	case m.State == ClientIdle && event == EventBackchannelReceived:
-		m.State = ClientObtainBackchannelSecret
+	case m.State == SessionProtocolClientIdle && event == SessionProtocolEventBackchannelReceived:
+		m.State = SessionProtocolClientObtainBackchannelSecret
 		return true, nil
-	case m.State == ClientObtainBackchannelSecret && event == EventSecretParsed:
-		m.State = ClientConnectRelay
+	case m.State == SessionProtocolClientObtainBackchannelSecret && event == SessionProtocolEventSecretParsed:
+		m.State = SessionProtocolClientConnectRelay
 		return true, nil
-	case m.State == ClientConnectRelay && event == EventRelayConnected:
-		m.State = ClientGenKeyPair
+	case m.State == SessionProtocolClientConnectRelay && event == SessionProtocolEventRelayConnected:
+		m.State = SessionProtocolClientGenKeyPair
 		return true, nil
-	case m.State == ClientGenKeyPair && event == EventKeyPairGenerated:
-		if fn := m.Actions[ActionSendPairHello]; fn != nil {
+	case m.State == SessionProtocolClientGenKeyPair && event == SessionProtocolEventKeyPairGenerated:
+		if fn := m.Actions[SessionProtocolActionSendPairHello]; fn != nil {
 			if err := fn(); err != nil { return false, err }
 		}
-		m.State = ClientWaitAck
+		m.State = SessionProtocolClientWaitAck
 		return true, nil
-	case m.State == ClientShowCode && event == EventCodeDisplayed:
-		m.State = ClientWaitPairComplete
+	case m.State == SessionProtocolClientShowCode && event == SessionProtocolEventCodeDisplayed:
+		m.State = SessionProtocolClientWaitPairComplete
 		return true, nil
-	case m.State == ClientPaired && event == EventAppLaunch:
-		m.State = ClientReconnect
+	case m.State == SessionProtocolClientPaired && event == SessionProtocolEventAppLaunch:
+		m.State = SessionProtocolClientReconnect
 		return true, nil
-	case m.State == ClientReconnect && event == EventRelayConnected:
-		m.State = ClientSendAuth
+	case m.State == SessionProtocolClientReconnect && event == SessionProtocolEventRelayConnected:
+		m.State = SessionProtocolClientSendAuth
 		return true, nil
-	case m.State == ClientSessionActive && event == EventSessionEstablished:
-		m.State = ClientRelayConnected
+	case m.State == SessionProtocolClientSessionActive && event == SessionProtocolEventSessionEstablished:
+		m.State = SessionProtocolClientRelayConnected
 		return true, nil
-	case m.State == ClientLANConnecting && event == EventLanDialOk:
-		m.State = ClientLANVerifying
+	case m.State == SessionProtocolClientLANConnecting && event == SessionProtocolEventLanDialOk:
+		m.State = SessionProtocolClientLANVerifying
 		return true, nil
-	case m.State == ClientLANConnecting && event == EventLanDialFailed:
-		m.State = ClientRelayConnected
+	case m.State == SessionProtocolClientLANConnecting && event == SessionProtocolEventLanDialFailed:
+		m.State = SessionProtocolClientRelayConnected
 		return true, nil
-	case m.State == ClientLANVerifying && event == EventVerifyTimeout:
+	case m.State == SessionProtocolClientLANVerifying && event == SessionProtocolEventVerifyTimeout:
 		m.CDispatcherPath = "relay"
 		if m.OnChange != nil { m.OnChange("c_dispatcher_path") }
-		m.State = ClientRelayConnected
+		m.State = SessionProtocolClientRelayConnected
 		return true, nil
-	case m.State == ClientLANActive && event == EventLanError:
-		if fn := m.Actions[ActionFallbackToRelay]; fn != nil {
-			if err := fn(); err != nil { return false, err }
-		}
-		m.CActivePath = "relay"
-		if m.OnChange != nil { m.OnChange("c_active_path") }
-		m.CDispatcherPath = "relay"
-		if m.OnChange != nil { m.OnChange("c_dispatcher_path") }
-		m.LanSignal = "pending"
-		if m.OnChange != nil { m.OnChange("lan_signal") }
-		m.State = ClientRelayFallback
-		return true, nil
-	case m.State == ClientLANActive && event == EventLanStreamError:
-		if fn := m.Actions[ActionFallbackToRelay]; fn != nil {
+	case m.State == SessionProtocolClientLANActive && event == SessionProtocolEventLanError:
+		if fn := m.Actions[SessionProtocolActionFallbackToRelay]; fn != nil {
 			if err := fn(); err != nil { return false, err }
 		}
 		m.CActivePath = "relay"
@@ -1411,21 +1399,10 @@ func (m *ClientMachine) Step(event EventID) (bool, error) {
 		if m.OnChange != nil { m.OnChange("c_dispatcher_path") }
 		m.LanSignal = "pending"
 		if m.OnChange != nil { m.OnChange("lan_signal") }
-		m.State = ClientRelayFallback
+		m.State = SessionProtocolClientRelayFallback
 		return true, nil
-	case m.State == ClientRelayFallback && event == EventRelayOk:
-		m.State = ClientRelayConnected
-		return true, nil
-	case m.State == ClientLANConnecting && event == EventAppForceFallback:
-		m.State = ClientRelayConnected
-		return true, nil
-	case m.State == ClientLANVerifying && event == EventAppForceFallback:
-		m.CDispatcherPath = "relay"
-		if m.OnChange != nil { m.OnChange("c_dispatcher_path") }
-		m.State = ClientRelayConnected
-		return true, nil
-	case m.State == ClientLANActive && event == EventAppForceFallback:
-		if fn := m.Actions[ActionFallbackToRelay]; fn != nil {
+	case m.State == SessionProtocolClientLANActive && event == SessionProtocolEventLanStreamError:
+		if fn := m.Actions[SessionProtocolActionFallbackToRelay]; fn != nil {
 			if err := fn(); err != nil { return false, err }
 		}
 		m.CActivePath = "relay"
@@ -1434,163 +1411,186 @@ func (m *ClientMachine) Step(event EventID) (bool, error) {
 		if m.OnChange != nil { m.OnChange("c_dispatcher_path") }
 		m.LanSignal = "pending"
 		if m.OnChange != nil { m.OnChange("lan_signal") }
-		m.State = ClientRelayConnected
+		m.State = SessionProtocolClientRelayFallback
 		return true, nil
-	case m.State == ClientRelayConnected && event == EventDisconnect:
-		m.State = ClientPaired
+	case m.State == SessionProtocolClientRelayFallback && event == SessionProtocolEventRelayOk:
+		m.State = SessionProtocolClientRelayConnected
 		return true, nil
-	case m.State == ClientRelayConnected && event == EventAppSend:
-		m.State = ClientRelayConnected
+	case m.State == SessionProtocolClientLANConnecting && event == SessionProtocolEventAppForceFallback:
+		m.State = SessionProtocolClientRelayConnected
 		return true, nil
-	case m.State == ClientLANConnecting && event == EventAppSend:
-		m.State = ClientLANConnecting
+	case m.State == SessionProtocolClientLANVerifying && event == SessionProtocolEventAppForceFallback:
+		m.CDispatcherPath = "relay"
+		if m.OnChange != nil { m.OnChange("c_dispatcher_path") }
+		m.State = SessionProtocolClientRelayConnected
 		return true, nil
-	case m.State == ClientLANVerifying && event == EventAppSend:
-		m.State = ClientLANVerifying
+	case m.State == SessionProtocolClientLANActive && event == SessionProtocolEventAppForceFallback:
+		if fn := m.Actions[SessionProtocolActionFallbackToRelay]; fn != nil {
+			if err := fn(); err != nil { return false, err }
+		}
+		m.CActivePath = "relay"
+		if m.OnChange != nil { m.OnChange("c_active_path") }
+		m.CDispatcherPath = "relay"
+		if m.OnChange != nil { m.OnChange("c_dispatcher_path") }
+		m.LanSignal = "pending"
+		if m.OnChange != nil { m.OnChange("lan_signal") }
+		m.State = SessionProtocolClientRelayConnected
 		return true, nil
-	case m.State == ClientLANActive && event == EventAppSend:
-		m.State = ClientLANActive
+	case m.State == SessionProtocolClientRelayConnected && event == SessionProtocolEventDisconnect:
+		m.State = SessionProtocolClientPaired
 		return true, nil
-	case m.State == ClientRelayFallback && event == EventAppSend:
-		m.State = ClientRelayFallback
+	case m.State == SessionProtocolClientRelayConnected && event == SessionProtocolEventAppSend:
+		m.State = SessionProtocolClientRelayConnected
 		return true, nil
-	case m.State == ClientRelayConnected && event == EventRelayStreamData:
-		m.State = ClientRelayConnected
+	case m.State == SessionProtocolClientLANConnecting && event == SessionProtocolEventAppSend:
+		m.State = SessionProtocolClientLANConnecting
 		return true, nil
-	case m.State == ClientLANConnecting && event == EventRelayStreamData:
-		m.State = ClientLANConnecting
+	case m.State == SessionProtocolClientLANVerifying && event == SessionProtocolEventAppSend:
+		m.State = SessionProtocolClientLANVerifying
 		return true, nil
-	case m.State == ClientLANVerifying && event == EventRelayStreamData:
-		m.State = ClientLANVerifying
+	case m.State == SessionProtocolClientLANActive && event == SessionProtocolEventAppSend:
+		m.State = SessionProtocolClientLANActive
 		return true, nil
-	case m.State == ClientLANActive && event == EventRelayStreamData:
-		m.State = ClientLANActive
+	case m.State == SessionProtocolClientRelayFallback && event == SessionProtocolEventAppSend:
+		m.State = SessionProtocolClientRelayFallback
 		return true, nil
-	case m.State == ClientRelayFallback && event == EventRelayStreamData:
-		m.State = ClientRelayFallback
+	case m.State == SessionProtocolClientRelayConnected && event == SessionProtocolEventRelayStreamData:
+		m.State = SessionProtocolClientRelayConnected
 		return true, nil
-	case m.State == ClientRelayConnected && event == EventRelayStreamError:
-		m.State = ClientRelayConnected
+	case m.State == SessionProtocolClientLANConnecting && event == SessionProtocolEventRelayStreamData:
+		m.State = SessionProtocolClientLANConnecting
 		return true, nil
-	case m.State == ClientLANConnecting && event == EventRelayStreamError:
-		m.State = ClientLANConnecting
+	case m.State == SessionProtocolClientLANVerifying && event == SessionProtocolEventRelayStreamData:
+		m.State = SessionProtocolClientLANVerifying
 		return true, nil
-	case m.State == ClientLANVerifying && event == EventRelayStreamError:
-		m.State = ClientLANVerifying
+	case m.State == SessionProtocolClientLANActive && event == SessionProtocolEventRelayStreamData:
+		m.State = SessionProtocolClientLANActive
 		return true, nil
-	case m.State == ClientLANActive && event == EventRelayStreamError:
-		m.State = ClientLANActive
+	case m.State == SessionProtocolClientRelayFallback && event == SessionProtocolEventRelayStreamData:
+		m.State = SessionProtocolClientRelayFallback
 		return true, nil
-	case m.State == ClientRelayFallback && event == EventRelayStreamError:
-		m.State = ClientRelayFallback
+	case m.State == SessionProtocolClientRelayConnected && event == SessionProtocolEventRelayStreamError:
+		m.State = SessionProtocolClientRelayConnected
 		return true, nil
-	case m.State == ClientRelayConnected && event == EventAppSendDatagram:
-		m.State = ClientRelayConnected
+	case m.State == SessionProtocolClientLANConnecting && event == SessionProtocolEventRelayStreamError:
+		m.State = SessionProtocolClientLANConnecting
 		return true, nil
-	case m.State == ClientLANConnecting && event == EventAppSendDatagram:
-		m.State = ClientLANConnecting
+	case m.State == SessionProtocolClientLANVerifying && event == SessionProtocolEventRelayStreamError:
+		m.State = SessionProtocolClientLANVerifying
 		return true, nil
-	case m.State == ClientLANVerifying && event == EventAppSendDatagram:
-		m.State = ClientLANVerifying
+	case m.State == SessionProtocolClientLANActive && event == SessionProtocolEventRelayStreamError:
+		m.State = SessionProtocolClientLANActive
 		return true, nil
-	case m.State == ClientLANActive && event == EventAppSendDatagram:
-		m.State = ClientLANActive
+	case m.State == SessionProtocolClientRelayFallback && event == SessionProtocolEventRelayStreamError:
+		m.State = SessionProtocolClientRelayFallback
 		return true, nil
-	case m.State == ClientRelayFallback && event == EventAppSendDatagram:
-		m.State = ClientRelayFallback
+	case m.State == SessionProtocolClientRelayConnected && event == SessionProtocolEventAppSendDatagram:
+		m.State = SessionProtocolClientRelayConnected
 		return true, nil
-	case m.State == ClientRelayConnected && event == EventRelayDatagram:
-		m.State = ClientRelayConnected
+	case m.State == SessionProtocolClientLANConnecting && event == SessionProtocolEventAppSendDatagram:
+		m.State = SessionProtocolClientLANConnecting
 		return true, nil
-	case m.State == ClientLANConnecting && event == EventRelayDatagram:
-		m.State = ClientLANConnecting
+	case m.State == SessionProtocolClientLANVerifying && event == SessionProtocolEventAppSendDatagram:
+		m.State = SessionProtocolClientLANVerifying
 		return true, nil
-	case m.State == ClientLANVerifying && event == EventRelayDatagram:
-		m.State = ClientLANVerifying
+	case m.State == SessionProtocolClientLANActive && event == SessionProtocolEventAppSendDatagram:
+		m.State = SessionProtocolClientLANActive
 		return true, nil
-	case m.State == ClientLANActive && event == EventRelayDatagram:
-		m.State = ClientLANActive
+	case m.State == SessionProtocolClientRelayFallback && event == SessionProtocolEventAppSendDatagram:
+		m.State = SessionProtocolClientRelayFallback
 		return true, nil
-	case m.State == ClientRelayFallback && event == EventRelayDatagram:
-		m.State = ClientRelayFallback
+	case m.State == SessionProtocolClientRelayConnected && event == SessionProtocolEventRelayDatagram:
+		m.State = SessionProtocolClientRelayConnected
 		return true, nil
-	case m.State == ClientLANActive && event == EventLanStreamData:
-		m.State = ClientLANActive
+	case m.State == SessionProtocolClientLANConnecting && event == SessionProtocolEventRelayDatagram:
+		m.State = SessionProtocolClientLANConnecting
 		return true, nil
-	case m.State == ClientLANActive && event == EventLanDatagram:
-		m.State = ClientLANActive
+	case m.State == SessionProtocolClientLANVerifying && event == SessionProtocolEventRelayDatagram:
+		m.State = SessionProtocolClientLANVerifying
+		return true, nil
+	case m.State == SessionProtocolClientLANActive && event == SessionProtocolEventRelayDatagram:
+		m.State = SessionProtocolClientLANActive
+		return true, nil
+	case m.State == SessionProtocolClientRelayFallback && event == SessionProtocolEventRelayDatagram:
+		m.State = SessionProtocolClientRelayFallback
+		return true, nil
+	case m.State == SessionProtocolClientLANActive && event == SessionProtocolEventLanStreamData:
+		m.State = SessionProtocolClientLANActive
+		return true, nil
+	case m.State == SessionProtocolClientLANActive && event == SessionProtocolEventLanDatagram:
+		m.State = SessionProtocolClientLANActive
 		return true, nil
 	}
 	return false, nil
 }
 
-func (m *ClientMachine) HandleEvent(ev EventID) ([]CmdID, error) {
+func (m *SessionProtocolClientMachine) HandleEvent(ev EventID) ([]CmdID, error) {
 	switch {
-	case m.State == ClientIdle && ev == EventBackchannelReceived:
-		m.State = ClientObtainBackchannelSecret
+	case m.State == SessionProtocolClientIdle && ev == SessionProtocolEventBackchannelReceived:
+		m.State = SessionProtocolClientObtainBackchannelSecret
 		return nil, nil
-	case m.State == ClientObtainBackchannelSecret && ev == EventSecretParsed:
-		m.State = ClientConnectRelay
+	case m.State == SessionProtocolClientObtainBackchannelSecret && ev == SessionProtocolEventSecretParsed:
+		m.State = SessionProtocolClientConnectRelay
 		return nil, nil
-	case m.State == ClientConnectRelay && ev == EventRelayConnected:
-		m.State = ClientGenKeyPair
+	case m.State == SessionProtocolClientConnectRelay && ev == SessionProtocolEventRelayConnected:
+		m.State = SessionProtocolClientGenKeyPair
 		return nil, nil
-	case m.State == ClientGenKeyPair && ev == EventKeyPairGenerated:
-		if fn := m.Actions[ActionSendPairHello]; fn != nil {
+	case m.State == SessionProtocolClientGenKeyPair && ev == SessionProtocolEventKeyPairGenerated:
+		if fn := m.Actions[SessionProtocolActionSendPairHello]; fn != nil {
 			if err := fn(); err != nil { return nil, err }
 		}
-		m.State = ClientWaitAck
+		m.State = SessionProtocolClientWaitAck
 		return nil, nil
-	case m.State == ClientWaitAck && ev == EventRecvPairHelloAck:
-		if fn := m.Actions[ActionDeriveSecret]; fn != nil {
+	case m.State == SessionProtocolClientWaitAck && ev == SessionProtocolEventRecvPairHelloAck:
+		if fn := m.Actions[SessionProtocolActionDeriveSecret]; fn != nil {
 			if err := fn(); err != nil { return nil, err }
 		}
 		// received_backend_pub: recv_msg.pubkey (set by action)
 		// client_shared_key: DeriveKey("client_pub", recv_msg.pubkey) (set by action)
-		m.State = ClientE2EReady
+		m.State = SessionProtocolClientE2EReady
 		return nil, nil
-	case m.State == ClientE2EReady && ev == EventRecvPairConfirm:
+	case m.State == SessionProtocolClientE2EReady && ev == SessionProtocolEventRecvPairConfirm:
 		// client_code: DeriveCode(received_backend_pub, "client_pub") (set by action)
-		m.State = ClientShowCode
+		m.State = SessionProtocolClientShowCode
 		return nil, nil
-	case m.State == ClientShowCode && ev == EventCodeDisplayed:
-		m.State = ClientWaitPairComplete
+	case m.State == SessionProtocolClientShowCode && ev == SessionProtocolEventCodeDisplayed:
+		m.State = SessionProtocolClientWaitPairComplete
 		return nil, nil
-	case m.State == ClientWaitPairComplete && ev == EventRecvPairComplete:
-		if fn := m.Actions[ActionStoreSecret]; fn != nil {
+	case m.State == SessionProtocolClientWaitPairComplete && ev == SessionProtocolEventRecvPairComplete:
+		if fn := m.Actions[SessionProtocolActionStoreSecret]; fn != nil {
 			if err := fn(); err != nil { return nil, err }
 		}
-		m.State = ClientPaired
+		m.State = SessionProtocolClientPaired
 		return nil, nil
-	case m.State == ClientPaired && ev == EventAppLaunch:
-		m.State = ClientReconnect
+	case m.State == SessionProtocolClientPaired && ev == SessionProtocolEventAppLaunch:
+		m.State = SessionProtocolClientReconnect
 		return nil, nil
-	case m.State == ClientReconnect && ev == EventRelayConnected:
-		m.State = ClientSendAuth
+	case m.State == SessionProtocolClientReconnect && ev == SessionProtocolEventRelayConnected:
+		m.State = SessionProtocolClientSendAuth
 		return nil, nil
-	case m.State == ClientSendAuth && ev == EventRecvAuthOk:
-		m.State = ClientSessionActive
+	case m.State == SessionProtocolClientSendAuth && ev == SessionProtocolEventRecvAuthOk:
+		m.State = SessionProtocolClientSessionActive
 		return nil, nil
-	case m.State == ClientSessionActive && ev == EventSessionEstablished:
-		m.State = ClientRelayConnected
+	case m.State == SessionProtocolClientSessionActive && ev == SessionProtocolEventSessionEstablished:
+		m.State = SessionProtocolClientRelayConnected
 		return nil, nil
-	case m.State == ClientRelayConnected && ev == EventRecvLanOffer && m.Guards[GuardLanEnabled] != nil && m.Guards[GuardLanEnabled]():
-		if fn := m.Actions[ActionDialLan]; fn != nil {
+	case m.State == SessionProtocolClientRelayConnected && ev == SessionProtocolEventRecvLanOffer && m.Guards[SessionProtocolGuardLanEnabled] != nil && m.Guards[SessionProtocolGuardLanEnabled]():
+		if fn := m.Actions[SessionProtocolActionDialLan]; fn != nil {
 			if err := fn(); err != nil { return nil, err }
 		}
-		m.State = ClientLANConnecting
-		return []CmdID{CmdDialLan}, nil
-	case m.State == ClientRelayConnected && ev == EventRecvLanOffer && m.Guards[GuardLanDisabled] != nil && m.Guards[GuardLanDisabled]():
-		m.State = ClientRelayConnected
+		m.State = SessionProtocolClientLANConnecting
+		return []CmdID{SessionProtocolCmdDialLan}, nil
+	case m.State == SessionProtocolClientRelayConnected && ev == SessionProtocolEventRecvLanOffer && m.Guards[SessionProtocolGuardLanDisabled] != nil && m.Guards[SessionProtocolGuardLanDisabled]():
+		m.State = SessionProtocolClientRelayConnected
 		return nil, nil
-	case m.State == ClientLANConnecting && ev == EventLanDialOk:
-		m.State = ClientLANVerifying
-		return []CmdID{CmdSendLanVerify}, nil
-	case m.State == ClientLANConnecting && ev == EventLanDialFailed:
-		m.State = ClientRelayConnected
+	case m.State == SessionProtocolClientLANConnecting && ev == SessionProtocolEventLanDialOk:
+		m.State = SessionProtocolClientLANVerifying
+		return []CmdID{SessionProtocolCmdSendLanVerify}, nil
+	case m.State == SessionProtocolClientLANConnecting && ev == SessionProtocolEventLanDialFailed:
+		m.State = SessionProtocolClientRelayConnected
 		return nil, nil
-	case m.State == ClientLANVerifying && ev == EventRecvLanConfirm:
-		if fn := m.Actions[ActionActivateLan]; fn != nil {
+	case m.State == SessionProtocolClientLANVerifying && ev == SessionProtocolEventRecvLanConfirm:
+		if fn := m.Actions[SessionProtocolActionActivateLan]; fn != nil {
 			if err := fn(); err != nil { return nil, err }
 		}
 		m.CActivePath = "lan"
@@ -1599,18 +1599,18 @@ func (m *ClientMachine) HandleEvent(ev EventID) ([]CmdID, error) {
 		if m.OnChange != nil { m.OnChange("c_dispatcher_path") }
 		m.LanSignal = "ready"
 		if m.OnChange != nil { m.OnChange("lan_signal") }
-		m.State = ClientLANActive
-		return []CmdID{CmdStartLanStreamReader, CmdStartLanDgReader, CmdSignalLanReady, CmdSetCryptoDatagram}, nil
-	case m.State == ClientLANVerifying && ev == EventVerifyTimeout:
+		m.State = SessionProtocolClientLANActive
+		return []CmdID{SessionProtocolCmdStartLanStreamReader, SessionProtocolCmdStartLanDgReader, SessionProtocolCmdSignalLanReady, SessionProtocolCmdSetCryptoDatagram}, nil
+	case m.State == SessionProtocolClientLANVerifying && ev == SessionProtocolEventVerifyTimeout:
 		m.CDispatcherPath = "relay"
 		if m.OnChange != nil { m.OnChange("c_dispatcher_path") }
-		m.State = ClientRelayConnected
+		m.State = SessionProtocolClientRelayConnected
 		return nil, nil
-	case m.State == ClientLANActive && ev == EventRecvPathPing:
-		m.State = ClientLANActive
-		return []CmdID{CmdSendPathPong}, nil
-	case m.State == ClientLANActive && ev == EventLanError:
-		if fn := m.Actions[ActionFallbackToRelay]; fn != nil {
+	case m.State == SessionProtocolClientLANActive && ev == SessionProtocolEventRecvPathPing:
+		m.State = SessionProtocolClientLANActive
+		return []CmdID{SessionProtocolCmdSendPathPong}, nil
+	case m.State == SessionProtocolClientLANActive && ev == SessionProtocolEventLanError:
+		if fn := m.Actions[SessionProtocolActionFallbackToRelay]; fn != nil {
 			if err := fn(); err != nil { return nil, err }
 		}
 		m.CActivePath = "relay"
@@ -1619,10 +1619,10 @@ func (m *ClientMachine) HandleEvent(ev EventID) ([]CmdID, error) {
 		if m.OnChange != nil { m.OnChange("c_dispatcher_path") }
 		m.LanSignal = "pending"
 		if m.OnChange != nil { m.OnChange("lan_signal") }
-		m.State = ClientRelayFallback
-		return []CmdID{CmdStopLanStreamReader, CmdStopLanDgReader, CmdCloseLanPath, CmdResetLanReady}, nil
-	case m.State == ClientLANActive && ev == EventLanStreamError:
-		if fn := m.Actions[ActionFallbackToRelay]; fn != nil {
+		m.State = SessionProtocolClientRelayFallback
+		return []CmdID{SessionProtocolCmdStopLanStreamReader, SessionProtocolCmdStopLanDgReader, SessionProtocolCmdCloseLanPath, SessionProtocolCmdResetLanReady}, nil
+	case m.State == SessionProtocolClientLANActive && ev == SessionProtocolEventLanStreamError:
+		if fn := m.Actions[SessionProtocolActionFallbackToRelay]; fn != nil {
 			if err := fn(); err != nil { return nil, err }
 		}
 		m.CActivePath = "relay"
@@ -1631,27 +1631,27 @@ func (m *ClientMachine) HandleEvent(ev EventID) ([]CmdID, error) {
 		if m.OnChange != nil { m.OnChange("c_dispatcher_path") }
 		m.LanSignal = "pending"
 		if m.OnChange != nil { m.OnChange("lan_signal") }
-		m.State = ClientRelayFallback
-		return []CmdID{CmdStopLanStreamReader, CmdStopLanDgReader, CmdCloseLanPath, CmdResetLanReady}, nil
-	case m.State == ClientRelayFallback && ev == EventRelayOk:
-		m.State = ClientRelayConnected
+		m.State = SessionProtocolClientRelayFallback
+		return []CmdID{SessionProtocolCmdStopLanStreamReader, SessionProtocolCmdStopLanDgReader, SessionProtocolCmdCloseLanPath, SessionProtocolCmdResetLanReady}, nil
+	case m.State == SessionProtocolClientRelayFallback && ev == SessionProtocolEventRelayOk:
+		m.State = SessionProtocolClientRelayConnected
 		return nil, nil
-	case m.State == ClientLANActive && ev == EventRecvLanOffer && m.Guards[GuardLanEnabled] != nil && m.Guards[GuardLanEnabled]():
-		if fn := m.Actions[ActionDialLan]; fn != nil {
+	case m.State == SessionProtocolClientLANActive && ev == SessionProtocolEventRecvLanOffer && m.Guards[SessionProtocolGuardLanEnabled] != nil && m.Guards[SessionProtocolGuardLanEnabled]():
+		if fn := m.Actions[SessionProtocolActionDialLan]; fn != nil {
 			if err := fn(); err != nil { return nil, err }
 		}
-		m.State = ClientLANConnecting
-		return []CmdID{CmdStopLanStreamReader, CmdStopLanDgReader, CmdCloseLanPath, CmdDialLan}, nil
-	case m.State == ClientLANConnecting && ev == EventAppForceFallback:
-		m.State = ClientRelayConnected
+		m.State = SessionProtocolClientLANConnecting
+		return []CmdID{SessionProtocolCmdStopLanStreamReader, SessionProtocolCmdStopLanDgReader, SessionProtocolCmdCloseLanPath, SessionProtocolCmdDialLan}, nil
+	case m.State == SessionProtocolClientLANConnecting && ev == SessionProtocolEventAppForceFallback:
+		m.State = SessionProtocolClientRelayConnected
 		return nil, nil
-	case m.State == ClientLANVerifying && ev == EventAppForceFallback:
+	case m.State == SessionProtocolClientLANVerifying && ev == SessionProtocolEventAppForceFallback:
 		m.CDispatcherPath = "relay"
 		if m.OnChange != nil { m.OnChange("c_dispatcher_path") }
-		m.State = ClientRelayConnected
-		return []CmdID{CmdStopLanStreamReader, CmdStopLanDgReader, CmdCloseLanPath}, nil
-	case m.State == ClientLANActive && ev == EventAppForceFallback:
-		if fn := m.Actions[ActionFallbackToRelay]; fn != nil {
+		m.State = SessionProtocolClientRelayConnected
+		return []CmdID{SessionProtocolCmdStopLanStreamReader, SessionProtocolCmdStopLanDgReader, SessionProtocolCmdCloseLanPath}, nil
+	case m.State == SessionProtocolClientLANActive && ev == SessionProtocolEventAppForceFallback:
+		if fn := m.Actions[SessionProtocolActionFallbackToRelay]; fn != nil {
 			if err := fn(); err != nil { return nil, err }
 		}
 		m.CActivePath = "relay"
@@ -1660,98 +1660,98 @@ func (m *ClientMachine) HandleEvent(ev EventID) ([]CmdID, error) {
 		if m.OnChange != nil { m.OnChange("c_dispatcher_path") }
 		m.LanSignal = "pending"
 		if m.OnChange != nil { m.OnChange("lan_signal") }
-		m.State = ClientRelayConnected
-		return []CmdID{CmdStopLanStreamReader, CmdStopLanDgReader, CmdCloseLanPath, CmdResetLanReady}, nil
-	case m.State == ClientRelayConnected && ev == EventDisconnect:
-		m.State = ClientPaired
+		m.State = SessionProtocolClientRelayConnected
+		return []CmdID{SessionProtocolCmdStopLanStreamReader, SessionProtocolCmdStopLanDgReader, SessionProtocolCmdCloseLanPath, SessionProtocolCmdResetLanReady}, nil
+	case m.State == SessionProtocolClientRelayConnected && ev == SessionProtocolEventDisconnect:
+		m.State = SessionProtocolClientPaired
 		return nil, nil
-	case m.State == ClientRelayConnected && ev == EventAppSend:
-		m.State = ClientRelayConnected
-		return []CmdID{CmdWriteActiveStream}, nil
-	case m.State == ClientLANConnecting && ev == EventAppSend:
-		m.State = ClientLANConnecting
-		return []CmdID{CmdWriteActiveStream}, nil
-	case m.State == ClientLANVerifying && ev == EventAppSend:
-		m.State = ClientLANVerifying
-		return []CmdID{CmdWriteActiveStream}, nil
-	case m.State == ClientLANActive && ev == EventAppSend:
-		m.State = ClientLANActive
-		return []CmdID{CmdWriteActiveStream}, nil
-	case m.State == ClientRelayFallback && ev == EventAppSend:
-		m.State = ClientRelayFallback
-		return []CmdID{CmdWriteActiveStream}, nil
-	case m.State == ClientRelayConnected && ev == EventRelayStreamData:
-		m.State = ClientRelayConnected
-		return []CmdID{CmdDeliverRecv}, nil
-	case m.State == ClientLANConnecting && ev == EventRelayStreamData:
-		m.State = ClientLANConnecting
-		return []CmdID{CmdDeliverRecv}, nil
-	case m.State == ClientLANVerifying && ev == EventRelayStreamData:
-		m.State = ClientLANVerifying
-		return []CmdID{CmdDeliverRecv}, nil
-	case m.State == ClientLANActive && ev == EventRelayStreamData:
-		m.State = ClientLANActive
-		return []CmdID{CmdDeliverRecv}, nil
-	case m.State == ClientRelayFallback && ev == EventRelayStreamData:
-		m.State = ClientRelayFallback
-		return []CmdID{CmdDeliverRecv}, nil
-	case m.State == ClientRelayConnected && ev == EventRelayStreamError:
-		m.State = ClientRelayConnected
-		return []CmdID{CmdDeliverRecvError}, nil
-	case m.State == ClientLANConnecting && ev == EventRelayStreamError:
-		m.State = ClientLANConnecting
-		return []CmdID{CmdDeliverRecvError}, nil
-	case m.State == ClientLANVerifying && ev == EventRelayStreamError:
-		m.State = ClientLANVerifying
-		return []CmdID{CmdDeliverRecvError}, nil
-	case m.State == ClientLANActive && ev == EventRelayStreamError:
-		m.State = ClientLANActive
-		return []CmdID{CmdDeliverRecvError}, nil
-	case m.State == ClientRelayFallback && ev == EventRelayStreamError:
-		m.State = ClientRelayFallback
-		return []CmdID{CmdDeliverRecvError}, nil
-	case m.State == ClientRelayConnected && ev == EventAppSendDatagram:
-		m.State = ClientRelayConnected
-		return []CmdID{CmdSendActiveDatagram}, nil
-	case m.State == ClientLANConnecting && ev == EventAppSendDatagram:
-		m.State = ClientLANConnecting
-		return []CmdID{CmdSendActiveDatagram}, nil
-	case m.State == ClientLANVerifying && ev == EventAppSendDatagram:
-		m.State = ClientLANVerifying
-		return []CmdID{CmdSendActiveDatagram}, nil
-	case m.State == ClientLANActive && ev == EventAppSendDatagram:
-		m.State = ClientLANActive
-		return []CmdID{CmdSendActiveDatagram}, nil
-	case m.State == ClientRelayFallback && ev == EventAppSendDatagram:
-		m.State = ClientRelayFallback
-		return []CmdID{CmdSendActiveDatagram}, nil
-	case m.State == ClientRelayConnected && ev == EventRelayDatagram:
-		m.State = ClientRelayConnected
-		return []CmdID{CmdDeliverRecvDatagram}, nil
-	case m.State == ClientLANConnecting && ev == EventRelayDatagram:
-		m.State = ClientLANConnecting
-		return []CmdID{CmdDeliverRecvDatagram}, nil
-	case m.State == ClientLANVerifying && ev == EventRelayDatagram:
-		m.State = ClientLANVerifying
-		return []CmdID{CmdDeliverRecvDatagram}, nil
-	case m.State == ClientLANActive && ev == EventRelayDatagram:
-		m.State = ClientLANActive
-		return []CmdID{CmdDeliverRecvDatagram}, nil
-	case m.State == ClientRelayFallback && ev == EventRelayDatagram:
-		m.State = ClientRelayFallback
-		return []CmdID{CmdDeliverRecvDatagram}, nil
-	case m.State == ClientLANActive && ev == EventLanStreamData:
-		m.State = ClientLANActive
-		return []CmdID{CmdDeliverRecv}, nil
-	case m.State == ClientLANActive && ev == EventLanDatagram:
-		m.State = ClientLANActive
-		return []CmdID{CmdDeliverRecvDatagram}, nil
+	case m.State == SessionProtocolClientRelayConnected && ev == SessionProtocolEventAppSend:
+		m.State = SessionProtocolClientRelayConnected
+		return []CmdID{SessionProtocolCmdWriteActiveStream}, nil
+	case m.State == SessionProtocolClientLANConnecting && ev == SessionProtocolEventAppSend:
+		m.State = SessionProtocolClientLANConnecting
+		return []CmdID{SessionProtocolCmdWriteActiveStream}, nil
+	case m.State == SessionProtocolClientLANVerifying && ev == SessionProtocolEventAppSend:
+		m.State = SessionProtocolClientLANVerifying
+		return []CmdID{SessionProtocolCmdWriteActiveStream}, nil
+	case m.State == SessionProtocolClientLANActive && ev == SessionProtocolEventAppSend:
+		m.State = SessionProtocolClientLANActive
+		return []CmdID{SessionProtocolCmdWriteActiveStream}, nil
+	case m.State == SessionProtocolClientRelayFallback && ev == SessionProtocolEventAppSend:
+		m.State = SessionProtocolClientRelayFallback
+		return []CmdID{SessionProtocolCmdWriteActiveStream}, nil
+	case m.State == SessionProtocolClientRelayConnected && ev == SessionProtocolEventRelayStreamData:
+		m.State = SessionProtocolClientRelayConnected
+		return []CmdID{SessionProtocolCmdDeliverRecv}, nil
+	case m.State == SessionProtocolClientLANConnecting && ev == SessionProtocolEventRelayStreamData:
+		m.State = SessionProtocolClientLANConnecting
+		return []CmdID{SessionProtocolCmdDeliverRecv}, nil
+	case m.State == SessionProtocolClientLANVerifying && ev == SessionProtocolEventRelayStreamData:
+		m.State = SessionProtocolClientLANVerifying
+		return []CmdID{SessionProtocolCmdDeliverRecv}, nil
+	case m.State == SessionProtocolClientLANActive && ev == SessionProtocolEventRelayStreamData:
+		m.State = SessionProtocolClientLANActive
+		return []CmdID{SessionProtocolCmdDeliverRecv}, nil
+	case m.State == SessionProtocolClientRelayFallback && ev == SessionProtocolEventRelayStreamData:
+		m.State = SessionProtocolClientRelayFallback
+		return []CmdID{SessionProtocolCmdDeliverRecv}, nil
+	case m.State == SessionProtocolClientRelayConnected && ev == SessionProtocolEventRelayStreamError:
+		m.State = SessionProtocolClientRelayConnected
+		return []CmdID{SessionProtocolCmdDeliverRecvError}, nil
+	case m.State == SessionProtocolClientLANConnecting && ev == SessionProtocolEventRelayStreamError:
+		m.State = SessionProtocolClientLANConnecting
+		return []CmdID{SessionProtocolCmdDeliverRecvError}, nil
+	case m.State == SessionProtocolClientLANVerifying && ev == SessionProtocolEventRelayStreamError:
+		m.State = SessionProtocolClientLANVerifying
+		return []CmdID{SessionProtocolCmdDeliverRecvError}, nil
+	case m.State == SessionProtocolClientLANActive && ev == SessionProtocolEventRelayStreamError:
+		m.State = SessionProtocolClientLANActive
+		return []CmdID{SessionProtocolCmdDeliverRecvError}, nil
+	case m.State == SessionProtocolClientRelayFallback && ev == SessionProtocolEventRelayStreamError:
+		m.State = SessionProtocolClientRelayFallback
+		return []CmdID{SessionProtocolCmdDeliverRecvError}, nil
+	case m.State == SessionProtocolClientRelayConnected && ev == SessionProtocolEventAppSendDatagram:
+		m.State = SessionProtocolClientRelayConnected
+		return []CmdID{SessionProtocolCmdSendActiveDatagram}, nil
+	case m.State == SessionProtocolClientLANConnecting && ev == SessionProtocolEventAppSendDatagram:
+		m.State = SessionProtocolClientLANConnecting
+		return []CmdID{SessionProtocolCmdSendActiveDatagram}, nil
+	case m.State == SessionProtocolClientLANVerifying && ev == SessionProtocolEventAppSendDatagram:
+		m.State = SessionProtocolClientLANVerifying
+		return []CmdID{SessionProtocolCmdSendActiveDatagram}, nil
+	case m.State == SessionProtocolClientLANActive && ev == SessionProtocolEventAppSendDatagram:
+		m.State = SessionProtocolClientLANActive
+		return []CmdID{SessionProtocolCmdSendActiveDatagram}, nil
+	case m.State == SessionProtocolClientRelayFallback && ev == SessionProtocolEventAppSendDatagram:
+		m.State = SessionProtocolClientRelayFallback
+		return []CmdID{SessionProtocolCmdSendActiveDatagram}, nil
+	case m.State == SessionProtocolClientRelayConnected && ev == SessionProtocolEventRelayDatagram:
+		m.State = SessionProtocolClientRelayConnected
+		return []CmdID{SessionProtocolCmdDeliverRecvDatagram}, nil
+	case m.State == SessionProtocolClientLANConnecting && ev == SessionProtocolEventRelayDatagram:
+		m.State = SessionProtocolClientLANConnecting
+		return []CmdID{SessionProtocolCmdDeliverRecvDatagram}, nil
+	case m.State == SessionProtocolClientLANVerifying && ev == SessionProtocolEventRelayDatagram:
+		m.State = SessionProtocolClientLANVerifying
+		return []CmdID{SessionProtocolCmdDeliverRecvDatagram}, nil
+	case m.State == SessionProtocolClientLANActive && ev == SessionProtocolEventRelayDatagram:
+		m.State = SessionProtocolClientLANActive
+		return []CmdID{SessionProtocolCmdDeliverRecvDatagram}, nil
+	case m.State == SessionProtocolClientRelayFallback && ev == SessionProtocolEventRelayDatagram:
+		m.State = SessionProtocolClientRelayFallback
+		return []CmdID{SessionProtocolCmdDeliverRecvDatagram}, nil
+	case m.State == SessionProtocolClientLANActive && ev == SessionProtocolEventLanStreamData:
+		m.State = SessionProtocolClientLANActive
+		return []CmdID{SessionProtocolCmdDeliverRecv}, nil
+	case m.State == SessionProtocolClientLANActive && ev == SessionProtocolEventLanDatagram:
+		m.State = SessionProtocolClientLANActive
+		return []CmdID{SessionProtocolCmdDeliverRecvDatagram}, nil
 	}
 	return nil, nil
 }
 
-// RelayMachine is the generated state machine for the relay actor.
-type RelayMachine struct {
+// SessionProtocolRelayMachine is the generated state machine for the relay actor.
+type SessionProtocolRelayMachine struct {
 	State State
 	RelayBridge string // relay bridge state
 
@@ -1760,72 +1760,72 @@ type RelayMachine struct {
 	OnChange func(varName string)
 }
 
-func NewRelayMachine() *RelayMachine {
-	return &RelayMachine{
-		State: RelayIdle,
+func NewSessionProtocolRelayMachine() *SessionProtocolRelayMachine {
+	return &SessionProtocolRelayMachine{
+		State: SessionProtocolRelayIdle,
 		RelayBridge: "idle",
 		Guards:  make(map[GuardID]func() bool),
 		Actions: make(map[ActionID]func() error),
 	}
 }
 
-func (m *RelayMachine) HandleMessage(msg MsgType) (bool, error) {
+func (m *SessionProtocolRelayMachine) HandleMessage(msg MsgType) (bool, error) {
 	switch {
 	}
 	return false, nil
 }
 
-func (m *RelayMachine) Step(event EventID) (bool, error) {
+func (m *SessionProtocolRelayMachine) Step(event EventID) (bool, error) {
 	switch {
-	case m.State == RelayIdle && event == EventBackendRegister:
-		m.State = RelayBackendRegistered
+	case m.State == SessionProtocolRelayIdle && event == SessionProtocolEventBackendRegister:
+		m.State = SessionProtocolRelayBackendRegistered
 		return true, nil
-	case m.State == RelayBackendRegistered && event == EventClientConnect:
-		if fn := m.Actions[ActionBridgeStreams]; fn != nil {
+	case m.State == SessionProtocolRelayBackendRegistered && event == SessionProtocolEventClientConnect:
+		if fn := m.Actions[SessionProtocolActionBridgeStreams]; fn != nil {
 			if err := fn(); err != nil { return false, err }
 		}
 		m.RelayBridge = "active"
 		if m.OnChange != nil { m.OnChange("relay_bridge") }
-		m.State = RelayBridged
+		m.State = SessionProtocolRelayBridged
 		return true, nil
-	case m.State == RelayBridged && event == EventClientDisconnect:
-		if fn := m.Actions[ActionUnbridge]; fn != nil {
+	case m.State == SessionProtocolRelayBridged && event == SessionProtocolEventClientDisconnect:
+		if fn := m.Actions[SessionProtocolActionUnbridge]; fn != nil {
 			if err := fn(); err != nil { return false, err }
 		}
 		m.RelayBridge = "idle"
 		if m.OnChange != nil { m.OnChange("relay_bridge") }
-		m.State = RelayBackendRegistered
+		m.State = SessionProtocolRelayBackendRegistered
 		return true, nil
-	case m.State == RelayBackendRegistered && event == EventBackendDisconnect:
-		m.State = RelayIdle
+	case m.State == SessionProtocolRelayBackendRegistered && event == SessionProtocolEventBackendDisconnect:
+		m.State = SessionProtocolRelayIdle
 		return true, nil
 	}
 	return false, nil
 }
 
-func (m *RelayMachine) HandleEvent(ev EventID) ([]CmdID, error) {
+func (m *SessionProtocolRelayMachine) HandleEvent(ev EventID) ([]CmdID, error) {
 	switch {
-	case m.State == RelayIdle && ev == EventBackendRegister:
-		m.State = RelayBackendRegistered
+	case m.State == SessionProtocolRelayIdle && ev == SessionProtocolEventBackendRegister:
+		m.State = SessionProtocolRelayBackendRegistered
 		return nil, nil
-	case m.State == RelayBackendRegistered && ev == EventClientConnect:
-		if fn := m.Actions[ActionBridgeStreams]; fn != nil {
+	case m.State == SessionProtocolRelayBackendRegistered && ev == SessionProtocolEventClientConnect:
+		if fn := m.Actions[SessionProtocolActionBridgeStreams]; fn != nil {
 			if err := fn(); err != nil { return nil, err }
 		}
 		m.RelayBridge = "active"
 		if m.OnChange != nil { m.OnChange("relay_bridge") }
-		m.State = RelayBridged
+		m.State = SessionProtocolRelayBridged
 		return nil, nil
-	case m.State == RelayBridged && ev == EventClientDisconnect:
-		if fn := m.Actions[ActionUnbridge]; fn != nil {
+	case m.State == SessionProtocolRelayBridged && ev == SessionProtocolEventClientDisconnect:
+		if fn := m.Actions[SessionProtocolActionUnbridge]; fn != nil {
 			if err := fn(); err != nil { return nil, err }
 		}
 		m.RelayBridge = "idle"
 		if m.OnChange != nil { m.OnChange("relay_bridge") }
-		m.State = RelayBackendRegistered
+		m.State = SessionProtocolRelayBackendRegistered
 		return nil, nil
-	case m.State == RelayBackendRegistered && ev == EventBackendDisconnect:
-		m.State = RelayIdle
+	case m.State == SessionProtocolRelayBackendRegistered && ev == SessionProtocolEventBackendDisconnect:
+		m.State = SessionProtocolRelayIdle
 		return nil, nil
 	}
 	return nil, nil

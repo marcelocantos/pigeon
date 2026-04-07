@@ -18,7 +18,7 @@ import kotlin.test.fail
 /**
  * End-to-end integration tests for the Kotlin relay client.
  *
- * These tests start a real Go tern relay server as a subprocess and
+ * These tests start a real Go pigeon relay server as a subprocess and
  * connect to it using the kwik QUIC client via [KwikQuicTransport].
  * They exercise the actual QUIC protocol path — TLS handshake, ALPN
  * negotiation, length-prefixed framing, and bidirectional message relay.

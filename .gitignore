@@ -1,5 +1,6 @@
 /pigeon
 /pigeon-test-binary
+/protogen
 *.test
 .DS_Store
 sqlite_mcp_server.db

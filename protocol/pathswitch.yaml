@@ -296,15 +296,19 @@ vars:
     initial: '"none"'
     desc: relay instance ID of this peer
   ping_failures:
+    type: int
     initial: '0'
     desc: consecutive failed pings on the direct path
   max_ping_failures:
+    type: int
     initial: '3'
     desc: threshold before fallback
   backoff_level:
+    type: int
     initial: '0'
     desc: current exponential backoff level (0 = no backoff)
   max_backoff_level:
+    type: int
     initial: '5'
     desc: 'cap on backoff level (2^5 * base = 32x base interval)'
 

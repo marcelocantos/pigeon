@@ -31,17 +31,17 @@ func TestMachineHappyPath(t *testing.T) {
 		t.Fatalf("NewMachine: %v", err)
 	}
 
-	m.RegisterGuard(GuardTokenValid, func(any) bool { return true })
-	m.RegisterGuard(GuardTokenInvalid, func(any) bool { return false })
-	m.RegisterGuard(GuardCodeCorrect, func(any) bool { return true })
-	m.RegisterGuard(GuardCodeWrong, func(any) bool { return false })
-	m.RegisterGuard(GuardDeviceKnown, func(any) bool { return true })
-	m.RegisterGuard(GuardDeviceUnknown, func(any) bool { return false })
-	m.RegisterGuard(GuardNonceFresh, func(any) bool { return true })
+	m.RegisterGuard(PairingCeremonyGuardTokenValid, func(any) bool { return true })
+	m.RegisterGuard(PairingCeremonyGuardTokenInvalid, func(any) bool { return false })
+	m.RegisterGuard(PairingCeremonyGuardCodeCorrect, func(any) bool { return true })
+	m.RegisterGuard(PairingCeremonyGuardCodeWrong, func(any) bool { return false })
+	m.RegisterGuard(PairingCeremonyGuardDeviceKnown, func(any) bool { return true })
+	m.RegisterGuard(PairingCeremonyGuardDeviceUnknown, func(any) bool { return false })
+	m.RegisterGuard(PairingCeremonyGuardNonceFresh, func(any) bool { return true })
 
 	noopActions(m,
-		ActionGenerateToken, ActionRegisterRelay, ActionDeriveSecret,
-		ActionStoreDevice, ActionVerifyDevice,
+		PairingCeremonyActionGenerateToken, PairingCeremonyActionRegisterRelay, PairingCeremonyActionDeriveSecret,
+		PairingCeremonyActionStoreDevice, PairingCeremonyActionVerifyDevice,
 	)
 
 	assertState := func(expected State) {
@@ -51,25 +51,25 @@ func TestMachineHappyPath(t *testing.T) {
 		}
 	}
 
-	assertState(ServerIdle)
-	mustHandle(t, m, MsgPairBegin)
-	assertState(ServerGenerateToken)
+	assertState(PairingCeremonyServerIdle)
+	mustHandle(t, m, PairingCeremonyMsgPairBegin)
+	assertState(PairingCeremonyServerGenerateToken)
 	mustStep(t, m) // -> RegisterRelay
 	mustStep(t, m) // -> WaitingForClient
-	mustHandle(t, m, MsgPairHello)
-	assertState(ServerDeriveSecret)
+	mustHandle(t, m, PairingCeremonyMsgPairHello)
+	assertState(PairingCeremonyServerDeriveSecret)
 	mustStep(t, m) // -> SendAck
 	mustStep(t, m) // -> WaitingForCode
-	mustHandle(t, m, MsgCodeSubmit)
-	assertState(ServerValidateCode)
+	mustHandle(t, m, PairingCeremonyMsgCodeSubmit)
+	assertState(PairingCeremonyServerValidateCode)
 	mustStep(t, m) // -> StorePaired
 	mustStep(t, m) // -> Paired
-	assertState(ServerPaired)
+	assertState(PairingCeremonyServerPaired)
 
 	// Reconnection.
-	mustHandle(t, m, MsgAuthRequest)
+	mustHandle(t, m, PairingCeremonyMsgAuthRequest)
 	mustStep(t, m) // -> SessionActive
-	assertState(ServerSessionActive)
+	assertState(PairingCeremonyServerSessionActive)
 }
 
 func TestMachineTokenRejection(t *testing.T) {
@@ -79,16 +79,16 @@ func TestMachineTokenRejection(t *testing.T) {
 		t.Fatalf("NewMachine: %v", err)
 	}
 
-	m.RegisterGuard(GuardTokenValid, func(any) bool { return false })
-	m.RegisterGuard(GuardTokenInvalid, func(any) bool { return true })
-	noopActions(m, ActionGenerateToken, ActionRegisterRelay)
+	m.RegisterGuard(PairingCeremonyGuardTokenValid, func(any) bool { return false })
+	m.RegisterGuard(PairingCeremonyGuardTokenInvalid, func(any) bool { return true })
+	noopActions(m, PairingCeremonyActionGenerateToken, PairingCeremonyActionRegisterRelay)
 
-	mustHandle(t, m, MsgPairBegin)
+	mustHandle(t, m, PairingCeremonyMsgPairBegin)
 	mustStep(t, m) // -> RegisterRelay
 	mustStep(t, m) // -> WaitingForClient
-	mustHandle(t, m, MsgPairHello)
+	mustHandle(t, m, PairingCeremonyMsgPairHello)
 
-	if got := m.State(); got != ServerIdle {
+	if got := m.State(); got != PairingCeremonyServerIdle {
 		t.Fatalf("expected Idle after invalid token, got %s", got)
 	}
 }
@@ -100,22 +100,22 @@ func TestMachineCodeRejection(t *testing.T) {
 		t.Fatalf("NewMachine: %v", err)
 	}
 
-	m.RegisterGuard(GuardTokenValid, func(any) bool { return true })
-	m.RegisterGuard(GuardTokenInvalid, func(any) bool { return false })
-	m.RegisterGuard(GuardCodeCorrect, func(any) bool { return false })
-	m.RegisterGuard(GuardCodeWrong, func(any) bool { return true })
-	noopActions(m, ActionGenerateToken, ActionRegisterRelay, ActionDeriveSecret)
+	m.RegisterGuard(PairingCeremonyGuardTokenValid, func(any) bool { return true })
+	m.RegisterGuard(PairingCeremonyGuardTokenInvalid, func(any) bool { return false })
+	m.RegisterGuard(PairingCeremonyGuardCodeCorrect, func(any) bool { return false })
+	m.RegisterGuard(PairingCeremonyGuardCodeWrong, func(any) bool { return true })
+	noopActions(m, PairingCeremonyActionGenerateToken, PairingCeremonyActionRegisterRelay, PairingCeremonyActionDeriveSecret)
 
-	mustHandle(t, m, MsgPairBegin)
+	mustHandle(t, m, PairingCeremonyMsgPairBegin)
 	mustStep(t, m) // -> RegisterRelay
 	mustStep(t, m) // -> WaitingForClient
-	mustHandle(t, m, MsgPairHello)
+	mustHandle(t, m, PairingCeremonyMsgPairHello)
 	mustStep(t, m) // -> SendAck
 	mustStep(t, m) // -> WaitingForCode
-	mustHandle(t, m, MsgCodeSubmit)
+	mustHandle(t, m, PairingCeremonyMsgCodeSubmit)
 	mustStep(t, m) // -> Idle (wrong code)
 
-	if got := m.State(); got != ServerIdle {
+	if got := m.State(); got != PairingCeremonyServerIdle {
 		t.Fatalf("expected Idle after wrong code, got %s", got)
 	}
 }
@@ -127,7 +127,7 @@ func TestMachineRejectsInvalidMessage(t *testing.T) {
 		t.Fatalf("NewMachine: %v", err)
 	}
 
-	if _, err := m.HandleMessage(MsgAuthRequest, nil); err == nil {
+	if _, err := m.HandleMessage(PairingCeremonyMsgAuthRequest, nil); err == nil {
 		t.Fatal("expected error for invalid message in Idle state")
 	}
 }
@@ -139,31 +139,31 @@ func TestIOSMachineHappyPath(t *testing.T) {
 		t.Fatalf("NewMachine: %v", err)
 	}
 
-	noopActions(m, ActionSendPairHello, ActionDeriveSecret, ActionStoreSecret)
+	noopActions(m, PairingCeremonyActionSendPairHello, PairingCeremonyActionDeriveSecret, PairingCeremonyActionStoreSecret)
 
 	mustStep(t, m) // -> ScanQR
 	mustStep(t, m) // -> ConnectRelay
 	mustStep(t, m) // -> GenKeyPair
 	mustStep(t, m) // -> WaitAck
-	mustHandle(t, m, MsgPairHelloAck)
-	mustHandle(t, m, MsgPairConfirm)
+	mustHandle(t, m, PairingCeremonyMsgPairHelloAck)
+	mustHandle(t, m, PairingCeremonyMsgPairConfirm)
 
-	if got := m.State(); got != AppShowCode {
+	if got := m.State(); got != PairingCeremonyAppShowCode {
 		t.Fatalf("expected ShowCode, got %s", got)
 	}
 
 	mustStep(t, m) // -> WaitPairComplete
-	mustHandle(t, m, MsgPairComplete)
+	mustHandle(t, m, PairingCeremonyMsgPairComplete)
 
-	if got := m.State(); got != AppPaired {
+	if got := m.State(); got != PairingCeremonyAppPaired {
 		t.Fatalf("expected Paired, got %s", got)
 	}
 
 	mustStep(t, m) // -> Reconnect
 	mustStep(t, m) // -> SendAuth
-	mustHandle(t, m, MsgAuthOk)
+	mustHandle(t, m, PairingCeremonyMsgAuthOk)
 
-	if got := m.State(); got != AppSessionActive {
+	if got := m.State(); got != PairingCeremonyAppSessionActive {
 		t.Fatalf("expected SessionActive, got %s", got)
 	}
 }
@@ -177,12 +177,12 @@ func TestCLIMachineHappyPath(t *testing.T) {
 
 	mustStep(t, m)
 	mustStep(t, m)
-	mustHandle(t, m, MsgTokenResponse)
-	mustHandle(t, m, MsgWaitingForCode)
+	mustHandle(t, m, PairingCeremonyMsgTokenResponse)
+	mustHandle(t, m, PairingCeremonyMsgWaitingForCode)
 	mustStep(t, m)
-	mustHandle(t, m, MsgPairStatus)
+	mustHandle(t, m, PairingCeremonyMsgPairStatus)
 
-	if got := m.State(); got != CLIDone {
+	if got := m.State(); got != PairingCeremonyCLIDone {
 		t.Fatalf("expected Done, got %s", got)
 	}
 }
@@ -343,24 +343,24 @@ func TestStepNoInternalTransition(t *testing.T) {
 		t.Fatal(err)
 	}
 	// Advance machine to Paired state via the full happy path.
-	m.RegisterGuard(GuardTokenValid, func(any) bool { return true })
-	m.RegisterGuard(GuardTokenInvalid, func(any) bool { return false })
-	m.RegisterGuard(GuardCodeCorrect, func(any) bool { return true })
-	m.RegisterGuard(GuardCodeWrong, func(any) bool { return false })
-	m.RegisterGuard(GuardDeviceKnown, func(any) bool { return true })
-	m.RegisterGuard(GuardDeviceUnknown, func(any) bool { return false })
-	m.RegisterGuard(GuardNonceFresh, func(any) bool { return true })
+	m.RegisterGuard(PairingCeremonyGuardTokenValid, func(any) bool { return true })
+	m.RegisterGuard(PairingCeremonyGuardTokenInvalid, func(any) bool { return false })
+	m.RegisterGuard(PairingCeremonyGuardCodeCorrect, func(any) bool { return true })
+	m.RegisterGuard(PairingCeremonyGuardCodeWrong, func(any) bool { return false })
+	m.RegisterGuard(PairingCeremonyGuardDeviceKnown, func(any) bool { return true })
+	m.RegisterGuard(PairingCeremonyGuardDeviceUnknown, func(any) bool { return false })
+	m.RegisterGuard(PairingCeremonyGuardNonceFresh, func(any) bool { return true })
 	noopActions(m,
-		ActionGenerateToken, ActionRegisterRelay, ActionDeriveSecret,
-		ActionStoreDevice, ActionVerifyDevice,
+		PairingCeremonyActionGenerateToken, PairingCeremonyActionRegisterRelay, PairingCeremonyActionDeriveSecret,
+		PairingCeremonyActionStoreDevice, PairingCeremonyActionVerifyDevice,
 	)
-	mustHandle(t, m, MsgPairBegin)
+	mustHandle(t, m, PairingCeremonyMsgPairBegin)
 	mustStep(t, m)
 	mustStep(t, m)
-	mustHandle(t, m, MsgPairHello)
+	mustHandle(t, m, PairingCeremonyMsgPairHello)
 	mustStep(t, m)
 	mustStep(t, m)
-	mustHandle(t, m, MsgCodeSubmit)
+	mustHandle(t, m, PairingCeremonyMsgCodeSubmit)
 	mustStep(t, m)
 	mustStep(t, m)
 	// Now in ServerPaired — no internal transition.
@@ -538,12 +538,12 @@ func TestValidateSendsUndeclaredMessage(t *testing.T) {
 func TestExportKotlinStructure(t *testing.T) {
 	p := PairingCeremony()
 	var buf bytes.Buffer
-	if err := p.ExportKotlin(&buf, "com.example.tern"); err != nil {
+	if err := p.ExportKotlin(&buf, "com.example.pigeon"); err != nil {
 		t.Fatalf("ExportKotlin: %v", err)
 	}
 	out := buf.String()
 	checks := []string{
-		"package com.example.tern",
+		"package com.example.pigeon",
 		"MessageType",
 		"enum class",
 		"transitions",

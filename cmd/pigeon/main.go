@@ -116,9 +116,9 @@ func main() {
 		listenQUICPort = "4433"
 	}
 
-	// TERN_TOKEN restricts /register to authorized backends.
+	// PIGEON_TOKEN restricts /register to authorized backends.
 	// If unset, registration is open.
-	token := os.Getenv("TERN_TOKEN")
+	token := os.Getenv("PIGEON_TOKEN")
 
 	slog.SetDefault(slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{
 		Level: slog.LevelInfo,

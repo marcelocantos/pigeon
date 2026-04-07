@@ -101,11 +101,14 @@ func (p *Protocol) ExportGo(w io.Writer, pkgName, funcName string) error {
 	}
 
 	// --- Enum constants ---
+	// All constants are prefixed with the protocol name to avoid
+	// collisions when multiple protocols are generated into the same package.
+	cPrefix := funcName // e.g. "PairingCeremony", "Session"
 
 	for _, a := range p.Actors {
 		states := collectStates(a)
-		prefix := goConstPrefix(a.Name)
-		fmt.Fprintf(&b, "// %s states.\n", a.Name)
+		prefix := cPrefix + goConstPrefix(a.Name)
+		fmt.Fprintf(&b, "// %s %s states.\n", funcName, a.Name)
 		b.WriteString("const (\n")
 		for _, s := range states {
 			fmt.Fprintf(&b, "\t%s%s State = %q\n", prefix, s, s)
@@ -113,15 +116,15 @@ func (p *Protocol) ExportGo(w io.Writer, pkgName, funcName string) error {
 		b.WriteString(")\n\n")
 	}
 
-	b.WriteString("// Message types.\nconst (\n")
+	fmt.Fprintf(&b, "// %s message types.\nconst (\n", funcName)
 	for _, m := range p.Messages {
-		fmt.Fprintf(&b, "\tMsg%s MsgType = %q\n", goCamel(string(m.Type)), m.Type)
+		fmt.Fprintf(&b, "\t%sMsg%s MsgType = %q\n", cPrefix, goCamel(string(m.Type)), m.Type)
 	}
 	b.WriteString(")\n\n")
 
-	b.WriteString("// Guards.\nconst (\n")
+	fmt.Fprintf(&b, "// %s guards.\nconst (\n", funcName)
 	for _, g := range p.Guards {
-		fmt.Fprintf(&b, "\tGuard%s GuardID = %q\n", goCamel(string(g.ID)), g.ID)
+		fmt.Fprintf(&b, "\t%sGuard%s GuardID = %q\n", cPrefix, goCamel(string(g.ID)), g.ID)
 	}
 	b.WriteString(")\n\n")
 
@@ -139,9 +142,9 @@ func (p *Protocol) ExportGo(w io.Writer, pkgName, funcName string) error {
 	}
 	if len(actions) > 0 {
 		sortedActions := sortedKeys(actions)
-		b.WriteString("// Actions.\nconst (\n")
+		fmt.Fprintf(&b, "// %s actions.\nconst (\n", funcName)
 		for _, id := range sortedActions {
-			fmt.Fprintf(&b, "\tAction%s ActionID = %q\n", goCamel(id), id)
+			fmt.Fprintf(&b, "\t%sAction%s ActionID = %q\n", cPrefix, goCamel(id), id)
 		}
 		b.WriteString(")\n\n")
 	}
@@ -161,18 +164,18 @@ func (p *Protocol) ExportGo(w io.Writer, pkgName, funcName string) error {
 
 	if len(events) > 0 {
 		sortedEvents := sortedKeys(events)
-		b.WriteString("// Events.\nconst (\n")
+		fmt.Fprintf(&b, "// %s events.\nconst (\n", funcName)
 		for _, id := range sortedEvents {
-			fmt.Fprintf(&b, "\tEvent%s EventID = %q\n", goCamel(id), id)
+			fmt.Fprintf(&b, "\t%sEvent%s EventID = %q\n", cPrefix, goCamel(id), id)
 		}
 		b.WriteString(")\n\n")
 	}
 
 	// Command IDs from the commands: section.
 	if len(p.Commands) > 0 {
-		b.WriteString("// Commands.\nconst (\n")
+		fmt.Fprintf(&b, "// %s commands.\nconst (\n", funcName)
 		for _, c := range p.Commands {
-			fmt.Fprintf(&b, "\tCmd%s CmdID = %q\n", goCamel(string(c.ID)), c.ID)
+			fmt.Fprintf(&b, "\t%sCmd%s CmdID = %q\n", cPrefix, goCamel(string(c.ID)), c.ID)
 		}
 		b.WriteString(")\n\n")
 	}
@@ -332,8 +335,8 @@ func (p *Protocol) ExportGo(w io.Writer, pkgName, funcName string) error {
 	// --- Per-actor typed state machines ---
 
 	for _, a := range p.Actors {
-		prefix := goCamel(goConstPrefix(a.Name))
-		stateType := goConstPrefix(a.Name)
+		prefix := cPrefix + goCamel(goConstPrefix(a.Name))
+		stateType := cPrefix + goConstPrefix(a.Name)
 
 		// Collect vars updated by this actor's transitions.
 		actorVarSet := map[string]bool{}
@@ -394,14 +397,14 @@ func (p *Protocol) ExportGo(w io.Writer, pkgName, funcName string) error {
 			}
 			guard := ""
 			if t.Guard != "" {
-				guard = fmt.Sprintf(" && m.Guards[Guard%s] != nil && m.Guards[Guard%s]()",
-					goCamel(string(t.Guard)), goCamel(string(t.Guard)))
+				guard = fmt.Sprintf(" && m.Guards[%sGuard%s] != nil && m.Guards[%sGuard%s]()",
+					cPrefix, goCamel(string(t.Guard)), cPrefix, goCamel(string(t.Guard)))
 			}
-			fmt.Fprintf(&b, "\tcase m.State == %s%s && msg == Msg%s%s:\n",
+			fmt.Fprintf(&b, "\tcase m.State == %s%s && msg == %sMsg%s%s:\n",
 				stateType, goCamel(string(t.From)),
-				goCamel(string(t.On.Msg)), guard)
+				cPrefix, goCamel(string(t.On.Msg)), guard)
 
-			writeGoTransitionBody(&b, t, stateType)
+			writeGoTransitionBody(&b, t, stateType, cPrefix)
 			b.WriteString("\t\treturn true, nil\n")
 		}
 		b.WriteString("\t}\n\treturn false, nil\n}\n\n")
@@ -415,14 +418,14 @@ func (p *Protocol) ExportGo(w io.Writer, pkgName, funcName string) error {
 			}
 			guard := ""
 			if t.Guard != "" {
-				guard = fmt.Sprintf(" && m.Guards[Guard%s] != nil && m.Guards[Guard%s]()",
-					goCamel(string(t.Guard)), goCamel(string(t.Guard)))
+				guard = fmt.Sprintf(" && m.Guards[%sGuard%s] != nil && m.Guards[%sGuard%s]()",
+					cPrefix, goCamel(string(t.Guard)), cPrefix, goCamel(string(t.Guard)))
 			}
-			fmt.Fprintf(&b, "\tcase m.State == %s%s && event == Event%s%s:\n",
+			fmt.Fprintf(&b, "\tcase m.State == %s%s && event == %sEvent%s%s:\n",
 				stateType, goCamel(string(t.From)),
-				goCamel(t.On.Desc), guard)
+				cPrefix, goCamel(t.On.Desc), guard)
 
-			writeGoTransitionBody(&b, t, stateType)
+			writeGoTransitionBody(&b, t, stateType, cPrefix)
 			b.WriteString("\t\treturn true, nil\n")
 		}
 		b.WriteString("\t}\n\treturn false, nil\n}\n\n")
@@ -434,22 +437,22 @@ func (p *Protocol) ExportGo(w io.Writer, pkgName, funcName string) error {
 		for _, t := range a.FlattenedTransitions() {
 			guard := ""
 			if t.Guard != "" {
-				guard = fmt.Sprintf(" && m.Guards[Guard%s] != nil && m.Guards[Guard%s]()",
-					goCamel(string(t.Guard)), goCamel(string(t.Guard)))
+				guard = fmt.Sprintf(" && m.Guards[%sGuard%s] != nil && m.Guards[%sGuard%s]()",
+					cPrefix, goCamel(string(t.Guard)), cPrefix, goCamel(string(t.Guard)))
 			}
 
 			// Event ID: recv messages become EventRecv*, internal events become Event*.
 			var eventConst string
 			if t.On.Kind == TriggerRecv {
-				eventConst = fmt.Sprintf("EventRecv%s", goCamel(string(t.On.Msg)))
+				eventConst = fmt.Sprintf("%sEventRecv%s", cPrefix, goCamel(string(t.On.Msg)))
 			} else {
-				eventConst = fmt.Sprintf("Event%s", goCamel(t.On.Desc))
+				eventConst = fmt.Sprintf("%sEvent%s", cPrefix, goCamel(t.On.Desc))
 			}
 
 			fmt.Fprintf(&b, "\tcase m.State == %s%s && ev == %s%s:\n",
 				stateType, goCamel(string(t.From)), eventConst, guard)
 
-			writeGoEventTransitionBody(&b, t, stateType)
+			writeGoEventTransitionBody(&b, t, stateType, cPrefix)
 		}
 		b.WriteString("\t}\n\treturn nil, nil\n}\n\n")
 	}
@@ -460,10 +463,10 @@ func (p *Protocol) ExportGo(w io.Writer, pkgName, funcName string) error {
 
 // writeGoTransitionBody emits the action call, variable updates, state
 // change, and change notifications for a single transition.
-func writeGoTransitionBody(b *strings.Builder, t Transition, stateType string) {
+func writeGoTransitionBody(b *strings.Builder, t Transition, stateType, cPrefix string) {
 	// Action.
 	if t.Do != "" {
-		fmt.Fprintf(b, "\t\tif fn := m.Actions[Action%s]; fn != nil {\n", goCamel(string(t.Do)))
+		fmt.Fprintf(b, "\t\tif fn := m.Actions[%sAction%s]; fn != nil {\n", cPrefix, goCamel(string(t.Do)))
 		b.WriteString("\t\t\tif err := fn(); err != nil { return false, err }\n")
 		b.WriteString("\t\t}\n")
 	}
@@ -489,10 +492,10 @@ func writeGoTransitionBody(b *strings.Builder, t Transition, stateType string) {
 
 // writeGoEventTransitionBody emits the action call, variable updates,
 // state change, and command list return for HandleEvent.
-func writeGoEventTransitionBody(b *strings.Builder, t Transition, stateType string) {
+func writeGoEventTransitionBody(b *strings.Builder, t Transition, stateType, cPrefix string) {
 	// Action.
 	if t.Do != "" {
-		fmt.Fprintf(b, "\t\tif fn := m.Actions[Action%s]; fn != nil {\n", goCamel(string(t.Do)))
+		fmt.Fprintf(b, "\t\tif fn := m.Actions[%sAction%s]; fn != nil {\n", cPrefix, goCamel(string(t.Do)))
 		b.WriteString("\t\t\tif err := fn(); err != nil { return nil, err }\n")
 		b.WriteString("\t\t}\n")
 	}
@@ -521,7 +524,7 @@ func writeGoEventTransitionBody(b *strings.Builder, t Transition, stateType stri
 			if i > 0 {
 				b.WriteString(", ")
 			}
-			fmt.Fprintf(b, "Cmd%s", goCamel(string(cmd)))
+			fmt.Fprintf(b, "%sCmd%s", cPrefix, goCamel(string(cmd)))
 		}
 		b.WriteString("}, nil\n")
 	} else {

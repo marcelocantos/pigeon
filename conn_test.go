@@ -76,7 +76,7 @@ func localRelay(t *testing.T) relayEnv {
 	t.Helper()
 	// If an external instrumented relay is running (e.g. for coverage),
 	// use it instead of starting our own.
-	if qURL := os.Getenv("TERN_TEST_QUIC_URL"); qURL != "" {
+	if qURL := os.Getenv("PIGEON_TEST_QUIC_URL"); qURL != "" {
 		u, _ := url.Parse(qURL)
 		return relayEnv{
 			url: qURL,
@@ -137,7 +137,7 @@ func localRelayWT(t *testing.T) relayEnv {
 	t.Helper()
 
 	// If an external instrumented relay is running, use it.
-	if wtURL := os.Getenv("TERN_TEST_WT_URL"); wtURL != "" {
+	if wtURL := os.Getenv("PIGEON_TEST_WT_URL"); wtURL != "" {
 		return relayEnv{
 			url: wtURL,
 			cfg: Config{
@@ -2013,7 +2013,7 @@ func TestConnectToOccupiedInstanceViaQUICRaw(t *testing.T) {
 }
 
 // TestConnectWTNilTLSConfig exercises the nil TLS config path in
-// connectWebTransport (tern.go:278-279) and registerWebTransport (tern.go:229-231).
+// connectWebTransport (pigeon.go:278-279) and registerWebTransport (pigeon.go:229-231).
 // The dial will fail because there's no trust anchor for the self-signed cert,
 // but the nil-config branch is exercised before the failure.
 func TestConnectWTNilTLSConfig(t *testing.T) {

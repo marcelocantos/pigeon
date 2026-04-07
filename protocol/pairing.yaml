@@ -290,6 +290,7 @@ vars:
     initial: '<<"none">>'
     desc: code received in code_submit (tuple to match DeriveCode output type)
   code_attempts:
+    type: int
     initial: '0'
     desc: failed code submission attempts
   device_secret:

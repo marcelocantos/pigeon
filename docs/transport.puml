@@ -103,9 +103,9 @@ B_RelayConnected -[#888,dashed]-> C_RelayConnected : lan_offer\n{addr, challenge
 B_LANOffered -[#888,dashed]-> C_LANVerifying : lan_confirm
 B_LANActive -[#888,dashed]-> C_LANActive : path_ping
 B_LANDegraded -[#888,dashed]-> C_LANActive : path_ping
-B_RelayBackoff -[#888,dashed]-> C_RelayConnected : lan_offer\n{challenge, addr}
 B_RelayBackoff -[#888,dashed]-> C_RelayConnected : lan_offer\n{addr, challenge}
-B_RelayConnected -[#888,dashed]-> C_RelayConnected : lan_offer\n{challenge, addr}
+B_RelayBackoff -[#888,dashed]-> C_RelayConnected : lan_offer\n{addr, challenge}
+B_RelayConnected -[#888,dashed]-> C_RelayConnected : lan_offer\n{addr, challenge}
 C_GenKeyPair -[#888,dashed]-> B_WaitingForClient : pair_hello\n{token, pubkey}
 C_Reconnect -[#888,dashed]-> B_Paired : auth_request\n{device_id, secret, nonce, key}
 C_LANConnecting -[#888,dashed]-> B_LANOffered : lan_verify\n{challenge, instance_id}

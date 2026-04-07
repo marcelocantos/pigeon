@@ -16,7 +16,7 @@ import (
 	"github.com/quic-go/quic-go"
 )
 
-// pigeonALPN is the ALPN protocol identifier for raw QUIC tern connections.
+// pigeonALPN is the ALPN protocol identifier for raw QUIC pigeon connections.
 const pigeonALPN = "pigeon"
 
 // quicSession wraps a raw QUIC connection to implement relaySession.

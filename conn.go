@@ -90,16 +90,16 @@ func newConn(stream io.ReadWriteCloser, dg datagrammer, closer io.Closer, opener
 	}
 	switch role {
 	case roleBackend:
-		m := NewBackendMachine()
-		m.State = BackendRelayConnected
-		m.Guards[GuardChallengeValid] = func() bool { return true }
-		m.Guards[GuardChallengeInvalid] = func() bool { return false }
-		m.Guards[GuardLanServerAvailable] = func() bool { return true }
-		m.Guards[GuardUnderMaxFailures] = func() bool { return m.PingFailures+1 < 3 }
-		m.Guards[GuardAtMaxFailures] = func() bool { return m.PingFailures+1 >= 3 }
-		m.Actions[ActionActivateLan] = func() error { return nil }
-		m.Actions[ActionResetFailures] = func() error { return nil }
-		m.Actions[ActionFallbackToRelay] = func() error {
+		m := NewSessionProtocolBackendMachine()
+		m.State = SessionProtocolBackendRelayConnected
+		m.Guards[SessionProtocolGuardChallengeValid] = func() bool { return true }
+		m.Guards[SessionProtocolGuardChallengeInvalid] = func() bool { return false }
+		m.Guards[SessionProtocolGuardLanServerAvailable] = func() bool { return true }
+		m.Guards[SessionProtocolGuardUnderMaxFailures] = func() bool { return m.PingFailures+1 < 3 }
+		m.Guards[SessionProtocolGuardAtMaxFailures] = func() bool { return m.PingFailures+1 >= 3 }
+		m.Actions[SessionProtocolActionActivateLan] = func() error { return nil }
+		m.Actions[SessionProtocolActionResetFailures] = func() error { return nil }
+		m.Actions[SessionProtocolActionFallbackToRelay] = func() error {
 			// Increment backoff (complex expr not handled by codegen).
 			m.BackoffLevel++
 			if m.BackoffLevel > 5 {
@@ -109,13 +109,13 @@ func newConn(stream io.ReadWriteCloser, dg datagrammer, closer io.Closer, opener
 		}
 		machine = m
 	case roleClient:
-		m := NewClientMachine()
-		m.State = ClientRelayConnected
-		m.Guards[GuardLanEnabled] = func() bool { return true }
-		m.Guards[GuardLanDisabled] = func() bool { return false }
-		m.Actions[ActionDialLan] = func() error { return nil }
-		m.Actions[ActionActivateLan] = func() error { return nil }
-		m.Actions[ActionFallbackToRelay] = func() error { return nil }
+		m := NewSessionProtocolClientMachine()
+		m.State = SessionProtocolClientRelayConnected
+		m.Guards[SessionProtocolGuardLanEnabled] = func() bool { return true }
+		m.Guards[SessionProtocolGuardLanDisabled] = func() bool { return false }
+		m.Actions[SessionProtocolActionDialLan] = func() error { return nil }
+		m.Actions[SessionProtocolActionActivateLan] = func() error { return nil }
+		m.Actions[SessionProtocolActionFallbackToRelay] = func() error { return nil }
 		machine = m
 	}
 
@@ -195,7 +195,7 @@ func (c *Conn) SetChannel(ch *crypto.Channel) {
 
 	// Trigger LAN advertisement via the machine.
 	if c.lanServer != nil {
-		c.exec.submit(event{id: EventLanServerReady})
+		c.exec.submit(event{id: SessionProtocolEventLanServerReady})
 	}
 }
 
@@ -256,7 +256,7 @@ func (c *Conn) Close() error {
 // to relay. The machine handles this via app_force_fallback transitions
 // from any LAN-related state.
 func (c *Conn) fallbackToRelay() {
-	c.exec.submitSync(event{id: EventAppForceFallback})
+	c.exec.submitSync(event{id: SessionProtocolEventAppForceFallback})
 }
 
 // isDirectActive returns true if the direct path is active.

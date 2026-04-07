@@ -6,20 +6,6 @@
 
 package com.marcelocantos.pigeon.crypto
 
-enum class MessageType(val value: String) {
-    PairHello("pair_hello"),
-    PairHelloAck("pair_hello_ack"),
-    PairConfirm("pair_confirm"),
-    PairComplete("pair_complete"),
-    AuthRequest("auth_request"),
-    AuthOk("auth_ok"),
-    LanOffer("lan_offer"),
-    LanVerify("lan_verify"),
-    LanConfirm("lan_confirm"),
-    PathPing("path_ping"),
-    PathPong("path_pong");
-}
-
 enum class BackendState(val value: String) {
     Idle("Idle"),
     GenerateToken("GenerateToken"),
@@ -66,327 +52,346 @@ enum class RelayState(val value: String) {
     Bridged("Bridged");
 }
 
-enum class GuardID(val value: String) {
-    TokenValid("token_valid"),
-    TokenInvalid("token_invalid"),
-    CodeCorrect("code_correct"),
-    CodeWrong("code_wrong"),
-    DeviceKnown("device_known"),
-    DeviceUnknown("device_unknown"),
-    NonceFresh("nonce_fresh"),
-    ChallengeValid("challenge_valid"),
-    ChallengeInvalid("challenge_invalid"),
-    LanEnabled("lan_enabled"),
-    LanDisabled("lan_disabled"),
-    LanServerAvailable("lan_server_available"),
-    UnderMaxFailures("under_max_failures"),
-    AtMaxFailures("at_max_failures");
-}
+/** The protocol transition table and shared type enums. */
+object SessionProtocol {
 
-enum class ActionID(val value: String) {
-    GenerateToken("generate_token"),
-    RegisterRelay("register_relay"),
-    DeriveSecret("derive_secret"),
-    StoreDevice("store_device"),
-    VerifyDevice("verify_device"),
-    ActivateLan("activate_lan"),
-    FallbackToRelay("fallback_to_relay"),
-    ResetFailures("reset_failures"),
-    SendPairHello("send_pair_hello"),
-    StoreSecret("store_secret"),
-    DialLan("dial_lan"),
-    BridgeStreams("bridge_streams"),
-    Unbridge("unbridge");
-}
+    enum class MessageType(val value: String) {
+        PairHello("pair_hello"),
+        PairHelloAck("pair_hello_ack"),
+        PairConfirm("pair_confirm"),
+        PairComplete("pair_complete"),
+        AuthRequest("auth_request"),
+        AuthOk("auth_ok"),
+        LanOffer("lan_offer"),
+        LanVerify("lan_verify"),
+        LanConfirm("lan_confirm"),
+        PathPing("path_ping"),
+        PathPong("path_pong");
+    }
 
-enum class EventID(val value: String) {
-    AppClose("app_close"),
-    AppForceFallback("app_force_fallback"),
-    AppLaunch("app_launch"),
-    AppRecv("app_recv"),
-    AppRecvDatagram("app_recv_datagram"),
-    AppSend("app_send"),
-    AppSendDatagram("app_send_datagram"),
-    BackchannelReceived("backchannel_received"),
-    BackendDisconnect("backend_disconnect"),
-    BackendRegister("backend_register"),
-    BackoffExpired("backoff_expired"),
-    CheckCode("check_code"),
-    CliCodeEntered("cli_code_entered"),
-    CliInitPair("cli_init_pair"),
-    ClientConnect("client_connect"),
-    ClientDisconnect("client_disconnect"),
-    CodeDisplayed("code_displayed"),
-    Disconnect("disconnect"),
-    EcdhComplete("ecdh_complete"),
-    Finalise("finalise"),
-    KeyPairGenerated("key_pair_generated"),
-    LanDatagram("lan_datagram"),
-    LanDialFailed("lan_dial_failed"),
-    LanDialOk("lan_dial_ok"),
-    LanError("lan_error"),
-    LanServerChanged("lan_server_changed"),
-    LanServerReady("lan_server_ready"),
-    LanStreamData("lan_stream_data"),
-    LanStreamError("lan_stream_error"),
-    LanVerifyOk("lan_verify_ok"),
-    OfferTimeout("offer_timeout"),
-    PingTick("ping_tick"),
-    PingTimeout("ping_timeout"),
-    ReadvertiseTick("readvertise_tick"),
-    RecvAuthOk("recv_auth_ok"),
-    RecvAuthRequest("recv_auth_request"),
-    RecvLanConfirm("recv_lan_confirm"),
-    RecvLanOffer("recv_lan_offer"),
-    RecvLanVerify("recv_lan_verify"),
-    RecvPairComplete("recv_pair_complete"),
-    RecvPairConfirm("recv_pair_confirm"),
-    RecvPairHello("recv_pair_hello"),
-    RecvPairHelloAck("recv_pair_hello_ack"),
-    RecvPathPing("recv_path_ping"),
-    RecvPathPong("recv_path_pong"),
-    RelayConnected("relay_connected"),
-    RelayDatagram("relay_datagram"),
-    RelayOk("relay_ok"),
-    RelayRegistered("relay_registered"),
-    RelayStreamData("relay_stream_data"),
-    RelayStreamError("relay_stream_error"),
-    SecretParsed("secret_parsed"),
-    SessionEstablished("session_established"),
-    SignalCodeDisplay("signal_code_display"),
-    TokenCreated("token_created"),
-    Verify("verify"),
-    VerifyTimeout("verify_timeout");
-}
+    enum class GuardID(val value: String) {
+        TokenValid("token_valid"),
+        TokenInvalid("token_invalid"),
+        CodeCorrect("code_correct"),
+        CodeWrong("code_wrong"),
+        DeviceKnown("device_known"),
+        DeviceUnknown("device_unknown"),
+        NonceFresh("nonce_fresh"),
+        ChallengeValid("challenge_valid"),
+        ChallengeInvalid("challenge_invalid"),
+        LanEnabled("lan_enabled"),
+        LanDisabled("lan_disabled"),
+        LanServerAvailable("lan_server_available"),
+        UnderMaxFailures("under_max_failures"),
+        AtMaxFailures("at_max_failures");
+    }
 
-enum class CmdID(val value: String) {
-    WriteActiveStream("write_active_stream"),
-    SendActiveDatagram("send_active_datagram"),
-    SendPathPing("send_path_ping"),
-    SendPathPong("send_path_pong"),
-    SendLanOffer("send_lan_offer"),
-    SendLanVerify("send_lan_verify"),
-    SendLanConfirm("send_lan_confirm"),
-    DialLan("dial_lan"),
-    DeliverRecv("deliver_recv"),
-    DeliverRecvError("deliver_recv_error"),
-    DeliverRecvDatagram("deliver_recv_datagram"),
-    StartLanStreamReader("start_lan_stream_reader"),
-    StopLanStreamReader("stop_lan_stream_reader"),
-    StartLanDgReader("start_lan_dg_reader"),
-    StopLanDgReader("stop_lan_dg_reader"),
-    StartMonitor("start_monitor"),
-    StopMonitor("stop_monitor"),
-    StartPongTimeout("start_pong_timeout"),
-    CancelPongTimeout("cancel_pong_timeout"),
-    StartBackoffTimer("start_backoff_timer"),
-    CloseLanPath("close_lan_path"),
-    SignalLanReady("signal_lan_ready"),
-    ResetLanReady("reset_lan_ready"),
-    SetCryptoDatagram("set_crypto_datagram");
-}
+    enum class ActionID(val value: String) {
+        GenerateToken("generate_token"),
+        RegisterRelay("register_relay"),
+        DeriveSecret("derive_secret"),
+        StoreDevice("store_device"),
+        VerifyDevice("verify_device"),
+        ActivateLan("activate_lan"),
+        FallbackToRelay("fallback_to_relay"),
+        ResetFailures("reset_failures"),
+        SendPairHello("send_pair_hello"),
+        StoreSecret("store_secret"),
+        DialLan("dial_lan"),
+        BridgeStreams("bridge_streams"),
+        Unbridge("unbridge");
+    }
 
-/** Protocol wire constants shared across all platforms. */
-object Wire {
-    const val DG_CONN_WHOLE: Byte = 0x00.toByte()
-    const val DG_PING: Byte = 0x10.toByte()
-    const val DG_PONG: Byte = 0x11.toByte()
-    const val DG_CONN_FRAGMENT: Byte = 0x40.toByte()
-    const val DG_CHAN_WHOLE: Byte = 0x80.toByte()
-    const val DG_CHAN_FRAGMENT: Byte = 0xC0.toByte()
-    const val FRAG_HEADER_SIZE = 8
-    const val CHAN_ID_SIZE = 2
-    const val MAX_DATAGRAM_PAYLOAD = 1200
-    const val FRAGMENT_TIMEOUT_MS = 5000L // ms
-    const val FRAME_APP: Byte = 0x00.toByte()
-    const val FRAME_LAN_OFFER: Byte = 0x01.toByte()
-    const val FRAME_CUTOVER: Byte = 0x02.toByte()
-    const val MAX_MESSAGE_SIZE = 1048576
-    const val LENGTH_PREFIX_SIZE = 4
-    const val PING_INTERVAL_MS = 5000L // ms
-    const val PONG_TIMEOUT_MS = 4000L // ms
-    const val MAX_PING_FAILURES = 3
-    const val MAX_BACKOFF_LEVEL = 5
-    const val STREAM_CHANNEL_OPENER_SUFFIX = ":o2a"
-    const val STREAM_CHANNEL_ACCEPT_SUFFIX = ":a2o"
-    const val DG_CHANNEL_SEND_SUFFIX = ":dg:send"
-    const val DG_CHANNEL_RECV_SUFFIX = ":dg:recv"
-    const val CHANNEL_ID_HASH_MULTIPLIER = 31
-}
+    enum class EventID(val value: String) {
+        AppClose("app_close"),
+        AppForceFallback("app_force_fallback"),
+        AppLaunch("app_launch"),
+        AppRecv("app_recv"),
+        AppRecvDatagram("app_recv_datagram"),
+        AppSend("app_send"),
+        AppSendDatagram("app_send_datagram"),
+        BackchannelReceived("backchannel_received"),
+        BackendDisconnect("backend_disconnect"),
+        BackendRegister("backend_register"),
+        BackoffExpired("backoff_expired"),
+        CheckCode("check_code"),
+        CliCodeEntered("cli_code_entered"),
+        CliInitPair("cli_init_pair"),
+        ClientConnect("client_connect"),
+        ClientDisconnect("client_disconnect"),
+        CodeDisplayed("code_displayed"),
+        Disconnect("disconnect"),
+        EcdhComplete("ecdh_complete"),
+        Finalise("finalise"),
+        KeyPairGenerated("key_pair_generated"),
+        LanDatagram("lan_datagram"),
+        LanDialFailed("lan_dial_failed"),
+        LanDialOk("lan_dial_ok"),
+        LanError("lan_error"),
+        LanServerChanged("lan_server_changed"),
+        LanServerReady("lan_server_ready"),
+        LanStreamData("lan_stream_data"),
+        LanStreamError("lan_stream_error"),
+        LanVerifyOk("lan_verify_ok"),
+        OfferTimeout("offer_timeout"),
+        PingTick("ping_tick"),
+        PingTimeout("ping_timeout"),
+        ReadvertiseTick("readvertise_tick"),
+        RecvAuthOk("recv_auth_ok"),
+        RecvAuthRequest("recv_auth_request"),
+        RecvLanConfirm("recv_lan_confirm"),
+        RecvLanOffer("recv_lan_offer"),
+        RecvLanVerify("recv_lan_verify"),
+        RecvPairComplete("recv_pair_complete"),
+        RecvPairConfirm("recv_pair_confirm"),
+        RecvPairHello("recv_pair_hello"),
+        RecvPairHelloAck("recv_pair_hello_ack"),
+        RecvPathPing("recv_path_ping"),
+        RecvPathPong("recv_path_pong"),
+        RelayConnected("relay_connected"),
+        RelayDatagram("relay_datagram"),
+        RelayOk("relay_ok"),
+        RelayRegistered("relay_registered"),
+        RelayStreamData("relay_stream_data"),
+        RelayStreamError("relay_stream_error"),
+        SecretParsed("secret_parsed"),
+        SessionEstablished("session_established"),
+        SignalCodeDisplay("signal_code_display"),
+        TokenCreated("token_created"),
+        Verify("verify"),
+        VerifyTimeout("verify_timeout");
+    }
 
-/** backend transition table. */
-object BackendTable {
-    val initial = BackendState.Idle
+    enum class CmdID(val value: String) {
+        WriteActiveStream("write_active_stream"),
+        SendActiveDatagram("send_active_datagram"),
+        SendPathPing("send_path_ping"),
+        SendPathPong("send_path_pong"),
+        SendLanOffer("send_lan_offer"),
+        SendLanVerify("send_lan_verify"),
+        SendLanConfirm("send_lan_confirm"),
+        DialLan("dial_lan"),
+        DeliverRecv("deliver_recv"),
+        DeliverRecvError("deliver_recv_error"),
+        DeliverRecvDatagram("deliver_recv_datagram"),
+        StartLanStreamReader("start_lan_stream_reader"),
+        StopLanStreamReader("stop_lan_stream_reader"),
+        StartLanDgReader("start_lan_dg_reader"),
+        StopLanDgReader("stop_lan_dg_reader"),
+        StartMonitor("start_monitor"),
+        StopMonitor("stop_monitor"),
+        StartPongTimeout("start_pong_timeout"),
+        CancelPongTimeout("cancel_pong_timeout"),
+        StartBackoffTimer("start_backoff_timer"),
+        CloseLanPath("close_lan_path"),
+        SignalLanReady("signal_lan_ready"),
+        ResetLanReady("reset_lan_ready"),
+        SetCryptoDatagram("set_crypto_datagram");
+    }
 
-    data class Transition(
-        val from: String,
-        val to: String,
-        val on: String,
-        val onKind: String,
-        val guard: String? = null,
-        val action: String? = null,
-        val sends: List<Pair<String, String>> = emptyList(),
-    )
+    /** Protocol wire constants shared across all platforms. */
+    object Wire {
+        const val DG_CONN_WHOLE: Byte = 0x00.toByte()
+        const val DG_PING: Byte = 0x10.toByte()
+        const val DG_PONG: Byte = 0x11.toByte()
+        const val DG_CONN_FRAGMENT: Byte = 0x40.toByte()
+        const val DG_CHAN_WHOLE: Byte = 0x80.toByte()
+        const val DG_CHAN_FRAGMENT: Byte = 0xC0.toByte()
+        const val FRAG_HEADER_SIZE = 8
+        const val CHAN_ID_SIZE = 2
+        const val MAX_DATAGRAM_PAYLOAD = 1200
+        const val FRAGMENT_TIMEOUT_MS = 5000L // ms
+        const val FRAME_APP: Byte = 0x00.toByte()
+        const val FRAME_LAN_OFFER: Byte = 0x01.toByte()
+        const val FRAME_CUTOVER: Byte = 0x02.toByte()
+        const val MAX_MESSAGE_SIZE = 1048576
+        const val LENGTH_PREFIX_SIZE = 4
+        const val PING_INTERVAL_MS = 5000L // ms
+        const val PONG_TIMEOUT_MS = 4000L // ms
+        const val MAX_PING_FAILURES = 3
+        const val MAX_BACKOFF_LEVEL = 5
+        const val STREAM_CHANNEL_OPENER_SUFFIX = ":o2a"
+        const val STREAM_CHANNEL_ACCEPT_SUFFIX = ":a2o"
+        const val DG_CHANNEL_SEND_SUFFIX = ":dg:send"
+        const val DG_CHANNEL_RECV_SUFFIX = ":dg:recv"
+        const val CHANNEL_ID_HASH_MULTIPLIER = 31
+    }
 
-    val transitions = listOf(
-        Transition("Idle", "GenerateToken", "cli_init_pair", "internal", null, "generate_token", emptyList()),
-        Transition("GenerateToken", "RegisterRelay", "token_created", "internal", null, "register_relay", emptyList()),
-        Transition("RegisterRelay", "WaitingForClient", "relay_registered", "internal", null, null, emptyList()),
-        Transition("WaitingForClient", "DeriveSecret", "pair_hello", "recv", "token_valid", "derive_secret", emptyList()),
-        Transition("WaitingForClient", "Idle", "pair_hello", "recv", "token_invalid", null, emptyList()),
-        Transition("DeriveSecret", "SendAck", "ecdh_complete", "internal", null, null, listOf("client" to "pair_hello_ack")),
-        Transition("SendAck", "WaitingForCode", "signal_code_display", "internal", null, null, listOf("client" to "pair_confirm")),
-        Transition("WaitingForCode", "ValidateCode", "cli_code_entered", "internal", null, null, emptyList()),
-        Transition("ValidateCode", "StorePaired", "check_code", "internal", "code_correct", null, emptyList()),
-        Transition("ValidateCode", "Idle", "check_code", "internal", "code_wrong", null, emptyList()),
-        Transition("StorePaired", "Paired", "finalise", "internal", null, "store_device", listOf("client" to "pair_complete")),
-        Transition("Paired", "AuthCheck", "auth_request", "recv", null, null, emptyList()),
-        Transition("AuthCheck", "SessionActive", "verify", "internal", "device_known", "verify_device", listOf("client" to "auth_ok")),
-        Transition("AuthCheck", "Idle", "verify", "internal", "device_unknown", null, emptyList()),
-        Transition("SessionActive", "RelayConnected", "session_established", "internal", null, null, emptyList()),
-        Transition("RelayConnected", "LANOffered", "lan_server_ready", "internal", null, null, listOf("client" to "lan_offer")),
-        Transition("LANOffered", "LANActive", "lan_verify", "recv", "challenge_valid", "activate_lan", listOf("client" to "lan_confirm")),
-        Transition("LANOffered", "RelayConnected", "lan_verify", "recv", "challenge_invalid", null, emptyList()),
-        Transition("LANOffered", "RelayBackoff", "offer_timeout", "internal", null, null, emptyList()),
-        Transition("LANActive", "LANActive", "ping_tick", "internal", null, null, listOf("client" to "path_ping")),
-        Transition("LANActive", "LANDegraded", "ping_timeout", "internal", null, null, emptyList()),
-        Transition("LANDegraded", "LANDegraded", "ping_tick", "internal", null, null, listOf("client" to "path_ping")),
-        Transition("LANActive", "RelayBackoff", "lan_stream_error", "internal", null, "fallback_to_relay", emptyList()),
-        Transition("LANDegraded", "RelayBackoff", "lan_stream_error", "internal", null, "fallback_to_relay", emptyList()),
-        Transition("LANDegraded", "LANActive", "path_pong", "recv", null, "reset_failures", emptyList()),
-        Transition("LANDegraded", "LANDegraded", "ping_timeout", "internal", "under_max_failures", null, emptyList()),
-        Transition("LANDegraded", "RelayBackoff", "ping_timeout", "internal", "at_max_failures", "fallback_to_relay", emptyList()),
-        Transition("RelayBackoff", "LANOffered", "backoff_expired", "internal", null, null, listOf("client" to "lan_offer")),
-        Transition("RelayBackoff", "LANOffered", "lan_server_changed", "internal", null, null, listOf("client" to "lan_offer")),
-        Transition("RelayConnected", "LANOffered", "readvertise_tick", "internal", "lan_server_available", null, listOf("client" to "lan_offer")),
-        Transition("LANOffered", "RelayConnected", "app_force_fallback", "internal", null, null, emptyList()),
-        Transition("LANActive", "RelayBackoff", "app_force_fallback", "internal", null, "fallback_to_relay", emptyList()),
-        Transition("LANDegraded", "RelayBackoff", "app_force_fallback", "internal", null, "fallback_to_relay", emptyList()),
-        Transition("RelayConnected", "Paired", "disconnect", "internal", null, null, emptyList()),
-        Transition("RelayConnected", "RelayConnected", "app_send", "internal", null, null, emptyList()),
-        Transition("LANOffered", "LANOffered", "app_send", "internal", null, null, emptyList()),
-        Transition("LANActive", "LANActive", "app_send", "internal", null, null, emptyList()),
-        Transition("LANDegraded", "LANDegraded", "app_send", "internal", null, null, emptyList()),
-        Transition("RelayBackoff", "RelayBackoff", "app_send", "internal", null, null, emptyList()),
-        Transition("RelayConnected", "RelayConnected", "relay_stream_data", "internal", null, null, emptyList()),
-        Transition("LANOffered", "LANOffered", "relay_stream_data", "internal", null, null, emptyList()),
-        Transition("LANActive", "LANActive", "relay_stream_data", "internal", null, null, emptyList()),
-        Transition("LANDegraded", "LANDegraded", "relay_stream_data", "internal", null, null, emptyList()),
-        Transition("RelayBackoff", "RelayBackoff", "relay_stream_data", "internal", null, null, emptyList()),
-        Transition("RelayConnected", "RelayConnected", "relay_stream_error", "internal", null, null, emptyList()),
-        Transition("LANOffered", "LANOffered", "relay_stream_error", "internal", null, null, emptyList()),
-        Transition("LANActive", "LANActive", "relay_stream_error", "internal", null, null, emptyList()),
-        Transition("LANDegraded", "LANDegraded", "relay_stream_error", "internal", null, null, emptyList()),
-        Transition("RelayBackoff", "RelayBackoff", "relay_stream_error", "internal", null, null, emptyList()),
-        Transition("RelayConnected", "RelayConnected", "app_send_datagram", "internal", null, null, emptyList()),
-        Transition("LANOffered", "LANOffered", "app_send_datagram", "internal", null, null, emptyList()),
-        Transition("LANActive", "LANActive", "app_send_datagram", "internal", null, null, emptyList()),
-        Transition("LANDegraded", "LANDegraded", "app_send_datagram", "internal", null, null, emptyList()),
-        Transition("RelayBackoff", "RelayBackoff", "app_send_datagram", "internal", null, null, emptyList()),
-        Transition("RelayConnected", "RelayConnected", "relay_datagram", "internal", null, null, emptyList()),
-        Transition("LANOffered", "LANOffered", "relay_datagram", "internal", null, null, emptyList()),
-        Transition("LANActive", "LANActive", "relay_datagram", "internal", null, null, emptyList()),
-        Transition("LANDegraded", "LANDegraded", "relay_datagram", "internal", null, null, emptyList()),
-        Transition("RelayBackoff", "RelayBackoff", "relay_datagram", "internal", null, null, emptyList()),
-        Transition("LANActive", "LANActive", "lan_stream_data", "internal", null, null, emptyList()),
-        Transition("LANDegraded", "LANDegraded", "lan_stream_data", "internal", null, null, emptyList()),
-        Transition("LANActive", "LANActive", "lan_datagram", "internal", null, null, emptyList()),
-        Transition("LANDegraded", "LANDegraded", "lan_datagram", "internal", null, null, emptyList()),
-    )
-}
+    /** backend transition table. */
+    object BackendTable {
+        val initial = BackendState.Idle
 
-/** client transition table. */
-object ClientTable {
-    val initial = ClientState.Idle
+        data class Transition(
+            val from: String,
+            val to: String,
+            val on: String,
+            val onKind: String,
+            val guard: String? = null,
+            val action: String? = null,
+            val sends: List<Pair<String, String>> = emptyList(),
+        )
 
-    data class Transition(
-        val from: String,
-        val to: String,
-        val on: String,
-        val onKind: String,
-        val guard: String? = null,
-        val action: String? = null,
-        val sends: List<Pair<String, String>> = emptyList(),
-    )
+        val transitions = listOf(
+            Transition("Idle", "GenerateToken", "cli_init_pair", "internal", null, "generate_token", emptyList()),
+            Transition("GenerateToken", "RegisterRelay", "token_created", "internal", null, "register_relay", emptyList()),
+            Transition("RegisterRelay", "WaitingForClient", "relay_registered", "internal", null, null, emptyList()),
+            Transition("WaitingForClient", "DeriveSecret", "pair_hello", "recv", "token_valid", "derive_secret", emptyList()),
+            Transition("WaitingForClient", "Idle", "pair_hello", "recv", "token_invalid", null, emptyList()),
+            Transition("DeriveSecret", "SendAck", "ecdh_complete", "internal", null, null, listOf("client" to "pair_hello_ack")),
+            Transition("SendAck", "WaitingForCode", "signal_code_display", "internal", null, null, listOf("client" to "pair_confirm")),
+            Transition("WaitingForCode", "ValidateCode", "cli_code_entered", "internal", null, null, emptyList()),
+            Transition("ValidateCode", "StorePaired", "check_code", "internal", "code_correct", null, emptyList()),
+            Transition("ValidateCode", "Idle", "check_code", "internal", "code_wrong", null, emptyList()),
+            Transition("StorePaired", "Paired", "finalise", "internal", null, "store_device", listOf("client" to "pair_complete")),
+            Transition("Paired", "AuthCheck", "auth_request", "recv", null, null, emptyList()),
+            Transition("AuthCheck", "SessionActive", "verify", "internal", "device_known", "verify_device", listOf("client" to "auth_ok")),
+            Transition("AuthCheck", "Idle", "verify", "internal", "device_unknown", null, emptyList()),
+            Transition("SessionActive", "RelayConnected", "session_established", "internal", null, null, emptyList()),
+            Transition("RelayConnected", "LANOffered", "lan_server_ready", "internal", null, null, listOf("client" to "lan_offer")),
+            Transition("LANOffered", "LANActive", "lan_verify", "recv", "challenge_valid", "activate_lan", listOf("client" to "lan_confirm")),
+            Transition("LANOffered", "RelayConnected", "lan_verify", "recv", "challenge_invalid", null, emptyList()),
+            Transition("LANOffered", "RelayBackoff", "offer_timeout", "internal", null, null, emptyList()),
+            Transition("LANActive", "LANActive", "ping_tick", "internal", null, null, listOf("client" to "path_ping")),
+            Transition("LANActive", "LANDegraded", "ping_timeout", "internal", null, null, emptyList()),
+            Transition("LANDegraded", "LANDegraded", "ping_tick", "internal", null, null, listOf("client" to "path_ping")),
+            Transition("LANActive", "RelayBackoff", "lan_stream_error", "internal", null, "fallback_to_relay", emptyList()),
+            Transition("LANDegraded", "RelayBackoff", "lan_stream_error", "internal", null, "fallback_to_relay", emptyList()),
+            Transition("LANDegraded", "LANActive", "path_pong", "recv", null, "reset_failures", emptyList()),
+            Transition("LANDegraded", "LANDegraded", "ping_timeout", "internal", "under_max_failures", null, emptyList()),
+            Transition("LANDegraded", "RelayBackoff", "ping_timeout", "internal", "at_max_failures", "fallback_to_relay", emptyList()),
+            Transition("RelayBackoff", "LANOffered", "backoff_expired", "internal", null, null, listOf("client" to "lan_offer")),
+            Transition("RelayBackoff", "LANOffered", "lan_server_changed", "internal", null, null, listOf("client" to "lan_offer")),
+            Transition("RelayConnected", "LANOffered", "readvertise_tick", "internal", "lan_server_available", null, listOf("client" to "lan_offer")),
+            Transition("LANOffered", "RelayConnected", "app_force_fallback", "internal", null, null, emptyList()),
+            Transition("LANActive", "RelayBackoff", "app_force_fallback", "internal", null, "fallback_to_relay", emptyList()),
+            Transition("LANDegraded", "RelayBackoff", "app_force_fallback", "internal", null, "fallback_to_relay", emptyList()),
+            Transition("RelayConnected", "Paired", "disconnect", "internal", null, null, emptyList()),
+            Transition("RelayConnected", "RelayConnected", "app_send", "internal", null, null, emptyList()),
+            Transition("LANOffered", "LANOffered", "app_send", "internal", null, null, emptyList()),
+            Transition("LANActive", "LANActive", "app_send", "internal", null, null, emptyList()),
+            Transition("LANDegraded", "LANDegraded", "app_send", "internal", null, null, emptyList()),
+            Transition("RelayBackoff", "RelayBackoff", "app_send", "internal", null, null, emptyList()),
+            Transition("RelayConnected", "RelayConnected", "relay_stream_data", "internal", null, null, emptyList()),
+            Transition("LANOffered", "LANOffered", "relay_stream_data", "internal", null, null, emptyList()),
+            Transition("LANActive", "LANActive", "relay_stream_data", "internal", null, null, emptyList()),
+            Transition("LANDegraded", "LANDegraded", "relay_stream_data", "internal", null, null, emptyList()),
+            Transition("RelayBackoff", "RelayBackoff", "relay_stream_data", "internal", null, null, emptyList()),
+            Transition("RelayConnected", "RelayConnected", "relay_stream_error", "internal", null, null, emptyList()),
+            Transition("LANOffered", "LANOffered", "relay_stream_error", "internal", null, null, emptyList()),
+            Transition("LANActive", "LANActive", "relay_stream_error", "internal", null, null, emptyList()),
+            Transition("LANDegraded", "LANDegraded", "relay_stream_error", "internal", null, null, emptyList()),
+            Transition("RelayBackoff", "RelayBackoff", "relay_stream_error", "internal", null, null, emptyList()),
+            Transition("RelayConnected", "RelayConnected", "app_send_datagram", "internal", null, null, emptyList()),
+            Transition("LANOffered", "LANOffered", "app_send_datagram", "internal", null, null, emptyList()),
+            Transition("LANActive", "LANActive", "app_send_datagram", "internal", null, null, emptyList()),
+            Transition("LANDegraded", "LANDegraded", "app_send_datagram", "internal", null, null, emptyList()),
+            Transition("RelayBackoff", "RelayBackoff", "app_send_datagram", "internal", null, null, emptyList()),
+            Transition("RelayConnected", "RelayConnected", "relay_datagram", "internal", null, null, emptyList()),
+            Transition("LANOffered", "LANOffered", "relay_datagram", "internal", null, null, emptyList()),
+            Transition("LANActive", "LANActive", "relay_datagram", "internal", null, null, emptyList()),
+            Transition("LANDegraded", "LANDegraded", "relay_datagram", "internal", null, null, emptyList()),
+            Transition("RelayBackoff", "RelayBackoff", "relay_datagram", "internal", null, null, emptyList()),
+            Transition("LANActive", "LANActive", "lan_stream_data", "internal", null, null, emptyList()),
+            Transition("LANDegraded", "LANDegraded", "lan_stream_data", "internal", null, null, emptyList()),
+            Transition("LANActive", "LANActive", "lan_datagram", "internal", null, null, emptyList()),
+            Transition("LANDegraded", "LANDegraded", "lan_datagram", "internal", null, null, emptyList()),
+        )
+    }
 
-    val transitions = listOf(
-        Transition("Idle", "ObtainBackchannelSecret", "backchannel_received", "internal", null, null, emptyList()),
-        Transition("ObtainBackchannelSecret", "ConnectRelay", "secret_parsed", "internal", null, null, emptyList()),
-        Transition("ConnectRelay", "GenKeyPair", "relay_connected", "internal", null, null, emptyList()),
-        Transition("GenKeyPair", "WaitAck", "key_pair_generated", "internal", null, "send_pair_hello", listOf("backend" to "pair_hello")),
-        Transition("WaitAck", "E2EReady", "pair_hello_ack", "recv", null, "derive_secret", emptyList()),
-        Transition("E2EReady", "ShowCode", "pair_confirm", "recv", null, null, emptyList()),
-        Transition("ShowCode", "WaitPairComplete", "code_displayed", "internal", null, null, emptyList()),
-        Transition("WaitPairComplete", "Paired", "pair_complete", "recv", null, "store_secret", emptyList()),
-        Transition("Paired", "Reconnect", "app_launch", "internal", null, null, emptyList()),
-        Transition("Reconnect", "SendAuth", "relay_connected", "internal", null, null, listOf("backend" to "auth_request")),
-        Transition("SendAuth", "SessionActive", "auth_ok", "recv", null, null, emptyList()),
-        Transition("SessionActive", "RelayConnected", "session_established", "internal", null, null, emptyList()),
-        Transition("RelayConnected", "LANConnecting", "lan_offer", "recv", "lan_enabled", "dial_lan", emptyList()),
-        Transition("RelayConnected", "RelayConnected", "lan_offer", "recv", "lan_disabled", null, emptyList()),
-        Transition("LANConnecting", "LANVerifying", "lan_dial_ok", "internal", null, null, listOf("backend" to "lan_verify")),
-        Transition("LANConnecting", "RelayConnected", "lan_dial_failed", "internal", null, null, emptyList()),
-        Transition("LANVerifying", "LANActive", "lan_confirm", "recv", null, "activate_lan", emptyList()),
-        Transition("LANVerifying", "RelayConnected", "verify_timeout", "internal", null, null, emptyList()),
-        Transition("LANActive", "LANActive", "path_ping", "recv", null, null, listOf("backend" to "path_pong")),
-        Transition("LANActive", "RelayFallback", "lan_error", "internal", null, "fallback_to_relay", emptyList()),
-        Transition("LANActive", "RelayFallback", "lan_stream_error", "internal", null, "fallback_to_relay", emptyList()),
-        Transition("RelayFallback", "RelayConnected", "relay_ok", "internal", null, null, emptyList()),
-        Transition("LANActive", "LANConnecting", "lan_offer", "recv", "lan_enabled", "dial_lan", emptyList()),
-        Transition("LANConnecting", "RelayConnected", "app_force_fallback", "internal", null, null, emptyList()),
-        Transition("LANVerifying", "RelayConnected", "app_force_fallback", "internal", null, null, emptyList()),
-        Transition("LANActive", "RelayConnected", "app_force_fallback", "internal", null, "fallback_to_relay", emptyList()),
-        Transition("RelayConnected", "Paired", "disconnect", "internal", null, null, emptyList()),
-        Transition("RelayConnected", "RelayConnected", "app_send", "internal", null, null, emptyList()),
-        Transition("LANConnecting", "LANConnecting", "app_send", "internal", null, null, emptyList()),
-        Transition("LANVerifying", "LANVerifying", "app_send", "internal", null, null, emptyList()),
-        Transition("LANActive", "LANActive", "app_send", "internal", null, null, emptyList()),
-        Transition("RelayFallback", "RelayFallback", "app_send", "internal", null, null, emptyList()),
-        Transition("RelayConnected", "RelayConnected", "relay_stream_data", "internal", null, null, emptyList()),
-        Transition("LANConnecting", "LANConnecting", "relay_stream_data", "internal", null, null, emptyList()),
-        Transition("LANVerifying", "LANVerifying", "relay_stream_data", "internal", null, null, emptyList()),
-        Transition("LANActive", "LANActive", "relay_stream_data", "internal", null, null, emptyList()),
-        Transition("RelayFallback", "RelayFallback", "relay_stream_data", "internal", null, null, emptyList()),
-        Transition("RelayConnected", "RelayConnected", "relay_stream_error", "internal", null, null, emptyList()),
-        Transition("LANConnecting", "LANConnecting", "relay_stream_error", "internal", null, null, emptyList()),
-        Transition("LANVerifying", "LANVerifying", "relay_stream_error", "internal", null, null, emptyList()),
-        Transition("LANActive", "LANActive", "relay_stream_error", "internal", null, null, emptyList()),
-        Transition("RelayFallback", "RelayFallback", "relay_stream_error", "internal", null, null, emptyList()),
-        Transition("RelayConnected", "RelayConnected", "app_send_datagram", "internal", null, null, emptyList()),
-        Transition("LANConnecting", "LANConnecting", "app_send_datagram", "internal", null, null, emptyList()),
-        Transition("LANVerifying", "LANVerifying", "app_send_datagram", "internal", null, null, emptyList()),
-        Transition("LANActive", "LANActive", "app_send_datagram", "internal", null, null, emptyList()),
-        Transition("RelayFallback", "RelayFallback", "app_send_datagram", "internal", null, null, emptyList()),
-        Transition("RelayConnected", "RelayConnected", "relay_datagram", "internal", null, null, emptyList()),
-        Transition("LANConnecting", "LANConnecting", "relay_datagram", "internal", null, null, emptyList()),
-        Transition("LANVerifying", "LANVerifying", "relay_datagram", "internal", null, null, emptyList()),
-        Transition("LANActive", "LANActive", "relay_datagram", "internal", null, null, emptyList()),
-        Transition("RelayFallback", "RelayFallback", "relay_datagram", "internal", null, null, emptyList()),
-        Transition("LANActive", "LANActive", "lan_stream_data", "internal", null, null, emptyList()),
-        Transition("LANActive", "LANActive", "lan_datagram", "internal", null, null, emptyList()),
-    )
-}
+    /** client transition table. */
+    object ClientTable {
+        val initial = ClientState.Idle
 
-/** relay transition table. */
-object RelayTable {
-    val initial = RelayState.Idle
+        data class Transition(
+            val from: String,
+            val to: String,
+            val on: String,
+            val onKind: String,
+            val guard: String? = null,
+            val action: String? = null,
+            val sends: List<Pair<String, String>> = emptyList(),
+        )
 
-    data class Transition(
-        val from: String,
-        val to: String,
-        val on: String,
-        val onKind: String,
-        val guard: String? = null,
-        val action: String? = null,
-        val sends: List<Pair<String, String>> = emptyList(),
-    )
+        val transitions = listOf(
+            Transition("Idle", "ObtainBackchannelSecret", "backchannel_received", "internal", null, null, emptyList()),
+            Transition("ObtainBackchannelSecret", "ConnectRelay", "secret_parsed", "internal", null, null, emptyList()),
+            Transition("ConnectRelay", "GenKeyPair", "relay_connected", "internal", null, null, emptyList()),
+            Transition("GenKeyPair", "WaitAck", "key_pair_generated", "internal", null, "send_pair_hello", listOf("backend" to "pair_hello")),
+            Transition("WaitAck", "E2EReady", "pair_hello_ack", "recv", null, "derive_secret", emptyList()),
+            Transition("E2EReady", "ShowCode", "pair_confirm", "recv", null, null, emptyList()),
+            Transition("ShowCode", "WaitPairComplete", "code_displayed", "internal", null, null, emptyList()),
+            Transition("WaitPairComplete", "Paired", "pair_complete", "recv", null, "store_secret", emptyList()),
+            Transition("Paired", "Reconnect", "app_launch", "internal", null, null, emptyList()),
+            Transition("Reconnect", "SendAuth", "relay_connected", "internal", null, null, listOf("backend" to "auth_request")),
+            Transition("SendAuth", "SessionActive", "auth_ok", "recv", null, null, emptyList()),
+            Transition("SessionActive", "RelayConnected", "session_established", "internal", null, null, emptyList()),
+            Transition("RelayConnected", "LANConnecting", "lan_offer", "recv", "lan_enabled", "dial_lan", emptyList()),
+            Transition("RelayConnected", "RelayConnected", "lan_offer", "recv", "lan_disabled", null, emptyList()),
+            Transition("LANConnecting", "LANVerifying", "lan_dial_ok", "internal", null, null, listOf("backend" to "lan_verify")),
+            Transition("LANConnecting", "RelayConnected", "lan_dial_failed", "internal", null, null, emptyList()),
+            Transition("LANVerifying", "LANActive", "lan_confirm", "recv", null, "activate_lan", emptyList()),
+            Transition("LANVerifying", "RelayConnected", "verify_timeout", "internal", null, null, emptyList()),
+            Transition("LANActive", "LANActive", "path_ping", "recv", null, null, listOf("backend" to "path_pong")),
+            Transition("LANActive", "RelayFallback", "lan_error", "internal", null, "fallback_to_relay", emptyList()),
+            Transition("LANActive", "RelayFallback", "lan_stream_error", "internal", null, "fallback_to_relay", emptyList()),
+            Transition("RelayFallback", "RelayConnected", "relay_ok", "internal", null, null, emptyList()),
+            Transition("LANActive", "LANConnecting", "lan_offer", "recv", "lan_enabled", "dial_lan", emptyList()),
+            Transition("LANConnecting", "RelayConnected", "app_force_fallback", "internal", null, null, emptyList()),
+            Transition("LANVerifying", "RelayConnected", "app_force_fallback", "internal", null, null, emptyList()),
+            Transition("LANActive", "RelayConnected", "app_force_fallback", "internal", null, "fallback_to_relay", emptyList()),
+            Transition("RelayConnected", "Paired", "disconnect", "internal", null, null, emptyList()),
+            Transition("RelayConnected", "RelayConnected", "app_send", "internal", null, null, emptyList()),
+            Transition("LANConnecting", "LANConnecting", "app_send", "internal", null, null, emptyList()),
+            Transition("LANVerifying", "LANVerifying", "app_send", "internal", null, null, emptyList()),
+            Transition("LANActive", "LANActive", "app_send", "internal", null, null, emptyList()),
+            Transition("RelayFallback", "RelayFallback", "app_send", "internal", null, null, emptyList()),
+            Transition("RelayConnected", "RelayConnected", "relay_stream_data", "internal", null, null, emptyList()),
+            Transition("LANConnecting", "LANConnecting", "relay_stream_data", "internal", null, null, emptyList()),
+            Transition("LANVerifying", "LANVerifying", "relay_stream_data", "internal", null, null, emptyList()),
+            Transition("LANActive", "LANActive", "relay_stream_data", "internal", null, null, emptyList()),
+            Transition("RelayFallback", "RelayFallback", "relay_stream_data", "internal", null, null, emptyList()),
+            Transition("RelayConnected", "RelayConnected", "relay_stream_error", "internal", null, null, emptyList()),
+            Transition("LANConnecting", "LANConnecting", "relay_stream_error", "internal", null, null, emptyList()),
+            Transition("LANVerifying", "LANVerifying", "relay_stream_error", "internal", null, null, emptyList()),
+            Transition("LANActive", "LANActive", "relay_stream_error", "internal", null, null, emptyList()),
+            Transition("RelayFallback", "RelayFallback", "relay_stream_error", "internal", null, null, emptyList()),
+            Transition("RelayConnected", "RelayConnected", "app_send_datagram", "internal", null, null, emptyList()),
+            Transition("LANConnecting", "LANConnecting", "app_send_datagram", "internal", null, null, emptyList()),
+            Transition("LANVerifying", "LANVerifying", "app_send_datagram", "internal", null, null, emptyList()),
+            Transition("LANActive", "LANActive", "app_send_datagram", "internal", null, null, emptyList()),
+            Transition("RelayFallback", "RelayFallback", "app_send_datagram", "internal", null, null, emptyList()),
+            Transition("RelayConnected", "RelayConnected", "relay_datagram", "internal", null, null, emptyList()),
+            Transition("LANConnecting", "LANConnecting", "relay_datagram", "internal", null, null, emptyList()),
+            Transition("LANVerifying", "LANVerifying", "relay_datagram", "internal", null, null, emptyList()),
+            Transition("LANActive", "LANActive", "relay_datagram", "internal", null, null, emptyList()),
+            Transition("RelayFallback", "RelayFallback", "relay_datagram", "internal", null, null, emptyList()),
+            Transition("LANActive", "LANActive", "lan_stream_data", "internal", null, null, emptyList()),
+            Transition("LANActive", "LANActive", "lan_datagram", "internal", null, null, emptyList()),
+        )
+    }
 
-    val transitions = listOf(
-        Transition("Idle", "BackendRegistered", "backend_register", "internal", null, null, emptyList()),
-        Transition("BackendRegistered", "Bridged", "client_connect", "internal", null, "bridge_streams", emptyList()),
-        Transition("Bridged", "BackendRegistered", "client_disconnect", "internal", null, "unbridge", emptyList()),
-        Transition("BackendRegistered", "Idle", "backend_disconnect", "internal", null, null, emptyList()),
-    )
+    /** relay transition table. */
+    object RelayTable {
+        val initial = RelayState.Idle
+
+        data class Transition(
+            val from: String,
+            val to: String,
+            val on: String,
+            val onKind: String,
+            val guard: String? = null,
+            val action: String? = null,
+            val sends: List<Pair<String, String>> = emptyList(),
+        )
+
+        val transitions = listOf(
+            Transition("Idle", "BackendRegistered", "backend_register", "internal", null, null, emptyList()),
+            Transition("BackendRegistered", "Bridged", "client_connect", "internal", null, "bridge_streams", emptyList()),
+            Transition("Bridged", "BackendRegistered", "client_disconnect", "internal", null, "unbridge", emptyList()),
+            Transition("BackendRegistered", "Idle", "backend_disconnect", "internal", null, null, emptyList()),
+        )
+    }
+
 }
 
 /** BackendMachine is the generated state machine for the backend actor. */
@@ -414,35 +419,35 @@ class BackendMachine {
     var bDispatcherPath: String = "relay" // backend datagram dispatcher binding
     var monitorTarget: String = "none" // health monitor target
     var lanSignal: String = "pending" // LANReady notification state
-    val guards = mutableMapOf<GuardID, () -> Boolean>()
-    val actions = mutableMapOf<ActionID, () -> Unit>()
+    val guards = mutableMapOf<SessionProtocol.GuardID, () -> Boolean>()
+    val actions = mutableMapOf<SessionProtocol.ActionID, () -> Unit>()
 
     /** Handle an event and return the list of commands to execute. */
-    fun handleEvent(ev: EventID): List<CmdID> {
+    fun handleEvent(ev: SessionProtocol.EventID): List<SessionProtocol.CmdID> {
         val cmds = when {
-            state == BackendState.Idle && ev == EventID.CliInitPair ->
+            state == BackendState.Idle && ev == SessionProtocol.EventID.CliInitPair ->
                 run {
-                    actions[ActionID.GenerateToken]?.invoke()
+                    actions[SessionProtocol.ActionID.GenerateToken]?.invoke()
                     currentToken = "tok_1"
                     // active_tokens: active_tokens \union {"tok_1"} (set by action)
                     state = BackendState.GenerateToken
                     emptyList()
                 }
-            state == BackendState.GenerateToken && ev == EventID.TokenCreated ->
+            state == BackendState.GenerateToken && ev == SessionProtocol.EventID.TokenCreated ->
                 run {
-                    actions[ActionID.RegisterRelay]?.invoke()
+                    actions[SessionProtocol.ActionID.RegisterRelay]?.invoke()
                     state = BackendState.RegisterRelay
                     emptyList()
                 }
-            state == BackendState.RegisterRelay && ev == EventID.RelayRegistered ->
+            state == BackendState.RegisterRelay && ev == SessionProtocol.EventID.RelayRegistered ->
                 run {
                     secretPublished = true
                     state = BackendState.WaitingForClient
                     emptyList()
                 }
-            state == BackendState.WaitingForClient && ev == EventID.RecvPairHello && guards[GuardID.TokenValid]?.invoke() == true ->
+            state == BackendState.WaitingForClient && ev == SessionProtocol.EventID.RecvPairHello && guards[SessionProtocol.GuardID.TokenValid]?.invoke() == true ->
                 run {
-                    actions[ActionID.DeriveSecret]?.invoke()
+                    actions[SessionProtocol.ActionID.DeriveSecret]?.invoke()
                     // received_client_pub: recv_msg.pubkey (set by action)
                     backendEcdhPub = "backend_pub"
                     // backend_shared_key: DeriveKey("backend_pub", recv_msg.pubkey) (set by action)
@@ -450,41 +455,41 @@ class BackendMachine {
                     state = BackendState.DeriveSecret
                     emptyList()
                 }
-            state == BackendState.WaitingForClient && ev == EventID.RecvPairHello && guards[GuardID.TokenInvalid]?.invoke() == true ->
+            state == BackendState.WaitingForClient && ev == SessionProtocol.EventID.RecvPairHello && guards[SessionProtocol.GuardID.TokenInvalid]?.invoke() == true ->
                 run {
                     state = BackendState.Idle
                     emptyList()
                 }
-            state == BackendState.DeriveSecret && ev == EventID.EcdhComplete ->
+            state == BackendState.DeriveSecret && ev == SessionProtocol.EventID.EcdhComplete ->
                 run {
                     state = BackendState.SendAck
                     emptyList()
                 }
-            state == BackendState.SendAck && ev == EventID.SignalCodeDisplay ->
+            state == BackendState.SendAck && ev == SessionProtocol.EventID.SignalCodeDisplay ->
                 run {
                     state = BackendState.WaitingForCode
                     emptyList()
                 }
-            state == BackendState.WaitingForCode && ev == EventID.CliCodeEntered ->
+            state == BackendState.WaitingForCode && ev == SessionProtocol.EventID.CliCodeEntered ->
                 run {
                     // received_code: cli_entered_code (set by action)
                     state = BackendState.ValidateCode
                     emptyList()
                 }
-            state == BackendState.ValidateCode && ev == EventID.CheckCode && guards[GuardID.CodeCorrect]?.invoke() == true ->
+            state == BackendState.ValidateCode && ev == SessionProtocol.EventID.CheckCode && guards[SessionProtocol.GuardID.CodeCorrect]?.invoke() == true ->
                 run {
                     state = BackendState.StorePaired
                     emptyList()
                 }
-            state == BackendState.ValidateCode && ev == EventID.CheckCode && guards[GuardID.CodeWrong]?.invoke() == true ->
+            state == BackendState.ValidateCode && ev == SessionProtocol.EventID.CheckCode && guards[SessionProtocol.GuardID.CodeWrong]?.invoke() == true ->
                 run {
                     // code_attempts: code_attempts + 1 (set by action)
                     state = BackendState.Idle
                     emptyList()
                 }
-            state == BackendState.StorePaired && ev == EventID.Finalise ->
+            state == BackendState.StorePaired && ev == SessionProtocol.EventID.Finalise ->
                 run {
-                    actions[ActionID.StoreDevice]?.invoke()
+                    actions[SessionProtocol.ActionID.StoreDevice]?.invoke()
                     deviceSecret = "dev_secret_1"
                     // paired_devices: paired_devices \union {"device_1"} (set by action)
                     // active_tokens: active_tokens \ {current_token} (set by action)
@@ -492,38 +497,38 @@ class BackendMachine {
                     state = BackendState.Paired
                     emptyList()
                 }
-            state == BackendState.Paired && ev == EventID.RecvAuthRequest ->
+            state == BackendState.Paired && ev == SessionProtocol.EventID.RecvAuthRequest ->
                 run {
                     // received_device_id: recv_msg.device_id (set by action)
                     // received_auth_nonce: recv_msg.nonce (set by action)
                     state = BackendState.AuthCheck
                     emptyList()
                 }
-            state == BackendState.AuthCheck && ev == EventID.Verify && guards[GuardID.DeviceKnown]?.invoke() == true ->
+            state == BackendState.AuthCheck && ev == SessionProtocol.EventID.Verify && guards[SessionProtocol.GuardID.DeviceKnown]?.invoke() == true ->
                 run {
-                    actions[ActionID.VerifyDevice]?.invoke()
+                    actions[SessionProtocol.ActionID.VerifyDevice]?.invoke()
                     // auth_nonces_used: auth_nonces_used \union {received_auth_nonce} (set by action)
                     state = BackendState.SessionActive
                     emptyList()
                 }
-            state == BackendState.AuthCheck && ev == EventID.Verify && guards[GuardID.DeviceUnknown]?.invoke() == true ->
+            state == BackendState.AuthCheck && ev == SessionProtocol.EventID.Verify && guards[SessionProtocol.GuardID.DeviceUnknown]?.invoke() == true ->
                 run {
                     state = BackendState.Idle
                     emptyList()
                 }
-            state == BackendState.SessionActive && ev == EventID.SessionEstablished ->
+            state == BackendState.SessionActive && ev == SessionProtocol.EventID.SessionEstablished ->
                 run {
                     state = BackendState.RelayConnected
                     emptyList()
                 }
-            state == BackendState.RelayConnected && ev == EventID.LanServerReady ->
+            state == BackendState.RelayConnected && ev == SessionProtocol.EventID.LanServerReady ->
                 run {
                     state = BackendState.LANOffered
-                    listOf(CmdID.SendLanOffer)
+                    listOf(SessionProtocol.CmdID.SendLanOffer)
                 }
-            state == BackendState.LANOffered && ev == EventID.RecvLanVerify && guards[GuardID.ChallengeValid]?.invoke() == true ->
+            state == BackendState.LANOffered && ev == SessionProtocol.EventID.RecvLanVerify && guards[SessionProtocol.GuardID.ChallengeValid]?.invoke() == true ->
                 run {
-                    actions[ActionID.ActivateLan]?.invoke()
+                    actions[SessionProtocol.ActionID.ActivateLan]?.invoke()
                     pingFailures = 0
                     backoffLevel = 0
                     bActivePath = "lan"
@@ -531,39 +536,39 @@ class BackendMachine {
                     monitorTarget = "lan"
                     lanSignal = "ready"
                     state = BackendState.LANActive
-                    listOf(CmdID.SendLanConfirm, CmdID.StartLanStreamReader, CmdID.StartLanDgReader, CmdID.StartMonitor, CmdID.SignalLanReady, CmdID.SetCryptoDatagram)
+                    listOf(SessionProtocol.CmdID.SendLanConfirm, SessionProtocol.CmdID.StartLanStreamReader, SessionProtocol.CmdID.StartLanDgReader, SessionProtocol.CmdID.StartMonitor, SessionProtocol.CmdID.SignalLanReady, SessionProtocol.CmdID.SetCryptoDatagram)
                 }
-            state == BackendState.LANOffered && ev == EventID.RecvLanVerify && guards[GuardID.ChallengeInvalid]?.invoke() == true ->
+            state == BackendState.LANOffered && ev == SessionProtocol.EventID.RecvLanVerify && guards[SessionProtocol.GuardID.ChallengeInvalid]?.invoke() == true ->
                 run {
                     state = BackendState.RelayConnected
                     emptyList()
                 }
-            state == BackendState.LANOffered && ev == EventID.OfferTimeout ->
+            state == BackendState.LANOffered && ev == SessionProtocol.EventID.OfferTimeout ->
                 run {
                     // backoff_level: Min(backoff_level + 1, max_backoff_level) (set by action)
                     lanSignal = "pending"
                     state = BackendState.RelayBackoff
-                    listOf(CmdID.ResetLanReady, CmdID.StartBackoffTimer)
+                    listOf(SessionProtocol.CmdID.ResetLanReady, SessionProtocol.CmdID.StartBackoffTimer)
                 }
-            state == BackendState.LANActive && ev == EventID.PingTick ->
+            state == BackendState.LANActive && ev == SessionProtocol.EventID.PingTick ->
                 run {
                     state = BackendState.LANActive
-                    listOf(CmdID.SendPathPing, CmdID.StartPongTimeout)
+                    listOf(SessionProtocol.CmdID.SendPathPing, SessionProtocol.CmdID.StartPongTimeout)
                 }
-            state == BackendState.LANActive && ev == EventID.PingTimeout ->
+            state == BackendState.LANActive && ev == SessionProtocol.EventID.PingTimeout ->
                 run {
                     pingFailures = 1
                     state = BackendState.LANDegraded
                     emptyList()
                 }
-            state == BackendState.LANDegraded && ev == EventID.PingTick ->
+            state == BackendState.LANDegraded && ev == SessionProtocol.EventID.PingTick ->
                 run {
                     state = BackendState.LANDegraded
-                    listOf(CmdID.SendPathPing, CmdID.StartPongTimeout)
+                    listOf(SessionProtocol.CmdID.SendPathPing, SessionProtocol.CmdID.StartPongTimeout)
                 }
-            state == BackendState.LANActive && ev == EventID.LanStreamError ->
+            state == BackendState.LANActive && ev == SessionProtocol.EventID.LanStreamError ->
                 run {
-                    actions[ActionID.FallbackToRelay]?.invoke()
+                    actions[SessionProtocol.ActionID.FallbackToRelay]?.invoke()
                     // backoff_level: Min(backoff_level + 1, max_backoff_level) (set by action)
                     bActivePath = "relay"
                     bDispatcherPath = "relay"
@@ -571,11 +576,11 @@ class BackendMachine {
                     lanSignal = "pending"
                     pingFailures = 0
                     state = BackendState.RelayBackoff
-                    listOf(CmdID.StopMonitor, CmdID.StopLanStreamReader, CmdID.StopLanDgReader, CmdID.CloseLanPath, CmdID.ResetLanReady, CmdID.StartBackoffTimer)
+                    listOf(SessionProtocol.CmdID.StopMonitor, SessionProtocol.CmdID.StopLanStreamReader, SessionProtocol.CmdID.StopLanDgReader, SessionProtocol.CmdID.CloseLanPath, SessionProtocol.CmdID.ResetLanReady, SessionProtocol.CmdID.StartBackoffTimer)
                 }
-            state == BackendState.LANDegraded && ev == EventID.LanStreamError ->
+            state == BackendState.LANDegraded && ev == SessionProtocol.EventID.LanStreamError ->
                 run {
-                    actions[ActionID.FallbackToRelay]?.invoke()
+                    actions[SessionProtocol.ActionID.FallbackToRelay]?.invoke()
                     // backoff_level: Min(backoff_level + 1, max_backoff_level) (set by action)
                     bActivePath = "relay"
                     bDispatcherPath = "relay"
@@ -583,24 +588,24 @@ class BackendMachine {
                     lanSignal = "pending"
                     pingFailures = 0
                     state = BackendState.RelayBackoff
-                    listOf(CmdID.StopMonitor, CmdID.StopLanStreamReader, CmdID.StopLanDgReader, CmdID.CloseLanPath, CmdID.ResetLanReady, CmdID.StartBackoffTimer)
+                    listOf(SessionProtocol.CmdID.StopMonitor, SessionProtocol.CmdID.StopLanStreamReader, SessionProtocol.CmdID.StopLanDgReader, SessionProtocol.CmdID.CloseLanPath, SessionProtocol.CmdID.ResetLanReady, SessionProtocol.CmdID.StartBackoffTimer)
                 }
-            state == BackendState.LANDegraded && ev == EventID.RecvPathPong ->
+            state == BackendState.LANDegraded && ev == SessionProtocol.EventID.RecvPathPong ->
                 run {
-                    actions[ActionID.ResetFailures]?.invoke()
+                    actions[SessionProtocol.ActionID.ResetFailures]?.invoke()
                     pingFailures = 0
                     state = BackendState.LANActive
-                    listOf(CmdID.CancelPongTimeout)
+                    listOf(SessionProtocol.CmdID.CancelPongTimeout)
                 }
-            state == BackendState.LANDegraded && ev == EventID.PingTimeout && guards[GuardID.UnderMaxFailures]?.invoke() == true ->
+            state == BackendState.LANDegraded && ev == SessionProtocol.EventID.PingTimeout && guards[SessionProtocol.GuardID.UnderMaxFailures]?.invoke() == true ->
                 run {
                     // ping_failures: ping_failures + 1 (set by action)
                     state = BackendState.LANDegraded
                     emptyList()
                 }
-            state == BackendState.LANDegraded && ev == EventID.PingTimeout && guards[GuardID.AtMaxFailures]?.invoke() == true ->
+            state == BackendState.LANDegraded && ev == SessionProtocol.EventID.PingTimeout && guards[SessionProtocol.GuardID.AtMaxFailures]?.invoke() == true ->
                 run {
-                    actions[ActionID.FallbackToRelay]?.invoke()
+                    actions[SessionProtocol.ActionID.FallbackToRelay]?.invoke()
                     // backoff_level: Min(backoff_level + 1, max_backoff_level) (set by action)
                     bActivePath = "relay"
                     bDispatcherPath = "relay"
@@ -608,33 +613,33 @@ class BackendMachine {
                     lanSignal = "pending"
                     pingFailures = 0
                     state = BackendState.RelayBackoff
-                    listOf(CmdID.StopMonitor, CmdID.StopLanStreamReader, CmdID.StopLanDgReader, CmdID.CloseLanPath, CmdID.ResetLanReady, CmdID.StartBackoffTimer)
+                    listOf(SessionProtocol.CmdID.StopMonitor, SessionProtocol.CmdID.StopLanStreamReader, SessionProtocol.CmdID.StopLanDgReader, SessionProtocol.CmdID.CloseLanPath, SessionProtocol.CmdID.ResetLanReady, SessionProtocol.CmdID.StartBackoffTimer)
                 }
-            state == BackendState.RelayBackoff && ev == EventID.BackoffExpired ->
+            state == BackendState.RelayBackoff && ev == SessionProtocol.EventID.BackoffExpired ->
                 run {
                     state = BackendState.LANOffered
-                    listOf(CmdID.SendLanOffer)
+                    listOf(SessionProtocol.CmdID.SendLanOffer)
                 }
-            state == BackendState.RelayBackoff && ev == EventID.LanServerChanged ->
+            state == BackendState.RelayBackoff && ev == SessionProtocol.EventID.LanServerChanged ->
                 run {
                     backoffLevel = 0
                     state = BackendState.LANOffered
-                    listOf(CmdID.SendLanOffer)
+                    listOf(SessionProtocol.CmdID.SendLanOffer)
                 }
-            state == BackendState.RelayConnected && ev == EventID.ReadvertiseTick && guards[GuardID.LanServerAvailable]?.invoke() == true ->
+            state == BackendState.RelayConnected && ev == SessionProtocol.EventID.ReadvertiseTick && guards[SessionProtocol.GuardID.LanServerAvailable]?.invoke() == true ->
                 run {
                     state = BackendState.LANOffered
-                    listOf(CmdID.SendLanOffer)
+                    listOf(SessionProtocol.CmdID.SendLanOffer)
                 }
-            state == BackendState.LANOffered && ev == EventID.AppForceFallback ->
+            state == BackendState.LANOffered && ev == SessionProtocol.EventID.AppForceFallback ->
                 run {
                     lanSignal = "pending"
                     state = BackendState.RelayConnected
-                    listOf(CmdID.ResetLanReady)
+                    listOf(SessionProtocol.CmdID.ResetLanReady)
                 }
-            state == BackendState.LANActive && ev == EventID.AppForceFallback ->
+            state == BackendState.LANActive && ev == SessionProtocol.EventID.AppForceFallback ->
                 run {
-                    actions[ActionID.FallbackToRelay]?.invoke()
+                    actions[SessionProtocol.ActionID.FallbackToRelay]?.invoke()
                     // backoff_level: Min(backoff_level + 1, max_backoff_level) (set by action)
                     bActivePath = "relay"
                     bDispatcherPath = "relay"
@@ -642,11 +647,11 @@ class BackendMachine {
                     lanSignal = "pending"
                     pingFailures = 0
                     state = BackendState.RelayBackoff
-                    listOf(CmdID.StopMonitor, CmdID.CancelPongTimeout, CmdID.StopLanStreamReader, CmdID.StopLanDgReader, CmdID.CloseLanPath, CmdID.ResetLanReady, CmdID.StartBackoffTimer)
+                    listOf(SessionProtocol.CmdID.StopMonitor, SessionProtocol.CmdID.CancelPongTimeout, SessionProtocol.CmdID.StopLanStreamReader, SessionProtocol.CmdID.StopLanDgReader, SessionProtocol.CmdID.CloseLanPath, SessionProtocol.CmdID.ResetLanReady, SessionProtocol.CmdID.StartBackoffTimer)
                 }
-            state == BackendState.LANDegraded && ev == EventID.AppForceFallback ->
+            state == BackendState.LANDegraded && ev == SessionProtocol.EventID.AppForceFallback ->
                 run {
-                    actions[ActionID.FallbackToRelay]?.invoke()
+                    actions[SessionProtocol.ActionID.FallbackToRelay]?.invoke()
                     // backoff_level: Min(backoff_level + 1, max_backoff_level) (set by action)
                     bActivePath = "relay"
                     bDispatcherPath = "relay"
@@ -654,157 +659,157 @@ class BackendMachine {
                     lanSignal = "pending"
                     pingFailures = 0
                     state = BackendState.RelayBackoff
-                    listOf(CmdID.StopMonitor, CmdID.CancelPongTimeout, CmdID.StopLanStreamReader, CmdID.StopLanDgReader, CmdID.CloseLanPath, CmdID.ResetLanReady, CmdID.StartBackoffTimer)
+                    listOf(SessionProtocol.CmdID.StopMonitor, SessionProtocol.CmdID.CancelPongTimeout, SessionProtocol.CmdID.StopLanStreamReader, SessionProtocol.CmdID.StopLanDgReader, SessionProtocol.CmdID.CloseLanPath, SessionProtocol.CmdID.ResetLanReady, SessionProtocol.CmdID.StartBackoffTimer)
                 }
-            state == BackendState.RelayConnected && ev == EventID.Disconnect ->
+            state == BackendState.RelayConnected && ev == SessionProtocol.EventID.Disconnect ->
                 run {
                     state = BackendState.Paired
                     emptyList()
                 }
-            state == BackendState.RelayConnected && ev == EventID.AppSend ->
+            state == BackendState.RelayConnected && ev == SessionProtocol.EventID.AppSend ->
                 run {
                     state = BackendState.RelayConnected
-                    listOf(CmdID.WriteActiveStream)
+                    listOf(SessionProtocol.CmdID.WriteActiveStream)
                 }
-            state == BackendState.LANOffered && ev == EventID.AppSend ->
+            state == BackendState.LANOffered && ev == SessionProtocol.EventID.AppSend ->
                 run {
                     state = BackendState.LANOffered
-                    listOf(CmdID.WriteActiveStream)
+                    listOf(SessionProtocol.CmdID.WriteActiveStream)
                 }
-            state == BackendState.LANActive && ev == EventID.AppSend ->
+            state == BackendState.LANActive && ev == SessionProtocol.EventID.AppSend ->
                 run {
                     state = BackendState.LANActive
-                    listOf(CmdID.WriteActiveStream)
+                    listOf(SessionProtocol.CmdID.WriteActiveStream)
                 }
-            state == BackendState.LANDegraded && ev == EventID.AppSend ->
+            state == BackendState.LANDegraded && ev == SessionProtocol.EventID.AppSend ->
                 run {
                     state = BackendState.LANDegraded
-                    listOf(CmdID.WriteActiveStream)
+                    listOf(SessionProtocol.CmdID.WriteActiveStream)
                 }
-            state == BackendState.RelayBackoff && ev == EventID.AppSend ->
+            state == BackendState.RelayBackoff && ev == SessionProtocol.EventID.AppSend ->
                 run {
                     state = BackendState.RelayBackoff
-                    listOf(CmdID.WriteActiveStream)
+                    listOf(SessionProtocol.CmdID.WriteActiveStream)
                 }
-            state == BackendState.RelayConnected && ev == EventID.RelayStreamData ->
+            state == BackendState.RelayConnected && ev == SessionProtocol.EventID.RelayStreamData ->
                 run {
                     state = BackendState.RelayConnected
-                    listOf(CmdID.DeliverRecv)
+                    listOf(SessionProtocol.CmdID.DeliverRecv)
                 }
-            state == BackendState.LANOffered && ev == EventID.RelayStreamData ->
+            state == BackendState.LANOffered && ev == SessionProtocol.EventID.RelayStreamData ->
                 run {
                     state = BackendState.LANOffered
-                    listOf(CmdID.DeliverRecv)
+                    listOf(SessionProtocol.CmdID.DeliverRecv)
                 }
-            state == BackendState.LANActive && ev == EventID.RelayStreamData ->
+            state == BackendState.LANActive && ev == SessionProtocol.EventID.RelayStreamData ->
                 run {
                     state = BackendState.LANActive
-                    listOf(CmdID.DeliverRecv)
+                    listOf(SessionProtocol.CmdID.DeliverRecv)
                 }
-            state == BackendState.LANDegraded && ev == EventID.RelayStreamData ->
+            state == BackendState.LANDegraded && ev == SessionProtocol.EventID.RelayStreamData ->
                 run {
                     state = BackendState.LANDegraded
-                    listOf(CmdID.DeliverRecv)
+                    listOf(SessionProtocol.CmdID.DeliverRecv)
                 }
-            state == BackendState.RelayBackoff && ev == EventID.RelayStreamData ->
+            state == BackendState.RelayBackoff && ev == SessionProtocol.EventID.RelayStreamData ->
                 run {
                     state = BackendState.RelayBackoff
-                    listOf(CmdID.DeliverRecv)
+                    listOf(SessionProtocol.CmdID.DeliverRecv)
                 }
-            state == BackendState.RelayConnected && ev == EventID.RelayStreamError ->
+            state == BackendState.RelayConnected && ev == SessionProtocol.EventID.RelayStreamError ->
                 run {
                     state = BackendState.RelayConnected
-                    listOf(CmdID.DeliverRecvError)
+                    listOf(SessionProtocol.CmdID.DeliverRecvError)
                 }
-            state == BackendState.LANOffered && ev == EventID.RelayStreamError ->
+            state == BackendState.LANOffered && ev == SessionProtocol.EventID.RelayStreamError ->
                 run {
                     state = BackendState.LANOffered
-                    listOf(CmdID.DeliverRecvError)
+                    listOf(SessionProtocol.CmdID.DeliverRecvError)
                 }
-            state == BackendState.LANActive && ev == EventID.RelayStreamError ->
+            state == BackendState.LANActive && ev == SessionProtocol.EventID.RelayStreamError ->
                 run {
                     state = BackendState.LANActive
-                    listOf(CmdID.DeliverRecvError)
+                    listOf(SessionProtocol.CmdID.DeliverRecvError)
                 }
-            state == BackendState.LANDegraded && ev == EventID.RelayStreamError ->
+            state == BackendState.LANDegraded && ev == SessionProtocol.EventID.RelayStreamError ->
                 run {
                     state = BackendState.LANDegraded
-                    listOf(CmdID.DeliverRecvError)
+                    listOf(SessionProtocol.CmdID.DeliverRecvError)
                 }
-            state == BackendState.RelayBackoff && ev == EventID.RelayStreamError ->
+            state == BackendState.RelayBackoff && ev == SessionProtocol.EventID.RelayStreamError ->
                 run {
                     state = BackendState.RelayBackoff
-                    listOf(CmdID.DeliverRecvError)
+                    listOf(SessionProtocol.CmdID.DeliverRecvError)
                 }
-            state == BackendState.RelayConnected && ev == EventID.AppSendDatagram ->
+            state == BackendState.RelayConnected && ev == SessionProtocol.EventID.AppSendDatagram ->
                 run {
                     state = BackendState.RelayConnected
-                    listOf(CmdID.SendActiveDatagram)
+                    listOf(SessionProtocol.CmdID.SendActiveDatagram)
                 }
-            state == BackendState.LANOffered && ev == EventID.AppSendDatagram ->
+            state == BackendState.LANOffered && ev == SessionProtocol.EventID.AppSendDatagram ->
                 run {
                     state = BackendState.LANOffered
-                    listOf(CmdID.SendActiveDatagram)
+                    listOf(SessionProtocol.CmdID.SendActiveDatagram)
                 }
-            state == BackendState.LANActive && ev == EventID.AppSendDatagram ->
+            state == BackendState.LANActive && ev == SessionProtocol.EventID.AppSendDatagram ->
                 run {
                     state = BackendState.LANActive
-                    listOf(CmdID.SendActiveDatagram)
+                    listOf(SessionProtocol.CmdID.SendActiveDatagram)
                 }
-            state == BackendState.LANDegraded && ev == EventID.AppSendDatagram ->
+            state == BackendState.LANDegraded && ev == SessionProtocol.EventID.AppSendDatagram ->
                 run {
                     state = BackendState.LANDegraded
-                    listOf(CmdID.SendActiveDatagram)
+                    listOf(SessionProtocol.CmdID.SendActiveDatagram)
                 }
-            state == BackendState.RelayBackoff && ev == EventID.AppSendDatagram ->
+            state == BackendState.RelayBackoff && ev == SessionProtocol.EventID.AppSendDatagram ->
                 run {
                     state = BackendState.RelayBackoff
-                    listOf(CmdID.SendActiveDatagram)
+                    listOf(SessionProtocol.CmdID.SendActiveDatagram)
                 }
-            state == BackendState.RelayConnected && ev == EventID.RelayDatagram ->
+            state == BackendState.RelayConnected && ev == SessionProtocol.EventID.RelayDatagram ->
                 run {
                     state = BackendState.RelayConnected
-                    listOf(CmdID.DeliverRecvDatagram)
+                    listOf(SessionProtocol.CmdID.DeliverRecvDatagram)
                 }
-            state == BackendState.LANOffered && ev == EventID.RelayDatagram ->
+            state == BackendState.LANOffered && ev == SessionProtocol.EventID.RelayDatagram ->
                 run {
                     state = BackendState.LANOffered
-                    listOf(CmdID.DeliverRecvDatagram)
+                    listOf(SessionProtocol.CmdID.DeliverRecvDatagram)
                 }
-            state == BackendState.LANActive && ev == EventID.RelayDatagram ->
+            state == BackendState.LANActive && ev == SessionProtocol.EventID.RelayDatagram ->
                 run {
                     state = BackendState.LANActive
-                    listOf(CmdID.DeliverRecvDatagram)
+                    listOf(SessionProtocol.CmdID.DeliverRecvDatagram)
                 }
-            state == BackendState.LANDegraded && ev == EventID.RelayDatagram ->
+            state == BackendState.LANDegraded && ev == SessionProtocol.EventID.RelayDatagram ->
                 run {
                     state = BackendState.LANDegraded
-                    listOf(CmdID.DeliverRecvDatagram)
+                    listOf(SessionProtocol.CmdID.DeliverRecvDatagram)
                 }
-            state == BackendState.RelayBackoff && ev == EventID.RelayDatagram ->
+            state == BackendState.RelayBackoff && ev == SessionProtocol.EventID.RelayDatagram ->
                 run {
                     state = BackendState.RelayBackoff
-                    listOf(CmdID.DeliverRecvDatagram)
+                    listOf(SessionProtocol.CmdID.DeliverRecvDatagram)
                 }
-            state == BackendState.LANActive && ev == EventID.LanStreamData ->
+            state == BackendState.LANActive && ev == SessionProtocol.EventID.LanStreamData ->
                 run {
                     state = BackendState.LANActive
-                    listOf(CmdID.DeliverRecv)
+                    listOf(SessionProtocol.CmdID.DeliverRecv)
                 }
-            state == BackendState.LANDegraded && ev == EventID.LanStreamData ->
+            state == BackendState.LANDegraded && ev == SessionProtocol.EventID.LanStreamData ->
                 run {
                     state = BackendState.LANDegraded
-                    listOf(CmdID.DeliverRecv)
+                    listOf(SessionProtocol.CmdID.DeliverRecv)
                 }
-            state == BackendState.LANActive && ev == EventID.LanDatagram ->
+            state == BackendState.LANActive && ev == SessionProtocol.EventID.LanDatagram ->
                 run {
                     state = BackendState.LANActive
-                    listOf(CmdID.DeliverRecvDatagram)
+                    listOf(SessionProtocol.CmdID.DeliverRecvDatagram)
                 }
-            state == BackendState.LANDegraded && ev == EventID.LanDatagram ->
+            state == BackendState.LANDegraded && ev == SessionProtocol.EventID.LanDatagram ->
                 run {
                     state = BackendState.LANDegraded
-                    listOf(CmdID.DeliverRecvDatagram)
+                    listOf(SessionProtocol.CmdID.DeliverRecvDatagram)
                 }
             else -> emptyList()
         }
@@ -822,307 +827,307 @@ class ClientMachine {
     var cActivePath: String = "relay" // client active path
     var cDispatcherPath: String = "relay" // client datagram dispatcher binding
     var lanSignal: String = "pending" // LANReady notification state
-    val guards = mutableMapOf<GuardID, () -> Boolean>()
-    val actions = mutableMapOf<ActionID, () -> Unit>()
+    val guards = mutableMapOf<SessionProtocol.GuardID, () -> Boolean>()
+    val actions = mutableMapOf<SessionProtocol.ActionID, () -> Unit>()
 
     /** Handle an event and return the list of commands to execute. */
-    fun handleEvent(ev: EventID): List<CmdID> {
+    fun handleEvent(ev: SessionProtocol.EventID): List<SessionProtocol.CmdID> {
         val cmds = when {
-            state == ClientState.Idle && ev == EventID.BackchannelReceived ->
+            state == ClientState.Idle && ev == SessionProtocol.EventID.BackchannelReceived ->
                 run {
                     state = ClientState.ObtainBackchannelSecret
                     emptyList()
                 }
-            state == ClientState.ObtainBackchannelSecret && ev == EventID.SecretParsed ->
+            state == ClientState.ObtainBackchannelSecret && ev == SessionProtocol.EventID.SecretParsed ->
                 run {
                     state = ClientState.ConnectRelay
                     emptyList()
                 }
-            state == ClientState.ConnectRelay && ev == EventID.RelayConnected ->
+            state == ClientState.ConnectRelay && ev == SessionProtocol.EventID.RelayConnected ->
                 run {
                     state = ClientState.GenKeyPair
                     emptyList()
                 }
-            state == ClientState.GenKeyPair && ev == EventID.KeyPairGenerated ->
+            state == ClientState.GenKeyPair && ev == SessionProtocol.EventID.KeyPairGenerated ->
                 run {
-                    actions[ActionID.SendPairHello]?.invoke()
+                    actions[SessionProtocol.ActionID.SendPairHello]?.invoke()
                     state = ClientState.WaitAck
                     emptyList()
                 }
-            state == ClientState.WaitAck && ev == EventID.RecvPairHelloAck ->
+            state == ClientState.WaitAck && ev == SessionProtocol.EventID.RecvPairHelloAck ->
                 run {
-                    actions[ActionID.DeriveSecret]?.invoke()
+                    actions[SessionProtocol.ActionID.DeriveSecret]?.invoke()
                     // received_backend_pub: recv_msg.pubkey (set by action)
                     // client_shared_key: DeriveKey("client_pub", recv_msg.pubkey) (set by action)
                     state = ClientState.E2EReady
                     emptyList()
                 }
-            state == ClientState.E2EReady && ev == EventID.RecvPairConfirm ->
+            state == ClientState.E2EReady && ev == SessionProtocol.EventID.RecvPairConfirm ->
                 run {
                     // client_code: DeriveCode(received_backend_pub, "client_pub") (set by action)
                     state = ClientState.ShowCode
                     emptyList()
                 }
-            state == ClientState.ShowCode && ev == EventID.CodeDisplayed ->
+            state == ClientState.ShowCode && ev == SessionProtocol.EventID.CodeDisplayed ->
                 run {
                     state = ClientState.WaitPairComplete
                     emptyList()
                 }
-            state == ClientState.WaitPairComplete && ev == EventID.RecvPairComplete ->
+            state == ClientState.WaitPairComplete && ev == SessionProtocol.EventID.RecvPairComplete ->
                 run {
-                    actions[ActionID.StoreSecret]?.invoke()
+                    actions[SessionProtocol.ActionID.StoreSecret]?.invoke()
                     state = ClientState.Paired
                     emptyList()
                 }
-            state == ClientState.Paired && ev == EventID.AppLaunch ->
+            state == ClientState.Paired && ev == SessionProtocol.EventID.AppLaunch ->
                 run {
                     state = ClientState.Reconnect
                     emptyList()
                 }
-            state == ClientState.Reconnect && ev == EventID.RelayConnected ->
+            state == ClientState.Reconnect && ev == SessionProtocol.EventID.RelayConnected ->
                 run {
                     state = ClientState.SendAuth
                     emptyList()
                 }
-            state == ClientState.SendAuth && ev == EventID.RecvAuthOk ->
+            state == ClientState.SendAuth && ev == SessionProtocol.EventID.RecvAuthOk ->
                 run {
                     state = ClientState.SessionActive
                     emptyList()
                 }
-            state == ClientState.SessionActive && ev == EventID.SessionEstablished ->
+            state == ClientState.SessionActive && ev == SessionProtocol.EventID.SessionEstablished ->
                 run {
                     state = ClientState.RelayConnected
                     emptyList()
                 }
-            state == ClientState.RelayConnected && ev == EventID.RecvLanOffer && guards[GuardID.LanEnabled]?.invoke() == true ->
+            state == ClientState.RelayConnected && ev == SessionProtocol.EventID.RecvLanOffer && guards[SessionProtocol.GuardID.LanEnabled]?.invoke() == true ->
                 run {
-                    actions[ActionID.DialLan]?.invoke()
+                    actions[SessionProtocol.ActionID.DialLan]?.invoke()
                     state = ClientState.LANConnecting
-                    listOf(CmdID.DialLan)
+                    listOf(SessionProtocol.CmdID.DialLan)
                 }
-            state == ClientState.RelayConnected && ev == EventID.RecvLanOffer && guards[GuardID.LanDisabled]?.invoke() == true ->
+            state == ClientState.RelayConnected && ev == SessionProtocol.EventID.RecvLanOffer && guards[SessionProtocol.GuardID.LanDisabled]?.invoke() == true ->
                 run {
                     state = ClientState.RelayConnected
                     emptyList()
                 }
-            state == ClientState.LANConnecting && ev == EventID.LanDialOk ->
+            state == ClientState.LANConnecting && ev == SessionProtocol.EventID.LanDialOk ->
                 run {
                     state = ClientState.LANVerifying
-                    listOf(CmdID.SendLanVerify)
+                    listOf(SessionProtocol.CmdID.SendLanVerify)
                 }
-            state == ClientState.LANConnecting && ev == EventID.LanDialFailed ->
+            state == ClientState.LANConnecting && ev == SessionProtocol.EventID.LanDialFailed ->
                 run {
                     state = ClientState.RelayConnected
                     emptyList()
                 }
-            state == ClientState.LANVerifying && ev == EventID.RecvLanConfirm ->
+            state == ClientState.LANVerifying && ev == SessionProtocol.EventID.RecvLanConfirm ->
                 run {
-                    actions[ActionID.ActivateLan]?.invoke()
+                    actions[SessionProtocol.ActionID.ActivateLan]?.invoke()
                     cActivePath = "lan"
                     cDispatcherPath = "lan"
                     lanSignal = "ready"
                     state = ClientState.LANActive
-                    listOf(CmdID.StartLanStreamReader, CmdID.StartLanDgReader, CmdID.SignalLanReady, CmdID.SetCryptoDatagram)
+                    listOf(SessionProtocol.CmdID.StartLanStreamReader, SessionProtocol.CmdID.StartLanDgReader, SessionProtocol.CmdID.SignalLanReady, SessionProtocol.CmdID.SetCryptoDatagram)
                 }
-            state == ClientState.LANVerifying && ev == EventID.VerifyTimeout ->
+            state == ClientState.LANVerifying && ev == SessionProtocol.EventID.VerifyTimeout ->
                 run {
                     cDispatcherPath = "relay"
                     state = ClientState.RelayConnected
                     emptyList()
                 }
-            state == ClientState.LANActive && ev == EventID.RecvPathPing ->
+            state == ClientState.LANActive && ev == SessionProtocol.EventID.RecvPathPing ->
                 run {
                     state = ClientState.LANActive
-                    listOf(CmdID.SendPathPong)
+                    listOf(SessionProtocol.CmdID.SendPathPong)
                 }
-            state == ClientState.LANActive && ev == EventID.LanError ->
+            state == ClientState.LANActive && ev == SessionProtocol.EventID.LanError ->
                 run {
-                    actions[ActionID.FallbackToRelay]?.invoke()
+                    actions[SessionProtocol.ActionID.FallbackToRelay]?.invoke()
                     cActivePath = "relay"
                     cDispatcherPath = "relay"
                     lanSignal = "pending"
                     state = ClientState.RelayFallback
-                    listOf(CmdID.StopLanStreamReader, CmdID.StopLanDgReader, CmdID.CloseLanPath, CmdID.ResetLanReady)
+                    listOf(SessionProtocol.CmdID.StopLanStreamReader, SessionProtocol.CmdID.StopLanDgReader, SessionProtocol.CmdID.CloseLanPath, SessionProtocol.CmdID.ResetLanReady)
                 }
-            state == ClientState.LANActive && ev == EventID.LanStreamError ->
+            state == ClientState.LANActive && ev == SessionProtocol.EventID.LanStreamError ->
                 run {
-                    actions[ActionID.FallbackToRelay]?.invoke()
+                    actions[SessionProtocol.ActionID.FallbackToRelay]?.invoke()
                     cActivePath = "relay"
                     cDispatcherPath = "relay"
                     lanSignal = "pending"
                     state = ClientState.RelayFallback
-                    listOf(CmdID.StopLanStreamReader, CmdID.StopLanDgReader, CmdID.CloseLanPath, CmdID.ResetLanReady)
+                    listOf(SessionProtocol.CmdID.StopLanStreamReader, SessionProtocol.CmdID.StopLanDgReader, SessionProtocol.CmdID.CloseLanPath, SessionProtocol.CmdID.ResetLanReady)
                 }
-            state == ClientState.RelayFallback && ev == EventID.RelayOk ->
+            state == ClientState.RelayFallback && ev == SessionProtocol.EventID.RelayOk ->
                 run {
                     state = ClientState.RelayConnected
                     emptyList()
                 }
-            state == ClientState.LANActive && ev == EventID.RecvLanOffer && guards[GuardID.LanEnabled]?.invoke() == true ->
+            state == ClientState.LANActive && ev == SessionProtocol.EventID.RecvLanOffer && guards[SessionProtocol.GuardID.LanEnabled]?.invoke() == true ->
                 run {
-                    actions[ActionID.DialLan]?.invoke()
+                    actions[SessionProtocol.ActionID.DialLan]?.invoke()
                     state = ClientState.LANConnecting
-                    listOf(CmdID.StopLanStreamReader, CmdID.StopLanDgReader, CmdID.CloseLanPath, CmdID.DialLan)
+                    listOf(SessionProtocol.CmdID.StopLanStreamReader, SessionProtocol.CmdID.StopLanDgReader, SessionProtocol.CmdID.CloseLanPath, SessionProtocol.CmdID.DialLan)
                 }
-            state == ClientState.LANConnecting && ev == EventID.AppForceFallback ->
+            state == ClientState.LANConnecting && ev == SessionProtocol.EventID.AppForceFallback ->
                 run {
                     state = ClientState.RelayConnected
                     emptyList()
                 }
-            state == ClientState.LANVerifying && ev == EventID.AppForceFallback ->
+            state == ClientState.LANVerifying && ev == SessionProtocol.EventID.AppForceFallback ->
                 run {
                     cDispatcherPath = "relay"
                     state = ClientState.RelayConnected
-                    listOf(CmdID.StopLanStreamReader, CmdID.StopLanDgReader, CmdID.CloseLanPath)
+                    listOf(SessionProtocol.CmdID.StopLanStreamReader, SessionProtocol.CmdID.StopLanDgReader, SessionProtocol.CmdID.CloseLanPath)
                 }
-            state == ClientState.LANActive && ev == EventID.AppForceFallback ->
+            state == ClientState.LANActive && ev == SessionProtocol.EventID.AppForceFallback ->
                 run {
-                    actions[ActionID.FallbackToRelay]?.invoke()
+                    actions[SessionProtocol.ActionID.FallbackToRelay]?.invoke()
                     cActivePath = "relay"
                     cDispatcherPath = "relay"
                     lanSignal = "pending"
                     state = ClientState.RelayConnected
-                    listOf(CmdID.StopLanStreamReader, CmdID.StopLanDgReader, CmdID.CloseLanPath, CmdID.ResetLanReady)
+                    listOf(SessionProtocol.CmdID.StopLanStreamReader, SessionProtocol.CmdID.StopLanDgReader, SessionProtocol.CmdID.CloseLanPath, SessionProtocol.CmdID.ResetLanReady)
                 }
-            state == ClientState.RelayConnected && ev == EventID.Disconnect ->
+            state == ClientState.RelayConnected && ev == SessionProtocol.EventID.Disconnect ->
                 run {
                     state = ClientState.Paired
                     emptyList()
                 }
-            state == ClientState.RelayConnected && ev == EventID.AppSend ->
+            state == ClientState.RelayConnected && ev == SessionProtocol.EventID.AppSend ->
                 run {
                     state = ClientState.RelayConnected
-                    listOf(CmdID.WriteActiveStream)
+                    listOf(SessionProtocol.CmdID.WriteActiveStream)
                 }
-            state == ClientState.LANConnecting && ev == EventID.AppSend ->
+            state == ClientState.LANConnecting && ev == SessionProtocol.EventID.AppSend ->
                 run {
                     state = ClientState.LANConnecting
-                    listOf(CmdID.WriteActiveStream)
+                    listOf(SessionProtocol.CmdID.WriteActiveStream)
                 }
-            state == ClientState.LANVerifying && ev == EventID.AppSend ->
+            state == ClientState.LANVerifying && ev == SessionProtocol.EventID.AppSend ->
                 run {
                     state = ClientState.LANVerifying
-                    listOf(CmdID.WriteActiveStream)
+                    listOf(SessionProtocol.CmdID.WriteActiveStream)
                 }
-            state == ClientState.LANActive && ev == EventID.AppSend ->
+            state == ClientState.LANActive && ev == SessionProtocol.EventID.AppSend ->
                 run {
                     state = ClientState.LANActive
-                    listOf(CmdID.WriteActiveStream)
+                    listOf(SessionProtocol.CmdID.WriteActiveStream)
                 }
-            state == ClientState.RelayFallback && ev == EventID.AppSend ->
+            state == ClientState.RelayFallback && ev == SessionProtocol.EventID.AppSend ->
                 run {
                     state = ClientState.RelayFallback
-                    listOf(CmdID.WriteActiveStream)
+                    listOf(SessionProtocol.CmdID.WriteActiveStream)
                 }
-            state == ClientState.RelayConnected && ev == EventID.RelayStreamData ->
+            state == ClientState.RelayConnected && ev == SessionProtocol.EventID.RelayStreamData ->
                 run {
                     state = ClientState.RelayConnected
-                    listOf(CmdID.DeliverRecv)
+                    listOf(SessionProtocol.CmdID.DeliverRecv)
                 }
-            state == ClientState.LANConnecting && ev == EventID.RelayStreamData ->
+            state == ClientState.LANConnecting && ev == SessionProtocol.EventID.RelayStreamData ->
                 run {
                     state = ClientState.LANConnecting
-                    listOf(CmdID.DeliverRecv)
+                    listOf(SessionProtocol.CmdID.DeliverRecv)
                 }
-            state == ClientState.LANVerifying && ev == EventID.RelayStreamData ->
+            state == ClientState.LANVerifying && ev == SessionProtocol.EventID.RelayStreamData ->
                 run {
                     state = ClientState.LANVerifying
-                    listOf(CmdID.DeliverRecv)
+                    listOf(SessionProtocol.CmdID.DeliverRecv)
                 }
-            state == ClientState.LANActive && ev == EventID.RelayStreamData ->
+            state == ClientState.LANActive && ev == SessionProtocol.EventID.RelayStreamData ->
                 run {
                     state = ClientState.LANActive
-                    listOf(CmdID.DeliverRecv)
+                    listOf(SessionProtocol.CmdID.DeliverRecv)
                 }
-            state == ClientState.RelayFallback && ev == EventID.RelayStreamData ->
+            state == ClientState.RelayFallback && ev == SessionProtocol.EventID.RelayStreamData ->
                 run {
                     state = ClientState.RelayFallback
-                    listOf(CmdID.DeliverRecv)
+                    listOf(SessionProtocol.CmdID.DeliverRecv)
                 }
-            state == ClientState.RelayConnected && ev == EventID.RelayStreamError ->
+            state == ClientState.RelayConnected && ev == SessionProtocol.EventID.RelayStreamError ->
                 run {
                     state = ClientState.RelayConnected
-                    listOf(CmdID.DeliverRecvError)
+                    listOf(SessionProtocol.CmdID.DeliverRecvError)
                 }
-            state == ClientState.LANConnecting && ev == EventID.RelayStreamError ->
+            state == ClientState.LANConnecting && ev == SessionProtocol.EventID.RelayStreamError ->
                 run {
                     state = ClientState.LANConnecting
-                    listOf(CmdID.DeliverRecvError)
+                    listOf(SessionProtocol.CmdID.DeliverRecvError)
                 }
-            state == ClientState.LANVerifying && ev == EventID.RelayStreamError ->
+            state == ClientState.LANVerifying && ev == SessionProtocol.EventID.RelayStreamError ->
                 run {
                     state = ClientState.LANVerifying
-                    listOf(CmdID.DeliverRecvError)
+                    listOf(SessionProtocol.CmdID.DeliverRecvError)
                 }
-            state == ClientState.LANActive && ev == EventID.RelayStreamError ->
+            state == ClientState.LANActive && ev == SessionProtocol.EventID.RelayStreamError ->
                 run {
                     state = ClientState.LANActive
-                    listOf(CmdID.DeliverRecvError)
+                    listOf(SessionProtocol.CmdID.DeliverRecvError)
                 }
-            state == ClientState.RelayFallback && ev == EventID.RelayStreamError ->
+            state == ClientState.RelayFallback && ev == SessionProtocol.EventID.RelayStreamError ->
                 run {
                     state = ClientState.RelayFallback
-                    listOf(CmdID.DeliverRecvError)
+                    listOf(SessionProtocol.CmdID.DeliverRecvError)
                 }
-            state == ClientState.RelayConnected && ev == EventID.AppSendDatagram ->
+            state == ClientState.RelayConnected && ev == SessionProtocol.EventID.AppSendDatagram ->
                 run {
                     state = ClientState.RelayConnected
-                    listOf(CmdID.SendActiveDatagram)
+                    listOf(SessionProtocol.CmdID.SendActiveDatagram)
                 }
-            state == ClientState.LANConnecting && ev == EventID.AppSendDatagram ->
+            state == ClientState.LANConnecting && ev == SessionProtocol.EventID.AppSendDatagram ->
                 run {
                     state = ClientState.LANConnecting
-                    listOf(CmdID.SendActiveDatagram)
+                    listOf(SessionProtocol.CmdID.SendActiveDatagram)
                 }
-            state == ClientState.LANVerifying && ev == EventID.AppSendDatagram ->
+            state == ClientState.LANVerifying && ev == SessionProtocol.EventID.AppSendDatagram ->
                 run {
                     state = ClientState.LANVerifying
-                    listOf(CmdID.SendActiveDatagram)
+                    listOf(SessionProtocol.CmdID.SendActiveDatagram)
                 }
-            state == ClientState.LANActive && ev == EventID.AppSendDatagram ->
+            state == ClientState.LANActive && ev == SessionProtocol.EventID.AppSendDatagram ->
                 run {
                     state = ClientState.LANActive
-                    listOf(CmdID.SendActiveDatagram)
+                    listOf(SessionProtocol.CmdID.SendActiveDatagram)
                 }
-            state == ClientState.RelayFallback && ev == EventID.AppSendDatagram ->
+            state == ClientState.RelayFallback && ev == SessionProtocol.EventID.AppSendDatagram ->
                 run {
                     state = ClientState.RelayFallback
-                    listOf(CmdID.SendActiveDatagram)
+                    listOf(SessionProtocol.CmdID.SendActiveDatagram)
                 }
-            state == ClientState.RelayConnected && ev == EventID.RelayDatagram ->
+            state == ClientState.RelayConnected && ev == SessionProtocol.EventID.RelayDatagram ->
                 run {
                     state = ClientState.RelayConnected
-                    listOf(CmdID.DeliverRecvDatagram)
+                    listOf(SessionProtocol.CmdID.DeliverRecvDatagram)
                 }
-            state == ClientState.LANConnecting && ev == EventID.RelayDatagram ->
+            state == ClientState.LANConnecting && ev == SessionProtocol.EventID.RelayDatagram ->
                 run {
                     state = ClientState.LANConnecting
-                    listOf(CmdID.DeliverRecvDatagram)
+                    listOf(SessionProtocol.CmdID.DeliverRecvDatagram)
                 }
-            state == ClientState.LANVerifying && ev == EventID.RelayDatagram ->
+            state == ClientState.LANVerifying && ev == SessionProtocol.EventID.RelayDatagram ->
                 run {
                     state = ClientState.LANVerifying
-                    listOf(CmdID.DeliverRecvDatagram)
+                    listOf(SessionProtocol.CmdID.DeliverRecvDatagram)
                 }
-            state == ClientState.LANActive && ev == EventID.RelayDatagram ->
+            state == ClientState.LANActive && ev == SessionProtocol.EventID.RelayDatagram ->
                 run {
                     state = ClientState.LANActive
-                    listOf(CmdID.DeliverRecvDatagram)
+                    listOf(SessionProtocol.CmdID.DeliverRecvDatagram)
                 }
-            state == ClientState.RelayFallback && ev == EventID.RelayDatagram ->
+            state == ClientState.RelayFallback && ev == SessionProtocol.EventID.RelayDatagram ->
                 run {
                     state = ClientState.RelayFallback
-                    listOf(CmdID.DeliverRecvDatagram)
+                    listOf(SessionProtocol.CmdID.DeliverRecvDatagram)
                 }
-            state == ClientState.LANActive && ev == EventID.LanStreamData ->
+            state == ClientState.LANActive && ev == SessionProtocol.EventID.LanStreamData ->
                 run {
                     state = ClientState.LANActive
-                    listOf(CmdID.DeliverRecv)
+                    listOf(SessionProtocol.CmdID.DeliverRecv)
                 }
-            state == ClientState.LANActive && ev == EventID.LanDatagram ->
+            state == ClientState.LANActive && ev == SessionProtocol.EventID.LanDatagram ->
                 run {
                     state = ClientState.LANActive
-                    listOf(CmdID.DeliverRecvDatagram)
+                    listOf(SessionProtocol.CmdID.DeliverRecvDatagram)
                 }
             else -> emptyList()
         }
@@ -1135,32 +1140,32 @@ class RelayMachine {
     var state: RelayState = RelayState.Idle
         private set
     var relayBridge: String = "idle" // relay bridge state
-    val guards = mutableMapOf<GuardID, () -> Boolean>()
-    val actions = mutableMapOf<ActionID, () -> Unit>()
+    val guards = mutableMapOf<SessionProtocol.GuardID, () -> Boolean>()
+    val actions = mutableMapOf<SessionProtocol.ActionID, () -> Unit>()
 
     /** Handle an event and return the list of commands to execute. */
-    fun handleEvent(ev: EventID): List<CmdID> {
+    fun handleEvent(ev: SessionProtocol.EventID): List<SessionProtocol.CmdID> {
         val cmds = when {
-            state == RelayState.Idle && ev == EventID.BackendRegister ->
+            state == RelayState.Idle && ev == SessionProtocol.EventID.BackendRegister ->
                 run {
                     state = RelayState.BackendRegistered
                     emptyList()
                 }
-            state == RelayState.BackendRegistered && ev == EventID.ClientConnect ->
+            state == RelayState.BackendRegistered && ev == SessionProtocol.EventID.ClientConnect ->
                 run {
-                    actions[ActionID.BridgeStreams]?.invoke()
+                    actions[SessionProtocol.ActionID.BridgeStreams]?.invoke()
                     relayBridge = "active"
                     state = RelayState.Bridged
                     emptyList()
                 }
-            state == RelayState.Bridged && ev == EventID.ClientDisconnect ->
+            state == RelayState.Bridged && ev == SessionProtocol.EventID.ClientDisconnect ->
                 run {
-                    actions[ActionID.Unbridge]?.invoke()
+                    actions[SessionProtocol.ActionID.Unbridge]?.invoke()
                     relayBridge = "idle"
                     state = RelayState.BackendRegistered
                     emptyList()
                 }
-            state == RelayState.BackendRegistered && ev == EventID.BackendDisconnect ->
+            state == RelayState.BackendRegistered && ev == SessionProtocol.EventID.BackendDisconnect ->
                 run {
                     state = RelayState.Idle
                     emptyList()

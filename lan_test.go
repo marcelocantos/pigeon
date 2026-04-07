@@ -445,7 +445,7 @@ func TestLANFallbackAndReestablish(t *testing.T) {
 
 	// Backoff should be 1.
 	// Backoff is tracked in the backend machine.
-	if m, ok := b.exec.machine.(*BackendMachine); ok {
+	if m, ok := b.exec.machine.(*SessionProtocolBackendMachine); ok {
 		if m.BackoffLevel < 1 {
 			t.Fatalf("backend backoff: got %d, want ≥1", m.BackoffLevel)
 		}
@@ -516,33 +516,33 @@ func TestLANFallbackToRelay(t *testing.T) {
 // and TestExecutorBackendFallback in executor_test.go.
 // The pathRouter is gone; the machine manages path state.
 func TestMachinePathBasics(t *testing.T) {
-	m := NewBackendMachine()
-	m.State = BackendRelayConnected
+	m := NewSessionProtocolBackendMachine()
+	m.State = SessionProtocolBackendRelayConnected
 
 	if m.BActivePath != "relay" {
 		t.Fatalf("initial: got %q, want relay", m.BActivePath)
 	}
 
-	m.Guards[GuardChallengeValid] = func() bool { return true }
-	m.Guards[GuardChallengeInvalid] = func() bool { return false }
-	m.Guards[GuardLanServerAvailable] = func() bool { return true }
-	m.Guards[GuardUnderMaxFailures] = func() bool { return false }
-	m.Guards[GuardAtMaxFailures] = func() bool { return true }
-	m.Actions[ActionActivateLan] = func() error { return nil }
-	m.Actions[ActionFallbackToRelay] = func() error { return nil }
-	m.Actions[ActionResetFailures] = func() error { return nil }
+	m.Guards[SessionProtocolGuardChallengeValid] = func() bool { return true }
+	m.Guards[SessionProtocolGuardChallengeInvalid] = func() bool { return false }
+	m.Guards[SessionProtocolGuardLanServerAvailable] = func() bool { return true }
+	m.Guards[SessionProtocolGuardUnderMaxFailures] = func() bool { return false }
+	m.Guards[SessionProtocolGuardAtMaxFailures] = func() bool { return true }
+	m.Actions[SessionProtocolActionActivateLan] = func() error { return nil }
+	m.Actions[SessionProtocolActionFallbackToRelay] = func() error { return nil }
+	m.Actions[SessionProtocolActionResetFailures] = func() error { return nil }
 
-	m.HandleEvent(EventLanServerReady)
-	m.HandleEvent(EventRecvLanVerify)
+	m.HandleEvent(SessionProtocolEventLanServerReady)
+	m.HandleEvent(SessionProtocolEventRecvLanVerify)
 
 	if m.BActivePath != "lan" {
 		t.Fatalf("after activate: got %q, want lan", m.BActivePath)
 	}
 
 	// Fallback.
-	m.HandleEvent(EventPingTimeout) // → LANDegraded
+	m.HandleEvent(SessionProtocolEventPingTimeout) // → LANDegraded
 	m.PingFailures = 2
-	m.HandleEvent(EventPingTimeout) // → RelayBackoff
+	m.HandleEvent(SessionProtocolEventPingTimeout) // → RelayBackoff
 
 	if m.BActivePath != "relay" {
 		t.Fatalf("after fallback: got %q, want relay", m.BActivePath)

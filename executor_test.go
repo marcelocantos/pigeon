@@ -11,59 +11,59 @@ import (
 )
 
 // TestExecutorBackendLANActivation verifies that the executor drives
-// a BackendMachine from RelayConnected through LANOffered to LANActive,
+// a SessionProtocolBackendMachine from RelayConnected through LANOffered to LANActive,
 // returning the correct commands at each step.
 func TestExecutorBackendLANActivation(t *testing.T) {
-	m := NewBackendMachine()
-	m.State = BackendRelayConnected
+	m := NewSessionProtocolBackendMachine()
+	m.State = SessionProtocolBackendRelayConnected
 
-	m.Guards[GuardChallengeValid] = func() bool { return true }
-	m.Guards[GuardChallengeInvalid] = func() bool { return false }
-	m.Guards[GuardLanServerAvailable] = func() bool { return true }
-	m.Actions[ActionActivateLan] = func() error { return nil }
+	m.Guards[SessionProtocolGuardChallengeValid] = func() bool { return true }
+	m.Guards[SessionProtocolGuardChallengeInvalid] = func() bool { return false }
+	m.Guards[SessionProtocolGuardLanServerAvailable] = func() bool { return true }
+	m.Actions[SessionProtocolActionActivateLan] = func() error { return nil }
 
 	// RelayConnected + lan_server_ready → LANOffered
-	cmds, err := m.HandleEvent(EventLanServerReady)
+	cmds, err := m.HandleEvent(SessionProtocolEventLanServerReady)
 	if err != nil {
 		t.Fatal("lan_server_ready:", err)
 	}
-	if m.State != BackendLANOffered {
+	if m.State != SessionProtocolBackendLANOffered {
 		t.Fatalf("state: got %s, want LANOffered", m.State)
 	}
-	assertCmds(t, cmds, CmdSendLanOffer)
+	assertCmds(t, cmds, SessionProtocolCmdSendLanOffer)
 
 	// LANOffered + recv lan_verify → LANActive
-	cmds, err = m.HandleEvent(EventRecvLanVerify)
+	cmds, err = m.HandleEvent(SessionProtocolEventRecvLanVerify)
 	if err != nil {
 		t.Fatal("recv_lan_verify:", err)
 	}
-	if m.State != BackendLANActive {
+	if m.State != SessionProtocolBackendLANActive {
 		t.Fatalf("state: got %s, want LANActive", m.State)
 	}
 	assertCmds(t, cmds,
-		CmdSendLanConfirm,
-		CmdStartLanStreamReader,
-		CmdStartLanDgReader,
-		CmdStartMonitor,
-		CmdSignalLanReady,
-		CmdSetCryptoDatagram,
+		SessionProtocolCmdSendLanConfirm,
+		SessionProtocolCmdStartLanStreamReader,
+		SessionProtocolCmdStartLanDgReader,
+		SessionProtocolCmdStartMonitor,
+		SessionProtocolCmdSignalLanReady,
+		SessionProtocolCmdSetCryptoDatagram,
 	)
 }
 
 // TestExecutorBackendFallback verifies the degradation and fallback
 // sequence returns the correct resource cleanup commands.
 func TestExecutorBackendFallback(t *testing.T) {
-	m := NewBackendMachine()
-	m.State = BackendLANActive
+	m := NewSessionProtocolBackendMachine()
+	m.State = SessionProtocolBackendLANActive
 	m.PingFailures = 0
 
-	m.Guards[GuardUnderMaxFailures] = func() bool { return m.PingFailures+1 < 3 }
-	m.Guards[GuardAtMaxFailures] = func() bool { return m.PingFailures+1 >= 3 }
-	m.Actions[ActionFallbackToRelay] = func() error { return nil }
+	m.Guards[SessionProtocolGuardUnderMaxFailures] = func() bool { return m.PingFailures+1 < 3 }
+	m.Guards[SessionProtocolGuardAtMaxFailures] = func() bool { return m.PingFailures+1 >= 3 }
+	m.Actions[SessionProtocolActionFallbackToRelay] = func() error { return nil }
 
 	// LANActive + ping_timeout → LANDegraded
-	cmds, _ := m.HandleEvent(EventPingTimeout)
-	if m.State != BackendLANDegraded {
+	cmds, _ := m.HandleEvent(SessionProtocolEventPingTimeout)
+	if m.State != SessionProtocolBackendLANDegraded {
 		t.Fatalf("state: got %s, want LANDegraded", m.State)
 	}
 	assertCmds(t, cmds) // no commands on first degradation
@@ -72,80 +72,80 @@ func TestExecutorBackendFallback(t *testing.T) {
 	m.PingFailures = 2
 
 	// LANDegraded + ping_timeout (at_max) → RelayBackoff
-	cmds, _ = m.HandleEvent(EventPingTimeout)
-	if m.State != BackendRelayBackoff {
+	cmds, _ = m.HandleEvent(SessionProtocolEventPingTimeout)
+	if m.State != SessionProtocolBackendRelayBackoff {
 		t.Fatalf("state: got %s, want RelayBackoff", m.State)
 	}
 	assertCmds(t, cmds,
-		CmdStopMonitor,
-		CmdStopLanStreamReader,
-		CmdStopLanDgReader,
-		CmdCloseLanPath,
-		CmdResetLanReady,
-		CmdStartBackoffTimer,
+		SessionProtocolCmdStopMonitor,
+		SessionProtocolCmdStopLanStreamReader,
+		SessionProtocolCmdStopLanDgReader,
+		SessionProtocolCmdCloseLanPath,
+		SessionProtocolCmdResetLanReady,
+		SessionProtocolCmdStartBackoffTimer,
 	)
 }
 
 // TestExecutorClientLANActivation verifies the client-side LAN
 // activation sequence.
 func TestExecutorClientLANActivation(t *testing.T) {
-	m := NewClientMachine()
-	m.State = ClientRelayConnected
+	m := NewSessionProtocolClientMachine()
+	m.State = SessionProtocolClientRelayConnected
 
-	m.Guards[GuardLanEnabled] = func() bool { return true }
-	m.Guards[GuardLanDisabled] = func() bool { return false }
-	m.Actions[ActionDialLan] = func() error { return nil }
-	m.Actions[ActionActivateLan] = func() error { return nil }
+	m.Guards[SessionProtocolGuardLanEnabled] = func() bool { return true }
+	m.Guards[SessionProtocolGuardLanDisabled] = func() bool { return false }
+	m.Actions[SessionProtocolActionDialLan] = func() error { return nil }
+	m.Actions[SessionProtocolActionActivateLan] = func() error { return nil }
 
 	// RelayConnected + recv lan_offer → LANConnecting
-	cmds, _ := m.HandleEvent(EventRecvLanOffer)
-	if m.State != ClientLANConnecting {
+	cmds, _ := m.HandleEvent(SessionProtocolEventRecvLanOffer)
+	if m.State != SessionProtocolClientLANConnecting {
 		t.Fatalf("state: got %s, want LANConnecting", m.State)
 	}
-	assertCmds(t, cmds, CmdDialLan)
+	assertCmds(t, cmds, SessionProtocolCmdDialLan)
 
 	// LANConnecting + lan_dial_ok → LANVerifying
-	cmds, _ = m.HandleEvent(EventLanDialOk)
-	if m.State != ClientLANVerifying {
+	cmds, _ = m.HandleEvent(SessionProtocolEventLanDialOk)
+	if m.State != SessionProtocolClientLANVerifying {
 		t.Fatalf("state: got %s, want LANVerifying", m.State)
 	}
-	assertCmds(t, cmds, CmdSendLanVerify)
+	assertCmds(t, cmds, SessionProtocolCmdSendLanVerify)
 
 	// LANVerifying + recv lan_confirm → LANActive
-	cmds, _ = m.HandleEvent(EventRecvLanConfirm)
-	if m.State != ClientLANActive {
+	cmds, _ = m.HandleEvent(SessionProtocolEventRecvLanConfirm)
+	if m.State != SessionProtocolClientLANActive {
 		t.Fatalf("state: got %s, want LANActive", m.State)
 	}
 	assertCmds(t, cmds,
-		CmdStartLanStreamReader,
-		CmdStartLanDgReader,
-		CmdSignalLanReady,
-		CmdSetCryptoDatagram,
+		SessionProtocolCmdStartLanStreamReader,
+		SessionProtocolCmdStartLanDgReader,
+		SessionProtocolCmdSignalLanReady,
+		SessionProtocolCmdSetCryptoDatagram,
 	)
 }
 
 // TestExecutorClientFallback verifies the client fallback sequence.
 func TestExecutorClientFallback(t *testing.T) {
-	m := NewClientMachine()
-	m.State = ClientLANActive
+	m := NewSessionProtocolClientMachine()
+	m.State = SessionProtocolClientLANActive
 
-	m.Actions[ActionFallbackToRelay] = func() error { return nil }
+	m.Actions[SessionProtocolActionFallbackToRelay] = func() error { return nil }
 
 	// LANActive + lan_error → RelayFallback
-	cmds, _ := m.HandleEvent(EventLanError)
-	if m.State != ClientRelayFallback {
+	cmds, _ := m.HandleEvent(SessionProtocolEventLanError)
+	if m.State != SessionProtocolClientRelayFallback {
 		t.Fatalf("state: got %s, want RelayFallback", m.State)
 	}
 	assertCmds(t, cmds,
-		CmdStopLanStreamReader,
-		CmdStopLanDgReader,
-		CmdCloseLanPath,
-		CmdResetLanReady,
+		SessionProtocolCmdStopLanStreamReader,
+		SessionProtocolCmdStopLanDgReader,
+		SessionProtocolCmdCloseLanPath,
+		SessionProtocolCmdResetLanReady,
 	)
 
 	// RelayFallback + relay_ok → RelayConnected
-	cmds, _ = m.HandleEvent(EventRelayOk)
-	if m.State != ClientRelayConnected {
+	cmds, _ = m.HandleEvent(SessionProtocolEventRelayOk)
+	if m.State != SessionProtocolClientRelayConnected {
 		t.Fatalf("state: got %s, want RelayConnected", m.State)
 	}
 	assertCmds(t, cmds) // no commands
@@ -157,24 +157,24 @@ func TestExecutorEventLoop(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
-	m := NewBackendMachine()
-	m.State = BackendRelayConnected
-	m.Guards[GuardChallengeValid] = func() bool { return true }
-	m.Guards[GuardChallengeInvalid] = func() bool { return false }
-	m.Guards[GuardLanServerAvailable] = func() bool { return true }
-	m.Actions[ActionActivateLan] = func() error { return nil }
+	m := NewSessionProtocolBackendMachine()
+	m.State = SessionProtocolBackendRelayConnected
+	m.Guards[SessionProtocolGuardChallengeValid] = func() bool { return true }
+	m.Guards[SessionProtocolGuardChallengeInvalid] = func() bool { return false }
+	m.Guards[SessionProtocolGuardLanServerAvailable] = func() bool { return true }
+	m.Actions[SessionProtocolActionActivateLan] = func() error { return nil }
 
 	// Create a mock relay path.
 	relay := newPath("relay", &execMockStream{}, &execMockDatagram{ctx: ctx}, nil, nil, nil)
 	e := newExecutor(ctx, cancel, m, relay)
 
 	// Submit a lan_server_ready event.
-	e.submit(event{id: EventLanServerReady})
+	e.submit(event{id: SessionProtocolEventLanServerReady})
 
 	// Give the event loop time to process.
 	time.Sleep(50 * time.Millisecond)
 
-	if m.State != BackendLANOffered {
+	if m.State != SessionProtocolBackendLANOffered {
 		t.Fatalf("state: got %s, want LANOffered", m.State)
 	}
 }
@@ -195,8 +195,8 @@ func TestExecutorSendRecv(t *testing.T) {
 	localStream := &pipeStream{r: remoteR, w: relayW}
 	remoteStream := &pipeStream{r: relayR, w: remoteW}
 
-	m := NewBackendMachine()
-	m.State = BackendRelayConnected
+	m := NewSessionProtocolBackendMachine()
+	m.State = SessionProtocolBackendRelayConnected
 
 	relay := newPath("relay", localStream, &execMockDatagram{ctx: ctx}, nil, nil, nil)
 	e := newExecutor(ctx, cancel, m, relay)
@@ -261,8 +261,8 @@ func TestExecutorSendRecvDatagram(t *testing.T) {
 	localDg := &chanDatagram{out: localToRemote, in: remoteToLocal}
 	remoteDg := &chanDatagram{out: remoteToLocal, in: localToRemote}
 
-	m := NewBackendMachine()
-	m.State = BackendRelayConnected
+	m := NewSessionProtocolBackendMachine()
+	m.State = SessionProtocolBackendRelayConnected
 
 	relay := newPath("relay", &execMockStream{}, localDg, nil, nil, nil)
 	e := newExecutor(ctx, cancel, m, relay)
@@ -324,54 +324,54 @@ func (d *chanDatagram) ReceiveDatagram(ctx context.Context) ([]byte, error) {
 // monitor starts → fallback → cleanup.
 func TestExecutorLANLifecycle(t *testing.T) {
 	// Test the backend machine's event sequence for LAN activation.
-	m := NewBackendMachine()
-	m.State = BackendRelayConnected
+	m := NewSessionProtocolBackendMachine()
+	m.State = SessionProtocolBackendRelayConnected
 
-	m.Guards[GuardChallengeValid] = func() bool { return true }
-	m.Guards[GuardChallengeInvalid] = func() bool { return false }
-	m.Guards[GuardLanServerAvailable] = func() bool { return true }
-	m.Guards[GuardUnderMaxFailures] = func() bool { return false }
-	m.Guards[GuardAtMaxFailures] = func() bool { return true }
-	m.Actions[ActionActivateLan] = func() error { return nil }
-	m.Actions[ActionFallbackToRelay] = func() error { return nil }
+	m.Guards[SessionProtocolGuardChallengeValid] = func() bool { return true }
+	m.Guards[SessionProtocolGuardChallengeInvalid] = func() bool { return false }
+	m.Guards[SessionProtocolGuardLanServerAvailable] = func() bool { return true }
+	m.Guards[SessionProtocolGuardUnderMaxFailures] = func() bool { return false }
+	m.Guards[SessionProtocolGuardAtMaxFailures] = func() bool { return true }
+	m.Actions[SessionProtocolActionActivateLan] = func() error { return nil }
+	m.Actions[SessionProtocolActionFallbackToRelay] = func() error { return nil }
 
 	// 1. LAN server ready → offer
-	cmds, _ := m.HandleEvent(EventLanServerReady)
-	assertCmds(t, cmds, CmdSendLanOffer)
-	if m.State != BackendLANOffered {
+	cmds, _ := m.HandleEvent(SessionProtocolEventLanServerReady)
+	assertCmds(t, cmds, SessionProtocolCmdSendLanOffer)
+	if m.State != SessionProtocolBackendLANOffered {
 		t.Fatalf("expected LANOffered, got %s", m.State)
 	}
 
 	// 2. Client verifies → activate LAN
-	cmds, _ = m.HandleEvent(EventRecvLanVerify)
+	cmds, _ = m.HandleEvent(SessionProtocolEventRecvLanVerify)
 	assertCmds(t, cmds,
-		CmdSendLanConfirm,
-		CmdStartLanStreamReader, CmdStartLanDgReader,
-		CmdStartMonitor, CmdSignalLanReady, CmdSetCryptoDatagram)
-	if m.State != BackendLANActive {
+		SessionProtocolCmdSendLanConfirm,
+		SessionProtocolCmdStartLanStreamReader, SessionProtocolCmdStartLanDgReader,
+		SessionProtocolCmdStartMonitor, SessionProtocolCmdSignalLanReady, SessionProtocolCmdSetCryptoDatagram)
+	if m.State != SessionProtocolBackendLANActive {
 		t.Fatalf("expected LANActive, got %s", m.State)
 	}
 
 	// 3. Ping timeout → degrade
-	cmds, _ = m.HandleEvent(EventPingTimeout)
-	if m.State != BackendLANDegraded {
+	cmds, _ = m.HandleEvent(SessionProtocolEventPingTimeout)
+	if m.State != SessionProtocolBackendLANDegraded {
 		t.Fatalf("expected LANDegraded, got %s", m.State)
 	}
 
 	// 4. Max failures → fallback with full cleanup
 	m.PingFailures = 2
-	cmds, _ = m.HandleEvent(EventPingTimeout)
+	cmds, _ = m.HandleEvent(SessionProtocolEventPingTimeout)
 	assertCmds(t, cmds,
-		CmdStopMonitor, CmdStopLanStreamReader, CmdStopLanDgReader,
-		CmdCloseLanPath, CmdResetLanReady, CmdStartBackoffTimer)
-	if m.State != BackendRelayBackoff {
+		SessionProtocolCmdStopMonitor, SessionProtocolCmdStopLanStreamReader, SessionProtocolCmdStopLanDgReader,
+		SessionProtocolCmdCloseLanPath, SessionProtocolCmdResetLanReady, SessionProtocolCmdStartBackoffTimer)
+	if m.State != SessionProtocolBackendRelayBackoff {
 		t.Fatalf("expected RelayBackoff, got %s", m.State)
 	}
 
 	// 5. Backoff expires → re-offer
-	cmds, _ = m.HandleEvent(EventBackoffExpired)
-	assertCmds(t, cmds, CmdSendLanOffer)
-	if m.State != BackendLANOffered {
+	cmds, _ = m.HandleEvent(SessionProtocolEventBackoffExpired)
+	assertCmds(t, cmds, SessionProtocolCmdSendLanOffer)
+	if m.State != SessionProtocolBackendLANOffered {
 		t.Fatalf("expected LANOffered, got %s", m.State)
 	}
 }

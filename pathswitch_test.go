@@ -90,7 +90,7 @@ func reestablishLAN(t *testing.T, ctx context.Context, b, c *Conn) {
 	}
 
 	// Trigger LAN re-advertisement via the executor.
-	b.exec.submit(event{id: EventLanServerReady})
+	b.exec.submit(event{id: SessionProtocolEventLanServerReady})
 
 	// Wait for LAN to establish.
 	select {

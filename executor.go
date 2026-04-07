@@ -66,7 +66,7 @@ type datagramData struct {
 	data []byte
 }
 
-// lanDialResult is the payload for EventLanDialOk.
+// lanDialResult is the payload for SessionProtocolEventLanDialOk.
 type lanDialResult struct {
 	stream   io.ReadWriteCloser
 	dg       datagrammer
@@ -184,10 +184,10 @@ func newExecutor(
 
 	// Start relay readers — they run for the lifetime of the connection.
 	if relay.stream != nil {
-		go e.streamReader(ctx, relay, EventRelayStreamData, EventRelayStreamError)
+		go e.streamReader(ctx, relay, SessionProtocolEventRelayStreamData, SessionProtocolEventRelayStreamError)
 	}
 	if relay.dg != nil {
-		go e.datagramReader(ctx, relay, EventRelayDatagram)
+		go e.datagramReader(ctx, relay, SessionProtocolEventRelayDatagram)
 	}
 
 	// Start the event loop.
@@ -199,7 +199,7 @@ func newExecutor(
 // send submits an app_send event and blocks until the write completes.
 func (e *executor) send(ctx context.Context, data []byte) error {
 	done := make(chan error, 1)
-	e.submit(event{id: EventAppSend, payload: &sendRequest{data: data, done: done}})
+	e.submit(event{id: SessionProtocolEventAppSend, payload: &sendRequest{data: data, done: done}})
 	select {
 	case err := <-done:
 		return err
@@ -214,7 +214,7 @@ func (e *executor) send(ctx context.Context, data []byte) error {
 // handles encryption and fragmentation.
 func (e *executor) sendDatagram(data []byte) error {
 	done := make(chan error, 1)
-	e.submit(event{id: EventAppSendDatagram, payload: &sendRequest{data: data, done: done}})
+	e.submit(event{id: SessionProtocolEventAppSendDatagram, payload: &sendRequest{data: data, done: done}})
 	select {
 	case err := <-done:
 		return err
@@ -226,7 +226,7 @@ func (e *executor) sendDatagram(data []byte) error {
 // recvDatagram submits a datagram recv waiter and blocks until data arrives.
 func (e *executor) recvDatagram(ctx context.Context) ([]byte, error) {
 	result := make(chan dgRecvResult, 1)
-	e.submit(event{id: EventAppRecvDatagram, payload: result})
+	e.submit(event{id: SessionProtocolEventAppRecvDatagram, payload: result})
 	select {
 	case r := <-result:
 		return r.data, r.err
@@ -240,7 +240,7 @@ func (e *executor) recvDatagram(ctx context.Context) ([]byte, error) {
 // recv submits an app_recv waiter and blocks until data arrives.
 func (e *executor) recv(ctx context.Context) ([]byte, error) {
 	result := make(chan recvResult, 1)
-	e.submit(event{id: EventAppRecv, payload: result})
+	e.submit(event{id: SessionProtocolEventAppRecv, payload: result})
 	select {
 	case r := <-result:
 		return r.data, r.err
@@ -281,7 +281,7 @@ func (e *executor) run() {
 			// Recv is executor-level: register a waiter, deliver when
 			// data arrives. Not a machine transition. If buffered data
 			// exists, deliver immediately.
-			if ev.id == EventAppRecv {
+			if ev.id == SessionProtocolEventAppRecv {
 				if ch, ok := ev.payload.(chan recvResult); ok {
 					if len(e.recvBuffer) > 0 {
 						ch <- recvResult{data: e.recvBuffer[0]}
@@ -295,7 +295,7 @@ func (e *executor) run() {
 				}
 				continue
 			}
-			if ev.id == EventAppRecvDatagram {
+			if ev.id == SessionProtocolEventAppRecvDatagram {
 				switch p := ev.payload.(type) {
 				case chan dgRecvResult:
 					// Conn-level datagram recv.
@@ -322,17 +322,17 @@ func (e *executor) run() {
 			}
 
 			// Stash event-specific data before the machine processes it.
-			if ev.id == EventRecvLanOffer {
+			if ev.id == SessionProtocolEventRecvLanOffer {
 				if od, ok := ev.payload.(*lanOfferData); ok {
 					e.lastOffer = od
 				}
 			}
-			if ev.id == EventLanDialOk {
+			if ev.id == SessionProtocolEventLanDialOk {
 				if ld, ok := ev.payload.(*lanDialResult); ok {
 					e.lan = newPath("lan", ld.stream, ld.dg, ld.closer, ld.opener, ld.acceptor)
 				}
 			}
-			if ev.id == EventRecvLanVerify {
+			if ev.id == SessionProtocolEventRecvLanVerify {
 				if vd, ok := ev.payload.(*lanVerifyData); ok {
 					// Backend: LAN server verified the client's challenge.
 					// Install the LAN path before the machine transitions.
@@ -367,7 +367,7 @@ func (e *executor) run() {
 // executeCommand carries out a single command from the machine.
 func (e *executor) executeCommand(cmd CmdID, payload any) {
 	switch cmd {
-	case CmdWriteActiveStream:
+	case SessionProtocolCmdWriteActiveStream:
 		if req, ok := payload.(*sendRequest); ok {
 			p := e.activePath()
 			var msg []byte
@@ -383,7 +383,7 @@ func (e *executor) executeCommand(cmd CmdID, payload any) {
 			req.done <- err
 		}
 
-	case CmdSendActiveDatagram:
+	case SessionProtocolCmdSendActiveDatagram:
 		if req, ok := payload.(*sendRequest); ok {
 			p := e.activePath()
 			data := req.data
@@ -402,88 +402,88 @@ func (e *executor) executeCommand(cmd CmdID, payload any) {
 			}
 		}
 
-	case CmdDeliverRecv:
+	case SessionProtocolCmdDeliverRecv:
 		if sd, ok := payload.(*streamData); ok {
 			e.deliverRecv(sd.data)
 		}
 
-	case CmdDeliverRecvError:
+	case SessionProtocolCmdDeliverRecvError:
 		if se, ok := payload.(*streamError); ok {
 			e.deliverRecvError(se.err)
 		}
 
-	case CmdDeliverRecvDatagram:
+	case SessionProtocolCmdDeliverRecvDatagram:
 		if dd, ok := payload.(*datagramData); ok {
 			e.processDatagram(dd.data)
 		}
 
-	case CmdSendPathPing:
+	case SessionProtocolCmdSendPathPing:
 		p := e.activePath()
 		if p.dg != nil {
 			p.dg.SendDatagram([]byte{DgPing})
 		}
 
-	case CmdSendPathPong:
+	case SessionProtocolCmdSendPathPong:
 		p := e.activePath()
 		if p.dg != nil {
 			p.dg.SendDatagram([]byte{DgPong})
 		}
 
-	case CmdSendLanOffer:
+	case SessionProtocolCmdSendLanOffer:
 		if e.lanServer != nil {
 			if err := e.sendLANOffer(); err != nil {
 				slog.Warn("send LAN offer failed", "err", err)
 			}
 		}
 
-	case CmdDialLan:
+	case SessionProtocolCmdDialLan:
 		// Dial happens asynchronously — post result as event.
 		go e.dialLAN()
 
-	case CmdSendLanVerify:
+	case SessionProtocolCmdSendLanVerify:
 		// Verification is part of the dial flow — handled in dialLAN.
 
-	case CmdSendLanConfirm:
+	case SessionProtocolCmdSendLanConfirm:
 		// Confirmation is sent by the LAN server handler.
 
-	case CmdStartLanStreamReader:
+	case SessionProtocolCmdStartLanStreamReader:
 		if e.lan != nil {
 			ctx, cancel := context.WithCancel(e.ctx)
 			e.lanStreamCancel = cancel
-			go e.streamReader(ctx, e.lan, EventLanStreamData, EventLanStreamError)
+			go e.streamReader(ctx, e.lan, SessionProtocolEventLanStreamData, SessionProtocolEventLanStreamError)
 		}
 
-	case CmdStopLanStreamReader:
+	case SessionProtocolCmdStopLanStreamReader:
 		if e.lanStreamCancel != nil {
 			e.lanStreamCancel()
 			e.lanStreamCancel = nil
 		}
 
-	case CmdStartLanDgReader:
+	case SessionProtocolCmdStartLanDgReader:
 		if e.lan != nil {
 			ctx, cancel := context.WithCancel(e.ctx)
 			e.lanDgCancel = cancel
-			go e.datagramReader(ctx, e.lan, EventLanDatagram)
+			go e.datagramReader(ctx, e.lan, SessionProtocolEventLanDatagram)
 		}
 
-	case CmdStopLanDgReader:
+	case SessionProtocolCmdStopLanDgReader:
 		if e.lanDgCancel != nil {
 			e.lanDgCancel()
 			e.lanDgCancel = nil
 		}
 
-	case CmdStartMonitor:
+	case SessionProtocolCmdStartMonitor:
 		ctx, cancel := context.WithCancel(e.ctx)
 		e.monitorCancel = cancel
 		go e.monitorLoop(ctx)
 
-	case CmdStopMonitor:
+	case SessionProtocolCmdStopMonitor:
 		if e.monitorCancel != nil {
 			e.monitorCancel()
 			e.monitorCancel = nil
 		}
 
-	case CmdStartPongTimeout:
+	case SessionProtocolCmdStartPongTimeout:
 		if e.pongCancel != nil {
 			e.pongCancel()
 		}
@@ -492,23 +492,23 @@ func (e *executor) executeCommand(cmd CmdID, payload any) {
 		go func() {
 			select {
 			case <-time.After(e.pongTimeout):
-				e.submit(event{id: EventPingTimeout})
+				e.submit(event{id: SessionProtocolEventPingTimeout})
 			case <-ctx.Done():
 			}
 		}()
 
-	case CmdCancelPongTimeout:
+	case SessionProtocolCmdCancelPongTimeout:
 		if e.pongCancel != nil {
 			e.pongCancel()
 			e.pongCancel = nil
 		}
 
-	case CmdStartBackoffTimer:
+	case SessionProtocolCmdStartBackoffTimer:
 		ctx, cancel := context.WithCancel(e.ctx)
 		e.backoffCancel = cancel
 		go e.backoffLoop(ctx)
 
-	case CmdCloseLanPath:
+	case SessionProtocolCmdCloseLanPath:
 		if e.lan != nil {
 			e.lan.close()
 			e.lan = nil
@@ -519,17 +519,17 @@ func (e *executor) executeCommand(cmd CmdID, payload any) {
 			e.chanDgBuffers[id] = nil
 		}
 
-	case CmdSignalLanReady:
+	case SessionProtocolCmdSignalLanReady:
 		select {
 		case <-e.lanReady:
 		default:
 			close(e.lanReady)
 		}
 
-	case CmdResetLanReady:
+	case SessionProtocolCmdResetLanReady:
 		e.lanReady = make(chan struct{})
 
-	case CmdSetCryptoDatagram:
+	case SessionProtocolCmdSetCryptoDatagram:
 		if e.channel != nil {
 			e.channel.SetMode(crypto.ModeDatagrams)
 		}
@@ -580,10 +580,10 @@ func (e *executor) processDatagram(raw []byte) {
 
 	switch raw[0] {
 	case DgPing:
-		e.submit(event{id: EventRecvPathPing})
+		e.submit(event{id: SessionProtocolEventRecvPathPing})
 		return
 	case DgPong:
-		e.submit(event{id: EventRecvPathPong})
+		e.submit(event{id: SessionProtocolEventRecvPathPong})
 		return
 	case DgConnWhole:
 		payload := raw[1:]
@@ -682,7 +682,7 @@ func (e *executor) deliverChannelDatagram(id uint16, data []byte) {
 // given channel ID. Delivers immediately from the buffer if available.
 func (e *executor) recvChannelDatagram(ctx context.Context, id uint16) ([]byte, error) {
 	result := make(chan dgRecvResult, 1)
-	e.submit(event{id: EventAppRecvDatagram, payload: &chanDgRecvRequest{chanID: id, result: result}})
+	e.submit(event{id: SessionProtocolEventAppRecvDatagram, payload: &chanDgRecvRequest{chanID: id, result: result}})
 	select {
 	case r := <-result:
 		return r.data, r.err
@@ -729,7 +729,7 @@ func (e *executor) streamReader(ctx context.Context, p *path, dataEvent, errorEv
 					slog.Warn("bad LAN offer", "err", err)
 					continue
 				}
-				e.submit(event{id: EventRecvLanOffer, payload: &lanOfferData{
+				e.submit(event{id: SessionProtocolEventRecvLanOffer, payload: &lanOfferData{
 					addr: offer.Addr, challenge: offer.Challenge,
 				}})
 			case FrameCutover:
@@ -769,7 +769,7 @@ func (e *executor) monitorLoop(ctx context.Context) {
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
-			e.submit(event{id: EventPingTick})
+			e.submit(event{id: SessionProtocolEventPingTick})
 		}
 	}
 }
@@ -780,7 +780,7 @@ func (e *executor) backoffLoop(ctx context.Context) {
 	// the machine and this runs after a transition, read the field directly.
 	level := 0
 	switch m := e.machine.(type) {
-	case *BackendMachine:
+	case *SessionProtocolBackendMachine:
 		level = m.BackoffLevel
 	}
 
@@ -789,7 +789,7 @@ func (e *executor) backoffLoop(ctx context.Context) {
 
 	select {
 	case <-time.After(delay):
-		e.submit(event{id: EventBackoffExpired})
+		e.submit(event{id: SessionProtocolEventBackoffExpired})
 	case <-ctx.Done():
 	}
 }
@@ -813,12 +813,12 @@ func (e *executor) sendLANOffer() error {
 	}
 
 	// Register with the LAN server. When the client verifies, the
-	// callback posts EventRecvLanVerify to the executor.
+	// callback posts SessionProtocolEventRecvLanVerify to the executor.
 	e.lanServer.mu.Lock()
 	e.lanServer.conns[e.instanceID] = &pendingLAN{
 		challenge: challenge,
 		onVerify: func(stream io.ReadWriteCloser, conn *quic.Conn) {
-			e.submit(event{id: EventRecvLanVerify, payload: &lanVerifyData{
+			e.submit(event{id: SessionProtocolEventRecvLanVerify, payload: &lanVerifyData{
 				stream:   stream,
 				dg:       conn,
 				closer:   quicCloser{conn},
@@ -857,11 +857,11 @@ func (e *executor) sendControl(msgType byte, payload any) error {
 }
 
 // dialLAN attempts to connect to the LAN address from the most recent
-// offer. Posts EventLanDialOk or EventLanDialFailed.
+// offer. Posts SessionProtocolEventLanDialOk or SessionProtocolEventLanDialFailed.
 func (e *executor) dialLAN() {
 	offer := e.lastOffer
 	if offer == nil {
-		e.submit(event{id: EventLanDialFailed})
+		e.submit(event{id: SessionProtocolEventLanDialFailed})
 		return
 	}
 
@@ -869,11 +869,11 @@ func (e *executor) dialLAN() {
 	if tlsConfig == nil {
 		tlsConfig = &tls.Config{
 			InsecureSkipVerify: true,
-			NextProtos:         []string{"tern-lan"},
+			NextProtos:         []string{"pigeon-lan"},
 		}
 	} else {
 		tlsConfig = tlsConfig.Clone()
-		tlsConfig.NextProtos = []string{"tern-lan"}
+		tlsConfig.NextProtos = []string{"pigeon-lan"}
 	}
 
 	ctx, cancel := context.WithTimeout(e.ctx, 5*time.Second)
@@ -884,14 +884,14 @@ func (e *executor) dialLAN() {
 	})
 	if err != nil {
 		slog.Debug("LAN dial failed", "addr", offer.addr, "err", err)
-		e.submit(event{id: EventLanDialFailed})
+		e.submit(event{id: SessionProtocolEventLanDialFailed})
 		return
 	}
 
 	stream, err := conn.OpenStream()
 	if err != nil {
 		conn.CloseWithError(1, "open stream failed")
-		e.submit(event{id: EventLanDialFailed})
+		e.submit(event{id: SessionProtocolEventLanDialFailed})
 		return
 	}
 
@@ -903,7 +903,7 @@ func (e *executor) dialLAN() {
 	data, _ := json.Marshal(verify)
 	if err := writeMessage(stream, data); err != nil {
 		conn.CloseWithError(1, "write verify failed")
-		e.submit(event{id: EventLanDialFailed})
+		e.submit(event{id: SessionProtocolEventLanDialFailed})
 		return
 	}
 
@@ -911,7 +911,7 @@ func (e *executor) dialLAN() {
 	resp, err := readMessage(stream)
 	if err != nil || string(resp) != "ok" {
 		conn.CloseWithError(1, "verify rejected")
-		e.submit(event{id: EventLanDialFailed})
+		e.submit(event{id: SessionProtocolEventLanDialFailed})
 		return
 	}
 
@@ -926,7 +926,7 @@ func (e *executor) dialLAN() {
 	// Post both events: dial succeeded, then confirm received.
 	// The dialLAN flow does the full handshake (send verify, recv ok)
 	// so both transitions fire in sequence.
-	e.submit(event{id: EventLanDialOk, payload: result})
-	e.submit(event{id: EventRecvLanConfirm, payload: result})
+	e.submit(event{id: SessionProtocolEventLanDialOk, payload: result})
+	e.submit(event{id: SessionProtocolEventRecvLanConfirm, payload: result})
 }
 

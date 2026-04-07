@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 // Package crypto provides end-to-end encryption for traffic relayed
-// through tern. The relay sees only ciphertext.
+// through pigeon. The relay sees only ciphertext.
 //
 // Key exchange uses ECDH (X25519). Symmetric encryption uses AES-256-GCM
 // with a monotonic counter nonce. Session keys are derived via HKDF-SHA256.

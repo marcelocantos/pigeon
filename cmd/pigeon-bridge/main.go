@@ -40,7 +40,7 @@ func main() {
 	defer cancel()
 
 	tlsConfig := &tls.Config{
-		InsecureSkipVerify: os.Getenv("TERN_INSECURE") == "1",
+		InsecureSkipVerify: os.Getenv("PIGEON_INSECURE") == "1",
 	}
 
 	var conn *pigeon.Conn

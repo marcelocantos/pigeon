@@ -389,14 +389,14 @@ func TestChaosMultiPair(t *testing.T) {
 }
 
 // TestChaosLive runs a chaos workload against the deployed relay at
-// carrier-pigeon.fly.dev. Requires TERN_TOKEN to be set. No fault proxy —
+// carrier-pigeon.fly.dev. Requires PIGEON_TOKEN to be set. No fault proxy —
 // tests real network conditions.
 //
-// Run with: TERN_TOKEN=<tok> go test -run TestChaosLive -timeout 600s -v
+// Run with: PIGEON_TOKEN=<tok> go test -run TestChaosLive -timeout 600s -v
 func TestChaosLive(t *testing.T) {
-	token := os.Getenv("TERN_TOKEN")
+	token := os.Getenv("PIGEON_TOKEN")
 	if token == "" {
-		t.Skip("TERN_TOKEN not set; skipping live chaos test")
+		t.Skip("PIGEON_TOKEN not set; skipping live chaos test")
 	}
 	if testing.Short() {
 		t.Skip("chaos test skipped in short mode")

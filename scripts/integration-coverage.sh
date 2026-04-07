@@ -41,13 +41,13 @@ echo
 
 # --- Phase B: Tests against instrumented relay binary ---
 echo "=== Phase B: Build coverage-instrumented relay ==="
-go build -cover -o "$COVERDIR/tern-cover" ./cmd/pigeon || exit 1
+go build -cover -o "$COVERDIR/pigeon-cover" ./cmd/pigeon || exit 1
 
 QUIC_PORT=$(python3 -c "import socket; s=socket.socket(socket.AF_INET,socket.SOCK_DGRAM); s.bind(('',0)); print(s.getsockname()[1]); s.close()")
 WT_PORT=$(python3 -c "import socket; s=socket.socket(socket.AF_INET,socket.SOCK_DGRAM); s.bind(('',0)); print(s.getsockname()[1]); s.close()")
 
 echo "Starting instrumented relay (QUIC=$QUIC_PORT, WT=$WT_PORT)..."
-GOCOVERDIR="$INTEGRATION_COVERDIR" "$COVERDIR/tern-cover" \
+GOCOVERDIR="$INTEGRATION_COVERDIR" "$COVERDIR/pigeon-cover" \
     --port "$WT_PORT" --quic-port "$QUIC_PORT" 2>/dev/null &
 RELAY_PID=$!
 sleep 2
@@ -58,8 +58,8 @@ if ! kill -0 "$RELAY_PID" 2>/dev/null; then
 fi
 
 echo "Running tests against instrumented relay..."
-TERN_TEST_QUIC_URL="https://127.0.0.1:$QUIC_PORT" \
-TERN_TEST_WT_URL="https://127.0.0.1:$WT_PORT" \
+PIGEON_TEST_QUIC_URL="https://127.0.0.1:$QUIC_PORT" \
+PIGEON_TEST_WT_URL="https://127.0.0.1:$WT_PORT" \
 go test -count=1 -timeout=180s . 2>&1 \
     | grep -E "^ok |^FAIL" || true
 echo
@@ -93,8 +93,8 @@ if ls "$INTEGRATION_COVERDIR"/* 1>/dev/null 2>&1; then
     go tool cover -func="$COVERDIR/merged.out" | tail -1
     echo
 
-    go tool cover -html="$COVERDIR/merged.out" -o /tmp/tern-coverage.html
-    echo "HTML report: open /tmp/tern-coverage.html"
+    go tool cover -html="$COVERDIR/merged.out" -o /tmp/pigeon-coverage.html
+    echo "HTML report: open /tmp/pigeon-coverage.html"
 else
     echo "(No server-side coverage data collected)"
 fi
