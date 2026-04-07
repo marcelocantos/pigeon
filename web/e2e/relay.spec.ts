@@ -5,9 +5,9 @@ import { test, expect } from "@playwright/test";
 import { createServer } from "http";
 import type { Server } from "http";
 
-// Live relay coordinates. Tests are skipped if TERN_TOKEN is not set.
-const RELAY_URL = process.env.TERN_RELAY_URL || "https://carrier-pigeon.fly.dev";
-const TOKEN = process.env.TERN_TOKEN || "";
+// Live relay coordinates. Tests are skipped if PIGEON_TOKEN is not set.
+const RELAY_URL = process.env.PIGEON_RELAY_URL || "https://carrier-pigeon.fly.dev";
+const TOKEN = process.env.PIGEON_TOKEN || "";
 
 /**
  * Start a minimal HTTP server on localhost that serves a blank page.
@@ -100,7 +100,7 @@ test.describe("WebTransport relay E2E", () => {
   });
 
   test("register assigns a non-empty instance ID", async ({ page }) => {
-    test.skip(!TOKEN, "TERN_TOKEN not set");
+    test.skip(!TOKEN, "PIGEON_TOKEN not set");
     await page.goto(pageUrl);
 
     const instanceID = await page.evaluate(
@@ -128,7 +128,7 @@ test.describe("WebTransport relay E2E", () => {
   });
 
   test("bidirectional stream round-trip", async ({ page }) => {
-    test.skip(!TOKEN, "TERN_TOKEN not set");
+    test.skip(!TOKEN, "PIGEON_TOKEN not set");
     await page.goto(pageUrl);
 
     const result = await page.evaluate(
@@ -171,7 +171,7 @@ test.describe("WebTransport relay E2E", () => {
   });
 
   test("datagram round-trip", async ({ page }) => {
-    test.skip(!TOKEN, "TERN_TOKEN not set");
+    test.skip(!TOKEN, "PIGEON_TOKEN not set");
     await page.goto(pageUrl);
 
     const result = await page.evaluate(
@@ -217,7 +217,7 @@ test.describe("WebTransport relay E2E", () => {
   });
 
   test("encrypted stream round-trip", async ({ page }) => {
-    test.skip(!TOKEN, "TERN_TOKEN not set");
+    test.skip(!TOKEN, "PIGEON_TOKEN not set");
     await page.goto(pageUrl);
 
     const result = await page.evaluate(

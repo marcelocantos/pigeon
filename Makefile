@@ -49,7 +49,7 @@ e2e-swift:
 e2e-kotlin:
 	JAVA_HOME=$(JDK21) android/gradlew \
 		-p $(CURDIR)/android :pigeon:test --no-daemon --console=plain \
-		--tests "com.marcelocantos.pigeon.relay.TernConnE2ETest"
+		--tests "com.marcelocantos.pigeon.relay.PigeonConnE2ETest"
 
 # --- E2E tests against live relay (require PIGEON_TOKEN) ---
 

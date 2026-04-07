@@ -1,20 +1,20 @@
 // Copyright 2026 Marcelo Cantos
 // SPDX-License-Identifier: Apache-2.0
 
-// Node.js E2E test for the tern relay.
+// Node.js E2E test for the pigeon relay.
 // Uses pigeon-bridge (Go binary) to connect via QUIC and bridges
 // messages over stdin/stdout with length-prefixed framing.
 //
 // Usage:
-//   TERN_TOKEN=<tok> npx tsx --test src/relay.e2e.ts
+//   PIGEON_TOKEN=<tok> npx tsx --test src/relay.e2e.ts
 
 import { describe, it, before } from "node:test";
 import assert from "node:assert/strict";
 import { execSync, spawn, ChildProcess } from "node:child_process";
 import path from "node:path";
 
-const TOKEN = process.env.TERN_TOKEN || "";
-const RELAY_URL = process.env.TERN_RELAY_URL || "https://carrier-pigeon.fly.dev:4433";
+const TOKEN = process.env.PIGEON_TOKEN || "";
+const RELAY_URL = process.env.PIGEON_RELAY_URL || "https://carrier-pigeon.fly.dev:4433";
 
 const REPO_ROOT = path.resolve(import.meta.dirname, "../..");
 const BRIDGE_BIN = "/tmp/pigeon-bridge";
@@ -84,7 +84,7 @@ function spawnBridge(
 
 describe(
   "Node.js relay E2E (via pigeon-bridge)",
-  { skip: !TOKEN ? "TERN_TOKEN not set" : false },
+  { skip: !TOKEN ? "PIGEON_TOKEN not set" : false },
   () => {
     it("register assigns instance ID", async () => {
       const backend = spawnBridge("register", RELAY_URL, TOKEN);

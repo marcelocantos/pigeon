@@ -1,7 +1,7 @@
 {
-  "name": "@marcelocantos/tern",
+  "name": "@marcelocantos/pigeon",
   "version": "0.2.0",
-  "description": "TypeScript/Web client for tern WebTransport relay with E2E encryption",
+  "description": "TypeScript/Web client for pigeon WebTransport relay with E2E encryption",
   "type": "module",
   "exports": "./src/index.ts",
   "main": "./src/index.ts",

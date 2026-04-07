@@ -6,9 +6,9 @@
 // protocol works end-to-end. PigeonRelay wrapper tests are separate.
 //
 // Usage:
-//   swift build && .build/debug/tern-e2e-swift                                # local (auto-starts relay)
-//   PIGEON_RELAY_HOST=carrier-pigeon.fly.dev PIGEON_RELAY_PORT=4433 TERN_TOKEN=<t> \
-//     .build/debug/tern-e2e-swift                                              # live relay
+//   swift build && .build/debug/pigeon-e2e-swift                                # local (auto-starts relay)
+//   PIGEON_RELAY_HOST=carrier-pigeon.fly.dev PIGEON_RELAY_PORT=4433 PIGEON_TOKEN=<t> \
+//     .build/debug/pigeon-e2e-swift                                              # live relay
 
 #if canImport(Network)
 
@@ -20,17 +20,17 @@ import Pigeon
 
 let relayHost = ProcessInfo.processInfo.environment["PIGEON_RELAY_HOST"] ?? "127.0.0.1"
 let relayPort = UInt16(ProcessInfo.processInfo.environment["PIGEON_RELAY_PORT"] ?? "4433")!
-let relayToken = ProcessInfo.processInfo.environment["TERN_TOKEN"]
+let relayToken = ProcessInfo.processInfo.environment["PIGEON_TOKEN"]
 let isLocal = relayHost == "127.0.0.1" || relayHost == "localhost"
 
 // MARK: - QUIC helpers
 
 func quicConnect(_ host: String, _ port: UInt16) async throws -> NWConnection {
-    let opts = NWProtocolQUIC.Options(alpn: ["tern"])
+    let opts = NWProtocolQUIC.Options(alpn: ["pigeon"])
     sec_protocol_options_set_verify_block(opts.securityProtocolOptions, { _, _, c in c(true) }, .main)
     let params = NWParameters(quic: opts)
     let ep = NWEndpoint.hostPort(host: .init(host), port: NWEndpoint.Port(rawValue: port)!)
-    let q = DispatchQueue(label: "tern.\(arc4random())")
+    let q = DispatchQueue(label: "pigeon.\(arc4random())")
     let conn = NWConnection(to: ep, using: params)
 
     try await withThrowingTaskGroup(of: Void.self) { group in
@@ -98,7 +98,7 @@ class LocalRelay {
 
         let build = Process()
         build.executableURL = URL(fileURLWithPath: "/usr/bin/env")
-        build.arguments = ["go", "build", "-o", "/tmp/tern-e2e-server", "./cmd/tern"]
+        build.arguments = ["go", "build", "-o", "/tmp/pigeon-e2e-server", "./cmd/pigeon"]
         build.currentDirectoryURL = repoRoot
         build.standardOutput = FileHandle.nullDevice
         build.standardError = FileHandle.nullDevice
@@ -110,7 +110,7 @@ class LocalRelay {
 
         let port = findFreePort()
         let proc = Process()
-        proc.executableURL = URL(fileURLWithPath: "/tmp/tern-e2e-server")
+        proc.executableURL = URL(fileURLWithPath: "/tmp/pigeon-e2e-server")
         proc.arguments = ["--quic-port", String(port)]
         proc.standardOutput = FileHandle.nullDevice
         let pipe = Pipe()
@@ -121,7 +121,7 @@ class LocalRelay {
         let deadline = Date().addingTimeInterval(10)
         var ready = false
         pipe.fileHandleForReading.readabilityHandler = { h in
-            if let s = String(data: h.availableData, encoding: .utf8), s.contains("tern starting") { ready = true }
+            if let s = String(data: h.availableData, encoding: .utf8), s.contains("pigeon starting") { ready = true }
         }
         while !ready && Date() < deadline { Thread.sleep(forTimeInterval: 0.1) }
         pipe.fileHandleForReading.readabilityHandler = nil

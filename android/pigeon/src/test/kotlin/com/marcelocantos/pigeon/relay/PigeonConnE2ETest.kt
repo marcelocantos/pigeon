@@ -288,7 +288,7 @@ class PigeonConnE2ETest {
      * Full pairing ceremony simulation: ECDH key exchange through the
      * relay, confirmation code derivation, session key derivation, and
      * encrypted message exchange. This mirrors the Go E2E test in
-     * cmd/tern/e2e_test.go.
+     * cmd/pigeon/e2e_test.go.
      */
     @Test
     fun `full pairing ceremony with ECDH key exchange`() {

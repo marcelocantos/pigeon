@@ -12,24 +12,24 @@ import kotlin.test.assertTrue
 import org.junit.jupiter.api.Assumptions
 
 /**
- * End-to-end integration tests against the live tern relay.
+ * End-to-end integration tests against the live pigeon relay.
  *
  * Uses pigeon-bridge (Go binary) for QUIC connectivity. The bridge
- * handles the QUIC connection and tern handshake; messages are bridged
+ * handles the QUIC connection and pigeon handshake; messages are bridged
  * via stdin/stdout using the same length-prefixed framing.
  *
- * Requires TERN_TOKEN env var. Tests are skipped when not set.
+ * Requires PIGEON_TOKEN env var. Tests are skipped when not set.
  */
 class PigeonConnLiveE2ETest {
 
-    private val token: String? = System.getenv("TERN_TOKEN")
-    private val relayUrl: String = System.getenv("TERN_RELAY_URL") ?: "https://carrier-pigeon.fly.dev:4433"
+    private val token: String? = System.getenv("PIGEON_TOKEN")
+    private val relayUrl: String = System.getenv("PIGEON_RELAY_URL") ?: "https://carrier-pigeon.fly.dev:4433"
     private val repoRoot: String = findRepoRoot()
 
     private fun assumeLive() {
         Assumptions.assumeTrue(
             token != null && token.isNotEmpty(),
-            "TERN_TOKEN not set; skipping live relay test"
+            "PIGEON_TOKEN not set; skipping live relay test"
         )
     }
 

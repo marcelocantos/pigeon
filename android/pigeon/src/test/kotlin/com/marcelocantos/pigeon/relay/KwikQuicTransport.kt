@@ -45,7 +45,7 @@ class KwikQuicTransport private constructor(
         fun connect(host: String, port: Int): KwikQuicTransport {
             val connection = QuicClientConnection.newBuilder()
                 .uri(URI.create("https://$host:$port"))
-                .applicationProtocol("tern")
+                .applicationProtocol("pigeon")
                 .noServerCertificateCheck()
                 .enableDatagramExtension()
                 .build()

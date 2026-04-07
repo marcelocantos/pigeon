@@ -25,8 +25,8 @@ dependencies {
 tasks.test {
     useJUnitPlatform()
     // Forward env vars to test JVM for live E2E tests.
-    environment("TERN_TOKEN", System.getenv("TERN_TOKEN") ?: "")
-    environment("TERN_RELAY_HOST", System.getenv("TERN_RELAY_HOST") ?: "")
+    environment("PIGEON_TOKEN", System.getenv("PIGEON_TOKEN") ?: "")
+    environment("PIGEON_RELAY_HOST", System.getenv("PIGEON_RELAY_HOST") ?: "")
 }
 
 publishing {

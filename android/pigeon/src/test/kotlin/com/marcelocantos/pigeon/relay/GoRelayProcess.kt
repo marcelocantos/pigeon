@@ -15,7 +15,7 @@ import java.util.concurrent.TimeUnit
  * Manages a Go pigeon relay server as a subprocess for E2E tests.
  *
  * Builds the relay binary (if not already built), starts it on ephemeral
- * ports, waits for the "tern starting" log line to confirm readiness,
+ * ports, waits for the "pigeon starting" log line to confirm readiness,
  * and extracts the listening ports from server output.
  *
  * The relay uses a self-signed certificate (development mode) and
@@ -40,16 +40,16 @@ class GoRelayProcess private constructor(
         // Find the project root by walking up from the current working dir.
         private fun findProjectRoot(): Path {
             var dir = Path.of(System.getProperty("user.dir"))
-            // Walk up until we find go.mod in the tern root.
+            // Walk up until we find go.mod in the pigeon root.
             while (dir.parent != null) {
                 if (dir.resolve("go.mod").toFile().exists() &&
-                    dir.resolve("cmd/tern/main.go").toFile().exists()) {
+                    dir.resolve("cmd/pigeon/main.go").toFile().exists()) {
                     return dir
                 }
                 dir = dir.parent
             }
             throw IllegalStateException(
-                "Could not find tern project root (go.mod + cmd/tern/main.go) " +
+                "Could not find pigeon project root (go.mod + cmd/pigeon/main.go) " +
                 "walking up from ${System.getProperty("user.dir")}"
             )
         }
@@ -69,7 +69,7 @@ class GoRelayProcess private constructor(
          * @return pair of (cert file, key file) in a temp directory
          */
         private fun generateTestCert(): Pair<File, File> {
-            val tmpDir = File(System.getProperty("java.io.tmpdir"), "tern-test-certs-${System.nanoTime()}")
+            val tmpDir = File(System.getProperty("java.io.tmpdir"), "pigeon-test-certs-${System.nanoTime()}")
             tmpDir.mkdirs()
             val keyFile = File(tmpDir, "key.pem")
             val certFile = File(tmpDir, "cert.pem")
@@ -93,7 +93,7 @@ class GoRelayProcess private constructor(
         }
 
         /**
-         * Build and start a tern relay server on ephemeral ports.
+         * Build and start a pigeon relay server on ephemeral ports.
          *
          * @param token optional bearer token for /register authentication
          * @return a running [GoRelayProcess] ready to accept connections
@@ -101,15 +101,15 @@ class GoRelayProcess private constructor(
         fun start(token: String? = null): GoRelayProcess {
             val projectRoot = findProjectRoot()
 
-            // Build the tern binary.
-            val buildResult = ProcessBuilder("go", "build", "-o", "tern-test-binary", "./cmd/tern/")
+            // Build the pigeon binary.
+            val buildResult = ProcessBuilder("go", "build", "-o", "pigeon-test-binary", "./cmd/pigeon/")
                 .directory(projectRoot.toFile())
                 .redirectErrorStream(true)
                 .start()
             val buildOutput = buildResult.inputStream.bufferedReader().readText()
             val buildExit = buildResult.waitFor()
             if (buildExit != 0) {
-                throw IllegalStateException("Failed to build tern binary (exit $buildExit):\n$buildOutput")
+                throw IllegalStateException("Failed to build pigeon binary (exit $buildExit):\n$buildOutput")
             }
 
             // Generate an RSA TLS certificate for the test server.
@@ -121,11 +121,11 @@ class GoRelayProcess private constructor(
 
             val env = mutableMapOf<String, String>()
             if (token != null) {
-                env["TERN_TOKEN"] = token
+                env["PIGEON_TOKEN"] = token
             }
 
             val cmd = listOf(
-                projectRoot.resolve("tern-test-binary").toString(),
+                projectRoot.resolve("pigeon-test-binary").toString(),
                 "--port", wtPort.toString(),
                 "--quic-port", quicPort.toString(),
                 "--cert", certFile.absolutePath,
@@ -139,7 +139,7 @@ class GoRelayProcess private constructor(
 
             val process = pb.start()
 
-            // Wait for the "tern starting" log line to confirm the server is ready.
+            // Wait for the "pigeon starting" log line to confirm the server is ready.
             val reader = BufferedReader(InputStreamReader(process.inputStream))
             val readyLatch = CountDownLatch(1)
 
@@ -148,9 +148,9 @@ class GoRelayProcess private constructor(
                     var line: String?
                     while (reader.readLine().also { line = it } != null) {
                         val l = line ?: continue
-                        System.err.println("[tern-relay] $l")
+                        System.err.println("[pigeon-relay] $l")
 
-                        if (l.contains("msg=\"tern starting\"") || l.contains("msg=tern starting")) {
+                        if (l.contains("msg=\"pigeon starting\"") || l.contains("msg=pigeon starting")) {
                             readyLatch.countDown()
                         }
                     }
@@ -163,7 +163,7 @@ class GoRelayProcess private constructor(
 
             if (!readyLatch.await(30, TimeUnit.SECONDS)) {
                 process.destroyForcibly()
-                throw IllegalStateException("Timed out waiting for tern relay to start")
+                throw IllegalStateException("Timed out waiting for pigeon relay to start")
             }
 
             return GoRelayProcess(process, quicPort, wtPort, token)

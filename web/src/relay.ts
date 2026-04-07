@@ -94,7 +94,7 @@ async function readExact(
 // Currently callers must encrypt/decrypt manually using E2EChannel.
 
 /**
- * A connection to a peer through the tern WebTransport relay.
+ * A connection to a peer through the pigeon WebTransport relay.
  */
 export class Conn {
   /** The relay-assigned instance ID. */
