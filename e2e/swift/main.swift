@@ -70,7 +70,11 @@ func writeMsg(_ c: NWConnection, _ payload: Data) async throws {
 
 func readMsg(_ c: NWConnection) async throws -> Data {
     let hdr = try await readExact(c, 4)
-    let len = Int(UInt32(hdr[0]) << 24 | UInt32(hdr[1]) << 16 | UInt32(hdr[2]) << 8 | UInt32(hdr[3]))
+    let b0 = UInt32(hdr[0]) << 24
+    let b1 = UInt32(hdr[1]) << 16
+    let b2 = UInt32(hdr[2]) << 8
+    let b3 = UInt32(hdr[3])
+    let len = Int(b0 | b1 | b2 | b3)
     if len == 0 { return Data() }
     return try await readExact(c, len)
 }

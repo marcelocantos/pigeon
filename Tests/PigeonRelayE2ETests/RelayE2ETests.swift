@@ -237,7 +237,11 @@ final class RelayE2ETests: XCTestCase {
 
     private func readMsg(_ c: NWConnection) async throws -> Data {
         let hdr = try await readExact(c, 4)
-        let len = Int(UInt32(hdr[0]) << 24 | UInt32(hdr[1]) << 16 | UInt32(hdr[2]) << 8 | UInt32(hdr[3]))
+        let b0 = UInt32(hdr[0]) << 24
+        let b1 = UInt32(hdr[1]) << 16
+        let b2 = UInt32(hdr[2]) << 8
+        let b3 = UInt32(hdr[3])
+        let len = Int(b0 | b1 | b2 | b3)
         if len == 0 { return Data() }
         return try await readExact(c, len)
     }
@@ -268,7 +272,7 @@ final class RelayE2ETests: XCTestCase {
         addr.sin_addr.s_addr = INADDR_ANY.bigEndian
         var len = socklen_t(MemoryLayout<sockaddr_in>.size)
         withUnsafePointer(to: &addr) {
-            $0.withMemoryRebound(to: sockaddr.self, capacity: 1) { _ = bind(sock, $0, len) }
+            $0.withMemoryRebound(to: sockaddr.self, capacity: 1) { _ = Darwin.bind(sock, $0, len) }
         }
         withUnsafeMutablePointer(to: &addr) {
             $0.withMemoryRebound(to: sockaddr.self, capacity: 1) { _ = getsockname(sock, $0, &len) }

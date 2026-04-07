@@ -6,21 +6,7 @@
 
 import Foundation
 
-public enum MessageType: String, Sendable {
-    case pairHello = "pair_hello"
-    case pairHelloAck = "pair_hello_ack"
-    case pairConfirm = "pair_confirm"
-    case pairComplete = "pair_complete"
-    case authRequest = "auth_request"
-    case authOk = "auth_ok"
-    case lanOffer = "lan_offer"
-    case lanVerify = "lan_verify"
-    case lanConfirm = "lan_confirm"
-    case pathPing = "path_ping"
-    case pathPong = "path_pong"
-}
-
-public enum BackendState: String, Sendable {
+public enum SessionBackendState: String, Sendable {
     case idle = "Idle"
     case generateToken = "GenerateToken"
     case registerRelay = "RegisterRelay"
@@ -40,7 +26,7 @@ public enum BackendState: String, Sendable {
     case lANDegraded = "LANDegraded"
 }
 
-public enum ClientState: String, Sendable {
+public enum SessionClientState: String, Sendable {
     case idle = "Idle"
     case obtainBackchannelSecret = "ObtainBackchannelSecret"
     case connectRelay = "ConnectRelay"
@@ -60,130 +46,10 @@ public enum ClientState: String, Sendable {
     case relayFallback = "RelayFallback"
 }
 
-public enum RelayState: String, Sendable {
+public enum SessionRelayState: String, Sendable {
     case idle = "Idle"
     case backendRegistered = "BackendRegistered"
     case bridged = "Bridged"
-}
-
-public enum GuardID: String, Sendable {
-    case tokenValid = "token_valid"
-    case tokenInvalid = "token_invalid"
-    case codeCorrect = "code_correct"
-    case codeWrong = "code_wrong"
-    case deviceKnown = "device_known"
-    case deviceUnknown = "device_unknown"
-    case nonceFresh = "nonce_fresh"
-    case challengeValid = "challenge_valid"
-    case challengeInvalid = "challenge_invalid"
-    case lanEnabled = "lan_enabled"
-    case lanDisabled = "lan_disabled"
-    case lanServerAvailable = "lan_server_available"
-    case underMaxFailures = "under_max_failures"
-    case atMaxFailures = "at_max_failures"
-}
-
-public enum ActionID: String, Sendable {
-    case generateToken = "generate_token"
-    case registerRelay = "register_relay"
-    case deriveSecret = "derive_secret"
-    case storeDevice = "store_device"
-    case verifyDevice = "verify_device"
-    case activateLan = "activate_lan"
-    case fallbackToRelay = "fallback_to_relay"
-    case resetFailures = "reset_failures"
-    case sendPairHello = "send_pair_hello"
-    case storeSecret = "store_secret"
-    case dialLan = "dial_lan"
-    case bridgeStreams = "bridge_streams"
-    case unbridge = "unbridge"
-}
-
-public enum EventID: String, Sendable {
-    case appSend = "app_send"
-    case appRecv = "app_recv"
-    case appSendDatagram = "app_send_datagram"
-    case appRecvDatagram = "app_recv_datagram"
-    case appClose = "app_close"
-    case appForceFallback = "app_force_fallback"
-    case relayStreamData = "relay_stream_data"
-    case relayStreamError = "relay_stream_error"
-    case relayDatagram = "relay_datagram"
-    case lanStreamData = "lan_stream_data"
-    case lanStreamError = "lan_stream_error"
-    case lanDatagram = "lan_datagram"
-    case lanDialOk = "lan_dial_ok"
-    case lanDialFailed = "lan_dial_failed"
-    case lanVerifyOk = "lan_verify_ok"
-    case pingTimeout = "ping_timeout"
-    case pingTick = "ping_tick"
-    case backoffExpired = "backoff_expired"
-    case offerTimeout = "offer_timeout"
-    case cliInitPair = "cli_init_pair"
-    case tokenCreated = "token_created"
-    case relayRegistered = "relay_registered"
-    case ecdhComplete = "ecdh_complete"
-    case signalCodeDisplay = "signal_code_display"
-    case cliCodeEntered = "cli_code_entered"
-    case checkCode = "check_code"
-    case finalise = "finalise"
-    case verify = "verify"
-    case sessionEstablished = "session_established"
-    case lanServerReady = "lan_server_ready"
-    case lanServerChanged = "lan_server_changed"
-    case readvertiseTick = "readvertise_tick"
-    case disconnect = "disconnect"
-    case backchannelReceived = "backchannel_received"
-    case secretParsed = "secret_parsed"
-    case relayConnected = "relay_connected"
-    case keyPairGenerated = "key_pair_generated"
-    case codeDisplayed = "code_displayed"
-    case appLaunch = "app_launch"
-    case verifyTimeout = "verify_timeout"
-    case lanError = "lan_error"
-    case relayOk = "relay_ok"
-    case backendRegister = "backend_register"
-    case clientConnect = "client_connect"
-    case clientDisconnect = "client_disconnect"
-    case backendDisconnect = "backend_disconnect"
-    case recvPairHello = "recv_pair_hello"
-    case recvAuthRequest = "recv_auth_request"
-    case recvLanVerify = "recv_lan_verify"
-    case recvPathPong = "recv_path_pong"
-    case recvPairHelloAck = "recv_pair_hello_ack"
-    case recvPairConfirm = "recv_pair_confirm"
-    case recvPairComplete = "recv_pair_complete"
-    case recvAuthOk = "recv_auth_ok"
-    case recvLanOffer = "recv_lan_offer"
-    case recvLanConfirm = "recv_lan_confirm"
-    case recvPathPing = "recv_path_ping"
-}
-
-public enum CmdID: String, Sendable {
-    case writeActiveStream = "write_active_stream"
-    case sendActiveDatagram = "send_active_datagram"
-    case sendPathPing = "send_path_ping"
-    case sendPathPong = "send_path_pong"
-    case sendLanOffer = "send_lan_offer"
-    case sendLanVerify = "send_lan_verify"
-    case sendLanConfirm = "send_lan_confirm"
-    case dialLan = "dial_lan"
-    case deliverRecv = "deliver_recv"
-    case deliverRecvError = "deliver_recv_error"
-    case deliverRecvDatagram = "deliver_recv_datagram"
-    case startLanStreamReader = "start_lan_stream_reader"
-    case stopLanStreamReader = "stop_lan_stream_reader"
-    case startLanDgReader = "start_lan_dg_reader"
-    case stopLanDgReader = "stop_lan_dg_reader"
-    case startMonitor = "start_monitor"
-    case stopMonitor = "stop_monitor"
-    case startPongTimeout = "start_pong_timeout"
-    case cancelPongTimeout = "cancel_pong_timeout"
-    case startBackoffTimer = "start_backoff_timer"
-    case closeLanPath = "close_lan_path"
-    case signalLanReady = "signal_lan_ready"
-    case resetLanReady = "reset_lan_ready"
-    case setCryptoDatagram = "set_crypto_datagram"
 }
 
 /// Protocol wire constants shared across all platforms.
@@ -214,11 +80,146 @@ public enum SessionWire {
     public static let channelIdHashMultiplier = 31
 }
 
-/// The protocol transition table. Fed to Machine for execution.
+/// The protocol transition table and shared type enums.
 public enum SessionProtocol {
 
+    public enum MessageType: String, Sendable {
+        case pairHello = "pair_hello"
+        case pairHelloAck = "pair_hello_ack"
+        case pairConfirm = "pair_confirm"
+        case pairComplete = "pair_complete"
+        case authRequest = "auth_request"
+        case authOk = "auth_ok"
+        case lanOffer = "lan_offer"
+        case lanVerify = "lan_verify"
+        case lanConfirm = "lan_confirm"
+        case pathPing = "path_ping"
+        case pathPong = "path_pong"
+    }
+
+    public enum GuardID: String, Sendable {
+        case tokenValid = "token_valid"
+        case tokenInvalid = "token_invalid"
+        case codeCorrect = "code_correct"
+        case codeWrong = "code_wrong"
+        case deviceKnown = "device_known"
+        case deviceUnknown = "device_unknown"
+        case nonceFresh = "nonce_fresh"
+        case challengeValid = "challenge_valid"
+        case challengeInvalid = "challenge_invalid"
+        case lanEnabled = "lan_enabled"
+        case lanDisabled = "lan_disabled"
+        case lanServerAvailable = "lan_server_available"
+        case underMaxFailures = "under_max_failures"
+        case atMaxFailures = "at_max_failures"
+    }
+
+    public enum ActionID: String, Sendable {
+        case generateToken = "generate_token"
+        case registerRelay = "register_relay"
+        case deriveSecret = "derive_secret"
+        case storeDevice = "store_device"
+        case verifyDevice = "verify_device"
+        case activateLan = "activate_lan"
+        case fallbackToRelay = "fallback_to_relay"
+        case resetFailures = "reset_failures"
+        case sendPairHello = "send_pair_hello"
+        case storeSecret = "store_secret"
+        case dialLan = "dial_lan"
+        case bridgeStreams = "bridge_streams"
+        case unbridge = "unbridge"
+    }
+
+    public enum EventID: String, Sendable {
+        case appSend = "app_send"
+        case appRecv = "app_recv"
+        case appSendDatagram = "app_send_datagram"
+        case appRecvDatagram = "app_recv_datagram"
+        case appClose = "app_close"
+        case appForceFallback = "app_force_fallback"
+        case relayStreamData = "relay_stream_data"
+        case relayStreamError = "relay_stream_error"
+        case relayDatagram = "relay_datagram"
+        case lanStreamData = "lan_stream_data"
+        case lanStreamError = "lan_stream_error"
+        case lanDatagram = "lan_datagram"
+        case lanDialOk = "lan_dial_ok"
+        case lanDialFailed = "lan_dial_failed"
+        case lanVerifyOk = "lan_verify_ok"
+        case pingTimeout = "ping_timeout"
+        case pingTick = "ping_tick"
+        case backoffExpired = "backoff_expired"
+        case offerTimeout = "offer_timeout"
+        case cliInitPair = "cli_init_pair"
+        case tokenCreated = "token_created"
+        case relayRegistered = "relay_registered"
+        case ecdhComplete = "ecdh_complete"
+        case signalCodeDisplay = "signal_code_display"
+        case cliCodeEntered = "cli_code_entered"
+        case checkCode = "check_code"
+        case finalise = "finalise"
+        case verify = "verify"
+        case sessionEstablished = "session_established"
+        case lanServerReady = "lan_server_ready"
+        case lanServerChanged = "lan_server_changed"
+        case readvertiseTick = "readvertise_tick"
+        case disconnect = "disconnect"
+        case backchannelReceived = "backchannel_received"
+        case secretParsed = "secret_parsed"
+        case relayConnected = "relay_connected"
+        case keyPairGenerated = "key_pair_generated"
+        case codeDisplayed = "code_displayed"
+        case appLaunch = "app_launch"
+        case verifyTimeout = "verify_timeout"
+        case lanError = "lan_error"
+        case relayOk = "relay_ok"
+        case backendRegister = "backend_register"
+        case clientConnect = "client_connect"
+        case clientDisconnect = "client_disconnect"
+        case backendDisconnect = "backend_disconnect"
+        case recvPairHello = "recv_pair_hello"
+        case recvAuthRequest = "recv_auth_request"
+        case recvLanVerify = "recv_lan_verify"
+        case recvPathPong = "recv_path_pong"
+        case recvPairHelloAck = "recv_pair_hello_ack"
+        case recvPairConfirm = "recv_pair_confirm"
+        case recvPairComplete = "recv_pair_complete"
+        case recvAuthOk = "recv_auth_ok"
+        case recvLanOffer = "recv_lan_offer"
+        case recvLanConfirm = "recv_lan_confirm"
+        case recvPathPing = "recv_path_ping"
+    }
+
+    public enum CmdID: String, Sendable {
+        case writeActiveStream = "write_active_stream"
+        case sendActiveDatagram = "send_active_datagram"
+        case sendPathPing = "send_path_ping"
+        case sendPathPong = "send_path_pong"
+        case sendLanOffer = "send_lan_offer"
+        case sendLanVerify = "send_lan_verify"
+        case sendLanConfirm = "send_lan_confirm"
+        case dialLan = "dial_lan"
+        case deliverRecv = "deliver_recv"
+        case deliverRecvError = "deliver_recv_error"
+        case deliverRecvDatagram = "deliver_recv_datagram"
+        case startLanStreamReader = "start_lan_stream_reader"
+        case stopLanStreamReader = "stop_lan_stream_reader"
+        case startLanDgReader = "start_lan_dg_reader"
+        case stopLanDgReader = "stop_lan_dg_reader"
+        case startMonitor = "start_monitor"
+        case stopMonitor = "stop_monitor"
+        case startPongTimeout = "start_pong_timeout"
+        case cancelPongTimeout = "cancel_pong_timeout"
+        case startBackoffTimer = "start_backoff_timer"
+        case closeLanPath = "close_lan_path"
+        case signalLanReady = "signal_lan_ready"
+        case resetLanReady = "reset_lan_ready"
+        case setCryptoDatagram = "set_crypto_datagram"
+    }
+
+
     /// backend transitions.
-    public static let backendInitial: BackendState = .idle
+    public static let backendInitial: SessionBackendState = .idle
 
     public static let backendTransitions: [(from: String, to: String, on: String, onKind: String, guard: String?, action: String?, sends: [(to: String, msg: String)])] = [
         (from: "Idle", to: "GenerateToken", on: "cli_init_pair", onKind: "internal", guard: nil, action: "generate_token", sends: []),
@@ -287,7 +288,7 @@ public enum SessionProtocol {
     ]
 
     /// client transitions.
-    public static let clientInitial: ClientState = .idle
+    public static let clientInitial: SessionClientState = .idle
 
     public static let clientTransitions: [(from: String, to: String, on: String, onKind: String, guard: String?, action: String?, sends: [(to: String, msg: String)])] = [
         (from: "Idle", to: "ObtainBackchannelSecret", on: "backchannel_received", onKind: "internal", guard: nil, action: nil, sends: []),
@@ -347,7 +348,7 @@ public enum SessionProtocol {
     ]
 
     /// relay transitions.
-    public static let relayInitial: RelayState = .idle
+    public static let relayInitial: SessionRelayState = .idle
 
     public static let relayTransitions: [(from: String, to: String, on: String, onKind: String, guard: String?, action: String?, sends: [(to: String, msg: String)])] = [
         (from: "Idle", to: "BackendRegistered", on: "backend_register", onKind: "internal", guard: nil, action: nil, sends: []),
@@ -357,9 +358,15 @@ public enum SessionProtocol {
     ]
 }
 
-/// BackendMachine is the generated state machine for the backend actor.
-public final class BackendMachine: @unchecked Sendable {
-    public private(set) var state: BackendState
+/// SessionBackendMachine is the generated state machine for the backend actor.
+public final class SessionBackendMachine: @unchecked Sendable {
+    public typealias MessageType = SessionProtocol.MessageType
+    public typealias GuardID = SessionProtocol.GuardID
+    public typealias ActionID = SessionProtocol.ActionID
+    public typealias EventID = SessionProtocol.EventID
+    public typealias CmdID = SessionProtocol.CmdID
+
+    public private(set) var state: SessionBackendState
     public var currentToken: String // pairing token currently in play
     public var activeTokens: String // set of valid (non-revoked) tokens
     public var usedTokens: String // set of revoked tokens
@@ -681,7 +688,7 @@ public final class BackendMachine: @unchecked Sendable {
 
     /// Process a received message. Returns the new state, or nil if rejected.
     @discardableResult
-    public func handleMessage(_ msg: MessageType) throws -> BackendState? {
+    public func handleMessage(_ msg: MessageType) throws -> SessionBackendState? {
         switch (state, msg) {
         case (.waitingForClient, .pairHello) where guards[.tokenValid]?() == true:
             try actions[.deriveSecret]?()
@@ -724,7 +731,7 @@ public final class BackendMachine: @unchecked Sendable {
 
     /// Attempt an internal transition. Returns the new state, or nil if none available.
     @discardableResult
-    public func step() throws -> BackendState? {
+    public func step() throws -> SessionBackendState? {
         switch state {
         case .idle:
             try actions[.generateToken]?()
@@ -790,9 +797,15 @@ public final class BackendMachine: @unchecked Sendable {
     }
 }
 
-/// ClientMachine is the generated state machine for the client actor.
-public final class ClientMachine: @unchecked Sendable {
-    public private(set) var state: ClientState
+/// SessionClientMachine is the generated state machine for the client actor.
+public final class SessionClientMachine: @unchecked Sendable {
+    public typealias MessageType = SessionProtocol.MessageType
+    public typealias GuardID = SessionProtocol.GuardID
+    public typealias ActionID = SessionProtocol.ActionID
+    public typealias EventID = SessionProtocol.EventID
+    public typealias CmdID = SessionProtocol.CmdID
+
+    public private(set) var state: SessionClientState
     public var receivedBackendPub: String // pubkey client received in pair_hello_ack
     public var clientSharedKey: String // ECDH key derived by client
     public var clientCode: String // code computed by client
@@ -1012,7 +1025,7 @@ public final class ClientMachine: @unchecked Sendable {
 
     /// Process a received message. Returns the new state, or nil if rejected.
     @discardableResult
-    public func handleMessage(_ msg: MessageType) throws -> ClientState? {
+    public func handleMessage(_ msg: MessageType) throws -> SessionClientState? {
         switch (state, msg) {
         case (.waitAck, .pairHelloAck):
             try actions[.deriveSecret]?()
@@ -1059,7 +1072,7 @@ public final class ClientMachine: @unchecked Sendable {
 
     /// Attempt an internal transition. Returns the new state, or nil if none available.
     @discardableResult
-    public func step() throws -> ClientState? {
+    public func step() throws -> SessionClientState? {
         switch state {
         case .idle:
             state = .obtainBackchannelSecret
@@ -1092,9 +1105,15 @@ public final class ClientMachine: @unchecked Sendable {
     }
 }
 
-/// RelayMachine is the generated state machine for the relay actor.
-public final class RelayMachine: @unchecked Sendable {
-    public private(set) var state: RelayState
+/// SessionRelayMachine is the generated state machine for the relay actor.
+public final class SessionRelayMachine: @unchecked Sendable {
+    public typealias MessageType = SessionProtocol.MessageType
+    public typealias GuardID = SessionProtocol.GuardID
+    public typealias ActionID = SessionProtocol.ActionID
+    public typealias EventID = SessionProtocol.EventID
+    public typealias CmdID = SessionProtocol.CmdID
+
+    public private(set) var state: SessionRelayState
     public var relayBridge: String // relay bridge state
 
     public var guards: [GuardID: () -> Bool] = [:]
@@ -1132,7 +1151,7 @@ public final class RelayMachine: @unchecked Sendable {
 
     /// Process a received message. Returns the new state, or nil if rejected.
     @discardableResult
-    public func handleMessage(_ msg: MessageType) throws -> RelayState? {
+    public func handleMessage(_ msg: MessageType) throws -> SessionRelayState? {
         switch (state, msg) {
         default:
             return nil
@@ -1141,7 +1160,7 @@ public final class RelayMachine: @unchecked Sendable {
 
     /// Attempt an internal transition. Returns the new state, or nil if none available.
     @discardableResult
-    public func step() throws -> RelayState? {
+    public func step() throws -> SessionRelayState? {
         switch state {
         case .idle:
             state = .backendRegistered

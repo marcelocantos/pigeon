@@ -25,67 +25,24 @@ func (p *Protocol) ExportSwift(w io.Writer) error {
 	b.WriteString("// Source of truth: protocol/*.yaml\n\n")
 	b.WriteString("import Foundation\n\n")
 
-	// Message type enum.
-	b.WriteString("public enum MessageType: String, Sendable {\n")
-	for _, m := range p.Messages {
-		fmt.Fprintf(&b, "    case %s = \"%s\"\n", swiftCase(string(m.Type)), m.Type)
-	}
-	b.WriteString("}\n\n")
+	protoName := swiftTypeName(p.Name)
 
-	// Per-actor state enum.
+	// Per-actor state enums (at module scope — names are already unique per protocol).
 	for _, a := range p.Actors {
 		typeName := swiftTypeName(a.Name)
 		states := collectStates(a)
 
-		fmt.Fprintf(&b, "public enum %sState: String, Sendable {\n", typeName)
+		fmt.Fprintf(&b, "public enum %s%sState: String, Sendable {\n", protoName, typeName)
 		for _, s := range states {
 			fmt.Fprintf(&b, "    case %s = \"%s\"\n", swiftCase(string(s)), s)
 		}
 		b.WriteString("}\n\n")
 	}
 
-	// Guard ID enum.
-	if len(p.Guards) > 0 {
-		b.WriteString("public enum GuardID: String, Sendable {\n")
-		for _, g := range p.Guards {
-			fmt.Fprintf(&b, "    case %s = \"%s\"\n", swiftCase(string(g.ID)), g.ID)
-		}
-		b.WriteString("}\n\n")
-	}
-
-	// Action ID enum.
-	actions := collectActions(p)
-	if len(actions) > 0 {
-		b.WriteString("public enum ActionID: String, Sendable {\n")
-		for _, id := range actions {
-			fmt.Fprintf(&b, "    case %s = \"%s\"\n", swiftCase(id), id)
-		}
-		b.WriteString("}\n\n")
-	}
-
-	// EventID enum — declared events + internal events + recv_* events.
-	events := collectAllEvents(p)
-	if len(events) > 0 {
-		b.WriteString("public enum EventID: String, Sendable {\n")
-		for _, id := range events {
-			fmt.Fprintf(&b, "    case %s = \"%s\"\n", swiftCase(id), id)
-		}
-		b.WriteString("}\n\n")
-	}
-
-	// CmdID enum.
-	if len(p.Commands) > 0 {
-		b.WriteString("public enum CmdID: String, Sendable {\n")
-		for _, c := range p.Commands {
-			fmt.Fprintf(&b, "    case %s = \"%s\"\n", swiftCase(string(c.ID)), c.ID)
-		}
-		b.WriteString("}\n\n")
-	}
-
-	// Wire constants.
+	// Wire constants (at module scope — already prefixed with protocol name).
 	if len(p.WireConsts) > 0 {
 		b.WriteString("/// Protocol wire constants shared across all platforms.\n")
-		fmt.Fprintf(&b, "public enum %sWire {\n", swiftTypeName(p.Name))
+		fmt.Fprintf(&b, "public enum %sWire {\n", protoName)
 		for _, wc := range p.WireConsts {
 			name := swiftCase(wc.Name)
 			switch wc.Type {
@@ -102,16 +59,63 @@ func (p *Protocol) ExportSwift(w io.Writer) error {
 		b.WriteString("}\n\n")
 	}
 
-	// Protocol table as a static struct.
-	b.WriteString("/// The protocol transition table. Fed to Machine for execution.\n")
-	fmt.Fprintf(&b, "public enum %sProtocol {\n", swiftTypeName(p.Name))
+	// Protocol namespace — contains shared enums and transition tables.
+	b.WriteString("/// The protocol transition table and shared type enums.\n")
+	fmt.Fprintf(&b, "public enum %sProtocol {\n\n", protoName)
+
+	// Message type enum (nested).
+	b.WriteString("    public enum MessageType: String, Sendable {\n")
+	for _, m := range p.Messages {
+		fmt.Fprintf(&b, "        case %s = \"%s\"\n", swiftCase(string(m.Type)), m.Type)
+	}
+	b.WriteString("    }\n\n")
+
+	// Guard ID enum (nested).
+	if len(p.Guards) > 0 {
+		b.WriteString("    public enum GuardID: String, Sendable {\n")
+		for _, g := range p.Guards {
+			fmt.Fprintf(&b, "        case %s = \"%s\"\n", swiftCase(string(g.ID)), g.ID)
+		}
+		b.WriteString("    }\n\n")
+	}
+
+	// Action ID enum (nested).
+	actions := collectActions(p)
+	if len(actions) > 0 {
+		b.WriteString("    public enum ActionID: String, Sendable {\n")
+		for _, id := range actions {
+			fmt.Fprintf(&b, "        case %s = \"%s\"\n", swiftCase(id), id)
+		}
+		b.WriteString("    }\n\n")
+	}
+
+	// EventID enum (nested).
+	events := collectAllEvents(p)
+	if len(events) > 0 {
+		b.WriteString("    public enum EventID: String, Sendable {\n")
+		for _, id := range events {
+			fmt.Fprintf(&b, "        case %s = \"%s\"\n", swiftCase(id), id)
+		}
+		b.WriteString("    }\n\n")
+	}
+
+	// CmdID enum (nested).
+	if len(p.Commands) > 0 {
+		b.WriteString("    public enum CmdID: String, Sendable {\n")
+		for _, c := range p.Commands {
+			fmt.Fprintf(&b, "        case %s = \"%s\"\n", swiftCase(string(c.ID)), c.ID)
+		}
+		b.WriteString("    }\n\n")
+	}
+
+	// Transition tables.
 
 	for _, a := range p.Actors {
 		typeName := swiftTypeName(a.Name)
 		fmt.Fprintf(&b, "\n    /// %s transitions.\n", a.Name)
-		fmt.Fprintf(&b, "    public static let %sInitial: %sState = .%s\n\n",
+		fmt.Fprintf(&b, "    public static let %sInitial: %s%sState = .%s\n\n",
 			strings.ToLower(a.Name[:1])+a.Name[1:],
-			typeName,
+			protoName, typeName,
 			swiftCase(string(a.Initial)))
 
 		fmt.Fprintf(&b, "    public static let %sTransitions: [(from: String, to: String, on: String, onKind: String, guard: String?, action: String?, sends: [(to: String, msg: String)])] = [\n",
@@ -152,6 +156,7 @@ func (p *Protocol) ExportSwift(w io.Writer) error {
 	b.WriteString("}\n\n")
 
 	// Per-actor typed state machines.
+	protoPrefix := protoName + "Protocol"
 	for _, a := range p.Actors {
 		typeName := swiftTypeName(a.Name)
 
@@ -164,9 +169,17 @@ func (p *Protocol) ExportSwift(w io.Writer) error {
 		}
 
 		// Machine class.
-		fmt.Fprintf(&b, "/// %sMachine is the generated state machine for the %s actor.\n", typeName, a.Name)
-		fmt.Fprintf(&b, "public final class %sMachine: @unchecked Sendable {\n", typeName)
-		fmt.Fprintf(&b, "    public private(set) var state: %sState\n", typeName)
+		fmt.Fprintf(&b, "/// %s%sMachine is the generated state machine for the %s actor.\n", protoName, typeName, a.Name)
+		fmt.Fprintf(&b, "public final class %s%sMachine: @unchecked Sendable {\n", protoName, typeName)
+		fmt.Fprintf(&b, "    public typealias MessageType = %s.MessageType\n", protoPrefix)
+		fmt.Fprintf(&b, "    public typealias GuardID = %s.GuardID\n", protoPrefix)
+		fmt.Fprintf(&b, "    public typealias ActionID = %s.ActionID\n", protoPrefix)
+		fmt.Fprintf(&b, "    public typealias EventID = %s.EventID\n", protoPrefix)
+		if len(p.Commands) > 0 {
+			fmt.Fprintf(&b, "    public typealias CmdID = %s.CmdID\n", protoPrefix)
+		}
+		b.WriteString("\n")
+		fmt.Fprintf(&b, "    public private(set) var state: %s%sState\n", protoName, typeName)
 
 		// Typed variable fields owned by this actor.
 		for _, v := range p.Vars {
@@ -203,7 +216,11 @@ func (p *Protocol) ExportSwift(w io.Writer) error {
 		// handleEvent — unified entry point returning commands.
 		b.WriteString("    /// Handle any event (message receipt or internal). Returns emitted commands.\n")
 		b.WriteString("    @discardableResult\n")
-		b.WriteString("    public func handleEvent(_ ev: EventID) throws -> [CmdID] {\n")
+		if len(p.Commands) > 0 {
+			b.WriteString("    public func handleEvent(_ ev: EventID) throws -> [CmdID] {\n")
+		} else {
+			b.WriteString("    public func handleEvent(_ ev: EventID) throws -> [String] {\n")
+		}
 		b.WriteString("        switch (state, ev) {\n")
 		for _, t := range a.FlattenedTransitions() {
 			// Compute EventID case name.
@@ -232,7 +249,7 @@ func (p *Protocol) ExportSwift(w io.Writer) error {
 		// handleMessage — backward compat.
 		b.WriteString("    /// Process a received message. Returns the new state, or nil if rejected.\n")
 		fmt.Fprintf(&b, "    @discardableResult\n")
-		fmt.Fprintf(&b, "    public func handleMessage(_ msg: MessageType) throws -> %sState? {\n", typeName)
+		fmt.Fprintf(&b, "    public func handleMessage(_ msg: MessageType) throws -> %s%sState? {\n", protoName, typeName)
 		b.WriteString("        switch (state, msg) {\n")
 		for _, t := range a.FlattenedTransitions() {
 			if t.On.Kind != TriggerRecv {
@@ -260,7 +277,7 @@ func (p *Protocol) ExportSwift(w io.Writer) error {
 		// distinct internal events are event-driven and require handleEvent.
 		b.WriteString("    /// Attempt an internal transition. Returns the new state, or nil if none available.\n")
 		fmt.Fprintf(&b, "    @discardableResult\n")
-		fmt.Fprintf(&b, "    public func step() throws -> %sState? {\n", typeName)
+		fmt.Fprintf(&b, "    public func step() throws -> %s%sState? {\n", protoName, typeName)
 		b.WriteString("        switch state {\n")
 
 		// Group internal transitions by From state.
