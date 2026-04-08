@@ -4,7 +4,7 @@
 // Auto-generated from protocol definition. Do not edit.
 // Source of truth: protocol/*.yaml
 
-export enum ServerState {
+export enum PairingCeremonyServerState {
     Idle = "Idle",
     GenerateToken = "GenerateToken",
     RegisterRelay = "RegisterRelay",
@@ -19,7 +19,7 @@ export enum ServerState {
     SessionActive = "SessionActive",
 }
 
-export enum IosState {
+export enum PairingCeremonyIosState {
     Idle = "Idle",
     ScanQR = "ScanQR",
     ConnectRelay = "ConnectRelay",
@@ -34,7 +34,7 @@ export enum IosState {
     SessionActive = "SessionActive",
 }
 
-export enum CliState {
+export enum PairingCeremonyCliState {
     Idle = "Idle",
     GetKey = "GetKey",
     BeginPair = "BeginPair",
@@ -129,7 +129,7 @@ export namespace PairingCeremonyProtocol {
 
     /** server transition table. */
     export const serverTable: ActorTable = {
-        initial: ServerState.Idle,
+        initial: PairingCeremonyServerState.Idle,
         transitions: [
             { from: "Idle", to: "GenerateToken", on: "pair_begin", onKind: "recv", action: "generate_token" },
             { from: "GenerateToken", to: "RegisterRelay", on: "token created", onKind: "internal", action: "register_relay" },
@@ -151,7 +151,7 @@ export namespace PairingCeremonyProtocol {
 
     /** ios transition table. */
     export const iosTable: ActorTable = {
-        initial: IosState.Idle,
+        initial: PairingCeremonyIosState.Idle,
         transitions: [
             { from: "Idle", to: "ScanQR", on: "user scans QR", onKind: "internal" },
             { from: "ScanQR", to: "ConnectRelay", on: "QR parsed", onKind: "internal" },
@@ -170,7 +170,7 @@ export namespace PairingCeremonyProtocol {
 
     /** cli transition table. */
     export const cliTable: ActorTable = {
-        initial: CliState.Idle,
+        initial: PairingCeremonyCliState.Idle,
         transitions: [
             { from: "Idle", to: "GetKey", on: "cli --init", onKind: "internal" },
             { from: "GetKey", to: "BeginPair", on: "key stored", onKind: "internal", sends: [{ to: "server", msg: "pair_begin" }] },
@@ -183,10 +183,10 @@ export namespace PairingCeremonyProtocol {
 
 }
 
-/** ServerMachine is the generated state machine for the server actor. */
-export class ServerMachine {
+/** PairingCeremonyServerMachine is the generated state machine for the server actor. */
+export class PairingCeremonyServerMachine {
     readonly protocol = PairingCeremonyProtocol;
-    state: ServerState;
+    state: PairingCeremonyServerState;
     currentToken: string = "none"; // pairing token currently in play
     activeTokens: string = ""; // set of valid (non-revoked) tokens
     usedTokens: string = ""; // set of revoked tokens
@@ -205,89 +205,89 @@ export class ServerMachine {
     actions: Map<PairingCeremonyProtocol.ActionID, () => void> = new Map();
 
     constructor() {
-        this.state = ServerState.Idle;
+        this.state = PairingCeremonyServerState.Idle;
     }
 
-    handleEvent(ev: PairingCeremonyProtocol.EventID): PairingCeremonyProtocol.CmdID[] {
+    handleEvent(ev: PairingCeremonyProtocol.EventID): string[] {
         switch (true) {
-            case this.state === ServerState.Idle && ev === PairingCeremonyProtocol.EventID.RecvPairBegin: {
+            case this.state === PairingCeremonyServerState.Idle && ev === PairingCeremonyProtocol.EventID.RecvPairBegin: {
                 this.actions.get(PairingCeremonyProtocol.ActionID.GenerateToken)?.();
                 this.currentToken = "tok_1";
                 // active_tokens: active_tokens \union {"tok_1"} (set by action)
-                this.state = ServerState.GenerateToken;
+                this.state = PairingCeremonyServerState.GenerateToken;
                 return [];
             }
-            case this.state === ServerState.GenerateToken && ev === PairingCeremonyProtocol.EventID.TokenCreated: {
+            case this.state === PairingCeremonyServerState.GenerateToken && ev === PairingCeremonyProtocol.EventID.TokenCreated: {
                 this.actions.get(PairingCeremonyProtocol.ActionID.RegisterRelay)?.();
-                this.state = ServerState.RegisterRelay;
+                this.state = PairingCeremonyServerState.RegisterRelay;
                 return [];
             }
-            case this.state === ServerState.RegisterRelay && ev === PairingCeremonyProtocol.EventID.RelayRegistered: {
-                this.state = ServerState.WaitingForClient;
+            case this.state === PairingCeremonyServerState.RegisterRelay && ev === PairingCeremonyProtocol.EventID.RelayRegistered: {
+                this.state = PairingCeremonyServerState.WaitingForClient;
                 return [];
             }
-            case this.state === ServerState.WaitingForClient && ev === PairingCeremonyProtocol.EventID.RecvPairHello && this.guards.get(PairingCeremonyProtocol.GuardID.TokenValid)?.() === true: {
+            case this.state === PairingCeremonyServerState.WaitingForClient && ev === PairingCeremonyProtocol.EventID.RecvPairHello && this.guards.get(PairingCeremonyProtocol.GuardID.TokenValid)?.() === true: {
                 this.actions.get(PairingCeremonyProtocol.ActionID.DeriveSecret)?.();
                 // received_client_pub: recv_msg.pubkey (set by action)
                 this.serverEcdhPub = "server_pub";
                 // server_shared_key: DeriveKey("server_pub", recv_msg.pubkey) (set by action)
                 // server_code: DeriveCode("server_pub", recv_msg.pubkey) (set by action)
-                this.state = ServerState.DeriveSecret;
+                this.state = PairingCeremonyServerState.DeriveSecret;
                 return [];
             }
-            case this.state === ServerState.WaitingForClient && ev === PairingCeremonyProtocol.EventID.RecvPairHello && this.guards.get(PairingCeremonyProtocol.GuardID.TokenInvalid)?.() === true: {
-                this.state = ServerState.Idle;
+            case this.state === PairingCeremonyServerState.WaitingForClient && ev === PairingCeremonyProtocol.EventID.RecvPairHello && this.guards.get(PairingCeremonyProtocol.GuardID.TokenInvalid)?.() === true: {
+                this.state = PairingCeremonyServerState.Idle;
                 return [];
             }
-            case this.state === ServerState.DeriveSecret && ev === PairingCeremonyProtocol.EventID.ECDHComplete: {
-                this.state = ServerState.SendAck;
+            case this.state === PairingCeremonyServerState.DeriveSecret && ev === PairingCeremonyProtocol.EventID.ECDHComplete: {
+                this.state = PairingCeremonyServerState.SendAck;
                 return [];
             }
-            case this.state === ServerState.SendAck && ev === PairingCeremonyProtocol.EventID.SignalCodeDisplay: {
-                this.state = ServerState.WaitingForCode;
+            case this.state === PairingCeremonyServerState.SendAck && ev === PairingCeremonyProtocol.EventID.SignalCodeDisplay: {
+                this.state = PairingCeremonyServerState.WaitingForCode;
                 return [];
             }
-            case this.state === ServerState.WaitingForCode && ev === PairingCeremonyProtocol.EventID.RecvCodeSubmit: {
+            case this.state === PairingCeremonyServerState.WaitingForCode && ev === PairingCeremonyProtocol.EventID.RecvCodeSubmit: {
                 // received_code: recv_msg.code (set by action)
-                this.state = ServerState.ValidateCode;
+                this.state = PairingCeremonyServerState.ValidateCode;
                 return [];
             }
-            case this.state === ServerState.ValidateCode && ev === PairingCeremonyProtocol.EventID.CheckCode && this.guards.get(PairingCeremonyProtocol.GuardID.CodeCorrect)?.() === true: {
-                this.state = ServerState.StorePaired;
+            case this.state === PairingCeremonyServerState.ValidateCode && ev === PairingCeremonyProtocol.EventID.CheckCode && this.guards.get(PairingCeremonyProtocol.GuardID.CodeCorrect)?.() === true: {
+                this.state = PairingCeremonyServerState.StorePaired;
                 return [];
             }
-            case this.state === ServerState.ValidateCode && ev === PairingCeremonyProtocol.EventID.CheckCode && this.guards.get(PairingCeremonyProtocol.GuardID.CodeWrong)?.() === true: {
+            case this.state === PairingCeremonyServerState.ValidateCode && ev === PairingCeremonyProtocol.EventID.CheckCode && this.guards.get(PairingCeremonyProtocol.GuardID.CodeWrong)?.() === true: {
                 // code_attempts: code_attempts + 1 (set by action)
-                this.state = ServerState.Idle;
+                this.state = PairingCeremonyServerState.Idle;
                 return [];
             }
-            case this.state === ServerState.StorePaired && ev === PairingCeremonyProtocol.EventID.Finalise: {
+            case this.state === PairingCeremonyServerState.StorePaired && ev === PairingCeremonyProtocol.EventID.Finalise: {
                 this.actions.get(PairingCeremonyProtocol.ActionID.StoreDevice)?.();
                 this.deviceSecret = "dev_secret_1";
                 // paired_devices: paired_devices \union {"device_1"} (set by action)
                 // active_tokens: active_tokens \ {current_token} (set by action)
                 // used_tokens: used_tokens \union {current_token} (set by action)
-                this.state = ServerState.Paired;
+                this.state = PairingCeremonyServerState.Paired;
                 return [];
             }
-            case this.state === ServerState.Paired && ev === PairingCeremonyProtocol.EventID.RecvAuthRequest: {
+            case this.state === PairingCeremonyServerState.Paired && ev === PairingCeremonyProtocol.EventID.RecvAuthRequest: {
                 // received_device_id: recv_msg.device_id (set by action)
                 // received_auth_nonce: recv_msg.nonce (set by action)
-                this.state = ServerState.AuthCheck;
+                this.state = PairingCeremonyServerState.AuthCheck;
                 return [];
             }
-            case this.state === ServerState.AuthCheck && ev === PairingCeremonyProtocol.EventID.Verify && this.guards.get(PairingCeremonyProtocol.GuardID.DeviceKnown)?.() === true: {
+            case this.state === PairingCeremonyServerState.AuthCheck && ev === PairingCeremonyProtocol.EventID.Verify && this.guards.get(PairingCeremonyProtocol.GuardID.DeviceKnown)?.() === true: {
                 this.actions.get(PairingCeremonyProtocol.ActionID.VerifyDevice)?.();
                 // auth_nonces_used: auth_nonces_used \union {received_auth_nonce} (set by action)
-                this.state = ServerState.SessionActive;
+                this.state = PairingCeremonyServerState.SessionActive;
                 return [];
             }
-            case this.state === ServerState.AuthCheck && ev === PairingCeremonyProtocol.EventID.Verify && this.guards.get(PairingCeremonyProtocol.GuardID.DeviceUnknown)?.() === true: {
-                this.state = ServerState.Idle;
+            case this.state === PairingCeremonyServerState.AuthCheck && ev === PairingCeremonyProtocol.EventID.Verify && this.guards.get(PairingCeremonyProtocol.GuardID.DeviceUnknown)?.() === true: {
+                this.state = PairingCeremonyServerState.Idle;
                 return [];
             }
-            case this.state === ServerState.SessionActive && ev === PairingCeremonyProtocol.EventID.Disconnect: {
-                this.state = ServerState.Paired;
+            case this.state === PairingCeremonyServerState.SessionActive && ev === PairingCeremonyProtocol.EventID.Disconnect: {
+                this.state = PairingCeremonyServerState.Paired;
                 return [];
             }
         }
@@ -295,10 +295,10 @@ export class ServerMachine {
     }
 }
 
-/** IosMachine is the generated state machine for the ios actor. */
-export class IosMachine {
+/** PairingCeremonyIosMachine is the generated state machine for the ios actor. */
+export class PairingCeremonyIosMachine {
     readonly protocol = PairingCeremonyProtocol;
-    state: IosState;
+    state: PairingCeremonyIosState;
     receivedServerPub: string = "none"; // pubkey ios received in pair_hello_ack (may be adversary's)
     clientSharedKey: string = ""; // ECDH key derived by ios (tuple to match DeriveKey output type)
     iosCode: string = ""; // code computed by ios from its view of the pubkeys (tuple to match DeriveCode output type)
@@ -306,63 +306,63 @@ export class IosMachine {
     actions: Map<PairingCeremonyProtocol.ActionID, () => void> = new Map();
 
     constructor() {
-        this.state = IosState.Idle;
+        this.state = PairingCeremonyIosState.Idle;
     }
 
-    handleEvent(ev: PairingCeremonyProtocol.EventID): PairingCeremonyProtocol.CmdID[] {
+    handleEvent(ev: PairingCeremonyProtocol.EventID): string[] {
         switch (true) {
-            case this.state === IosState.Idle && ev === PairingCeremonyProtocol.EventID.UserScansQR: {
-                this.state = IosState.ScanQR;
+            case this.state === PairingCeremonyIosState.Idle && ev === PairingCeremonyProtocol.EventID.UserScansQR: {
+                this.state = PairingCeremonyIosState.ScanQR;
                 return [];
             }
-            case this.state === IosState.ScanQR && ev === PairingCeremonyProtocol.EventID.QRParsed: {
-                this.state = IosState.ConnectRelay;
+            case this.state === PairingCeremonyIosState.ScanQR && ev === PairingCeremonyProtocol.EventID.QRParsed: {
+                this.state = PairingCeremonyIosState.ConnectRelay;
                 return [];
             }
-            case this.state === IosState.ConnectRelay && ev === PairingCeremonyProtocol.EventID.RelayConnected: {
-                this.state = IosState.GenKeyPair;
+            case this.state === PairingCeremonyIosState.ConnectRelay && ev === PairingCeremonyProtocol.EventID.RelayConnected: {
+                this.state = PairingCeremonyIosState.GenKeyPair;
                 return [];
             }
-            case this.state === IosState.GenKeyPair && ev === PairingCeremonyProtocol.EventID.KeyPairGenerated: {
+            case this.state === PairingCeremonyIosState.GenKeyPair && ev === PairingCeremonyProtocol.EventID.KeyPairGenerated: {
                 this.actions.get(PairingCeremonyProtocol.ActionID.SendPairHello)?.();
-                this.state = IosState.WaitAck;
+                this.state = PairingCeremonyIosState.WaitAck;
                 return [];
             }
-            case this.state === IosState.WaitAck && ev === PairingCeremonyProtocol.EventID.RecvPairHelloAck: {
+            case this.state === PairingCeremonyIosState.WaitAck && ev === PairingCeremonyProtocol.EventID.RecvPairHelloAck: {
                 this.actions.get(PairingCeremonyProtocol.ActionID.DeriveSecret)?.();
                 // received_server_pub: recv_msg.pubkey (set by action)
                 // client_shared_key: DeriveKey("client_pub", recv_msg.pubkey) (set by action)
-                this.state = IosState.E2EReady;
+                this.state = PairingCeremonyIosState.E2EReady;
                 return [];
             }
-            case this.state === IosState.E2EReady && ev === PairingCeremonyProtocol.EventID.RecvPairConfirm: {
+            case this.state === PairingCeremonyIosState.E2EReady && ev === PairingCeremonyProtocol.EventID.RecvPairConfirm: {
                 // ios_code: DeriveCode(received_server_pub, "client_pub") (set by action)
-                this.state = IosState.ShowCode;
+                this.state = PairingCeremonyIosState.ShowCode;
                 return [];
             }
-            case this.state === IosState.ShowCode && ev === PairingCeremonyProtocol.EventID.CodeDisplayed: {
-                this.state = IosState.WaitPairComplete;
+            case this.state === PairingCeremonyIosState.ShowCode && ev === PairingCeremonyProtocol.EventID.CodeDisplayed: {
+                this.state = PairingCeremonyIosState.WaitPairComplete;
                 return [];
             }
-            case this.state === IosState.WaitPairComplete && ev === PairingCeremonyProtocol.EventID.RecvPairComplete: {
+            case this.state === PairingCeremonyIosState.WaitPairComplete && ev === PairingCeremonyProtocol.EventID.RecvPairComplete: {
                 this.actions.get(PairingCeremonyProtocol.ActionID.StoreSecret)?.();
-                this.state = IosState.Paired;
+                this.state = PairingCeremonyIosState.Paired;
                 return [];
             }
-            case this.state === IosState.Paired && ev === PairingCeremonyProtocol.EventID.AppLaunch: {
-                this.state = IosState.Reconnect;
+            case this.state === PairingCeremonyIosState.Paired && ev === PairingCeremonyProtocol.EventID.AppLaunch: {
+                this.state = PairingCeremonyIosState.Reconnect;
                 return [];
             }
-            case this.state === IosState.Reconnect && ev === PairingCeremonyProtocol.EventID.RelayConnected: {
-                this.state = IosState.SendAuth;
+            case this.state === PairingCeremonyIosState.Reconnect && ev === PairingCeremonyProtocol.EventID.RelayConnected: {
+                this.state = PairingCeremonyIosState.SendAuth;
                 return [];
             }
-            case this.state === IosState.SendAuth && ev === PairingCeremonyProtocol.EventID.RecvAuthOk: {
-                this.state = IosState.SessionActive;
+            case this.state === PairingCeremonyIosState.SendAuth && ev === PairingCeremonyProtocol.EventID.RecvAuthOk: {
+                this.state = PairingCeremonyIosState.SessionActive;
                 return [];
             }
-            case this.state === IosState.SessionActive && ev === PairingCeremonyProtocol.EventID.Disconnect: {
-                this.state = IosState.Paired;
+            case this.state === PairingCeremonyIosState.SessionActive && ev === PairingCeremonyProtocol.EventID.Disconnect: {
+                this.state = PairingCeremonyIosState.Paired;
                 return [];
             }
         }
@@ -370,41 +370,41 @@ export class IosMachine {
     }
 }
 
-/** CliMachine is the generated state machine for the cli actor. */
-export class CliMachine {
+/** PairingCeremonyCliMachine is the generated state machine for the cli actor. */
+export class PairingCeremonyCliMachine {
     readonly protocol = PairingCeremonyProtocol;
-    state: CliState;
+    state: PairingCeremonyCliState;
     guards: Map<PairingCeremonyProtocol.GuardID, () => boolean> = new Map();
     actions: Map<PairingCeremonyProtocol.ActionID, () => void> = new Map();
 
     constructor() {
-        this.state = CliState.Idle;
+        this.state = PairingCeremonyCliState.Idle;
     }
 
-    handleEvent(ev: PairingCeremonyProtocol.EventID): PairingCeremonyProtocol.CmdID[] {
+    handleEvent(ev: PairingCeremonyProtocol.EventID): string[] {
         switch (true) {
-            case this.state === CliState.Idle && ev === PairingCeremonyProtocol.EventID.CliInit: {
-                this.state = CliState.GetKey;
+            case this.state === PairingCeremonyCliState.Idle && ev === PairingCeremonyProtocol.EventID.CliInit: {
+                this.state = PairingCeremonyCliState.GetKey;
                 return [];
             }
-            case this.state === CliState.GetKey && ev === PairingCeremonyProtocol.EventID.KeyStored: {
-                this.state = CliState.BeginPair;
+            case this.state === PairingCeremonyCliState.GetKey && ev === PairingCeremonyProtocol.EventID.KeyStored: {
+                this.state = PairingCeremonyCliState.BeginPair;
                 return [];
             }
-            case this.state === CliState.BeginPair && ev === PairingCeremonyProtocol.EventID.RecvTokenResponse: {
-                this.state = CliState.ShowQR;
+            case this.state === PairingCeremonyCliState.BeginPair && ev === PairingCeremonyProtocol.EventID.RecvTokenResponse: {
+                this.state = PairingCeremonyCliState.ShowQR;
                 return [];
             }
-            case this.state === CliState.ShowQR && ev === PairingCeremonyProtocol.EventID.RecvWaitingForCode: {
-                this.state = CliState.PromptCode;
+            case this.state === PairingCeremonyCliState.ShowQR && ev === PairingCeremonyProtocol.EventID.RecvWaitingForCode: {
+                this.state = PairingCeremonyCliState.PromptCode;
                 return [];
             }
-            case this.state === CliState.PromptCode && ev === PairingCeremonyProtocol.EventID.UserEntersCode: {
-                this.state = CliState.SubmitCode;
+            case this.state === PairingCeremonyCliState.PromptCode && ev === PairingCeremonyProtocol.EventID.UserEntersCode: {
+                this.state = PairingCeremonyCliState.SubmitCode;
                 return [];
             }
-            case this.state === CliState.SubmitCode && ev === PairingCeremonyProtocol.EventID.RecvPairStatus: {
-                this.state = CliState.Done;
+            case this.state === PairingCeremonyCliState.SubmitCode && ev === PairingCeremonyProtocol.EventID.RecvPairStatus: {
+                this.state = PairingCeremonyCliState.Done;
                 return [];
             }
         }

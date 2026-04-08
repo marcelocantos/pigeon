@@ -6,7 +6,7 @@
 
 package com.marcelocantos.pigeon.crypto
 
-enum class BackendState(val value: String) {
+enum class SessionBackendState(val value: String) {
     Idle("Idle"),
     GenerateToken("GenerateToken"),
     RegisterRelay("RegisterRelay"),
@@ -26,7 +26,7 @@ enum class BackendState(val value: String) {
     LANDegraded("LANDegraded");
 }
 
-enum class ClientState(val value: String) {
+enum class SessionClientState(val value: String) {
     Idle("Idle"),
     ObtainBackchannelSecret("ObtainBackchannelSecret"),
     ConnectRelay("ConnectRelay"),
@@ -46,7 +46,7 @@ enum class ClientState(val value: String) {
     RelayFallback("RelayFallback");
 }
 
-enum class RelayState(val value: String) {
+enum class SessionRelayState(val value: String) {
     Idle("Idle"),
     BackendRegistered("BackendRegistered"),
     Bridged("Bridged");
@@ -219,7 +219,7 @@ object SessionProtocol {
 
     /** backend transition table. */
     object BackendTable {
-        val initial = BackendState.Idle
+        val initial = SessionBackendState.Idle
 
         data class Transition(
             val from: String,
@@ -300,7 +300,7 @@ object SessionProtocol {
 
     /** client transition table. */
     object ClientTable {
-        val initial = ClientState.Idle
+        val initial = SessionClientState.Idle
 
         data class Transition(
             val from: String,
@@ -372,7 +372,7 @@ object SessionProtocol {
 
     /** relay transition table. */
     object RelayTable {
-        val initial = RelayState.Idle
+        val initial = SessionRelayState.Idle
 
         data class Transition(
             val from: String,
@@ -394,9 +394,9 @@ object SessionProtocol {
 
 }
 
-/** BackendMachine is the generated state machine for the backend actor. */
-class BackendMachine {
-    var state: BackendState = BackendState.Idle
+/** SessionBackendMachine is the generated state machine for the backend actor. */
+class SessionBackendMachine {
+    var state: SessionBackendState = SessionBackendState.Idle
         private set
     var currentToken: String = "none" // pairing token currently in play
     var activeTokens: String = "" // set of valid (non-revoked) tokens
@@ -424,109 +424,109 @@ class BackendMachine {
 
     /** Handle an event and return the list of commands to execute. */
     fun handleEvent(ev: SessionProtocol.EventID): List<SessionProtocol.CmdID> {
-        val cmds = when {
-            state == BackendState.Idle && ev == SessionProtocol.EventID.CliInitPair ->
+        val cmds: List<SessionProtocol.CmdID> = when {
+            state == SessionBackendState.Idle && ev == SessionProtocol.EventID.CliInitPair ->
                 run {
                     actions[SessionProtocol.ActionID.GenerateToken]?.invoke()
                     currentToken = "tok_1"
                     // active_tokens: active_tokens \union {"tok_1"} (set by action)
-                    state = BackendState.GenerateToken
+                    state = SessionBackendState.GenerateToken
                     emptyList()
                 }
-            state == BackendState.GenerateToken && ev == SessionProtocol.EventID.TokenCreated ->
+            state == SessionBackendState.GenerateToken && ev == SessionProtocol.EventID.TokenCreated ->
                 run {
                     actions[SessionProtocol.ActionID.RegisterRelay]?.invoke()
-                    state = BackendState.RegisterRelay
+                    state = SessionBackendState.RegisterRelay
                     emptyList()
                 }
-            state == BackendState.RegisterRelay && ev == SessionProtocol.EventID.RelayRegistered ->
+            state == SessionBackendState.RegisterRelay && ev == SessionProtocol.EventID.RelayRegistered ->
                 run {
                     secretPublished = true
-                    state = BackendState.WaitingForClient
+                    state = SessionBackendState.WaitingForClient
                     emptyList()
                 }
-            state == BackendState.WaitingForClient && ev == SessionProtocol.EventID.RecvPairHello && guards[SessionProtocol.GuardID.TokenValid]?.invoke() == true ->
+            state == SessionBackendState.WaitingForClient && ev == SessionProtocol.EventID.RecvPairHello && guards[SessionProtocol.GuardID.TokenValid]?.invoke() == true ->
                 run {
                     actions[SessionProtocol.ActionID.DeriveSecret]?.invoke()
                     // received_client_pub: recv_msg.pubkey (set by action)
                     backendEcdhPub = "backend_pub"
                     // backend_shared_key: DeriveKey("backend_pub", recv_msg.pubkey) (set by action)
                     // backend_code: DeriveCode("backend_pub", recv_msg.pubkey) (set by action)
-                    state = BackendState.DeriveSecret
+                    state = SessionBackendState.DeriveSecret
                     emptyList()
                 }
-            state == BackendState.WaitingForClient && ev == SessionProtocol.EventID.RecvPairHello && guards[SessionProtocol.GuardID.TokenInvalid]?.invoke() == true ->
+            state == SessionBackendState.WaitingForClient && ev == SessionProtocol.EventID.RecvPairHello && guards[SessionProtocol.GuardID.TokenInvalid]?.invoke() == true ->
                 run {
-                    state = BackendState.Idle
+                    state = SessionBackendState.Idle
                     emptyList()
                 }
-            state == BackendState.DeriveSecret && ev == SessionProtocol.EventID.EcdhComplete ->
+            state == SessionBackendState.DeriveSecret && ev == SessionProtocol.EventID.EcdhComplete ->
                 run {
-                    state = BackendState.SendAck
+                    state = SessionBackendState.SendAck
                     emptyList()
                 }
-            state == BackendState.SendAck && ev == SessionProtocol.EventID.SignalCodeDisplay ->
+            state == SessionBackendState.SendAck && ev == SessionProtocol.EventID.SignalCodeDisplay ->
                 run {
-                    state = BackendState.WaitingForCode
+                    state = SessionBackendState.WaitingForCode
                     emptyList()
                 }
-            state == BackendState.WaitingForCode && ev == SessionProtocol.EventID.CliCodeEntered ->
+            state == SessionBackendState.WaitingForCode && ev == SessionProtocol.EventID.CliCodeEntered ->
                 run {
                     // received_code: cli_entered_code (set by action)
-                    state = BackendState.ValidateCode
+                    state = SessionBackendState.ValidateCode
                     emptyList()
                 }
-            state == BackendState.ValidateCode && ev == SessionProtocol.EventID.CheckCode && guards[SessionProtocol.GuardID.CodeCorrect]?.invoke() == true ->
+            state == SessionBackendState.ValidateCode && ev == SessionProtocol.EventID.CheckCode && guards[SessionProtocol.GuardID.CodeCorrect]?.invoke() == true ->
                 run {
-                    state = BackendState.StorePaired
+                    state = SessionBackendState.StorePaired
                     emptyList()
                 }
-            state == BackendState.ValidateCode && ev == SessionProtocol.EventID.CheckCode && guards[SessionProtocol.GuardID.CodeWrong]?.invoke() == true ->
+            state == SessionBackendState.ValidateCode && ev == SessionProtocol.EventID.CheckCode && guards[SessionProtocol.GuardID.CodeWrong]?.invoke() == true ->
                 run {
                     // code_attempts: code_attempts + 1 (set by action)
-                    state = BackendState.Idle
+                    state = SessionBackendState.Idle
                     emptyList()
                 }
-            state == BackendState.StorePaired && ev == SessionProtocol.EventID.Finalise ->
+            state == SessionBackendState.StorePaired && ev == SessionProtocol.EventID.Finalise ->
                 run {
                     actions[SessionProtocol.ActionID.StoreDevice]?.invoke()
                     deviceSecret = "dev_secret_1"
                     // paired_devices: paired_devices \union {"device_1"} (set by action)
                     // active_tokens: active_tokens \ {current_token} (set by action)
                     // used_tokens: used_tokens \union {current_token} (set by action)
-                    state = BackendState.Paired
+                    state = SessionBackendState.Paired
                     emptyList()
                 }
-            state == BackendState.Paired && ev == SessionProtocol.EventID.RecvAuthRequest ->
+            state == SessionBackendState.Paired && ev == SessionProtocol.EventID.RecvAuthRequest ->
                 run {
                     // received_device_id: recv_msg.device_id (set by action)
                     // received_auth_nonce: recv_msg.nonce (set by action)
-                    state = BackendState.AuthCheck
+                    state = SessionBackendState.AuthCheck
                     emptyList()
                 }
-            state == BackendState.AuthCheck && ev == SessionProtocol.EventID.Verify && guards[SessionProtocol.GuardID.DeviceKnown]?.invoke() == true ->
+            state == SessionBackendState.AuthCheck && ev == SessionProtocol.EventID.Verify && guards[SessionProtocol.GuardID.DeviceKnown]?.invoke() == true ->
                 run {
                     actions[SessionProtocol.ActionID.VerifyDevice]?.invoke()
                     // auth_nonces_used: auth_nonces_used \union {received_auth_nonce} (set by action)
-                    state = BackendState.SessionActive
+                    state = SessionBackendState.SessionActive
                     emptyList()
                 }
-            state == BackendState.AuthCheck && ev == SessionProtocol.EventID.Verify && guards[SessionProtocol.GuardID.DeviceUnknown]?.invoke() == true ->
+            state == SessionBackendState.AuthCheck && ev == SessionProtocol.EventID.Verify && guards[SessionProtocol.GuardID.DeviceUnknown]?.invoke() == true ->
                 run {
-                    state = BackendState.Idle
+                    state = SessionBackendState.Idle
                     emptyList()
                 }
-            state == BackendState.SessionActive && ev == SessionProtocol.EventID.SessionEstablished ->
+            state == SessionBackendState.SessionActive && ev == SessionProtocol.EventID.SessionEstablished ->
                 run {
-                    state = BackendState.RelayConnected
+                    state = SessionBackendState.RelayConnected
                     emptyList()
                 }
-            state == BackendState.RelayConnected && ev == SessionProtocol.EventID.LanServerReady ->
+            state == SessionBackendState.RelayConnected && ev == SessionProtocol.EventID.LanServerReady ->
                 run {
-                    state = BackendState.LANOffered
+                    state = SessionBackendState.LANOffered
                     listOf(SessionProtocol.CmdID.SendLanOffer)
                 }
-            state == BackendState.LANOffered && ev == SessionProtocol.EventID.RecvLanVerify && guards[SessionProtocol.GuardID.ChallengeValid]?.invoke() == true ->
+            state == SessionBackendState.LANOffered && ev == SessionProtocol.EventID.RecvLanVerify && guards[SessionProtocol.GuardID.ChallengeValid]?.invoke() == true ->
                 run {
                     actions[SessionProtocol.ActionID.ActivateLan]?.invoke()
                     pingFailures = 0
@@ -535,38 +535,38 @@ class BackendMachine {
                     bDispatcherPath = "lan"
                     monitorTarget = "lan"
                     lanSignal = "ready"
-                    state = BackendState.LANActive
+                    state = SessionBackendState.LANActive
                     listOf(SessionProtocol.CmdID.SendLanConfirm, SessionProtocol.CmdID.StartLanStreamReader, SessionProtocol.CmdID.StartLanDgReader, SessionProtocol.CmdID.StartMonitor, SessionProtocol.CmdID.SignalLanReady, SessionProtocol.CmdID.SetCryptoDatagram)
                 }
-            state == BackendState.LANOffered && ev == SessionProtocol.EventID.RecvLanVerify && guards[SessionProtocol.GuardID.ChallengeInvalid]?.invoke() == true ->
+            state == SessionBackendState.LANOffered && ev == SessionProtocol.EventID.RecvLanVerify && guards[SessionProtocol.GuardID.ChallengeInvalid]?.invoke() == true ->
                 run {
-                    state = BackendState.RelayConnected
+                    state = SessionBackendState.RelayConnected
                     emptyList()
                 }
-            state == BackendState.LANOffered && ev == SessionProtocol.EventID.OfferTimeout ->
+            state == SessionBackendState.LANOffered && ev == SessionProtocol.EventID.OfferTimeout ->
                 run {
                     // backoff_level: Min(backoff_level + 1, max_backoff_level) (set by action)
                     lanSignal = "pending"
-                    state = BackendState.RelayBackoff
+                    state = SessionBackendState.RelayBackoff
                     listOf(SessionProtocol.CmdID.ResetLanReady, SessionProtocol.CmdID.StartBackoffTimer)
                 }
-            state == BackendState.LANActive && ev == SessionProtocol.EventID.PingTick ->
+            state == SessionBackendState.LANActive && ev == SessionProtocol.EventID.PingTick ->
                 run {
-                    state = BackendState.LANActive
+                    state = SessionBackendState.LANActive
                     listOf(SessionProtocol.CmdID.SendPathPing, SessionProtocol.CmdID.StartPongTimeout)
                 }
-            state == BackendState.LANActive && ev == SessionProtocol.EventID.PingTimeout ->
+            state == SessionBackendState.LANActive && ev == SessionProtocol.EventID.PingTimeout ->
                 run {
                     pingFailures = 1
-                    state = BackendState.LANDegraded
+                    state = SessionBackendState.LANDegraded
                     emptyList()
                 }
-            state == BackendState.LANDegraded && ev == SessionProtocol.EventID.PingTick ->
+            state == SessionBackendState.LANDegraded && ev == SessionProtocol.EventID.PingTick ->
                 run {
-                    state = BackendState.LANDegraded
+                    state = SessionBackendState.LANDegraded
                     listOf(SessionProtocol.CmdID.SendPathPing, SessionProtocol.CmdID.StartPongTimeout)
                 }
-            state == BackendState.LANActive && ev == SessionProtocol.EventID.LanStreamError ->
+            state == SessionBackendState.LANActive && ev == SessionProtocol.EventID.LanStreamError ->
                 run {
                     actions[SessionProtocol.ActionID.FallbackToRelay]?.invoke()
                     // backoff_level: Min(backoff_level + 1, max_backoff_level) (set by action)
@@ -575,10 +575,10 @@ class BackendMachine {
                     monitorTarget = "none"
                     lanSignal = "pending"
                     pingFailures = 0
-                    state = BackendState.RelayBackoff
+                    state = SessionBackendState.RelayBackoff
                     listOf(SessionProtocol.CmdID.StopMonitor, SessionProtocol.CmdID.StopLanStreamReader, SessionProtocol.CmdID.StopLanDgReader, SessionProtocol.CmdID.CloseLanPath, SessionProtocol.CmdID.ResetLanReady, SessionProtocol.CmdID.StartBackoffTimer)
                 }
-            state == BackendState.LANDegraded && ev == SessionProtocol.EventID.LanStreamError ->
+            state == SessionBackendState.LANDegraded && ev == SessionProtocol.EventID.LanStreamError ->
                 run {
                     actions[SessionProtocol.ActionID.FallbackToRelay]?.invoke()
                     // backoff_level: Min(backoff_level + 1, max_backoff_level) (set by action)
@@ -587,23 +587,23 @@ class BackendMachine {
                     monitorTarget = "none"
                     lanSignal = "pending"
                     pingFailures = 0
-                    state = BackendState.RelayBackoff
+                    state = SessionBackendState.RelayBackoff
                     listOf(SessionProtocol.CmdID.StopMonitor, SessionProtocol.CmdID.StopLanStreamReader, SessionProtocol.CmdID.StopLanDgReader, SessionProtocol.CmdID.CloseLanPath, SessionProtocol.CmdID.ResetLanReady, SessionProtocol.CmdID.StartBackoffTimer)
                 }
-            state == BackendState.LANDegraded && ev == SessionProtocol.EventID.RecvPathPong ->
+            state == SessionBackendState.LANDegraded && ev == SessionProtocol.EventID.RecvPathPong ->
                 run {
                     actions[SessionProtocol.ActionID.ResetFailures]?.invoke()
                     pingFailures = 0
-                    state = BackendState.LANActive
+                    state = SessionBackendState.LANActive
                     listOf(SessionProtocol.CmdID.CancelPongTimeout)
                 }
-            state == BackendState.LANDegraded && ev == SessionProtocol.EventID.PingTimeout && guards[SessionProtocol.GuardID.UnderMaxFailures]?.invoke() == true ->
+            state == SessionBackendState.LANDegraded && ev == SessionProtocol.EventID.PingTimeout && guards[SessionProtocol.GuardID.UnderMaxFailures]?.invoke() == true ->
                 run {
                     // ping_failures: ping_failures + 1 (set by action)
-                    state = BackendState.LANDegraded
+                    state = SessionBackendState.LANDegraded
                     emptyList()
                 }
-            state == BackendState.LANDegraded && ev == SessionProtocol.EventID.PingTimeout && guards[SessionProtocol.GuardID.AtMaxFailures]?.invoke() == true ->
+            state == SessionBackendState.LANDegraded && ev == SessionProtocol.EventID.PingTimeout && guards[SessionProtocol.GuardID.AtMaxFailures]?.invoke() == true ->
                 run {
                     actions[SessionProtocol.ActionID.FallbackToRelay]?.invoke()
                     // backoff_level: Min(backoff_level + 1, max_backoff_level) (set by action)
@@ -612,32 +612,32 @@ class BackendMachine {
                     monitorTarget = "none"
                     lanSignal = "pending"
                     pingFailures = 0
-                    state = BackendState.RelayBackoff
+                    state = SessionBackendState.RelayBackoff
                     listOf(SessionProtocol.CmdID.StopMonitor, SessionProtocol.CmdID.StopLanStreamReader, SessionProtocol.CmdID.StopLanDgReader, SessionProtocol.CmdID.CloseLanPath, SessionProtocol.CmdID.ResetLanReady, SessionProtocol.CmdID.StartBackoffTimer)
                 }
-            state == BackendState.RelayBackoff && ev == SessionProtocol.EventID.BackoffExpired ->
+            state == SessionBackendState.RelayBackoff && ev == SessionProtocol.EventID.BackoffExpired ->
                 run {
-                    state = BackendState.LANOffered
+                    state = SessionBackendState.LANOffered
                     listOf(SessionProtocol.CmdID.SendLanOffer)
                 }
-            state == BackendState.RelayBackoff && ev == SessionProtocol.EventID.LanServerChanged ->
+            state == SessionBackendState.RelayBackoff && ev == SessionProtocol.EventID.LanServerChanged ->
                 run {
                     backoffLevel = 0
-                    state = BackendState.LANOffered
+                    state = SessionBackendState.LANOffered
                     listOf(SessionProtocol.CmdID.SendLanOffer)
                 }
-            state == BackendState.RelayConnected && ev == SessionProtocol.EventID.ReadvertiseTick && guards[SessionProtocol.GuardID.LanServerAvailable]?.invoke() == true ->
+            state == SessionBackendState.RelayConnected && ev == SessionProtocol.EventID.ReadvertiseTick && guards[SessionProtocol.GuardID.LanServerAvailable]?.invoke() == true ->
                 run {
-                    state = BackendState.LANOffered
+                    state = SessionBackendState.LANOffered
                     listOf(SessionProtocol.CmdID.SendLanOffer)
                 }
-            state == BackendState.LANOffered && ev == SessionProtocol.EventID.AppForceFallback ->
+            state == SessionBackendState.LANOffered && ev == SessionProtocol.EventID.AppForceFallback ->
                 run {
                     lanSignal = "pending"
-                    state = BackendState.RelayConnected
+                    state = SessionBackendState.RelayConnected
                     listOf(SessionProtocol.CmdID.ResetLanReady)
                 }
-            state == BackendState.LANActive && ev == SessionProtocol.EventID.AppForceFallback ->
+            state == SessionBackendState.LANActive && ev == SessionProtocol.EventID.AppForceFallback ->
                 run {
                     actions[SessionProtocol.ActionID.FallbackToRelay]?.invoke()
                     // backoff_level: Min(backoff_level + 1, max_backoff_level) (set by action)
@@ -646,10 +646,10 @@ class BackendMachine {
                     monitorTarget = "none"
                     lanSignal = "pending"
                     pingFailures = 0
-                    state = BackendState.RelayBackoff
+                    state = SessionBackendState.RelayBackoff
                     listOf(SessionProtocol.CmdID.StopMonitor, SessionProtocol.CmdID.CancelPongTimeout, SessionProtocol.CmdID.StopLanStreamReader, SessionProtocol.CmdID.StopLanDgReader, SessionProtocol.CmdID.CloseLanPath, SessionProtocol.CmdID.ResetLanReady, SessionProtocol.CmdID.StartBackoffTimer)
                 }
-            state == BackendState.LANDegraded && ev == SessionProtocol.EventID.AppForceFallback ->
+            state == SessionBackendState.LANDegraded && ev == SessionProtocol.EventID.AppForceFallback ->
                 run {
                     actions[SessionProtocol.ActionID.FallbackToRelay]?.invoke()
                     // backoff_level: Min(backoff_level + 1, max_backoff_level) (set by action)
@@ -658,157 +658,157 @@ class BackendMachine {
                     monitorTarget = "none"
                     lanSignal = "pending"
                     pingFailures = 0
-                    state = BackendState.RelayBackoff
+                    state = SessionBackendState.RelayBackoff
                     listOf(SessionProtocol.CmdID.StopMonitor, SessionProtocol.CmdID.CancelPongTimeout, SessionProtocol.CmdID.StopLanStreamReader, SessionProtocol.CmdID.StopLanDgReader, SessionProtocol.CmdID.CloseLanPath, SessionProtocol.CmdID.ResetLanReady, SessionProtocol.CmdID.StartBackoffTimer)
                 }
-            state == BackendState.RelayConnected && ev == SessionProtocol.EventID.Disconnect ->
+            state == SessionBackendState.RelayConnected && ev == SessionProtocol.EventID.Disconnect ->
                 run {
-                    state = BackendState.Paired
+                    state = SessionBackendState.Paired
                     emptyList()
                 }
-            state == BackendState.RelayConnected && ev == SessionProtocol.EventID.AppSend ->
+            state == SessionBackendState.RelayConnected && ev == SessionProtocol.EventID.AppSend ->
                 run {
-                    state = BackendState.RelayConnected
+                    state = SessionBackendState.RelayConnected
                     listOf(SessionProtocol.CmdID.WriteActiveStream)
                 }
-            state == BackendState.LANOffered && ev == SessionProtocol.EventID.AppSend ->
+            state == SessionBackendState.LANOffered && ev == SessionProtocol.EventID.AppSend ->
                 run {
-                    state = BackendState.LANOffered
+                    state = SessionBackendState.LANOffered
                     listOf(SessionProtocol.CmdID.WriteActiveStream)
                 }
-            state == BackendState.LANActive && ev == SessionProtocol.EventID.AppSend ->
+            state == SessionBackendState.LANActive && ev == SessionProtocol.EventID.AppSend ->
                 run {
-                    state = BackendState.LANActive
+                    state = SessionBackendState.LANActive
                     listOf(SessionProtocol.CmdID.WriteActiveStream)
                 }
-            state == BackendState.LANDegraded && ev == SessionProtocol.EventID.AppSend ->
+            state == SessionBackendState.LANDegraded && ev == SessionProtocol.EventID.AppSend ->
                 run {
-                    state = BackendState.LANDegraded
+                    state = SessionBackendState.LANDegraded
                     listOf(SessionProtocol.CmdID.WriteActiveStream)
                 }
-            state == BackendState.RelayBackoff && ev == SessionProtocol.EventID.AppSend ->
+            state == SessionBackendState.RelayBackoff && ev == SessionProtocol.EventID.AppSend ->
                 run {
-                    state = BackendState.RelayBackoff
+                    state = SessionBackendState.RelayBackoff
                     listOf(SessionProtocol.CmdID.WriteActiveStream)
                 }
-            state == BackendState.RelayConnected && ev == SessionProtocol.EventID.RelayStreamData ->
+            state == SessionBackendState.RelayConnected && ev == SessionProtocol.EventID.RelayStreamData ->
                 run {
-                    state = BackendState.RelayConnected
+                    state = SessionBackendState.RelayConnected
                     listOf(SessionProtocol.CmdID.DeliverRecv)
                 }
-            state == BackendState.LANOffered && ev == SessionProtocol.EventID.RelayStreamData ->
+            state == SessionBackendState.LANOffered && ev == SessionProtocol.EventID.RelayStreamData ->
                 run {
-                    state = BackendState.LANOffered
+                    state = SessionBackendState.LANOffered
                     listOf(SessionProtocol.CmdID.DeliverRecv)
                 }
-            state == BackendState.LANActive && ev == SessionProtocol.EventID.RelayStreamData ->
+            state == SessionBackendState.LANActive && ev == SessionProtocol.EventID.RelayStreamData ->
                 run {
-                    state = BackendState.LANActive
+                    state = SessionBackendState.LANActive
                     listOf(SessionProtocol.CmdID.DeliverRecv)
                 }
-            state == BackendState.LANDegraded && ev == SessionProtocol.EventID.RelayStreamData ->
+            state == SessionBackendState.LANDegraded && ev == SessionProtocol.EventID.RelayStreamData ->
                 run {
-                    state = BackendState.LANDegraded
+                    state = SessionBackendState.LANDegraded
                     listOf(SessionProtocol.CmdID.DeliverRecv)
                 }
-            state == BackendState.RelayBackoff && ev == SessionProtocol.EventID.RelayStreamData ->
+            state == SessionBackendState.RelayBackoff && ev == SessionProtocol.EventID.RelayStreamData ->
                 run {
-                    state = BackendState.RelayBackoff
+                    state = SessionBackendState.RelayBackoff
                     listOf(SessionProtocol.CmdID.DeliverRecv)
                 }
-            state == BackendState.RelayConnected && ev == SessionProtocol.EventID.RelayStreamError ->
+            state == SessionBackendState.RelayConnected && ev == SessionProtocol.EventID.RelayStreamError ->
                 run {
-                    state = BackendState.RelayConnected
+                    state = SessionBackendState.RelayConnected
                     listOf(SessionProtocol.CmdID.DeliverRecvError)
                 }
-            state == BackendState.LANOffered && ev == SessionProtocol.EventID.RelayStreamError ->
+            state == SessionBackendState.LANOffered && ev == SessionProtocol.EventID.RelayStreamError ->
                 run {
-                    state = BackendState.LANOffered
+                    state = SessionBackendState.LANOffered
                     listOf(SessionProtocol.CmdID.DeliverRecvError)
                 }
-            state == BackendState.LANActive && ev == SessionProtocol.EventID.RelayStreamError ->
+            state == SessionBackendState.LANActive && ev == SessionProtocol.EventID.RelayStreamError ->
                 run {
-                    state = BackendState.LANActive
+                    state = SessionBackendState.LANActive
                     listOf(SessionProtocol.CmdID.DeliverRecvError)
                 }
-            state == BackendState.LANDegraded && ev == SessionProtocol.EventID.RelayStreamError ->
+            state == SessionBackendState.LANDegraded && ev == SessionProtocol.EventID.RelayStreamError ->
                 run {
-                    state = BackendState.LANDegraded
+                    state = SessionBackendState.LANDegraded
                     listOf(SessionProtocol.CmdID.DeliverRecvError)
                 }
-            state == BackendState.RelayBackoff && ev == SessionProtocol.EventID.RelayStreamError ->
+            state == SessionBackendState.RelayBackoff && ev == SessionProtocol.EventID.RelayStreamError ->
                 run {
-                    state = BackendState.RelayBackoff
+                    state = SessionBackendState.RelayBackoff
                     listOf(SessionProtocol.CmdID.DeliverRecvError)
                 }
-            state == BackendState.RelayConnected && ev == SessionProtocol.EventID.AppSendDatagram ->
+            state == SessionBackendState.RelayConnected && ev == SessionProtocol.EventID.AppSendDatagram ->
                 run {
-                    state = BackendState.RelayConnected
+                    state = SessionBackendState.RelayConnected
                     listOf(SessionProtocol.CmdID.SendActiveDatagram)
                 }
-            state == BackendState.LANOffered && ev == SessionProtocol.EventID.AppSendDatagram ->
+            state == SessionBackendState.LANOffered && ev == SessionProtocol.EventID.AppSendDatagram ->
                 run {
-                    state = BackendState.LANOffered
+                    state = SessionBackendState.LANOffered
                     listOf(SessionProtocol.CmdID.SendActiveDatagram)
                 }
-            state == BackendState.LANActive && ev == SessionProtocol.EventID.AppSendDatagram ->
+            state == SessionBackendState.LANActive && ev == SessionProtocol.EventID.AppSendDatagram ->
                 run {
-                    state = BackendState.LANActive
+                    state = SessionBackendState.LANActive
                     listOf(SessionProtocol.CmdID.SendActiveDatagram)
                 }
-            state == BackendState.LANDegraded && ev == SessionProtocol.EventID.AppSendDatagram ->
+            state == SessionBackendState.LANDegraded && ev == SessionProtocol.EventID.AppSendDatagram ->
                 run {
-                    state = BackendState.LANDegraded
+                    state = SessionBackendState.LANDegraded
                     listOf(SessionProtocol.CmdID.SendActiveDatagram)
                 }
-            state == BackendState.RelayBackoff && ev == SessionProtocol.EventID.AppSendDatagram ->
+            state == SessionBackendState.RelayBackoff && ev == SessionProtocol.EventID.AppSendDatagram ->
                 run {
-                    state = BackendState.RelayBackoff
+                    state = SessionBackendState.RelayBackoff
                     listOf(SessionProtocol.CmdID.SendActiveDatagram)
                 }
-            state == BackendState.RelayConnected && ev == SessionProtocol.EventID.RelayDatagram ->
+            state == SessionBackendState.RelayConnected && ev == SessionProtocol.EventID.RelayDatagram ->
                 run {
-                    state = BackendState.RelayConnected
+                    state = SessionBackendState.RelayConnected
                     listOf(SessionProtocol.CmdID.DeliverRecvDatagram)
                 }
-            state == BackendState.LANOffered && ev == SessionProtocol.EventID.RelayDatagram ->
+            state == SessionBackendState.LANOffered && ev == SessionProtocol.EventID.RelayDatagram ->
                 run {
-                    state = BackendState.LANOffered
+                    state = SessionBackendState.LANOffered
                     listOf(SessionProtocol.CmdID.DeliverRecvDatagram)
                 }
-            state == BackendState.LANActive && ev == SessionProtocol.EventID.RelayDatagram ->
+            state == SessionBackendState.LANActive && ev == SessionProtocol.EventID.RelayDatagram ->
                 run {
-                    state = BackendState.LANActive
+                    state = SessionBackendState.LANActive
                     listOf(SessionProtocol.CmdID.DeliverRecvDatagram)
                 }
-            state == BackendState.LANDegraded && ev == SessionProtocol.EventID.RelayDatagram ->
+            state == SessionBackendState.LANDegraded && ev == SessionProtocol.EventID.RelayDatagram ->
                 run {
-                    state = BackendState.LANDegraded
+                    state = SessionBackendState.LANDegraded
                     listOf(SessionProtocol.CmdID.DeliverRecvDatagram)
                 }
-            state == BackendState.RelayBackoff && ev == SessionProtocol.EventID.RelayDatagram ->
+            state == SessionBackendState.RelayBackoff && ev == SessionProtocol.EventID.RelayDatagram ->
                 run {
-                    state = BackendState.RelayBackoff
+                    state = SessionBackendState.RelayBackoff
                     listOf(SessionProtocol.CmdID.DeliverRecvDatagram)
                 }
-            state == BackendState.LANActive && ev == SessionProtocol.EventID.LanStreamData ->
+            state == SessionBackendState.LANActive && ev == SessionProtocol.EventID.LanStreamData ->
                 run {
-                    state = BackendState.LANActive
+                    state = SessionBackendState.LANActive
                     listOf(SessionProtocol.CmdID.DeliverRecv)
                 }
-            state == BackendState.LANDegraded && ev == SessionProtocol.EventID.LanStreamData ->
+            state == SessionBackendState.LANDegraded && ev == SessionProtocol.EventID.LanStreamData ->
                 run {
-                    state = BackendState.LANDegraded
+                    state = SessionBackendState.LANDegraded
                     listOf(SessionProtocol.CmdID.DeliverRecv)
                 }
-            state == BackendState.LANActive && ev == SessionProtocol.EventID.LanDatagram ->
+            state == SessionBackendState.LANActive && ev == SessionProtocol.EventID.LanDatagram ->
                 run {
-                    state = BackendState.LANActive
+                    state = SessionBackendState.LANActive
                     listOf(SessionProtocol.CmdID.DeliverRecvDatagram)
                 }
-            state == BackendState.LANDegraded && ev == SessionProtocol.EventID.LanDatagram ->
+            state == SessionBackendState.LANDegraded && ev == SessionProtocol.EventID.LanDatagram ->
                 run {
-                    state = BackendState.LANDegraded
+                    state = SessionBackendState.LANDegraded
                     listOf(SessionProtocol.CmdID.DeliverRecvDatagram)
                 }
             else -> emptyList()
@@ -817,9 +817,9 @@ class BackendMachine {
     }
 }
 
-/** ClientMachine is the generated state machine for the client actor. */
-class ClientMachine {
-    var state: ClientState = ClientState.Idle
+/** SessionClientMachine is the generated state machine for the client actor. */
+class SessionClientMachine {
+    var state: SessionClientState = SessionClientState.Idle
         private set
     var receivedBackendPub: String = "none" // pubkey client received in pair_hello_ack
     var clientSharedKey: String = "" // ECDH key derived by client
@@ -832,301 +832,301 @@ class ClientMachine {
 
     /** Handle an event and return the list of commands to execute. */
     fun handleEvent(ev: SessionProtocol.EventID): List<SessionProtocol.CmdID> {
-        val cmds = when {
-            state == ClientState.Idle && ev == SessionProtocol.EventID.BackchannelReceived ->
+        val cmds: List<SessionProtocol.CmdID> = when {
+            state == SessionClientState.Idle && ev == SessionProtocol.EventID.BackchannelReceived ->
                 run {
-                    state = ClientState.ObtainBackchannelSecret
+                    state = SessionClientState.ObtainBackchannelSecret
                     emptyList()
                 }
-            state == ClientState.ObtainBackchannelSecret && ev == SessionProtocol.EventID.SecretParsed ->
+            state == SessionClientState.ObtainBackchannelSecret && ev == SessionProtocol.EventID.SecretParsed ->
                 run {
-                    state = ClientState.ConnectRelay
+                    state = SessionClientState.ConnectRelay
                     emptyList()
                 }
-            state == ClientState.ConnectRelay && ev == SessionProtocol.EventID.RelayConnected ->
+            state == SessionClientState.ConnectRelay && ev == SessionProtocol.EventID.RelayConnected ->
                 run {
-                    state = ClientState.GenKeyPair
+                    state = SessionClientState.GenKeyPair
                     emptyList()
                 }
-            state == ClientState.GenKeyPair && ev == SessionProtocol.EventID.KeyPairGenerated ->
+            state == SessionClientState.GenKeyPair && ev == SessionProtocol.EventID.KeyPairGenerated ->
                 run {
                     actions[SessionProtocol.ActionID.SendPairHello]?.invoke()
-                    state = ClientState.WaitAck
+                    state = SessionClientState.WaitAck
                     emptyList()
                 }
-            state == ClientState.WaitAck && ev == SessionProtocol.EventID.RecvPairHelloAck ->
+            state == SessionClientState.WaitAck && ev == SessionProtocol.EventID.RecvPairHelloAck ->
                 run {
                     actions[SessionProtocol.ActionID.DeriveSecret]?.invoke()
                     // received_backend_pub: recv_msg.pubkey (set by action)
                     // client_shared_key: DeriveKey("client_pub", recv_msg.pubkey) (set by action)
-                    state = ClientState.E2EReady
+                    state = SessionClientState.E2EReady
                     emptyList()
                 }
-            state == ClientState.E2EReady && ev == SessionProtocol.EventID.RecvPairConfirm ->
+            state == SessionClientState.E2EReady && ev == SessionProtocol.EventID.RecvPairConfirm ->
                 run {
                     // client_code: DeriveCode(received_backend_pub, "client_pub") (set by action)
-                    state = ClientState.ShowCode
+                    state = SessionClientState.ShowCode
                     emptyList()
                 }
-            state == ClientState.ShowCode && ev == SessionProtocol.EventID.CodeDisplayed ->
+            state == SessionClientState.ShowCode && ev == SessionProtocol.EventID.CodeDisplayed ->
                 run {
-                    state = ClientState.WaitPairComplete
+                    state = SessionClientState.WaitPairComplete
                     emptyList()
                 }
-            state == ClientState.WaitPairComplete && ev == SessionProtocol.EventID.RecvPairComplete ->
+            state == SessionClientState.WaitPairComplete && ev == SessionProtocol.EventID.RecvPairComplete ->
                 run {
                     actions[SessionProtocol.ActionID.StoreSecret]?.invoke()
-                    state = ClientState.Paired
+                    state = SessionClientState.Paired
                     emptyList()
                 }
-            state == ClientState.Paired && ev == SessionProtocol.EventID.AppLaunch ->
+            state == SessionClientState.Paired && ev == SessionProtocol.EventID.AppLaunch ->
                 run {
-                    state = ClientState.Reconnect
+                    state = SessionClientState.Reconnect
                     emptyList()
                 }
-            state == ClientState.Reconnect && ev == SessionProtocol.EventID.RelayConnected ->
+            state == SessionClientState.Reconnect && ev == SessionProtocol.EventID.RelayConnected ->
                 run {
-                    state = ClientState.SendAuth
+                    state = SessionClientState.SendAuth
                     emptyList()
                 }
-            state == ClientState.SendAuth && ev == SessionProtocol.EventID.RecvAuthOk ->
+            state == SessionClientState.SendAuth && ev == SessionProtocol.EventID.RecvAuthOk ->
                 run {
-                    state = ClientState.SessionActive
+                    state = SessionClientState.SessionActive
                     emptyList()
                 }
-            state == ClientState.SessionActive && ev == SessionProtocol.EventID.SessionEstablished ->
+            state == SessionClientState.SessionActive && ev == SessionProtocol.EventID.SessionEstablished ->
                 run {
-                    state = ClientState.RelayConnected
+                    state = SessionClientState.RelayConnected
                     emptyList()
                 }
-            state == ClientState.RelayConnected && ev == SessionProtocol.EventID.RecvLanOffer && guards[SessionProtocol.GuardID.LanEnabled]?.invoke() == true ->
+            state == SessionClientState.RelayConnected && ev == SessionProtocol.EventID.RecvLanOffer && guards[SessionProtocol.GuardID.LanEnabled]?.invoke() == true ->
                 run {
                     actions[SessionProtocol.ActionID.DialLan]?.invoke()
-                    state = ClientState.LANConnecting
+                    state = SessionClientState.LANConnecting
                     listOf(SessionProtocol.CmdID.DialLan)
                 }
-            state == ClientState.RelayConnected && ev == SessionProtocol.EventID.RecvLanOffer && guards[SessionProtocol.GuardID.LanDisabled]?.invoke() == true ->
+            state == SessionClientState.RelayConnected && ev == SessionProtocol.EventID.RecvLanOffer && guards[SessionProtocol.GuardID.LanDisabled]?.invoke() == true ->
                 run {
-                    state = ClientState.RelayConnected
+                    state = SessionClientState.RelayConnected
                     emptyList()
                 }
-            state == ClientState.LANConnecting && ev == SessionProtocol.EventID.LanDialOk ->
+            state == SessionClientState.LANConnecting && ev == SessionProtocol.EventID.LanDialOk ->
                 run {
-                    state = ClientState.LANVerifying
+                    state = SessionClientState.LANVerifying
                     listOf(SessionProtocol.CmdID.SendLanVerify)
                 }
-            state == ClientState.LANConnecting && ev == SessionProtocol.EventID.LanDialFailed ->
+            state == SessionClientState.LANConnecting && ev == SessionProtocol.EventID.LanDialFailed ->
                 run {
-                    state = ClientState.RelayConnected
+                    state = SessionClientState.RelayConnected
                     emptyList()
                 }
-            state == ClientState.LANVerifying && ev == SessionProtocol.EventID.RecvLanConfirm ->
+            state == SessionClientState.LANVerifying && ev == SessionProtocol.EventID.RecvLanConfirm ->
                 run {
                     actions[SessionProtocol.ActionID.ActivateLan]?.invoke()
                     cActivePath = "lan"
                     cDispatcherPath = "lan"
                     lanSignal = "ready"
-                    state = ClientState.LANActive
+                    state = SessionClientState.LANActive
                     listOf(SessionProtocol.CmdID.StartLanStreamReader, SessionProtocol.CmdID.StartLanDgReader, SessionProtocol.CmdID.SignalLanReady, SessionProtocol.CmdID.SetCryptoDatagram)
                 }
-            state == ClientState.LANVerifying && ev == SessionProtocol.EventID.VerifyTimeout ->
+            state == SessionClientState.LANVerifying && ev == SessionProtocol.EventID.VerifyTimeout ->
                 run {
                     cDispatcherPath = "relay"
-                    state = ClientState.RelayConnected
+                    state = SessionClientState.RelayConnected
                     emptyList()
                 }
-            state == ClientState.LANActive && ev == SessionProtocol.EventID.RecvPathPing ->
+            state == SessionClientState.LANActive && ev == SessionProtocol.EventID.RecvPathPing ->
                 run {
-                    state = ClientState.LANActive
+                    state = SessionClientState.LANActive
                     listOf(SessionProtocol.CmdID.SendPathPong)
                 }
-            state == ClientState.LANActive && ev == SessionProtocol.EventID.LanError ->
+            state == SessionClientState.LANActive && ev == SessionProtocol.EventID.LanError ->
                 run {
                     actions[SessionProtocol.ActionID.FallbackToRelay]?.invoke()
                     cActivePath = "relay"
                     cDispatcherPath = "relay"
                     lanSignal = "pending"
-                    state = ClientState.RelayFallback
+                    state = SessionClientState.RelayFallback
                     listOf(SessionProtocol.CmdID.StopLanStreamReader, SessionProtocol.CmdID.StopLanDgReader, SessionProtocol.CmdID.CloseLanPath, SessionProtocol.CmdID.ResetLanReady)
                 }
-            state == ClientState.LANActive && ev == SessionProtocol.EventID.LanStreamError ->
+            state == SessionClientState.LANActive && ev == SessionProtocol.EventID.LanStreamError ->
                 run {
                     actions[SessionProtocol.ActionID.FallbackToRelay]?.invoke()
                     cActivePath = "relay"
                     cDispatcherPath = "relay"
                     lanSignal = "pending"
-                    state = ClientState.RelayFallback
+                    state = SessionClientState.RelayFallback
                     listOf(SessionProtocol.CmdID.StopLanStreamReader, SessionProtocol.CmdID.StopLanDgReader, SessionProtocol.CmdID.CloseLanPath, SessionProtocol.CmdID.ResetLanReady)
                 }
-            state == ClientState.RelayFallback && ev == SessionProtocol.EventID.RelayOk ->
+            state == SessionClientState.RelayFallback && ev == SessionProtocol.EventID.RelayOk ->
                 run {
-                    state = ClientState.RelayConnected
+                    state = SessionClientState.RelayConnected
                     emptyList()
                 }
-            state == ClientState.LANActive && ev == SessionProtocol.EventID.RecvLanOffer && guards[SessionProtocol.GuardID.LanEnabled]?.invoke() == true ->
+            state == SessionClientState.LANActive && ev == SessionProtocol.EventID.RecvLanOffer && guards[SessionProtocol.GuardID.LanEnabled]?.invoke() == true ->
                 run {
                     actions[SessionProtocol.ActionID.DialLan]?.invoke()
-                    state = ClientState.LANConnecting
+                    state = SessionClientState.LANConnecting
                     listOf(SessionProtocol.CmdID.StopLanStreamReader, SessionProtocol.CmdID.StopLanDgReader, SessionProtocol.CmdID.CloseLanPath, SessionProtocol.CmdID.DialLan)
                 }
-            state == ClientState.LANConnecting && ev == SessionProtocol.EventID.AppForceFallback ->
+            state == SessionClientState.LANConnecting && ev == SessionProtocol.EventID.AppForceFallback ->
                 run {
-                    state = ClientState.RelayConnected
+                    state = SessionClientState.RelayConnected
                     emptyList()
                 }
-            state == ClientState.LANVerifying && ev == SessionProtocol.EventID.AppForceFallback ->
+            state == SessionClientState.LANVerifying && ev == SessionProtocol.EventID.AppForceFallback ->
                 run {
                     cDispatcherPath = "relay"
-                    state = ClientState.RelayConnected
+                    state = SessionClientState.RelayConnected
                     listOf(SessionProtocol.CmdID.StopLanStreamReader, SessionProtocol.CmdID.StopLanDgReader, SessionProtocol.CmdID.CloseLanPath)
                 }
-            state == ClientState.LANActive && ev == SessionProtocol.EventID.AppForceFallback ->
+            state == SessionClientState.LANActive && ev == SessionProtocol.EventID.AppForceFallback ->
                 run {
                     actions[SessionProtocol.ActionID.FallbackToRelay]?.invoke()
                     cActivePath = "relay"
                     cDispatcherPath = "relay"
                     lanSignal = "pending"
-                    state = ClientState.RelayConnected
+                    state = SessionClientState.RelayConnected
                     listOf(SessionProtocol.CmdID.StopLanStreamReader, SessionProtocol.CmdID.StopLanDgReader, SessionProtocol.CmdID.CloseLanPath, SessionProtocol.CmdID.ResetLanReady)
                 }
-            state == ClientState.RelayConnected && ev == SessionProtocol.EventID.Disconnect ->
+            state == SessionClientState.RelayConnected && ev == SessionProtocol.EventID.Disconnect ->
                 run {
-                    state = ClientState.Paired
+                    state = SessionClientState.Paired
                     emptyList()
                 }
-            state == ClientState.RelayConnected && ev == SessionProtocol.EventID.AppSend ->
+            state == SessionClientState.RelayConnected && ev == SessionProtocol.EventID.AppSend ->
                 run {
-                    state = ClientState.RelayConnected
+                    state = SessionClientState.RelayConnected
                     listOf(SessionProtocol.CmdID.WriteActiveStream)
                 }
-            state == ClientState.LANConnecting && ev == SessionProtocol.EventID.AppSend ->
+            state == SessionClientState.LANConnecting && ev == SessionProtocol.EventID.AppSend ->
                 run {
-                    state = ClientState.LANConnecting
+                    state = SessionClientState.LANConnecting
                     listOf(SessionProtocol.CmdID.WriteActiveStream)
                 }
-            state == ClientState.LANVerifying && ev == SessionProtocol.EventID.AppSend ->
+            state == SessionClientState.LANVerifying && ev == SessionProtocol.EventID.AppSend ->
                 run {
-                    state = ClientState.LANVerifying
+                    state = SessionClientState.LANVerifying
                     listOf(SessionProtocol.CmdID.WriteActiveStream)
                 }
-            state == ClientState.LANActive && ev == SessionProtocol.EventID.AppSend ->
+            state == SessionClientState.LANActive && ev == SessionProtocol.EventID.AppSend ->
                 run {
-                    state = ClientState.LANActive
+                    state = SessionClientState.LANActive
                     listOf(SessionProtocol.CmdID.WriteActiveStream)
                 }
-            state == ClientState.RelayFallback && ev == SessionProtocol.EventID.AppSend ->
+            state == SessionClientState.RelayFallback && ev == SessionProtocol.EventID.AppSend ->
                 run {
-                    state = ClientState.RelayFallback
+                    state = SessionClientState.RelayFallback
                     listOf(SessionProtocol.CmdID.WriteActiveStream)
                 }
-            state == ClientState.RelayConnected && ev == SessionProtocol.EventID.RelayStreamData ->
+            state == SessionClientState.RelayConnected && ev == SessionProtocol.EventID.RelayStreamData ->
                 run {
-                    state = ClientState.RelayConnected
+                    state = SessionClientState.RelayConnected
                     listOf(SessionProtocol.CmdID.DeliverRecv)
                 }
-            state == ClientState.LANConnecting && ev == SessionProtocol.EventID.RelayStreamData ->
+            state == SessionClientState.LANConnecting && ev == SessionProtocol.EventID.RelayStreamData ->
                 run {
-                    state = ClientState.LANConnecting
+                    state = SessionClientState.LANConnecting
                     listOf(SessionProtocol.CmdID.DeliverRecv)
                 }
-            state == ClientState.LANVerifying && ev == SessionProtocol.EventID.RelayStreamData ->
+            state == SessionClientState.LANVerifying && ev == SessionProtocol.EventID.RelayStreamData ->
                 run {
-                    state = ClientState.LANVerifying
+                    state = SessionClientState.LANVerifying
                     listOf(SessionProtocol.CmdID.DeliverRecv)
                 }
-            state == ClientState.LANActive && ev == SessionProtocol.EventID.RelayStreamData ->
+            state == SessionClientState.LANActive && ev == SessionProtocol.EventID.RelayStreamData ->
                 run {
-                    state = ClientState.LANActive
+                    state = SessionClientState.LANActive
                     listOf(SessionProtocol.CmdID.DeliverRecv)
                 }
-            state == ClientState.RelayFallback && ev == SessionProtocol.EventID.RelayStreamData ->
+            state == SessionClientState.RelayFallback && ev == SessionProtocol.EventID.RelayStreamData ->
                 run {
-                    state = ClientState.RelayFallback
+                    state = SessionClientState.RelayFallback
                     listOf(SessionProtocol.CmdID.DeliverRecv)
                 }
-            state == ClientState.RelayConnected && ev == SessionProtocol.EventID.RelayStreamError ->
+            state == SessionClientState.RelayConnected && ev == SessionProtocol.EventID.RelayStreamError ->
                 run {
-                    state = ClientState.RelayConnected
+                    state = SessionClientState.RelayConnected
                     listOf(SessionProtocol.CmdID.DeliverRecvError)
                 }
-            state == ClientState.LANConnecting && ev == SessionProtocol.EventID.RelayStreamError ->
+            state == SessionClientState.LANConnecting && ev == SessionProtocol.EventID.RelayStreamError ->
                 run {
-                    state = ClientState.LANConnecting
+                    state = SessionClientState.LANConnecting
                     listOf(SessionProtocol.CmdID.DeliverRecvError)
                 }
-            state == ClientState.LANVerifying && ev == SessionProtocol.EventID.RelayStreamError ->
+            state == SessionClientState.LANVerifying && ev == SessionProtocol.EventID.RelayStreamError ->
                 run {
-                    state = ClientState.LANVerifying
+                    state = SessionClientState.LANVerifying
                     listOf(SessionProtocol.CmdID.DeliverRecvError)
                 }
-            state == ClientState.LANActive && ev == SessionProtocol.EventID.RelayStreamError ->
+            state == SessionClientState.LANActive && ev == SessionProtocol.EventID.RelayStreamError ->
                 run {
-                    state = ClientState.LANActive
+                    state = SessionClientState.LANActive
                     listOf(SessionProtocol.CmdID.DeliverRecvError)
                 }
-            state == ClientState.RelayFallback && ev == SessionProtocol.EventID.RelayStreamError ->
+            state == SessionClientState.RelayFallback && ev == SessionProtocol.EventID.RelayStreamError ->
                 run {
-                    state = ClientState.RelayFallback
+                    state = SessionClientState.RelayFallback
                     listOf(SessionProtocol.CmdID.DeliverRecvError)
                 }
-            state == ClientState.RelayConnected && ev == SessionProtocol.EventID.AppSendDatagram ->
+            state == SessionClientState.RelayConnected && ev == SessionProtocol.EventID.AppSendDatagram ->
                 run {
-                    state = ClientState.RelayConnected
+                    state = SessionClientState.RelayConnected
                     listOf(SessionProtocol.CmdID.SendActiveDatagram)
                 }
-            state == ClientState.LANConnecting && ev == SessionProtocol.EventID.AppSendDatagram ->
+            state == SessionClientState.LANConnecting && ev == SessionProtocol.EventID.AppSendDatagram ->
                 run {
-                    state = ClientState.LANConnecting
+                    state = SessionClientState.LANConnecting
                     listOf(SessionProtocol.CmdID.SendActiveDatagram)
                 }
-            state == ClientState.LANVerifying && ev == SessionProtocol.EventID.AppSendDatagram ->
+            state == SessionClientState.LANVerifying && ev == SessionProtocol.EventID.AppSendDatagram ->
                 run {
-                    state = ClientState.LANVerifying
+                    state = SessionClientState.LANVerifying
                     listOf(SessionProtocol.CmdID.SendActiveDatagram)
                 }
-            state == ClientState.LANActive && ev == SessionProtocol.EventID.AppSendDatagram ->
+            state == SessionClientState.LANActive && ev == SessionProtocol.EventID.AppSendDatagram ->
                 run {
-                    state = ClientState.LANActive
+                    state = SessionClientState.LANActive
                     listOf(SessionProtocol.CmdID.SendActiveDatagram)
                 }
-            state == ClientState.RelayFallback && ev == SessionProtocol.EventID.AppSendDatagram ->
+            state == SessionClientState.RelayFallback && ev == SessionProtocol.EventID.AppSendDatagram ->
                 run {
-                    state = ClientState.RelayFallback
+                    state = SessionClientState.RelayFallback
                     listOf(SessionProtocol.CmdID.SendActiveDatagram)
                 }
-            state == ClientState.RelayConnected && ev == SessionProtocol.EventID.RelayDatagram ->
+            state == SessionClientState.RelayConnected && ev == SessionProtocol.EventID.RelayDatagram ->
                 run {
-                    state = ClientState.RelayConnected
+                    state = SessionClientState.RelayConnected
                     listOf(SessionProtocol.CmdID.DeliverRecvDatagram)
                 }
-            state == ClientState.LANConnecting && ev == SessionProtocol.EventID.RelayDatagram ->
+            state == SessionClientState.LANConnecting && ev == SessionProtocol.EventID.RelayDatagram ->
                 run {
-                    state = ClientState.LANConnecting
+                    state = SessionClientState.LANConnecting
                     listOf(SessionProtocol.CmdID.DeliverRecvDatagram)
                 }
-            state == ClientState.LANVerifying && ev == SessionProtocol.EventID.RelayDatagram ->
+            state == SessionClientState.LANVerifying && ev == SessionProtocol.EventID.RelayDatagram ->
                 run {
-                    state = ClientState.LANVerifying
+                    state = SessionClientState.LANVerifying
                     listOf(SessionProtocol.CmdID.DeliverRecvDatagram)
                 }
-            state == ClientState.LANActive && ev == SessionProtocol.EventID.RelayDatagram ->
+            state == SessionClientState.LANActive && ev == SessionProtocol.EventID.RelayDatagram ->
                 run {
-                    state = ClientState.LANActive
+                    state = SessionClientState.LANActive
                     listOf(SessionProtocol.CmdID.DeliverRecvDatagram)
                 }
-            state == ClientState.RelayFallback && ev == SessionProtocol.EventID.RelayDatagram ->
+            state == SessionClientState.RelayFallback && ev == SessionProtocol.EventID.RelayDatagram ->
                 run {
-                    state = ClientState.RelayFallback
+                    state = SessionClientState.RelayFallback
                     listOf(SessionProtocol.CmdID.DeliverRecvDatagram)
                 }
-            state == ClientState.LANActive && ev == SessionProtocol.EventID.LanStreamData ->
+            state == SessionClientState.LANActive && ev == SessionProtocol.EventID.LanStreamData ->
                 run {
-                    state = ClientState.LANActive
+                    state = SessionClientState.LANActive
                     listOf(SessionProtocol.CmdID.DeliverRecv)
                 }
-            state == ClientState.LANActive && ev == SessionProtocol.EventID.LanDatagram ->
+            state == SessionClientState.LANActive && ev == SessionProtocol.EventID.LanDatagram ->
                 run {
-                    state = ClientState.LANActive
+                    state = SessionClientState.LANActive
                     listOf(SessionProtocol.CmdID.DeliverRecvDatagram)
                 }
             else -> emptyList()
@@ -1135,9 +1135,9 @@ class ClientMachine {
     }
 }
 
-/** RelayMachine is the generated state machine for the relay actor. */
-class RelayMachine {
-    var state: RelayState = RelayState.Idle
+/** SessionRelayMachine is the generated state machine for the relay actor. */
+class SessionRelayMachine {
+    var state: SessionRelayState = SessionRelayState.Idle
         private set
     var relayBridge: String = "idle" // relay bridge state
     val guards = mutableMapOf<SessionProtocol.GuardID, () -> Boolean>()
@@ -1145,29 +1145,29 @@ class RelayMachine {
 
     /** Handle an event and return the list of commands to execute. */
     fun handleEvent(ev: SessionProtocol.EventID): List<SessionProtocol.CmdID> {
-        val cmds = when {
-            state == RelayState.Idle && ev == SessionProtocol.EventID.BackendRegister ->
+        val cmds: List<SessionProtocol.CmdID> = when {
+            state == SessionRelayState.Idle && ev == SessionProtocol.EventID.BackendRegister ->
                 run {
-                    state = RelayState.BackendRegistered
+                    state = SessionRelayState.BackendRegistered
                     emptyList()
                 }
-            state == RelayState.BackendRegistered && ev == SessionProtocol.EventID.ClientConnect ->
+            state == SessionRelayState.BackendRegistered && ev == SessionProtocol.EventID.ClientConnect ->
                 run {
                     actions[SessionProtocol.ActionID.BridgeStreams]?.invoke()
                     relayBridge = "active"
-                    state = RelayState.Bridged
+                    state = SessionRelayState.Bridged
                     emptyList()
                 }
-            state == RelayState.Bridged && ev == SessionProtocol.EventID.ClientDisconnect ->
+            state == SessionRelayState.Bridged && ev == SessionProtocol.EventID.ClientDisconnect ->
                 run {
                     actions[SessionProtocol.ActionID.Unbridge]?.invoke()
                     relayBridge = "idle"
-                    state = RelayState.BackendRegistered
+                    state = SessionRelayState.BackendRegistered
                     emptyList()
                 }
-            state == RelayState.BackendRegistered && ev == SessionProtocol.EventID.BackendDisconnect ->
+            state == SessionRelayState.BackendRegistered && ev == SessionProtocol.EventID.BackendDisconnect ->
                 run {
-                    state = RelayState.Idle
+                    state = SessionRelayState.Idle
                     emptyList()
                 }
             else -> emptyList()

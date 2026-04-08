@@ -6,7 +6,7 @@
 
 package com.marcelocantos.pigeon.crypto
 
-enum class ServerState(val value: String) {
+enum class PairingCeremonyServerState(val value: String) {
     Idle("Idle"),
     GenerateToken("GenerateToken"),
     RegisterRelay("RegisterRelay"),
@@ -21,7 +21,7 @@ enum class ServerState(val value: String) {
     SessionActive("SessionActive");
 }
 
-enum class IosState(val value: String) {
+enum class PairingCeremonyIosState(val value: String) {
     Idle("Idle"),
     ScanQR("ScanQR"),
     ConnectRelay("ConnectRelay"),
@@ -36,7 +36,7 @@ enum class IosState(val value: String) {
     SessionActive("SessionActive");
 }
 
-enum class CliState(val value: String) {
+enum class PairingCeremonyCliState(val value: String) {
     Idle("Idle"),
     GetKey("GetKey"),
     BeginPair("BeginPair"),
@@ -116,7 +116,7 @@ object PairingCeremonyProtocol {
 
     /** server transition table. */
     object ServerTable {
-        val initial = ServerState.Idle
+        val initial = PairingCeremonyServerState.Idle
 
         data class Transition(
             val from: String,
@@ -149,7 +149,7 @@ object PairingCeremonyProtocol {
 
     /** ios transition table. */
     object IosTable {
-        val initial = IosState.Idle
+        val initial = PairingCeremonyIosState.Idle
 
         data class Transition(
             val from: String,
@@ -179,7 +179,7 @@ object PairingCeremonyProtocol {
 
     /** cli transition table. */
     object CliTable {
-        val initial = CliState.Idle
+        val initial = PairingCeremonyCliState.Idle
 
         data class Transition(
             val from: String,
@@ -203,9 +203,9 @@ object PairingCeremonyProtocol {
 
 }
 
-/** ServerMachine is the generated state machine for the server actor. */
-class ServerMachine {
-    var state: ServerState = ServerState.Idle
+/** PairingCeremonyServerMachine is the generated state machine for the server actor. */
+class PairingCeremonyServerMachine {
+    var state: PairingCeremonyServerState = PairingCeremonyServerState.Idle
         private set
     var currentToken: String = "none" // pairing token currently in play
     var activeTokens: String = "" // set of valid (non-revoked) tokens
@@ -225,101 +225,101 @@ class ServerMachine {
     val actions = mutableMapOf<PairingCeremonyProtocol.ActionID, () -> Unit>()
 
     /** Handle an event and return the list of commands to execute. */
-    fun handleEvent(ev: PairingCeremonyProtocol.EventID): List<PairingCeremonyProtocol.CmdID> {
-        val cmds = when {
-            state == ServerState.Idle && ev == PairingCeremonyProtocol.EventID.RecvPairBegin ->
+    fun handleEvent(ev: PairingCeremonyProtocol.EventID): List<String> {
+        val cmds: List<String> = when {
+            state == PairingCeremonyServerState.Idle && ev == PairingCeremonyProtocol.EventID.RecvPairBegin ->
                 run {
                     actions[PairingCeremonyProtocol.ActionID.GenerateToken]?.invoke()
                     currentToken = "tok_1"
                     // active_tokens: active_tokens \union {"tok_1"} (set by action)
-                    state = ServerState.GenerateToken
+                    state = PairingCeremonyServerState.GenerateToken
                     emptyList()
                 }
-            state == ServerState.GenerateToken && ev == PairingCeremonyProtocol.EventID.TokenCreated ->
+            state == PairingCeremonyServerState.GenerateToken && ev == PairingCeremonyProtocol.EventID.TokenCreated ->
                 run {
                     actions[PairingCeremonyProtocol.ActionID.RegisterRelay]?.invoke()
-                    state = ServerState.RegisterRelay
+                    state = PairingCeremonyServerState.RegisterRelay
                     emptyList()
                 }
-            state == ServerState.RegisterRelay && ev == PairingCeremonyProtocol.EventID.RelayRegistered ->
+            state == PairingCeremonyServerState.RegisterRelay && ev == PairingCeremonyProtocol.EventID.RelayRegistered ->
                 run {
-                    state = ServerState.WaitingForClient
+                    state = PairingCeremonyServerState.WaitingForClient
                     emptyList()
                 }
-            state == ServerState.WaitingForClient && ev == PairingCeremonyProtocol.EventID.RecvPairHello && guards[PairingCeremonyProtocol.GuardID.TokenValid]?.invoke() == true ->
+            state == PairingCeremonyServerState.WaitingForClient && ev == PairingCeremonyProtocol.EventID.RecvPairHello && guards[PairingCeremonyProtocol.GuardID.TokenValid]?.invoke() == true ->
                 run {
                     actions[PairingCeremonyProtocol.ActionID.DeriveSecret]?.invoke()
                     // received_client_pub: recv_msg.pubkey (set by action)
                     serverEcdhPub = "server_pub"
                     // server_shared_key: DeriveKey("server_pub", recv_msg.pubkey) (set by action)
                     // server_code: DeriveCode("server_pub", recv_msg.pubkey) (set by action)
-                    state = ServerState.DeriveSecret
+                    state = PairingCeremonyServerState.DeriveSecret
                     emptyList()
                 }
-            state == ServerState.WaitingForClient && ev == PairingCeremonyProtocol.EventID.RecvPairHello && guards[PairingCeremonyProtocol.GuardID.TokenInvalid]?.invoke() == true ->
+            state == PairingCeremonyServerState.WaitingForClient && ev == PairingCeremonyProtocol.EventID.RecvPairHello && guards[PairingCeremonyProtocol.GuardID.TokenInvalid]?.invoke() == true ->
                 run {
-                    state = ServerState.Idle
+                    state = PairingCeremonyServerState.Idle
                     emptyList()
                 }
-            state == ServerState.DeriveSecret && ev == PairingCeremonyProtocol.EventID.ECDHComplete ->
+            state == PairingCeremonyServerState.DeriveSecret && ev == PairingCeremonyProtocol.EventID.ECDHComplete ->
                 run {
-                    state = ServerState.SendAck
+                    state = PairingCeremonyServerState.SendAck
                     emptyList()
                 }
-            state == ServerState.SendAck && ev == PairingCeremonyProtocol.EventID.SignalCodeDisplay ->
+            state == PairingCeremonyServerState.SendAck && ev == PairingCeremonyProtocol.EventID.SignalCodeDisplay ->
                 run {
-                    state = ServerState.WaitingForCode
+                    state = PairingCeremonyServerState.WaitingForCode
                     emptyList()
                 }
-            state == ServerState.WaitingForCode && ev == PairingCeremonyProtocol.EventID.RecvCodeSubmit ->
+            state == PairingCeremonyServerState.WaitingForCode && ev == PairingCeremonyProtocol.EventID.RecvCodeSubmit ->
                 run {
                     // received_code: recv_msg.code (set by action)
-                    state = ServerState.ValidateCode
+                    state = PairingCeremonyServerState.ValidateCode
                     emptyList()
                 }
-            state == ServerState.ValidateCode && ev == PairingCeremonyProtocol.EventID.CheckCode && guards[PairingCeremonyProtocol.GuardID.CodeCorrect]?.invoke() == true ->
+            state == PairingCeremonyServerState.ValidateCode && ev == PairingCeremonyProtocol.EventID.CheckCode && guards[PairingCeremonyProtocol.GuardID.CodeCorrect]?.invoke() == true ->
                 run {
-                    state = ServerState.StorePaired
+                    state = PairingCeremonyServerState.StorePaired
                     emptyList()
                 }
-            state == ServerState.ValidateCode && ev == PairingCeremonyProtocol.EventID.CheckCode && guards[PairingCeremonyProtocol.GuardID.CodeWrong]?.invoke() == true ->
+            state == PairingCeremonyServerState.ValidateCode && ev == PairingCeremonyProtocol.EventID.CheckCode && guards[PairingCeremonyProtocol.GuardID.CodeWrong]?.invoke() == true ->
                 run {
                     // code_attempts: code_attempts + 1 (set by action)
-                    state = ServerState.Idle
+                    state = PairingCeremonyServerState.Idle
                     emptyList()
                 }
-            state == ServerState.StorePaired && ev == PairingCeremonyProtocol.EventID.Finalise ->
+            state == PairingCeremonyServerState.StorePaired && ev == PairingCeremonyProtocol.EventID.Finalise ->
                 run {
                     actions[PairingCeremonyProtocol.ActionID.StoreDevice]?.invoke()
                     deviceSecret = "dev_secret_1"
                     // paired_devices: paired_devices \union {"device_1"} (set by action)
                     // active_tokens: active_tokens \ {current_token} (set by action)
                     // used_tokens: used_tokens \union {current_token} (set by action)
-                    state = ServerState.Paired
+                    state = PairingCeremonyServerState.Paired
                     emptyList()
                 }
-            state == ServerState.Paired && ev == PairingCeremonyProtocol.EventID.RecvAuthRequest ->
+            state == PairingCeremonyServerState.Paired && ev == PairingCeremonyProtocol.EventID.RecvAuthRequest ->
                 run {
                     // received_device_id: recv_msg.device_id (set by action)
                     // received_auth_nonce: recv_msg.nonce (set by action)
-                    state = ServerState.AuthCheck
+                    state = PairingCeremonyServerState.AuthCheck
                     emptyList()
                 }
-            state == ServerState.AuthCheck && ev == PairingCeremonyProtocol.EventID.Verify && guards[PairingCeremonyProtocol.GuardID.DeviceKnown]?.invoke() == true ->
+            state == PairingCeremonyServerState.AuthCheck && ev == PairingCeremonyProtocol.EventID.Verify && guards[PairingCeremonyProtocol.GuardID.DeviceKnown]?.invoke() == true ->
                 run {
                     actions[PairingCeremonyProtocol.ActionID.VerifyDevice]?.invoke()
                     // auth_nonces_used: auth_nonces_used \union {received_auth_nonce} (set by action)
-                    state = ServerState.SessionActive
+                    state = PairingCeremonyServerState.SessionActive
                     emptyList()
                 }
-            state == ServerState.AuthCheck && ev == PairingCeremonyProtocol.EventID.Verify && guards[PairingCeremonyProtocol.GuardID.DeviceUnknown]?.invoke() == true ->
+            state == PairingCeremonyServerState.AuthCheck && ev == PairingCeremonyProtocol.EventID.Verify && guards[PairingCeremonyProtocol.GuardID.DeviceUnknown]?.invoke() == true ->
                 run {
-                    state = ServerState.Idle
+                    state = PairingCeremonyServerState.Idle
                     emptyList()
                 }
-            state == ServerState.SessionActive && ev == PairingCeremonyProtocol.EventID.Disconnect ->
+            state == PairingCeremonyServerState.SessionActive && ev == PairingCeremonyProtocol.EventID.Disconnect ->
                 run {
-                    state = ServerState.Paired
+                    state = PairingCeremonyServerState.Paired
                     emptyList()
                 }
             else -> emptyList()
@@ -328,9 +328,9 @@ class ServerMachine {
     }
 }
 
-/** IosMachine is the generated state machine for the ios actor. */
-class IosMachine {
-    var state: IosState = IosState.Idle
+/** PairingCeremonyIosMachine is the generated state machine for the ios actor. */
+class PairingCeremonyIosMachine {
+    var state: PairingCeremonyIosState = PairingCeremonyIosState.Idle
         private set
     var receivedServerPub: String = "none" // pubkey ios received in pair_hello_ack (may be adversary's)
     var clientSharedKey: String = "" // ECDH key derived by ios (tuple to match DeriveKey output type)
@@ -339,72 +339,72 @@ class IosMachine {
     val actions = mutableMapOf<PairingCeremonyProtocol.ActionID, () -> Unit>()
 
     /** Handle an event and return the list of commands to execute. */
-    fun handleEvent(ev: PairingCeremonyProtocol.EventID): List<PairingCeremonyProtocol.CmdID> {
-        val cmds = when {
-            state == IosState.Idle && ev == PairingCeremonyProtocol.EventID.UserScansQR ->
+    fun handleEvent(ev: PairingCeremonyProtocol.EventID): List<String> {
+        val cmds: List<String> = when {
+            state == PairingCeremonyIosState.Idle && ev == PairingCeremonyProtocol.EventID.UserScansQR ->
                 run {
-                    state = IosState.ScanQR
+                    state = PairingCeremonyIosState.ScanQR
                     emptyList()
                 }
-            state == IosState.ScanQR && ev == PairingCeremonyProtocol.EventID.QRParsed ->
+            state == PairingCeremonyIosState.ScanQR && ev == PairingCeremonyProtocol.EventID.QRParsed ->
                 run {
-                    state = IosState.ConnectRelay
+                    state = PairingCeremonyIosState.ConnectRelay
                     emptyList()
                 }
-            state == IosState.ConnectRelay && ev == PairingCeremonyProtocol.EventID.RelayConnected ->
+            state == PairingCeremonyIosState.ConnectRelay && ev == PairingCeremonyProtocol.EventID.RelayConnected ->
                 run {
-                    state = IosState.GenKeyPair
+                    state = PairingCeremonyIosState.GenKeyPair
                     emptyList()
                 }
-            state == IosState.GenKeyPair && ev == PairingCeremonyProtocol.EventID.KeyPairGenerated ->
+            state == PairingCeremonyIosState.GenKeyPair && ev == PairingCeremonyProtocol.EventID.KeyPairGenerated ->
                 run {
                     actions[PairingCeremonyProtocol.ActionID.SendPairHello]?.invoke()
-                    state = IosState.WaitAck
+                    state = PairingCeremonyIosState.WaitAck
                     emptyList()
                 }
-            state == IosState.WaitAck && ev == PairingCeremonyProtocol.EventID.RecvPairHelloAck ->
+            state == PairingCeremonyIosState.WaitAck && ev == PairingCeremonyProtocol.EventID.RecvPairHelloAck ->
                 run {
                     actions[PairingCeremonyProtocol.ActionID.DeriveSecret]?.invoke()
                     // received_server_pub: recv_msg.pubkey (set by action)
                     // client_shared_key: DeriveKey("client_pub", recv_msg.pubkey) (set by action)
-                    state = IosState.E2EReady
+                    state = PairingCeremonyIosState.E2EReady
                     emptyList()
                 }
-            state == IosState.E2EReady && ev == PairingCeremonyProtocol.EventID.RecvPairConfirm ->
+            state == PairingCeremonyIosState.E2EReady && ev == PairingCeremonyProtocol.EventID.RecvPairConfirm ->
                 run {
                     // ios_code: DeriveCode(received_server_pub, "client_pub") (set by action)
-                    state = IosState.ShowCode
+                    state = PairingCeremonyIosState.ShowCode
                     emptyList()
                 }
-            state == IosState.ShowCode && ev == PairingCeremonyProtocol.EventID.CodeDisplayed ->
+            state == PairingCeremonyIosState.ShowCode && ev == PairingCeremonyProtocol.EventID.CodeDisplayed ->
                 run {
-                    state = IosState.WaitPairComplete
+                    state = PairingCeremonyIosState.WaitPairComplete
                     emptyList()
                 }
-            state == IosState.WaitPairComplete && ev == PairingCeremonyProtocol.EventID.RecvPairComplete ->
+            state == PairingCeremonyIosState.WaitPairComplete && ev == PairingCeremonyProtocol.EventID.RecvPairComplete ->
                 run {
                     actions[PairingCeremonyProtocol.ActionID.StoreSecret]?.invoke()
-                    state = IosState.Paired
+                    state = PairingCeremonyIosState.Paired
                     emptyList()
                 }
-            state == IosState.Paired && ev == PairingCeremonyProtocol.EventID.AppLaunch ->
+            state == PairingCeremonyIosState.Paired && ev == PairingCeremonyProtocol.EventID.AppLaunch ->
                 run {
-                    state = IosState.Reconnect
+                    state = PairingCeremonyIosState.Reconnect
                     emptyList()
                 }
-            state == IosState.Reconnect && ev == PairingCeremonyProtocol.EventID.RelayConnected ->
+            state == PairingCeremonyIosState.Reconnect && ev == PairingCeremonyProtocol.EventID.RelayConnected ->
                 run {
-                    state = IosState.SendAuth
+                    state = PairingCeremonyIosState.SendAuth
                     emptyList()
                 }
-            state == IosState.SendAuth && ev == PairingCeremonyProtocol.EventID.RecvAuthOk ->
+            state == PairingCeremonyIosState.SendAuth && ev == PairingCeremonyProtocol.EventID.RecvAuthOk ->
                 run {
-                    state = IosState.SessionActive
+                    state = PairingCeremonyIosState.SessionActive
                     emptyList()
                 }
-            state == IosState.SessionActive && ev == PairingCeremonyProtocol.EventID.Disconnect ->
+            state == PairingCeremonyIosState.SessionActive && ev == PairingCeremonyProtocol.EventID.Disconnect ->
                 run {
-                    state = IosState.Paired
+                    state = PairingCeremonyIosState.Paired
                     emptyList()
                 }
             else -> emptyList()
@@ -413,44 +413,44 @@ class IosMachine {
     }
 }
 
-/** CliMachine is the generated state machine for the cli actor. */
-class CliMachine {
-    var state: CliState = CliState.Idle
+/** PairingCeremonyCliMachine is the generated state machine for the cli actor. */
+class PairingCeremonyCliMachine {
+    var state: PairingCeremonyCliState = PairingCeremonyCliState.Idle
         private set
     val guards = mutableMapOf<PairingCeremonyProtocol.GuardID, () -> Boolean>()
     val actions = mutableMapOf<PairingCeremonyProtocol.ActionID, () -> Unit>()
 
     /** Handle an event and return the list of commands to execute. */
-    fun handleEvent(ev: PairingCeremonyProtocol.EventID): List<PairingCeremonyProtocol.CmdID> {
-        val cmds = when {
-            state == CliState.Idle && ev == PairingCeremonyProtocol.EventID.CliInit ->
+    fun handleEvent(ev: PairingCeremonyProtocol.EventID): List<String> {
+        val cmds: List<String> = when {
+            state == PairingCeremonyCliState.Idle && ev == PairingCeremonyProtocol.EventID.CliInit ->
                 run {
-                    state = CliState.GetKey
+                    state = PairingCeremonyCliState.GetKey
                     emptyList()
                 }
-            state == CliState.GetKey && ev == PairingCeremonyProtocol.EventID.KeyStored ->
+            state == PairingCeremonyCliState.GetKey && ev == PairingCeremonyProtocol.EventID.KeyStored ->
                 run {
-                    state = CliState.BeginPair
+                    state = PairingCeremonyCliState.BeginPair
                     emptyList()
                 }
-            state == CliState.BeginPair && ev == PairingCeremonyProtocol.EventID.RecvTokenResponse ->
+            state == PairingCeremonyCliState.BeginPair && ev == PairingCeremonyProtocol.EventID.RecvTokenResponse ->
                 run {
-                    state = CliState.ShowQR
+                    state = PairingCeremonyCliState.ShowQR
                     emptyList()
                 }
-            state == CliState.ShowQR && ev == PairingCeremonyProtocol.EventID.RecvWaitingForCode ->
+            state == PairingCeremonyCliState.ShowQR && ev == PairingCeremonyProtocol.EventID.RecvWaitingForCode ->
                 run {
-                    state = CliState.PromptCode
+                    state = PairingCeremonyCliState.PromptCode
                     emptyList()
                 }
-            state == CliState.PromptCode && ev == PairingCeremonyProtocol.EventID.UserEntersCode ->
+            state == PairingCeremonyCliState.PromptCode && ev == PairingCeremonyProtocol.EventID.UserEntersCode ->
                 run {
-                    state = CliState.SubmitCode
+                    state = PairingCeremonyCliState.SubmitCode
                     emptyList()
                 }
-            state == CliState.SubmitCode && ev == PairingCeremonyProtocol.EventID.RecvPairStatus ->
+            state == PairingCeremonyCliState.SubmitCode && ev == PairingCeremonyProtocol.EventID.RecvPairStatus ->
                 run {
-                    state = CliState.Done
+                    state = PairingCeremonyCliState.Done
                     emptyList()
                 }
             else -> emptyList()

@@ -6,7 +6,7 @@
 
 package com.marcelocantos.pigeon.crypto
 
-enum class BackendState(val value: String) {
+enum class PathSwitchBackendState(val value: String) {
     RelayConnected("RelayConnected"),
     LANOffered("LANOffered"),
     LANActive("LANActive"),
@@ -14,7 +14,7 @@ enum class BackendState(val value: String) {
     LANDegraded("LANDegraded");
 }
 
-enum class ClientState(val value: String) {
+enum class PathSwitchClientState(val value: String) {
     RelayConnected("RelayConnected"),
     LANConnecting("LANConnecting"),
     LANVerifying("LANVerifying"),
@@ -22,7 +22,7 @@ enum class ClientState(val value: String) {
     RelayFallback("RelayFallback");
 }
 
-enum class RelayState(val value: String) {
+enum class PathSwitchRelayState(val value: String) {
     Idle("Idle"),
     BackendRegistered("BackendRegistered"),
     Bridged("Bridged");
@@ -88,7 +88,7 @@ object PathSwitchProtocol {
 
     /** backend transition table. */
     object BackendTable {
-        val initial = BackendState.RelayConnected
+        val initial = PathSwitchBackendState.RelayConnected
 
         data class Transition(
             val from: String,
@@ -119,7 +119,7 @@ object PathSwitchProtocol {
 
     /** client transition table. */
     object ClientTable {
-        val initial = ClientState.RelayConnected
+        val initial = PathSwitchClientState.RelayConnected
 
         data class Transition(
             val from: String,
@@ -147,7 +147,7 @@ object PathSwitchProtocol {
 
     /** relay transition table. */
     object RelayTable {
-        val initial = RelayState.Idle
+        val initial = PathSwitchRelayState.Idle
 
         data class Transition(
             val from: String,
@@ -170,9 +170,9 @@ object PathSwitchProtocol {
 
 }
 
-/** BackendMachine is the generated state machine for the backend actor. */
-class BackendMachine {
-    var state: BackendState = BackendState.RelayConnected
+/** PathSwitchBackendMachine is the generated state machine for the backend actor. */
+class PathSwitchBackendMachine {
+    var state: PathSwitchBackendState = PathSwitchBackendState.RelayConnected
         private set
     var pingFailures: Int = 0 // consecutive failed pings on the direct path
     var backoffLevel: Int = 0 // current exponential backoff level (0 = no backoff)
@@ -184,14 +184,14 @@ class BackendMachine {
     val actions = mutableMapOf<PathSwitchProtocol.ActionID, () -> Unit>()
 
     /** Handle an event and return the list of commands to execute. */
-    fun handleEvent(ev: PathSwitchProtocol.EventID): List<PathSwitchProtocol.CmdID> {
-        val cmds = when {
-            state == BackendState.RelayConnected && ev == PathSwitchProtocol.EventID.LanServerReady ->
+    fun handleEvent(ev: PathSwitchProtocol.EventID): List<String> {
+        val cmds: List<String> = when {
+            state == PathSwitchBackendState.RelayConnected && ev == PathSwitchProtocol.EventID.LanServerReady ->
                 run {
-                    state = BackendState.LANOffered
+                    state = PathSwitchBackendState.LANOffered
                     emptyList()
                 }
-            state == BackendState.LANOffered && ev == PathSwitchProtocol.EventID.RecvLanVerify && guards[PathSwitchProtocol.GuardID.ChallengeValid]?.invoke() == true ->
+            state == PathSwitchBackendState.LANOffered && ev == PathSwitchProtocol.EventID.RecvLanVerify && guards[PathSwitchProtocol.GuardID.ChallengeValid]?.invoke() == true ->
                 run {
                     actions[PathSwitchProtocol.ActionID.ActivateLan]?.invoke()
                     pingFailures = 0
@@ -200,50 +200,50 @@ class BackendMachine {
                     monitorTarget = "lan"
                     dispatcherPath = "lan"
                     lanSignal = "ready"
-                    state = BackendState.LANActive
+                    state = PathSwitchBackendState.LANActive
                     emptyList()
                 }
-            state == BackendState.LANOffered && ev == PathSwitchProtocol.EventID.RecvLanVerify && guards[PathSwitchProtocol.GuardID.ChallengeInvalid]?.invoke() == true ->
+            state == PathSwitchBackendState.LANOffered && ev == PathSwitchProtocol.EventID.RecvLanVerify && guards[PathSwitchProtocol.GuardID.ChallengeInvalid]?.invoke() == true ->
                 run {
-                    state = BackendState.RelayConnected
+                    state = PathSwitchBackendState.RelayConnected
                     emptyList()
                 }
-            state == BackendState.LANOffered && ev == PathSwitchProtocol.EventID.OfferTimeout ->
+            state == PathSwitchBackendState.LANOffered && ev == PathSwitchProtocol.EventID.OfferTimeout ->
                 run {
                     // backoff_level: Min(backoff_level + 1, max_backoff_level) (set by action)
-                    state = BackendState.RelayBackoff
+                    state = PathSwitchBackendState.RelayBackoff
                     emptyList()
                 }
-            state == BackendState.LANActive && ev == PathSwitchProtocol.EventID.PingTick ->
+            state == PathSwitchBackendState.LANActive && ev == PathSwitchProtocol.EventID.PingTick ->
                 run {
-                    state = BackendState.LANActive
+                    state = PathSwitchBackendState.LANActive
                     emptyList()
                 }
-            state == BackendState.LANActive && ev == PathSwitchProtocol.EventID.PingTimeout ->
+            state == PathSwitchBackendState.LANActive && ev == PathSwitchProtocol.EventID.PingTimeout ->
                 run {
                     pingFailures = 1
-                    state = BackendState.LANDegraded
+                    state = PathSwitchBackendState.LANDegraded
                     emptyList()
                 }
-            state == BackendState.LANDegraded && ev == PathSwitchProtocol.EventID.PingTick ->
+            state == PathSwitchBackendState.LANDegraded && ev == PathSwitchProtocol.EventID.PingTick ->
                 run {
-                    state = BackendState.LANDegraded
+                    state = PathSwitchBackendState.LANDegraded
                     emptyList()
                 }
-            state == BackendState.LANDegraded && ev == PathSwitchProtocol.EventID.RecvPathPong ->
+            state == PathSwitchBackendState.LANDegraded && ev == PathSwitchProtocol.EventID.RecvPathPong ->
                 run {
                     actions[PathSwitchProtocol.ActionID.ResetFailures]?.invoke()
                     pingFailures = 0
-                    state = BackendState.LANActive
+                    state = PathSwitchBackendState.LANActive
                     emptyList()
                 }
-            state == BackendState.LANDegraded && ev == PathSwitchProtocol.EventID.PingTimeout && guards[PathSwitchProtocol.GuardID.UnderMaxFailures]?.invoke() == true ->
+            state == PathSwitchBackendState.LANDegraded && ev == PathSwitchProtocol.EventID.PingTimeout && guards[PathSwitchProtocol.GuardID.UnderMaxFailures]?.invoke() == true ->
                 run {
                     // ping_failures: ping_failures + 1 (set by action)
-                    state = BackendState.LANDegraded
+                    state = PathSwitchBackendState.LANDegraded
                     emptyList()
                 }
-            state == BackendState.LANDegraded && ev == PathSwitchProtocol.EventID.PingTimeout && guards[PathSwitchProtocol.GuardID.AtMaxFailures]?.invoke() == true ->
+            state == PathSwitchBackendState.LANDegraded && ev == PathSwitchProtocol.EventID.PingTimeout && guards[PathSwitchProtocol.GuardID.AtMaxFailures]?.invoke() == true ->
                 run {
                     actions[PathSwitchProtocol.ActionID.FallbackToRelay]?.invoke()
                     // backoff_level: Min(backoff_level + 1, max_backoff_level) (set by action)
@@ -252,23 +252,23 @@ class BackendMachine {
                     dispatcherPath = "relay"
                     lanSignal = "pending"
                     pingFailures = 0
-                    state = BackendState.RelayBackoff
+                    state = PathSwitchBackendState.RelayBackoff
                     emptyList()
                 }
-            state == BackendState.RelayBackoff && ev == PathSwitchProtocol.EventID.BackoffExpired ->
+            state == PathSwitchBackendState.RelayBackoff && ev == PathSwitchProtocol.EventID.BackoffExpired ->
                 run {
-                    state = BackendState.LANOffered
+                    state = PathSwitchBackendState.LANOffered
                     emptyList()
                 }
-            state == BackendState.RelayBackoff && ev == PathSwitchProtocol.EventID.LanServerChanged ->
+            state == PathSwitchBackendState.RelayBackoff && ev == PathSwitchProtocol.EventID.LanServerChanged ->
                 run {
                     backoffLevel = 0
-                    state = BackendState.LANOffered
+                    state = PathSwitchBackendState.LANOffered
                     emptyList()
                 }
-            state == BackendState.RelayConnected && ev == PathSwitchProtocol.EventID.ReadvertiseTick && guards[PathSwitchProtocol.GuardID.LanServerAvailable]?.invoke() == true ->
+            state == PathSwitchBackendState.RelayConnected && ev == PathSwitchProtocol.EventID.ReadvertiseTick && guards[PathSwitchProtocol.GuardID.LanServerAvailable]?.invoke() == true ->
                 run {
-                    state = BackendState.LANOffered
+                    state = PathSwitchBackendState.LANOffered
                     emptyList()
                 }
             else -> emptyList()
@@ -277,9 +277,9 @@ class BackendMachine {
     }
 }
 
-/** ClientMachine is the generated state machine for the client actor. */
-class ClientMachine {
-    var state: ClientState = ClientState.RelayConnected
+/** PathSwitchClientMachine is the generated state machine for the client actor. */
+class PathSwitchClientMachine {
+    var state: PathSwitchClientState = PathSwitchClientState.RelayConnected
         private set
     var activePath: String = "relay" // "relay" or "lan" — which path carries application traffic
     var dispatcherPath: String = "relay" // which path the datagram dispatcher reads from ("relay", "lan", "none")
@@ -288,67 +288,67 @@ class ClientMachine {
     val actions = mutableMapOf<PathSwitchProtocol.ActionID, () -> Unit>()
 
     /** Handle an event and return the list of commands to execute. */
-    fun handleEvent(ev: PathSwitchProtocol.EventID): List<PathSwitchProtocol.CmdID> {
-        val cmds = when {
-            state == ClientState.RelayConnected && ev == PathSwitchProtocol.EventID.RecvLanOffer && guards[PathSwitchProtocol.GuardID.LanEnabled]?.invoke() == true ->
+    fun handleEvent(ev: PathSwitchProtocol.EventID): List<String> {
+        val cmds: List<String> = when {
+            state == PathSwitchClientState.RelayConnected && ev == PathSwitchProtocol.EventID.RecvLanOffer && guards[PathSwitchProtocol.GuardID.LanEnabled]?.invoke() == true ->
                 run {
                     actions[PathSwitchProtocol.ActionID.DialLan]?.invoke()
-                    state = ClientState.LANConnecting
+                    state = PathSwitchClientState.LANConnecting
                     emptyList()
                 }
-            state == ClientState.RelayConnected && ev == PathSwitchProtocol.EventID.RecvLanOffer && guards[PathSwitchProtocol.GuardID.LanDisabled]?.invoke() == true ->
+            state == PathSwitchClientState.RelayConnected && ev == PathSwitchProtocol.EventID.RecvLanOffer && guards[PathSwitchProtocol.GuardID.LanDisabled]?.invoke() == true ->
                 run {
-                    state = ClientState.RelayConnected
+                    state = PathSwitchClientState.RelayConnected
                     emptyList()
                 }
-            state == ClientState.LANConnecting && ev == PathSwitchProtocol.EventID.LanDialOk ->
+            state == PathSwitchClientState.LANConnecting && ev == PathSwitchProtocol.EventID.LanDialOk ->
                 run {
-                    state = ClientState.LANVerifying
+                    state = PathSwitchClientState.LANVerifying
                     emptyList()
                 }
-            state == ClientState.LANConnecting && ev == PathSwitchProtocol.EventID.LanDialFailed ->
+            state == PathSwitchClientState.LANConnecting && ev == PathSwitchProtocol.EventID.LanDialFailed ->
                 run {
-                    state = ClientState.RelayConnected
+                    state = PathSwitchClientState.RelayConnected
                     emptyList()
                 }
-            state == ClientState.LANVerifying && ev == PathSwitchProtocol.EventID.RecvLanConfirm ->
+            state == PathSwitchClientState.LANVerifying && ev == PathSwitchProtocol.EventID.RecvLanConfirm ->
                 run {
                     actions[PathSwitchProtocol.ActionID.ActivateLan]?.invoke()
                     activePath = "lan"
                     dispatcherPath = "lan"
                     lanSignal = "ready"
-                    state = ClientState.LANActive
+                    state = PathSwitchClientState.LANActive
                     emptyList()
                 }
-            state == ClientState.LANVerifying && ev == PathSwitchProtocol.EventID.VerifyTimeout ->
+            state == PathSwitchClientState.LANVerifying && ev == PathSwitchProtocol.EventID.VerifyTimeout ->
                 run {
                     dispatcherPath = "relay"
-                    state = ClientState.RelayConnected
+                    state = PathSwitchClientState.RelayConnected
                     emptyList()
                 }
-            state == ClientState.LANActive && ev == PathSwitchProtocol.EventID.RecvPathPing ->
+            state == PathSwitchClientState.LANActive && ev == PathSwitchProtocol.EventID.RecvPathPing ->
                 run {
-                    state = ClientState.LANActive
+                    state = PathSwitchClientState.LANActive
                     emptyList()
                 }
-            state == ClientState.LANActive && ev == PathSwitchProtocol.EventID.LanError ->
+            state == PathSwitchClientState.LANActive && ev == PathSwitchProtocol.EventID.LanError ->
                 run {
                     actions[PathSwitchProtocol.ActionID.FallbackToRelay]?.invoke()
                     activePath = "relay"
                     dispatcherPath = "relay"
                     lanSignal = "pending"
-                    state = ClientState.RelayFallback
+                    state = PathSwitchClientState.RelayFallback
                     emptyList()
                 }
-            state == ClientState.RelayFallback && ev == PathSwitchProtocol.EventID.RelayOk ->
+            state == PathSwitchClientState.RelayFallback && ev == PathSwitchProtocol.EventID.RelayOk ->
                 run {
-                    state = ClientState.RelayConnected
+                    state = PathSwitchClientState.RelayConnected
                     emptyList()
                 }
-            state == ClientState.LANActive && ev == PathSwitchProtocol.EventID.RecvLanOffer && guards[PathSwitchProtocol.GuardID.LanEnabled]?.invoke() == true ->
+            state == PathSwitchClientState.LANActive && ev == PathSwitchProtocol.EventID.RecvLanOffer && guards[PathSwitchProtocol.GuardID.LanEnabled]?.invoke() == true ->
                 run {
                     actions[PathSwitchProtocol.ActionID.DialLan]?.invoke()
-                    state = ClientState.LANConnecting
+                    state = PathSwitchClientState.LANConnecting
                     emptyList()
                 }
             else -> emptyList()
@@ -357,45 +357,45 @@ class ClientMachine {
     }
 }
 
-/** RelayMachine is the generated state machine for the relay actor. */
-class RelayMachine {
-    var state: RelayState = RelayState.Idle
+/** PathSwitchRelayMachine is the generated state machine for the relay actor. */
+class PathSwitchRelayMachine {
+    var state: PathSwitchRelayState = PathSwitchRelayState.Idle
         private set
     var relayBridge: String = "idle" // relay bridge state ("active" = bridging, "idle" = backend registered but no client)
     val guards = mutableMapOf<PathSwitchProtocol.GuardID, () -> Boolean>()
     val actions = mutableMapOf<PathSwitchProtocol.ActionID, () -> Unit>()
 
     /** Handle an event and return the list of commands to execute. */
-    fun handleEvent(ev: PathSwitchProtocol.EventID): List<PathSwitchProtocol.CmdID> {
-        val cmds = when {
-            state == RelayState.Idle && ev == PathSwitchProtocol.EventID.BackendRegister ->
+    fun handleEvent(ev: PathSwitchProtocol.EventID): List<String> {
+        val cmds: List<String> = when {
+            state == PathSwitchRelayState.Idle && ev == PathSwitchProtocol.EventID.BackendRegister ->
                 run {
-                    state = RelayState.BackendRegistered
+                    state = PathSwitchRelayState.BackendRegistered
                     emptyList()
                 }
-            state == RelayState.BackendRegistered && ev == PathSwitchProtocol.EventID.ClientConnect ->
+            state == PathSwitchRelayState.BackendRegistered && ev == PathSwitchProtocol.EventID.ClientConnect ->
                 run {
                     actions[PathSwitchProtocol.ActionID.BridgeStreams]?.invoke()
                     relayBridge = "active"
-                    state = RelayState.Bridged
+                    state = PathSwitchRelayState.Bridged
                     emptyList()
                 }
-            state == RelayState.Bridged && ev == PathSwitchProtocol.EventID.ClientDisconnect ->
+            state == PathSwitchRelayState.Bridged && ev == PathSwitchProtocol.EventID.ClientDisconnect ->
                 run {
                     actions[PathSwitchProtocol.ActionID.Unbridge]?.invoke()
                     relayBridge = "idle"
-                    state = RelayState.BackendRegistered
+                    state = PathSwitchRelayState.BackendRegistered
                     emptyList()
                 }
-            state == RelayState.Bridged && ev == PathSwitchProtocol.EventID.RecvRelayResume ->
+            state == PathSwitchRelayState.Bridged && ev == PathSwitchProtocol.EventID.RecvRelayResume ->
                 run {
                     actions[PathSwitchProtocol.ActionID.RebridgeStreams]?.invoke()
-                    state = RelayState.Bridged
+                    state = PathSwitchRelayState.Bridged
                     emptyList()
                 }
-            state == RelayState.BackendRegistered && ev == PathSwitchProtocol.EventID.BackendDisconnect ->
+            state == PathSwitchRelayState.BackendRegistered && ev == PathSwitchProtocol.EventID.BackendDisconnect ->
                 run {
-                    state = RelayState.Idle
+                    state = PathSwitchRelayState.Idle
                     emptyList()
                 }
             else -> emptyList()

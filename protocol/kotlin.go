@@ -29,12 +29,14 @@ func (p *Protocol) ExportKotlin(w io.Writer, pkg string) error {
 	protoName := kotlinTypeName(p.Name)
 	protoPrefix := protoName + "Protocol"
 
-	// Per-actor state enums at package scope — names are already unique per actor.
+	// Per-actor state enums at package scope — prefixed with protocol name
+	// to avoid collisions when multiple protocols share actor names.
 	for _, a := range p.Actors {
 		typeName := kotlinTypeName(a.Name)
+		stateEnum := protoName + typeName + "State"
 		states := collectStates(a)
 
-		fmt.Fprintf(&b, "enum class %sState(val value: String) {\n", typeName)
+		fmt.Fprintf(&b, "enum class %s(val value: String) {\n", stateEnum)
 		for i, s := range states {
 			comma := ","
 			if i == len(states)-1 {
@@ -140,9 +142,10 @@ func (p *Protocol) ExportKotlin(w io.Writer, pkg string) error {
 	// Transition table per actor (nested).
 	for _, a := range p.Actors {
 		typeName := kotlinTypeName(a.Name)
+		stateEnum := protoName + typeName + "State"
 		fmt.Fprintf(&b, "    /** %s transition table. */\n", a.Name)
 		fmt.Fprintf(&b, "    object %sTable {\n", typeName)
-		fmt.Fprintf(&b, "        val initial = %sState.%s\n\n", typeName, a.Initial)
+		fmt.Fprintf(&b, "        val initial = %s.%s\n\n", stateEnum, a.Initial)
 
 		fmt.Fprintf(&b, "        data class Transition(\n")
 		b.WriteString("            val from: String,\n")
@@ -203,10 +206,14 @@ func (p *Protocol) ExportKotlin(w io.Writer, pkg string) error {
 			}
 		}
 
-		// Machine class.
-		fmt.Fprintf(&b, "/** %sMachine is the generated state machine for the %s actor. */\n", typeName, a.Name)
-		fmt.Fprintf(&b, "class %sMachine {\n", typeName)
-		fmt.Fprintf(&b, "    var state: %sState = %sState.%s\n", typeName, typeName, a.Initial)
+		// Machine class — prefix with protocol name to avoid collisions when
+		// multiple protocols share actor names (e.g. session and pathswitch
+		// both have "relay").
+		machinePrefix := protoName + typeName
+		stateEnum := protoName + typeName + "State"
+		fmt.Fprintf(&b, "/** %sMachine is the generated state machine for the %s actor. */\n", machinePrefix, a.Name)
+		fmt.Fprintf(&b, "class %sMachine {\n", machinePrefix)
+		fmt.Fprintf(&b, "    var state: %s = %s.%s\n", stateEnum, stateEnum, a.Initial)
 		b.WriteString("        private set\n")
 
 		// Typed variable fields owned by this actor.
@@ -233,8 +240,12 @@ func (p *Protocol) ExportKotlin(w io.Writer, pkg string) error {
 
 		// handleEvent method — unified entry point returning commands.
 		b.WriteString("    /** Handle an event and return the list of commands to execute. */\n")
-		fmt.Fprintf(&b, "    fun handleEvent(ev: %s.EventID): List<%s.CmdID> {\n", protoPrefix, protoPrefix)
-		b.WriteString("        val cmds = when {\n")
+		cmdType := "String"
+		if len(p.Commands) > 0 {
+			cmdType = protoPrefix + ".CmdID"
+		}
+		fmt.Fprintf(&b, "    fun handleEvent(ev: %s.EventID): List<%s> {\n", protoPrefix, cmdType)
+		fmt.Fprintf(&b, "        val cmds: List<%s> = when {\n", cmdType)
 
 		for _, t := range a.FlattenedTransitions() {
 			// Determine event constant.
@@ -252,8 +263,8 @@ func (p *Protocol) ExportKotlin(w io.Writer, pkg string) error {
 					protoPrefix, kotlinPascalCase(string(t.Guard)))
 			}
 
-			fmt.Fprintf(&b, "            state == %sState.%s && ev == %s%s ->\n",
-				typeName, t.From, eventConst, guardCond)
+			fmt.Fprintf(&b, "            state == %s.%s && ev == %s%s ->\n",
+				stateEnum, t.From, eventConst, guardCond)
 
 			// Transition body.
 			b.WriteString("                run {\n")
@@ -274,7 +285,7 @@ func (p *Protocol) ExportKotlin(w io.Writer, pkg string) error {
 			}
 
 			// State transition.
-			fmt.Fprintf(&b, "                    state = %sState.%s\n", typeName, t.To)
+			fmt.Fprintf(&b, "                    state = %s.%s\n", stateEnum, t.To)
 
 			// Return commands.
 			if len(t.Emits) > 0 {
