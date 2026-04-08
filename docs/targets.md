@@ -55,9 +55,10 @@
   - Tests verify state transitions for transport phase
   - Tests verify correct command emission per transition
   - Tests verify guard evaluation
-- **Context**: Swift (22 tests) and TypeScript (22 tests) pass. Kotlin tests written but blocked on pre-existing codegen compilation errors (CmdID undefined, namespace collisions between SessionMachine/PathSwitchMachine).
+- **Context**: All three languages pass: Swift (22 tests), TypeScript (22 tests), Kotlin (22 tests). Fixed codegen: protocol-prefixed state enums/machine classes, conditional CmdID return type.
 - **Origin**: bootstrap from targets.md (T20.2)
-- **Status**: Converging
+- **Status**: Achieved
+- **Achieved**: 2026-04-09
 - **Discovered**: 2026-04-08
 
 ### 🎯T10.3 Cross-language confirmation code interop test
@@ -246,7 +247,17 @@
 
 ## Achieved
 
-(none)
+### 🎯T10.1 Swift E2E integrated into swift test
+- **Achieved**: 2026-04-08
+- **Context**: PigeonRelayE2ETests target in Package.swift with RelayE2ETests.swift. 6 tests pass via `swift test`.
+
+### 🎯T10.2 State machine unit tests for Swift/Kotlin/TypeScript
+- **Achieved**: 2026-04-09
+- **Context**: All three languages pass: Swift (22 tests), TypeScript (22 tests), Kotlin (22 tests). Fixed codegen: protocol-prefixed state enums/machine classes, conditional CmdID return type.
+
+### 🎯T10.4 TypeScript local E2E tests
+- **Achieved**: 2026-04-08
+- **Context**: relay.local.e2e.ts with GoRelayProcess.ts helper. 3 tests (register, round-trip, ordering). Fixed pigeon-bridge port extraction bug.
 
 ## Graph
 
