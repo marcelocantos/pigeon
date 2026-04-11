@@ -1,6 +1,8 @@
 /pigeon
+/pigeon-bridge
 /pigeon-test-binary
 /protogen
+/crypto-peer
 *.test
 .DS_Store
 sqlite_mcp_server.db

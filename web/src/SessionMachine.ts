@@ -4,7 +4,7 @@
 // Auto-generated from protocol definition. Do not edit.
 // Source of truth: protocol/*.yaml
 
-export enum BackendState {
+export enum SessionBackendState {
     Idle = "Idle",
     GenerateToken = "GenerateToken",
     RegisterRelay = "RegisterRelay",
@@ -24,7 +24,7 @@ export enum BackendState {
     LANDegraded = "LANDegraded",
 }
 
-export enum ClientState {
+export enum SessionClientState {
     Idle = "Idle",
     ObtainBackchannelSecret = "ObtainBackchannelSecret",
     ConnectRelay = "ConnectRelay",
@@ -44,7 +44,7 @@ export enum ClientState {
     RelayFallback = "RelayFallback",
 }
 
-export enum RelayState {
+export enum SessionRelayState {
     Idle = "Idle",
     BackendRegistered = "BackendRegistered",
     Bridged = "Bridged",
@@ -232,7 +232,7 @@ export namespace SessionProtocol {
 
     /** backend transition table. */
     export const backendTable: ActorTable = {
-        initial: BackendState.Idle,
+        initial: SessionBackendState.Idle,
         transitions: [
             { from: "Idle", to: "GenerateToken", on: "cli_init_pair", onKind: "internal", action: "generate_token" },
             { from: "GenerateToken", to: "RegisterRelay", on: "token_created", onKind: "internal", action: "register_relay" },
@@ -302,7 +302,7 @@ export namespace SessionProtocol {
 
     /** client transition table. */
     export const clientTable: ActorTable = {
-        initial: ClientState.Idle,
+        initial: SessionClientState.Idle,
         transitions: [
             { from: "Idle", to: "ObtainBackchannelSecret", on: "backchannel_received", onKind: "internal" },
             { from: "ObtainBackchannelSecret", to: "ConnectRelay", on: "secret_parsed", onKind: "internal" },
@@ -363,7 +363,7 @@ export namespace SessionProtocol {
 
     /** relay transition table. */
     export const relayTable: ActorTable = {
-        initial: RelayState.Idle,
+        initial: SessionRelayState.Idle,
         transitions: [
             { from: "Idle", to: "BackendRegistered", on: "backend_register", onKind: "internal" },
             { from: "BackendRegistered", to: "Bridged", on: "client_connect", onKind: "internal", action: "bridge_streams" },
@@ -374,10 +374,10 @@ export namespace SessionProtocol {
 
 }
 
-/** BackendMachine is the generated state machine for the backend actor. */
-export class BackendMachine {
+/** SessionBackendMachine is the generated state machine for the backend actor. */
+export class SessionBackendMachine {
     readonly protocol = SessionProtocol;
-    state: BackendState;
+    state: SessionBackendState;
     currentToken: string = "none"; // pairing token currently in play
     activeTokens: Set<string> = new Set(); // set of valid (non-revoked) tokens
     usedTokens: Set<string> = new Set(); // set of revoked tokens
@@ -403,97 +403,97 @@ export class BackendMachine {
     actions: Map<SessionProtocol.ActionID, () => void> = new Map();
 
     constructor() {
-        this.state = BackendState.Idle;
+        this.state = SessionBackendState.Idle;
     }
 
     handleEvent(ev: SessionProtocol.EventID): SessionProtocol.CmdID[] {
         switch (true) {
-            case this.state === BackendState.Idle && ev === SessionProtocol.EventID.CliInitPair: {
+            case this.state === SessionBackendState.Idle && ev === SessionProtocol.EventID.CliInitPair: {
                 this.actions.get(SessionProtocol.ActionID.GenerateToken)?.();
                 this.currentToken = "tok_1";
                 // active_tokens: active_tokens \union {"tok_1"} (set by action)
-                this.state = BackendState.GenerateToken;
+                this.state = SessionBackendState.GenerateToken;
                 return [];
             }
-            case this.state === BackendState.GenerateToken && ev === SessionProtocol.EventID.TokenCreated: {
+            case this.state === SessionBackendState.GenerateToken && ev === SessionProtocol.EventID.TokenCreated: {
                 this.actions.get(SessionProtocol.ActionID.RegisterRelay)?.();
-                this.state = BackendState.RegisterRelay;
+                this.state = SessionBackendState.RegisterRelay;
                 return [];
             }
-            case this.state === BackendState.RegisterRelay && ev === SessionProtocol.EventID.RelayRegistered: {
+            case this.state === SessionBackendState.RegisterRelay && ev === SessionProtocol.EventID.RelayRegistered: {
                 this.secretPublished = true;
-                this.state = BackendState.WaitingForClient;
+                this.state = SessionBackendState.WaitingForClient;
                 return [];
             }
-            case this.state === BackendState.WaitingForClient && ev === SessionProtocol.EventID.RecvPairHello && this.guards.get(SessionProtocol.GuardID.TokenValid)?.() === true: {
+            case this.state === SessionBackendState.WaitingForClient && ev === SessionProtocol.EventID.RecvPairHello && this.guards.get(SessionProtocol.GuardID.TokenValid)?.() === true: {
                 this.actions.get(SessionProtocol.ActionID.DeriveSecret)?.();
                 // received_client_pub: recv_msg.pubkey (set by action)
                 this.backendEcdhPub = "backend_pub";
                 // backend_shared_key: DeriveKey("backend_pub", recv_msg.pubkey) (set by action)
                 // backend_code: DeriveCode("backend_pub", recv_msg.pubkey) (set by action)
-                this.state = BackendState.DeriveSecret;
+                this.state = SessionBackendState.DeriveSecret;
                 return [];
             }
-            case this.state === BackendState.WaitingForClient && ev === SessionProtocol.EventID.RecvPairHello && this.guards.get(SessionProtocol.GuardID.TokenInvalid)?.() === true: {
-                this.state = BackendState.Idle;
+            case this.state === SessionBackendState.WaitingForClient && ev === SessionProtocol.EventID.RecvPairHello && this.guards.get(SessionProtocol.GuardID.TokenInvalid)?.() === true: {
+                this.state = SessionBackendState.Idle;
                 return [];
             }
-            case this.state === BackendState.DeriveSecret && ev === SessionProtocol.EventID.EcdhComplete: {
-                this.state = BackendState.SendAck;
+            case this.state === SessionBackendState.DeriveSecret && ev === SessionProtocol.EventID.EcdhComplete: {
+                this.state = SessionBackendState.SendAck;
                 return [];
             }
-            case this.state === BackendState.SendAck && ev === SessionProtocol.EventID.SignalCodeDisplay: {
-                this.state = BackendState.WaitingForCode;
+            case this.state === SessionBackendState.SendAck && ev === SessionProtocol.EventID.SignalCodeDisplay: {
+                this.state = SessionBackendState.WaitingForCode;
                 return [];
             }
-            case this.state === BackendState.WaitingForCode && ev === SessionProtocol.EventID.CliCodeEntered: {
+            case this.state === SessionBackendState.WaitingForCode && ev === SessionProtocol.EventID.CliCodeEntered: {
                 // received_code: cli_entered_code (set by action)
-                this.state = BackendState.ValidateCode;
+                this.state = SessionBackendState.ValidateCode;
                 return [];
             }
-            case this.state === BackendState.ValidateCode && ev === SessionProtocol.EventID.CheckCode && this.guards.get(SessionProtocol.GuardID.CodeCorrect)?.() === true: {
-                this.state = BackendState.StorePaired;
+            case this.state === SessionBackendState.ValidateCode && ev === SessionProtocol.EventID.CheckCode && this.guards.get(SessionProtocol.GuardID.CodeCorrect)?.() === true: {
+                this.state = SessionBackendState.StorePaired;
                 return [];
             }
-            case this.state === BackendState.ValidateCode && ev === SessionProtocol.EventID.CheckCode && this.guards.get(SessionProtocol.GuardID.CodeWrong)?.() === true: {
+            case this.state === SessionBackendState.ValidateCode && ev === SessionProtocol.EventID.CheckCode && this.guards.get(SessionProtocol.GuardID.CodeWrong)?.() === true: {
                 // code_attempts: code_attempts + 1 (set by action)
-                this.state = BackendState.Idle;
+                this.state = SessionBackendState.Idle;
                 return [];
             }
-            case this.state === BackendState.StorePaired && ev === SessionProtocol.EventID.Finalise: {
+            case this.state === SessionBackendState.StorePaired && ev === SessionProtocol.EventID.Finalise: {
                 this.actions.get(SessionProtocol.ActionID.StoreDevice)?.();
                 this.deviceSecret = "dev_secret_1";
                 // paired_devices: paired_devices \union {"device_1"} (set by action)
                 // active_tokens: active_tokens \ {current_token} (set by action)
                 // used_tokens: used_tokens \union {current_token} (set by action)
-                this.state = BackendState.Paired;
+                this.state = SessionBackendState.Paired;
                 return [];
             }
-            case this.state === BackendState.Paired && ev === SessionProtocol.EventID.RecvAuthRequest: {
+            case this.state === SessionBackendState.Paired && ev === SessionProtocol.EventID.RecvAuthRequest: {
                 // received_device_id: recv_msg.device_id (set by action)
                 // received_auth_nonce: recv_msg.nonce (set by action)
-                this.state = BackendState.AuthCheck;
+                this.state = SessionBackendState.AuthCheck;
                 return [];
             }
-            case this.state === BackendState.AuthCheck && ev === SessionProtocol.EventID.Verify && this.guards.get(SessionProtocol.GuardID.DeviceKnown)?.() === true: {
+            case this.state === SessionBackendState.AuthCheck && ev === SessionProtocol.EventID.Verify && this.guards.get(SessionProtocol.GuardID.DeviceKnown)?.() === true: {
                 this.actions.get(SessionProtocol.ActionID.VerifyDevice)?.();
                 // auth_nonces_used: auth_nonces_used \union {received_auth_nonce} (set by action)
-                this.state = BackendState.SessionActive;
+                this.state = SessionBackendState.SessionActive;
                 return [];
             }
-            case this.state === BackendState.AuthCheck && ev === SessionProtocol.EventID.Verify && this.guards.get(SessionProtocol.GuardID.DeviceUnknown)?.() === true: {
-                this.state = BackendState.Idle;
+            case this.state === SessionBackendState.AuthCheck && ev === SessionProtocol.EventID.Verify && this.guards.get(SessionProtocol.GuardID.DeviceUnknown)?.() === true: {
+                this.state = SessionBackendState.Idle;
                 return [];
             }
-            case this.state === BackendState.SessionActive && ev === SessionProtocol.EventID.SessionEstablished: {
-                this.state = BackendState.RelayConnected;
+            case this.state === SessionBackendState.SessionActive && ev === SessionProtocol.EventID.SessionEstablished: {
+                this.state = SessionBackendState.RelayConnected;
                 return [];
             }
-            case this.state === BackendState.RelayConnected && ev === SessionProtocol.EventID.LanServerReady: {
-                this.state = BackendState.LANOffered;
+            case this.state === SessionBackendState.RelayConnected && ev === SessionProtocol.EventID.LanServerReady: {
+                this.state = SessionBackendState.LANOffered;
                 return [SessionProtocol.CmdID.SendLanOffer];
             }
-            case this.state === BackendState.LANOffered && ev === SessionProtocol.EventID.RecvLanVerify && this.guards.get(SessionProtocol.GuardID.ChallengeValid)?.() === true: {
+            case this.state === SessionBackendState.LANOffered && ev === SessionProtocol.EventID.RecvLanVerify && this.guards.get(SessionProtocol.GuardID.ChallengeValid)?.() === true: {
                 this.actions.get(SessionProtocol.ActionID.ActivateLan)?.();
                 this.pingFailures = 0;
                 this.backoffLevel = 0;
@@ -501,33 +501,33 @@ export class BackendMachine {
                 this.bDispatcherPath = "lan";
                 this.monitorTarget = "lan";
                 this.lanSignal = "ready";
-                this.state = BackendState.LANActive;
+                this.state = SessionBackendState.LANActive;
                 return [SessionProtocol.CmdID.SendLanConfirm, SessionProtocol.CmdID.StartLanStreamReader, SessionProtocol.CmdID.StartLanDgReader, SessionProtocol.CmdID.StartMonitor, SessionProtocol.CmdID.SignalLanReady, SessionProtocol.CmdID.SetCryptoDatagram];
             }
-            case this.state === BackendState.LANOffered && ev === SessionProtocol.EventID.RecvLanVerify && this.guards.get(SessionProtocol.GuardID.ChallengeInvalid)?.() === true: {
-                this.state = BackendState.RelayConnected;
+            case this.state === SessionBackendState.LANOffered && ev === SessionProtocol.EventID.RecvLanVerify && this.guards.get(SessionProtocol.GuardID.ChallengeInvalid)?.() === true: {
+                this.state = SessionBackendState.RelayConnected;
                 return [];
             }
-            case this.state === BackendState.LANOffered && ev === SessionProtocol.EventID.OfferTimeout: {
+            case this.state === SessionBackendState.LANOffered && ev === SessionProtocol.EventID.OfferTimeout: {
                 // backoff_level: Min(backoff_level + 1, max_backoff_level) (set by action)
                 this.lanSignal = "pending";
-                this.state = BackendState.RelayBackoff;
+                this.state = SessionBackendState.RelayBackoff;
                 return [SessionProtocol.CmdID.ResetLanReady, SessionProtocol.CmdID.StartBackoffTimer];
             }
-            case this.state === BackendState.LANActive && ev === SessionProtocol.EventID.PingTick: {
-                this.state = BackendState.LANActive;
+            case this.state === SessionBackendState.LANActive && ev === SessionProtocol.EventID.PingTick: {
+                this.state = SessionBackendState.LANActive;
                 return [SessionProtocol.CmdID.SendPathPing, SessionProtocol.CmdID.StartPongTimeout];
             }
-            case this.state === BackendState.LANActive && ev === SessionProtocol.EventID.PingTimeout: {
+            case this.state === SessionBackendState.LANActive && ev === SessionProtocol.EventID.PingTimeout: {
                 this.pingFailures = 1;
-                this.state = BackendState.LANDegraded;
+                this.state = SessionBackendState.LANDegraded;
                 return [];
             }
-            case this.state === BackendState.LANDegraded && ev === SessionProtocol.EventID.PingTick: {
-                this.state = BackendState.LANDegraded;
+            case this.state === SessionBackendState.LANDegraded && ev === SessionProtocol.EventID.PingTick: {
+                this.state = SessionBackendState.LANDegraded;
                 return [SessionProtocol.CmdID.SendPathPing, SessionProtocol.CmdID.StartPongTimeout];
             }
-            case this.state === BackendState.LANActive && ev === SessionProtocol.EventID.LanStreamError: {
+            case this.state === SessionBackendState.LANActive && ev === SessionProtocol.EventID.LanStreamError: {
                 this.actions.get(SessionProtocol.ActionID.FallbackToRelay)?.();
                 // backoff_level: Min(backoff_level + 1, max_backoff_level) (set by action)
                 this.bActivePath = "relay";
@@ -535,10 +535,10 @@ export class BackendMachine {
                 this.monitorTarget = "none";
                 this.lanSignal = "pending";
                 this.pingFailures = 0;
-                this.state = BackendState.RelayBackoff;
+                this.state = SessionBackendState.RelayBackoff;
                 return [SessionProtocol.CmdID.StopMonitor, SessionProtocol.CmdID.StopLanStreamReader, SessionProtocol.CmdID.StopLanDgReader, SessionProtocol.CmdID.CloseLanPath, SessionProtocol.CmdID.ResetLanReady, SessionProtocol.CmdID.StartBackoffTimer];
             }
-            case this.state === BackendState.LANDegraded && ev === SessionProtocol.EventID.LanStreamError: {
+            case this.state === SessionBackendState.LANDegraded && ev === SessionProtocol.EventID.LanStreamError: {
                 this.actions.get(SessionProtocol.ActionID.FallbackToRelay)?.();
                 // backoff_level: Min(backoff_level + 1, max_backoff_level) (set by action)
                 this.bActivePath = "relay";
@@ -546,21 +546,21 @@ export class BackendMachine {
                 this.monitorTarget = "none";
                 this.lanSignal = "pending";
                 this.pingFailures = 0;
-                this.state = BackendState.RelayBackoff;
+                this.state = SessionBackendState.RelayBackoff;
                 return [SessionProtocol.CmdID.StopMonitor, SessionProtocol.CmdID.StopLanStreamReader, SessionProtocol.CmdID.StopLanDgReader, SessionProtocol.CmdID.CloseLanPath, SessionProtocol.CmdID.ResetLanReady, SessionProtocol.CmdID.StartBackoffTimer];
             }
-            case this.state === BackendState.LANDegraded && ev === SessionProtocol.EventID.RecvPathPong: {
+            case this.state === SessionBackendState.LANDegraded && ev === SessionProtocol.EventID.RecvPathPong: {
                 this.actions.get(SessionProtocol.ActionID.ResetFailures)?.();
                 this.pingFailures = 0;
-                this.state = BackendState.LANActive;
+                this.state = SessionBackendState.LANActive;
                 return [SessionProtocol.CmdID.CancelPongTimeout];
             }
-            case this.state === BackendState.LANDegraded && ev === SessionProtocol.EventID.PingTimeout && this.guards.get(SessionProtocol.GuardID.UnderMaxFailures)?.() === true: {
+            case this.state === SessionBackendState.LANDegraded && ev === SessionProtocol.EventID.PingTimeout && this.guards.get(SessionProtocol.GuardID.UnderMaxFailures)?.() === true: {
                 // ping_failures: ping_failures + 1 (set by action)
-                this.state = BackendState.LANDegraded;
+                this.state = SessionBackendState.LANDegraded;
                 return [];
             }
-            case this.state === BackendState.LANDegraded && ev === SessionProtocol.EventID.PingTimeout && this.guards.get(SessionProtocol.GuardID.AtMaxFailures)?.() === true: {
+            case this.state === SessionBackendState.LANDegraded && ev === SessionProtocol.EventID.PingTimeout && this.guards.get(SessionProtocol.GuardID.AtMaxFailures)?.() === true: {
                 this.actions.get(SessionProtocol.ActionID.FallbackToRelay)?.();
                 // backoff_level: Min(backoff_level + 1, max_backoff_level) (set by action)
                 this.bActivePath = "relay";
@@ -568,28 +568,28 @@ export class BackendMachine {
                 this.monitorTarget = "none";
                 this.lanSignal = "pending";
                 this.pingFailures = 0;
-                this.state = BackendState.RelayBackoff;
+                this.state = SessionBackendState.RelayBackoff;
                 return [SessionProtocol.CmdID.StopMonitor, SessionProtocol.CmdID.StopLanStreamReader, SessionProtocol.CmdID.StopLanDgReader, SessionProtocol.CmdID.CloseLanPath, SessionProtocol.CmdID.ResetLanReady, SessionProtocol.CmdID.StartBackoffTimer];
             }
-            case this.state === BackendState.RelayBackoff && ev === SessionProtocol.EventID.BackoffExpired: {
-                this.state = BackendState.LANOffered;
+            case this.state === SessionBackendState.RelayBackoff && ev === SessionProtocol.EventID.BackoffExpired: {
+                this.state = SessionBackendState.LANOffered;
                 return [SessionProtocol.CmdID.SendLanOffer];
             }
-            case this.state === BackendState.RelayBackoff && ev === SessionProtocol.EventID.LanServerChanged: {
+            case this.state === SessionBackendState.RelayBackoff && ev === SessionProtocol.EventID.LanServerChanged: {
                 this.backoffLevel = 0;
-                this.state = BackendState.LANOffered;
+                this.state = SessionBackendState.LANOffered;
                 return [SessionProtocol.CmdID.SendLanOffer];
             }
-            case this.state === BackendState.RelayConnected && ev === SessionProtocol.EventID.ReadvertiseTick && this.guards.get(SessionProtocol.GuardID.LanServerAvailable)?.() === true: {
-                this.state = BackendState.LANOffered;
+            case this.state === SessionBackendState.RelayConnected && ev === SessionProtocol.EventID.ReadvertiseTick && this.guards.get(SessionProtocol.GuardID.LanServerAvailable)?.() === true: {
+                this.state = SessionBackendState.LANOffered;
                 return [SessionProtocol.CmdID.SendLanOffer];
             }
-            case this.state === BackendState.LANOffered && ev === SessionProtocol.EventID.AppForceFallback: {
+            case this.state === SessionBackendState.LANOffered && ev === SessionProtocol.EventID.AppForceFallback: {
                 this.lanSignal = "pending";
-                this.state = BackendState.RelayConnected;
+                this.state = SessionBackendState.RelayConnected;
                 return [SessionProtocol.CmdID.ResetLanReady];
             }
-            case this.state === BackendState.LANActive && ev === SessionProtocol.EventID.AppForceFallback: {
+            case this.state === SessionBackendState.LANActive && ev === SessionProtocol.EventID.AppForceFallback: {
                 this.actions.get(SessionProtocol.ActionID.FallbackToRelay)?.();
                 // backoff_level: Min(backoff_level + 1, max_backoff_level) (set by action)
                 this.bActivePath = "relay";
@@ -597,10 +597,10 @@ export class BackendMachine {
                 this.monitorTarget = "none";
                 this.lanSignal = "pending";
                 this.pingFailures = 0;
-                this.state = BackendState.RelayBackoff;
+                this.state = SessionBackendState.RelayBackoff;
                 return [SessionProtocol.CmdID.StopMonitor, SessionProtocol.CmdID.CancelPongTimeout, SessionProtocol.CmdID.StopLanStreamReader, SessionProtocol.CmdID.StopLanDgReader, SessionProtocol.CmdID.CloseLanPath, SessionProtocol.CmdID.ResetLanReady, SessionProtocol.CmdID.StartBackoffTimer];
             }
-            case this.state === BackendState.LANDegraded && ev === SessionProtocol.EventID.AppForceFallback: {
+            case this.state === SessionBackendState.LANDegraded && ev === SessionProtocol.EventID.AppForceFallback: {
                 this.actions.get(SessionProtocol.ActionID.FallbackToRelay)?.();
                 // backoff_level: Min(backoff_level + 1, max_backoff_level) (set by action)
                 this.bActivePath = "relay";
@@ -608,127 +608,127 @@ export class BackendMachine {
                 this.monitorTarget = "none";
                 this.lanSignal = "pending";
                 this.pingFailures = 0;
-                this.state = BackendState.RelayBackoff;
+                this.state = SessionBackendState.RelayBackoff;
                 return [SessionProtocol.CmdID.StopMonitor, SessionProtocol.CmdID.CancelPongTimeout, SessionProtocol.CmdID.StopLanStreamReader, SessionProtocol.CmdID.StopLanDgReader, SessionProtocol.CmdID.CloseLanPath, SessionProtocol.CmdID.ResetLanReady, SessionProtocol.CmdID.StartBackoffTimer];
             }
-            case this.state === BackendState.RelayConnected && ev === SessionProtocol.EventID.Disconnect: {
-                this.state = BackendState.Paired;
+            case this.state === SessionBackendState.RelayConnected && ev === SessionProtocol.EventID.Disconnect: {
+                this.state = SessionBackendState.Paired;
                 return [];
             }
-            case this.state === BackendState.RelayConnected && ev === SessionProtocol.EventID.AppSend: {
-                this.state = BackendState.RelayConnected;
+            case this.state === SessionBackendState.RelayConnected && ev === SessionProtocol.EventID.AppSend: {
+                this.state = SessionBackendState.RelayConnected;
                 return [SessionProtocol.CmdID.WriteActiveStream];
             }
-            case this.state === BackendState.LANOffered && ev === SessionProtocol.EventID.AppSend: {
-                this.state = BackendState.LANOffered;
+            case this.state === SessionBackendState.LANOffered && ev === SessionProtocol.EventID.AppSend: {
+                this.state = SessionBackendState.LANOffered;
                 return [SessionProtocol.CmdID.WriteActiveStream];
             }
-            case this.state === BackendState.LANActive && ev === SessionProtocol.EventID.AppSend: {
-                this.state = BackendState.LANActive;
+            case this.state === SessionBackendState.LANActive && ev === SessionProtocol.EventID.AppSend: {
+                this.state = SessionBackendState.LANActive;
                 return [SessionProtocol.CmdID.WriteActiveStream];
             }
-            case this.state === BackendState.LANDegraded && ev === SessionProtocol.EventID.AppSend: {
-                this.state = BackendState.LANDegraded;
+            case this.state === SessionBackendState.LANDegraded && ev === SessionProtocol.EventID.AppSend: {
+                this.state = SessionBackendState.LANDegraded;
                 return [SessionProtocol.CmdID.WriteActiveStream];
             }
-            case this.state === BackendState.RelayBackoff && ev === SessionProtocol.EventID.AppSend: {
-                this.state = BackendState.RelayBackoff;
+            case this.state === SessionBackendState.RelayBackoff && ev === SessionProtocol.EventID.AppSend: {
+                this.state = SessionBackendState.RelayBackoff;
                 return [SessionProtocol.CmdID.WriteActiveStream];
             }
-            case this.state === BackendState.RelayConnected && ev === SessionProtocol.EventID.RelayStreamData: {
-                this.state = BackendState.RelayConnected;
+            case this.state === SessionBackendState.RelayConnected && ev === SessionProtocol.EventID.RelayStreamData: {
+                this.state = SessionBackendState.RelayConnected;
                 return [SessionProtocol.CmdID.DeliverRecv];
             }
-            case this.state === BackendState.LANOffered && ev === SessionProtocol.EventID.RelayStreamData: {
-                this.state = BackendState.LANOffered;
+            case this.state === SessionBackendState.LANOffered && ev === SessionProtocol.EventID.RelayStreamData: {
+                this.state = SessionBackendState.LANOffered;
                 return [SessionProtocol.CmdID.DeliverRecv];
             }
-            case this.state === BackendState.LANActive && ev === SessionProtocol.EventID.RelayStreamData: {
-                this.state = BackendState.LANActive;
+            case this.state === SessionBackendState.LANActive && ev === SessionProtocol.EventID.RelayStreamData: {
+                this.state = SessionBackendState.LANActive;
                 return [SessionProtocol.CmdID.DeliverRecv];
             }
-            case this.state === BackendState.LANDegraded && ev === SessionProtocol.EventID.RelayStreamData: {
-                this.state = BackendState.LANDegraded;
+            case this.state === SessionBackendState.LANDegraded && ev === SessionProtocol.EventID.RelayStreamData: {
+                this.state = SessionBackendState.LANDegraded;
                 return [SessionProtocol.CmdID.DeliverRecv];
             }
-            case this.state === BackendState.RelayBackoff && ev === SessionProtocol.EventID.RelayStreamData: {
-                this.state = BackendState.RelayBackoff;
+            case this.state === SessionBackendState.RelayBackoff && ev === SessionProtocol.EventID.RelayStreamData: {
+                this.state = SessionBackendState.RelayBackoff;
                 return [SessionProtocol.CmdID.DeliverRecv];
             }
-            case this.state === BackendState.RelayConnected && ev === SessionProtocol.EventID.RelayStreamError: {
-                this.state = BackendState.RelayConnected;
+            case this.state === SessionBackendState.RelayConnected && ev === SessionProtocol.EventID.RelayStreamError: {
+                this.state = SessionBackendState.RelayConnected;
                 return [SessionProtocol.CmdID.DeliverRecvError];
             }
-            case this.state === BackendState.LANOffered && ev === SessionProtocol.EventID.RelayStreamError: {
-                this.state = BackendState.LANOffered;
+            case this.state === SessionBackendState.LANOffered && ev === SessionProtocol.EventID.RelayStreamError: {
+                this.state = SessionBackendState.LANOffered;
                 return [SessionProtocol.CmdID.DeliverRecvError];
             }
-            case this.state === BackendState.LANActive && ev === SessionProtocol.EventID.RelayStreamError: {
-                this.state = BackendState.LANActive;
+            case this.state === SessionBackendState.LANActive && ev === SessionProtocol.EventID.RelayStreamError: {
+                this.state = SessionBackendState.LANActive;
                 return [SessionProtocol.CmdID.DeliverRecvError];
             }
-            case this.state === BackendState.LANDegraded && ev === SessionProtocol.EventID.RelayStreamError: {
-                this.state = BackendState.LANDegraded;
+            case this.state === SessionBackendState.LANDegraded && ev === SessionProtocol.EventID.RelayStreamError: {
+                this.state = SessionBackendState.LANDegraded;
                 return [SessionProtocol.CmdID.DeliverRecvError];
             }
-            case this.state === BackendState.RelayBackoff && ev === SessionProtocol.EventID.RelayStreamError: {
-                this.state = BackendState.RelayBackoff;
+            case this.state === SessionBackendState.RelayBackoff && ev === SessionProtocol.EventID.RelayStreamError: {
+                this.state = SessionBackendState.RelayBackoff;
                 return [SessionProtocol.CmdID.DeliverRecvError];
             }
-            case this.state === BackendState.RelayConnected && ev === SessionProtocol.EventID.AppSendDatagram: {
-                this.state = BackendState.RelayConnected;
+            case this.state === SessionBackendState.RelayConnected && ev === SessionProtocol.EventID.AppSendDatagram: {
+                this.state = SessionBackendState.RelayConnected;
                 return [SessionProtocol.CmdID.SendActiveDatagram];
             }
-            case this.state === BackendState.LANOffered && ev === SessionProtocol.EventID.AppSendDatagram: {
-                this.state = BackendState.LANOffered;
+            case this.state === SessionBackendState.LANOffered && ev === SessionProtocol.EventID.AppSendDatagram: {
+                this.state = SessionBackendState.LANOffered;
                 return [SessionProtocol.CmdID.SendActiveDatagram];
             }
-            case this.state === BackendState.LANActive && ev === SessionProtocol.EventID.AppSendDatagram: {
-                this.state = BackendState.LANActive;
+            case this.state === SessionBackendState.LANActive && ev === SessionProtocol.EventID.AppSendDatagram: {
+                this.state = SessionBackendState.LANActive;
                 return [SessionProtocol.CmdID.SendActiveDatagram];
             }
-            case this.state === BackendState.LANDegraded && ev === SessionProtocol.EventID.AppSendDatagram: {
-                this.state = BackendState.LANDegraded;
+            case this.state === SessionBackendState.LANDegraded && ev === SessionProtocol.EventID.AppSendDatagram: {
+                this.state = SessionBackendState.LANDegraded;
                 return [SessionProtocol.CmdID.SendActiveDatagram];
             }
-            case this.state === BackendState.RelayBackoff && ev === SessionProtocol.EventID.AppSendDatagram: {
-                this.state = BackendState.RelayBackoff;
+            case this.state === SessionBackendState.RelayBackoff && ev === SessionProtocol.EventID.AppSendDatagram: {
+                this.state = SessionBackendState.RelayBackoff;
                 return [SessionProtocol.CmdID.SendActiveDatagram];
             }
-            case this.state === BackendState.RelayConnected && ev === SessionProtocol.EventID.RelayDatagram: {
-                this.state = BackendState.RelayConnected;
+            case this.state === SessionBackendState.RelayConnected && ev === SessionProtocol.EventID.RelayDatagram: {
+                this.state = SessionBackendState.RelayConnected;
                 return [SessionProtocol.CmdID.DeliverRecvDatagram];
             }
-            case this.state === BackendState.LANOffered && ev === SessionProtocol.EventID.RelayDatagram: {
-                this.state = BackendState.LANOffered;
+            case this.state === SessionBackendState.LANOffered && ev === SessionProtocol.EventID.RelayDatagram: {
+                this.state = SessionBackendState.LANOffered;
                 return [SessionProtocol.CmdID.DeliverRecvDatagram];
             }
-            case this.state === BackendState.LANActive && ev === SessionProtocol.EventID.RelayDatagram: {
-                this.state = BackendState.LANActive;
+            case this.state === SessionBackendState.LANActive && ev === SessionProtocol.EventID.RelayDatagram: {
+                this.state = SessionBackendState.LANActive;
                 return [SessionProtocol.CmdID.DeliverRecvDatagram];
             }
-            case this.state === BackendState.LANDegraded && ev === SessionProtocol.EventID.RelayDatagram: {
-                this.state = BackendState.LANDegraded;
+            case this.state === SessionBackendState.LANDegraded && ev === SessionProtocol.EventID.RelayDatagram: {
+                this.state = SessionBackendState.LANDegraded;
                 return [SessionProtocol.CmdID.DeliverRecvDatagram];
             }
-            case this.state === BackendState.RelayBackoff && ev === SessionProtocol.EventID.RelayDatagram: {
-                this.state = BackendState.RelayBackoff;
+            case this.state === SessionBackendState.RelayBackoff && ev === SessionProtocol.EventID.RelayDatagram: {
+                this.state = SessionBackendState.RelayBackoff;
                 return [SessionProtocol.CmdID.DeliverRecvDatagram];
             }
-            case this.state === BackendState.LANActive && ev === SessionProtocol.EventID.LanStreamData: {
-                this.state = BackendState.LANActive;
+            case this.state === SessionBackendState.LANActive && ev === SessionProtocol.EventID.LanStreamData: {
+                this.state = SessionBackendState.LANActive;
                 return [SessionProtocol.CmdID.DeliverRecv];
             }
-            case this.state === BackendState.LANDegraded && ev === SessionProtocol.EventID.LanStreamData: {
-                this.state = BackendState.LANDegraded;
+            case this.state === SessionBackendState.LANDegraded && ev === SessionProtocol.EventID.LanStreamData: {
+                this.state = SessionBackendState.LANDegraded;
                 return [SessionProtocol.CmdID.DeliverRecv];
             }
-            case this.state === BackendState.LANActive && ev === SessionProtocol.EventID.LanDatagram: {
-                this.state = BackendState.LANActive;
+            case this.state === SessionBackendState.LANActive && ev === SessionProtocol.EventID.LanDatagram: {
+                this.state = SessionBackendState.LANActive;
                 return [SessionProtocol.CmdID.DeliverRecvDatagram];
             }
-            case this.state === BackendState.LANDegraded && ev === SessionProtocol.EventID.LanDatagram: {
-                this.state = BackendState.LANDegraded;
+            case this.state === SessionBackendState.LANDegraded && ev === SessionProtocol.EventID.LanDatagram: {
+                this.state = SessionBackendState.LANDegraded;
                 return [SessionProtocol.CmdID.DeliverRecvDatagram];
             }
         }
@@ -736,10 +736,10 @@ export class BackendMachine {
     }
 }
 
-/** ClientMachine is the generated state machine for the client actor. */
-export class ClientMachine {
+/** SessionClientMachine is the generated state machine for the client actor. */
+export class SessionClientMachine {
     readonly protocol = SessionProtocol;
-    state: ClientState;
+    state: SessionClientState;
     receivedBackendPub: string = "none"; // pubkey client received in pair_hello_ack
     clientSharedKey: string = ""; // ECDH key derived by client
     clientCode: string = ""; // code computed by client
@@ -750,251 +750,251 @@ export class ClientMachine {
     actions: Map<SessionProtocol.ActionID, () => void> = new Map();
 
     constructor() {
-        this.state = ClientState.Idle;
+        this.state = SessionClientState.Idle;
     }
 
     handleEvent(ev: SessionProtocol.EventID): SessionProtocol.CmdID[] {
         switch (true) {
-            case this.state === ClientState.Idle && ev === SessionProtocol.EventID.BackchannelReceived: {
-                this.state = ClientState.ObtainBackchannelSecret;
+            case this.state === SessionClientState.Idle && ev === SessionProtocol.EventID.BackchannelReceived: {
+                this.state = SessionClientState.ObtainBackchannelSecret;
                 return [];
             }
-            case this.state === ClientState.ObtainBackchannelSecret && ev === SessionProtocol.EventID.SecretParsed: {
-                this.state = ClientState.ConnectRelay;
+            case this.state === SessionClientState.ObtainBackchannelSecret && ev === SessionProtocol.EventID.SecretParsed: {
+                this.state = SessionClientState.ConnectRelay;
                 return [];
             }
-            case this.state === ClientState.ConnectRelay && ev === SessionProtocol.EventID.RelayConnected: {
-                this.state = ClientState.GenKeyPair;
+            case this.state === SessionClientState.ConnectRelay && ev === SessionProtocol.EventID.RelayConnected: {
+                this.state = SessionClientState.GenKeyPair;
                 return [];
             }
-            case this.state === ClientState.GenKeyPair && ev === SessionProtocol.EventID.KeyPairGenerated: {
+            case this.state === SessionClientState.GenKeyPair && ev === SessionProtocol.EventID.KeyPairGenerated: {
                 this.actions.get(SessionProtocol.ActionID.SendPairHello)?.();
-                this.state = ClientState.WaitAck;
+                this.state = SessionClientState.WaitAck;
                 return [];
             }
-            case this.state === ClientState.WaitAck && ev === SessionProtocol.EventID.RecvPairHelloAck: {
+            case this.state === SessionClientState.WaitAck && ev === SessionProtocol.EventID.RecvPairHelloAck: {
                 this.actions.get(SessionProtocol.ActionID.DeriveSecret)?.();
                 // received_backend_pub: recv_msg.pubkey (set by action)
                 // client_shared_key: DeriveKey("client_pub", recv_msg.pubkey) (set by action)
-                this.state = ClientState.E2EReady;
+                this.state = SessionClientState.E2EReady;
                 return [];
             }
-            case this.state === ClientState.E2EReady && ev === SessionProtocol.EventID.RecvPairConfirm: {
+            case this.state === SessionClientState.E2EReady && ev === SessionProtocol.EventID.RecvPairConfirm: {
                 // client_code: DeriveCode(received_backend_pub, "client_pub") (set by action)
-                this.state = ClientState.ShowCode;
+                this.state = SessionClientState.ShowCode;
                 return [];
             }
-            case this.state === ClientState.ShowCode && ev === SessionProtocol.EventID.CodeDisplayed: {
-                this.state = ClientState.WaitPairComplete;
+            case this.state === SessionClientState.ShowCode && ev === SessionProtocol.EventID.CodeDisplayed: {
+                this.state = SessionClientState.WaitPairComplete;
                 return [];
             }
-            case this.state === ClientState.WaitPairComplete && ev === SessionProtocol.EventID.RecvPairComplete: {
+            case this.state === SessionClientState.WaitPairComplete && ev === SessionProtocol.EventID.RecvPairComplete: {
                 this.actions.get(SessionProtocol.ActionID.StoreSecret)?.();
-                this.state = ClientState.Paired;
+                this.state = SessionClientState.Paired;
                 return [];
             }
-            case this.state === ClientState.Paired && ev === SessionProtocol.EventID.AppLaunch: {
-                this.state = ClientState.Reconnect;
+            case this.state === SessionClientState.Paired && ev === SessionProtocol.EventID.AppLaunch: {
+                this.state = SessionClientState.Reconnect;
                 return [];
             }
-            case this.state === ClientState.Reconnect && ev === SessionProtocol.EventID.RelayConnected: {
-                this.state = ClientState.SendAuth;
+            case this.state === SessionClientState.Reconnect && ev === SessionProtocol.EventID.RelayConnected: {
+                this.state = SessionClientState.SendAuth;
                 return [];
             }
-            case this.state === ClientState.SendAuth && ev === SessionProtocol.EventID.RecvAuthOk: {
-                this.state = ClientState.SessionActive;
+            case this.state === SessionClientState.SendAuth && ev === SessionProtocol.EventID.RecvAuthOk: {
+                this.state = SessionClientState.SessionActive;
                 return [];
             }
-            case this.state === ClientState.SessionActive && ev === SessionProtocol.EventID.SessionEstablished: {
-                this.state = ClientState.RelayConnected;
+            case this.state === SessionClientState.SessionActive && ev === SessionProtocol.EventID.SessionEstablished: {
+                this.state = SessionClientState.RelayConnected;
                 return [];
             }
-            case this.state === ClientState.RelayConnected && ev === SessionProtocol.EventID.RecvLanOffer && this.guards.get(SessionProtocol.GuardID.LanEnabled)?.() === true: {
+            case this.state === SessionClientState.RelayConnected && ev === SessionProtocol.EventID.RecvLanOffer && this.guards.get(SessionProtocol.GuardID.LanEnabled)?.() === true: {
                 this.actions.get(SessionProtocol.ActionID.DialLan)?.();
-                this.state = ClientState.LANConnecting;
+                this.state = SessionClientState.LANConnecting;
                 return [SessionProtocol.CmdID.DialLan];
             }
-            case this.state === ClientState.RelayConnected && ev === SessionProtocol.EventID.RecvLanOffer && this.guards.get(SessionProtocol.GuardID.LanDisabled)?.() === true: {
-                this.state = ClientState.RelayConnected;
+            case this.state === SessionClientState.RelayConnected && ev === SessionProtocol.EventID.RecvLanOffer && this.guards.get(SessionProtocol.GuardID.LanDisabled)?.() === true: {
+                this.state = SessionClientState.RelayConnected;
                 return [];
             }
-            case this.state === ClientState.LANConnecting && ev === SessionProtocol.EventID.LanDialOk: {
-                this.state = ClientState.LANVerifying;
+            case this.state === SessionClientState.LANConnecting && ev === SessionProtocol.EventID.LanDialOk: {
+                this.state = SessionClientState.LANVerifying;
                 return [SessionProtocol.CmdID.SendLanVerify];
             }
-            case this.state === ClientState.LANConnecting && ev === SessionProtocol.EventID.LanDialFailed: {
-                this.state = ClientState.RelayConnected;
+            case this.state === SessionClientState.LANConnecting && ev === SessionProtocol.EventID.LanDialFailed: {
+                this.state = SessionClientState.RelayConnected;
                 return [];
             }
-            case this.state === ClientState.LANVerifying && ev === SessionProtocol.EventID.RecvLanConfirm: {
+            case this.state === SessionClientState.LANVerifying && ev === SessionProtocol.EventID.RecvLanConfirm: {
                 this.actions.get(SessionProtocol.ActionID.ActivateLan)?.();
                 this.cActivePath = "lan";
                 this.cDispatcherPath = "lan";
                 this.lanSignal = "ready";
-                this.state = ClientState.LANActive;
+                this.state = SessionClientState.LANActive;
                 return [SessionProtocol.CmdID.StartLanStreamReader, SessionProtocol.CmdID.StartLanDgReader, SessionProtocol.CmdID.SignalLanReady, SessionProtocol.CmdID.SetCryptoDatagram];
             }
-            case this.state === ClientState.LANVerifying && ev === SessionProtocol.EventID.VerifyTimeout: {
+            case this.state === SessionClientState.LANVerifying && ev === SessionProtocol.EventID.VerifyTimeout: {
                 this.cDispatcherPath = "relay";
-                this.state = ClientState.RelayConnected;
+                this.state = SessionClientState.RelayConnected;
                 return [];
             }
-            case this.state === ClientState.LANActive && ev === SessionProtocol.EventID.RecvPathPing: {
-                this.state = ClientState.LANActive;
+            case this.state === SessionClientState.LANActive && ev === SessionProtocol.EventID.RecvPathPing: {
+                this.state = SessionClientState.LANActive;
                 return [SessionProtocol.CmdID.SendPathPong];
             }
-            case this.state === ClientState.LANActive && ev === SessionProtocol.EventID.LanError: {
+            case this.state === SessionClientState.LANActive && ev === SessionProtocol.EventID.LanError: {
                 this.actions.get(SessionProtocol.ActionID.FallbackToRelay)?.();
                 this.cActivePath = "relay";
                 this.cDispatcherPath = "relay";
                 this.lanSignal = "pending";
-                this.state = ClientState.RelayFallback;
+                this.state = SessionClientState.RelayFallback;
                 return [SessionProtocol.CmdID.StopLanStreamReader, SessionProtocol.CmdID.StopLanDgReader, SessionProtocol.CmdID.CloseLanPath, SessionProtocol.CmdID.ResetLanReady];
             }
-            case this.state === ClientState.LANActive && ev === SessionProtocol.EventID.LanStreamError: {
+            case this.state === SessionClientState.LANActive && ev === SessionProtocol.EventID.LanStreamError: {
                 this.actions.get(SessionProtocol.ActionID.FallbackToRelay)?.();
                 this.cActivePath = "relay";
                 this.cDispatcherPath = "relay";
                 this.lanSignal = "pending";
-                this.state = ClientState.RelayFallback;
+                this.state = SessionClientState.RelayFallback;
                 return [SessionProtocol.CmdID.StopLanStreamReader, SessionProtocol.CmdID.StopLanDgReader, SessionProtocol.CmdID.CloseLanPath, SessionProtocol.CmdID.ResetLanReady];
             }
-            case this.state === ClientState.RelayFallback && ev === SessionProtocol.EventID.RelayOk: {
-                this.state = ClientState.RelayConnected;
+            case this.state === SessionClientState.RelayFallback && ev === SessionProtocol.EventID.RelayOk: {
+                this.state = SessionClientState.RelayConnected;
                 return [];
             }
-            case this.state === ClientState.LANActive && ev === SessionProtocol.EventID.RecvLanOffer && this.guards.get(SessionProtocol.GuardID.LanEnabled)?.() === true: {
+            case this.state === SessionClientState.LANActive && ev === SessionProtocol.EventID.RecvLanOffer && this.guards.get(SessionProtocol.GuardID.LanEnabled)?.() === true: {
                 this.actions.get(SessionProtocol.ActionID.DialLan)?.();
-                this.state = ClientState.LANConnecting;
+                this.state = SessionClientState.LANConnecting;
                 return [SessionProtocol.CmdID.StopLanStreamReader, SessionProtocol.CmdID.StopLanDgReader, SessionProtocol.CmdID.CloseLanPath, SessionProtocol.CmdID.DialLan];
             }
-            case this.state === ClientState.LANConnecting && ev === SessionProtocol.EventID.AppForceFallback: {
-                this.state = ClientState.RelayConnected;
+            case this.state === SessionClientState.LANConnecting && ev === SessionProtocol.EventID.AppForceFallback: {
+                this.state = SessionClientState.RelayConnected;
                 return [];
             }
-            case this.state === ClientState.LANVerifying && ev === SessionProtocol.EventID.AppForceFallback: {
+            case this.state === SessionClientState.LANVerifying && ev === SessionProtocol.EventID.AppForceFallback: {
                 this.cDispatcherPath = "relay";
-                this.state = ClientState.RelayConnected;
+                this.state = SessionClientState.RelayConnected;
                 return [SessionProtocol.CmdID.StopLanStreamReader, SessionProtocol.CmdID.StopLanDgReader, SessionProtocol.CmdID.CloseLanPath];
             }
-            case this.state === ClientState.LANActive && ev === SessionProtocol.EventID.AppForceFallback: {
+            case this.state === SessionClientState.LANActive && ev === SessionProtocol.EventID.AppForceFallback: {
                 this.actions.get(SessionProtocol.ActionID.FallbackToRelay)?.();
                 this.cActivePath = "relay";
                 this.cDispatcherPath = "relay";
                 this.lanSignal = "pending";
-                this.state = ClientState.RelayConnected;
+                this.state = SessionClientState.RelayConnected;
                 return [SessionProtocol.CmdID.StopLanStreamReader, SessionProtocol.CmdID.StopLanDgReader, SessionProtocol.CmdID.CloseLanPath, SessionProtocol.CmdID.ResetLanReady];
             }
-            case this.state === ClientState.RelayConnected && ev === SessionProtocol.EventID.Disconnect: {
-                this.state = ClientState.Paired;
+            case this.state === SessionClientState.RelayConnected && ev === SessionProtocol.EventID.Disconnect: {
+                this.state = SessionClientState.Paired;
                 return [];
             }
-            case this.state === ClientState.RelayConnected && ev === SessionProtocol.EventID.AppSend: {
-                this.state = ClientState.RelayConnected;
+            case this.state === SessionClientState.RelayConnected && ev === SessionProtocol.EventID.AppSend: {
+                this.state = SessionClientState.RelayConnected;
                 return [SessionProtocol.CmdID.WriteActiveStream];
             }
-            case this.state === ClientState.LANConnecting && ev === SessionProtocol.EventID.AppSend: {
-                this.state = ClientState.LANConnecting;
+            case this.state === SessionClientState.LANConnecting && ev === SessionProtocol.EventID.AppSend: {
+                this.state = SessionClientState.LANConnecting;
                 return [SessionProtocol.CmdID.WriteActiveStream];
             }
-            case this.state === ClientState.LANVerifying && ev === SessionProtocol.EventID.AppSend: {
-                this.state = ClientState.LANVerifying;
+            case this.state === SessionClientState.LANVerifying && ev === SessionProtocol.EventID.AppSend: {
+                this.state = SessionClientState.LANVerifying;
                 return [SessionProtocol.CmdID.WriteActiveStream];
             }
-            case this.state === ClientState.LANActive && ev === SessionProtocol.EventID.AppSend: {
-                this.state = ClientState.LANActive;
+            case this.state === SessionClientState.LANActive && ev === SessionProtocol.EventID.AppSend: {
+                this.state = SessionClientState.LANActive;
                 return [SessionProtocol.CmdID.WriteActiveStream];
             }
-            case this.state === ClientState.RelayFallback && ev === SessionProtocol.EventID.AppSend: {
-                this.state = ClientState.RelayFallback;
+            case this.state === SessionClientState.RelayFallback && ev === SessionProtocol.EventID.AppSend: {
+                this.state = SessionClientState.RelayFallback;
                 return [SessionProtocol.CmdID.WriteActiveStream];
             }
-            case this.state === ClientState.RelayConnected && ev === SessionProtocol.EventID.RelayStreamData: {
-                this.state = ClientState.RelayConnected;
+            case this.state === SessionClientState.RelayConnected && ev === SessionProtocol.EventID.RelayStreamData: {
+                this.state = SessionClientState.RelayConnected;
                 return [SessionProtocol.CmdID.DeliverRecv];
             }
-            case this.state === ClientState.LANConnecting && ev === SessionProtocol.EventID.RelayStreamData: {
-                this.state = ClientState.LANConnecting;
+            case this.state === SessionClientState.LANConnecting && ev === SessionProtocol.EventID.RelayStreamData: {
+                this.state = SessionClientState.LANConnecting;
                 return [SessionProtocol.CmdID.DeliverRecv];
             }
-            case this.state === ClientState.LANVerifying && ev === SessionProtocol.EventID.RelayStreamData: {
-                this.state = ClientState.LANVerifying;
+            case this.state === SessionClientState.LANVerifying && ev === SessionProtocol.EventID.RelayStreamData: {
+                this.state = SessionClientState.LANVerifying;
                 return [SessionProtocol.CmdID.DeliverRecv];
             }
-            case this.state === ClientState.LANActive && ev === SessionProtocol.EventID.RelayStreamData: {
-                this.state = ClientState.LANActive;
+            case this.state === SessionClientState.LANActive && ev === SessionProtocol.EventID.RelayStreamData: {
+                this.state = SessionClientState.LANActive;
                 return [SessionProtocol.CmdID.DeliverRecv];
             }
-            case this.state === ClientState.RelayFallback && ev === SessionProtocol.EventID.RelayStreamData: {
-                this.state = ClientState.RelayFallback;
+            case this.state === SessionClientState.RelayFallback && ev === SessionProtocol.EventID.RelayStreamData: {
+                this.state = SessionClientState.RelayFallback;
                 return [SessionProtocol.CmdID.DeliverRecv];
             }
-            case this.state === ClientState.RelayConnected && ev === SessionProtocol.EventID.RelayStreamError: {
-                this.state = ClientState.RelayConnected;
+            case this.state === SessionClientState.RelayConnected && ev === SessionProtocol.EventID.RelayStreamError: {
+                this.state = SessionClientState.RelayConnected;
                 return [SessionProtocol.CmdID.DeliverRecvError];
             }
-            case this.state === ClientState.LANConnecting && ev === SessionProtocol.EventID.RelayStreamError: {
-                this.state = ClientState.LANConnecting;
+            case this.state === SessionClientState.LANConnecting && ev === SessionProtocol.EventID.RelayStreamError: {
+                this.state = SessionClientState.LANConnecting;
                 return [SessionProtocol.CmdID.DeliverRecvError];
             }
-            case this.state === ClientState.LANVerifying && ev === SessionProtocol.EventID.RelayStreamError: {
-                this.state = ClientState.LANVerifying;
+            case this.state === SessionClientState.LANVerifying && ev === SessionProtocol.EventID.RelayStreamError: {
+                this.state = SessionClientState.LANVerifying;
                 return [SessionProtocol.CmdID.DeliverRecvError];
             }
-            case this.state === ClientState.LANActive && ev === SessionProtocol.EventID.RelayStreamError: {
-                this.state = ClientState.LANActive;
+            case this.state === SessionClientState.LANActive && ev === SessionProtocol.EventID.RelayStreamError: {
+                this.state = SessionClientState.LANActive;
                 return [SessionProtocol.CmdID.DeliverRecvError];
             }
-            case this.state === ClientState.RelayFallback && ev === SessionProtocol.EventID.RelayStreamError: {
-                this.state = ClientState.RelayFallback;
+            case this.state === SessionClientState.RelayFallback && ev === SessionProtocol.EventID.RelayStreamError: {
+                this.state = SessionClientState.RelayFallback;
                 return [SessionProtocol.CmdID.DeliverRecvError];
             }
-            case this.state === ClientState.RelayConnected && ev === SessionProtocol.EventID.AppSendDatagram: {
-                this.state = ClientState.RelayConnected;
+            case this.state === SessionClientState.RelayConnected && ev === SessionProtocol.EventID.AppSendDatagram: {
+                this.state = SessionClientState.RelayConnected;
                 return [SessionProtocol.CmdID.SendActiveDatagram];
             }
-            case this.state === ClientState.LANConnecting && ev === SessionProtocol.EventID.AppSendDatagram: {
-                this.state = ClientState.LANConnecting;
+            case this.state === SessionClientState.LANConnecting && ev === SessionProtocol.EventID.AppSendDatagram: {
+                this.state = SessionClientState.LANConnecting;
                 return [SessionProtocol.CmdID.SendActiveDatagram];
             }
-            case this.state === ClientState.LANVerifying && ev === SessionProtocol.EventID.AppSendDatagram: {
-                this.state = ClientState.LANVerifying;
+            case this.state === SessionClientState.LANVerifying && ev === SessionProtocol.EventID.AppSendDatagram: {
+                this.state = SessionClientState.LANVerifying;
                 return [SessionProtocol.CmdID.SendActiveDatagram];
             }
-            case this.state === ClientState.LANActive && ev === SessionProtocol.EventID.AppSendDatagram: {
-                this.state = ClientState.LANActive;
+            case this.state === SessionClientState.LANActive && ev === SessionProtocol.EventID.AppSendDatagram: {
+                this.state = SessionClientState.LANActive;
                 return [SessionProtocol.CmdID.SendActiveDatagram];
             }
-            case this.state === ClientState.RelayFallback && ev === SessionProtocol.EventID.AppSendDatagram: {
-                this.state = ClientState.RelayFallback;
+            case this.state === SessionClientState.RelayFallback && ev === SessionProtocol.EventID.AppSendDatagram: {
+                this.state = SessionClientState.RelayFallback;
                 return [SessionProtocol.CmdID.SendActiveDatagram];
             }
-            case this.state === ClientState.RelayConnected && ev === SessionProtocol.EventID.RelayDatagram: {
-                this.state = ClientState.RelayConnected;
+            case this.state === SessionClientState.RelayConnected && ev === SessionProtocol.EventID.RelayDatagram: {
+                this.state = SessionClientState.RelayConnected;
                 return [SessionProtocol.CmdID.DeliverRecvDatagram];
             }
-            case this.state === ClientState.LANConnecting && ev === SessionProtocol.EventID.RelayDatagram: {
-                this.state = ClientState.LANConnecting;
+            case this.state === SessionClientState.LANConnecting && ev === SessionProtocol.EventID.RelayDatagram: {
+                this.state = SessionClientState.LANConnecting;
                 return [SessionProtocol.CmdID.DeliverRecvDatagram];
             }
-            case this.state === ClientState.LANVerifying && ev === SessionProtocol.EventID.RelayDatagram: {
-                this.state = ClientState.LANVerifying;
+            case this.state === SessionClientState.LANVerifying && ev === SessionProtocol.EventID.RelayDatagram: {
+                this.state = SessionClientState.LANVerifying;
                 return [SessionProtocol.CmdID.DeliverRecvDatagram];
             }
-            case this.state === ClientState.LANActive && ev === SessionProtocol.EventID.RelayDatagram: {
-                this.state = ClientState.LANActive;
+            case this.state === SessionClientState.LANActive && ev === SessionProtocol.EventID.RelayDatagram: {
+                this.state = SessionClientState.LANActive;
                 return [SessionProtocol.CmdID.DeliverRecvDatagram];
             }
-            case this.state === ClientState.RelayFallback && ev === SessionProtocol.EventID.RelayDatagram: {
-                this.state = ClientState.RelayFallback;
+            case this.state === SessionClientState.RelayFallback && ev === SessionProtocol.EventID.RelayDatagram: {
+                this.state = SessionClientState.RelayFallback;
                 return [SessionProtocol.CmdID.DeliverRecvDatagram];
             }
-            case this.state === ClientState.LANActive && ev === SessionProtocol.EventID.LanStreamData: {
-                this.state = ClientState.LANActive;
+            case this.state === SessionClientState.LANActive && ev === SessionProtocol.EventID.LanStreamData: {
+                this.state = SessionClientState.LANActive;
                 return [SessionProtocol.CmdID.DeliverRecv];
             }
-            case this.state === ClientState.LANActive && ev === SessionProtocol.EventID.LanDatagram: {
-                this.state = ClientState.LANActive;
+            case this.state === SessionClientState.LANActive && ev === SessionProtocol.EventID.LanDatagram: {
+                this.state = SessionClientState.LANActive;
                 return [SessionProtocol.CmdID.DeliverRecvDatagram];
             }
         }
@@ -1002,38 +1002,38 @@ export class ClientMachine {
     }
 }
 
-/** RelayMachine is the generated state machine for the relay actor. */
-export class RelayMachine {
+/** SessionRelayMachine is the generated state machine for the relay actor. */
+export class SessionRelayMachine {
     readonly protocol = SessionProtocol;
-    state: RelayState;
+    state: SessionRelayState;
     relayBridge: string = "idle"; // relay bridge state
     guards: Map<SessionProtocol.GuardID, () => boolean> = new Map();
     actions: Map<SessionProtocol.ActionID, () => void> = new Map();
 
     constructor() {
-        this.state = RelayState.Idle;
+        this.state = SessionRelayState.Idle;
     }
 
     handleEvent(ev: SessionProtocol.EventID): SessionProtocol.CmdID[] {
         switch (true) {
-            case this.state === RelayState.Idle && ev === SessionProtocol.EventID.BackendRegister: {
-                this.state = RelayState.BackendRegistered;
+            case this.state === SessionRelayState.Idle && ev === SessionProtocol.EventID.BackendRegister: {
+                this.state = SessionRelayState.BackendRegistered;
                 return [];
             }
-            case this.state === RelayState.BackendRegistered && ev === SessionProtocol.EventID.ClientConnect: {
+            case this.state === SessionRelayState.BackendRegistered && ev === SessionProtocol.EventID.ClientConnect: {
                 this.actions.get(SessionProtocol.ActionID.BridgeStreams)?.();
                 this.relayBridge = "active";
-                this.state = RelayState.Bridged;
+                this.state = SessionRelayState.Bridged;
                 return [];
             }
-            case this.state === RelayState.Bridged && ev === SessionProtocol.EventID.ClientDisconnect: {
+            case this.state === SessionRelayState.Bridged && ev === SessionProtocol.EventID.ClientDisconnect: {
                 this.actions.get(SessionProtocol.ActionID.Unbridge)?.();
                 this.relayBridge = "idle";
-                this.state = RelayState.BackendRegistered;
+                this.state = SessionRelayState.BackendRegistered;
                 return [];
             }
-            case this.state === RelayState.BackendRegistered && ev === SessionProtocol.EventID.BackendDisconnect: {
-                this.state = RelayState.Idle;
+            case this.state === SessionRelayState.BackendRegistered && ev === SessionProtocol.EventID.BackendDisconnect: {
+                this.state = SessionRelayState.Idle;
                 return [];
             }
         }

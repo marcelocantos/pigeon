@@ -20,6 +20,7 @@ import (
 	"encoding/binary"
 	"fmt"
 	"io"
+	"net/url"
 	"os"
 	"time"
 
@@ -34,7 +35,7 @@ func main() {
 	}
 
 	cmd := os.Args[1]
-	url := os.Args[2]
+	relayURL := os.Args[2]
 
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
@@ -43,16 +44,25 @@ func main() {
 		InsecureSkipVerify: os.Getenv("PIGEON_INSECURE") == "1",
 	}
 
+	// Extract port from URL to use as QUIC port, allowing the bridge
+	// to connect to relays on non-default ports (e.g. local test servers).
+	var quicPort string
+	if u, err := url.Parse(relayURL); err == nil {
+		if p := u.Port(); p != "" {
+			quicPort = p
+		}
+	}
+
 	var conn *pigeon.Conn
 	var err error
 
 	switch cmd {
 	case "register":
-		cfg := pigeon.Config{TLS: tlsConfig}
+		cfg := pigeon.Config{TLS: tlsConfig, QUICPort: quicPort}
 		if len(os.Args) > 3 && os.Args[3] != "" {
 			cfg.Token = os.Args[3]
 		}
-		conn, err = pigeon.Register(ctx, url, cfg)
+		conn, err = pigeon.Register(ctx, relayURL, cfg)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "register: %v\n", err)
 			os.Exit(1)
@@ -66,7 +76,7 @@ func main() {
 			os.Exit(1)
 		}
 		instanceID := os.Args[3]
-		conn, err = pigeon.Connect(ctx, url, instanceID, pigeon.Config{TLS: tlsConfig})
+		conn, err = pigeon.Connect(ctx, relayURL, instanceID, pigeon.Config{TLS: tlsConfig, QUICPort: quicPort})
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "connect: %v\n", err)
 			os.Exit(1)

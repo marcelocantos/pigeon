@@ -1,541 +1,286 @@
-# Convergence Targets
+# Targets
 
 ## Active
 
 ### 🎯T1 Pigeon is a complete library for opaque authenticated relay
-
-All crypto, protocol state machines, code generators, QR helper, and
-Swift package live here. Applications import pigeon rather than duplicating
-relay/pairing logic.
-
-- **Weight**: 1.7 (value 5 / cost 3)
-
-**Sub-targets:**
-
-#### 🎯T1.8 Jevon imports pigeon's packages
-
-Jevon's `internal/crypto/`, `internal/protocol/`, `internal/qr/`, and
-`cmd/protogen/` are replaced by imports from pigeon. iOS app imports
-the `Pigeon` SPM package.
-
-- **Weight**: 1.7 (value 5 / cost 3)
-- **Status**: not started (requires pigeon to be tagged and pushed)
-
----
-
----
-
-### 🎯T5 Multi-transport with LAN upgrade
-
-Devices connected through the relay can discover they're on the same
-LAN and upgrade to a direct connection. The `pigeon.Conn` abstraction
-hides this — callers see a single ordered message stream regardless
-of transport.
-
-- **Weight**: 0.8 (value 5 / cost 6)
-
-#### 🎯T5.2 LAN discovery via relay
-
-After the encrypted channel is established, both sides exchange their
-local IP addresses through the relay. Each attempts a direct WebTransport
-connection to the peer's local address using a self-signed certificate.
-
-- **Weight**: 1.0 (value 5 / cost 5)
-- **Status**: not started
-
-#### 🎯T5.3 Cutover protocol
-
-Each side sends a `CUTOVER` marker as its final message on the old
-transport, then sends subsequent messages on the new transport. The
-receiver reads from both transports, orders by sequence number, and
-closes the old transport after receiving `CUTOVER`.
-
-- **Weight**: 1.0 (value 5 / cost 5)
-- **Status**: not started
-- **Depends on**: 🎯T10
-
-#### 🎯T5.4 Transport-agnostic Conn
-
-`pigeon.Conn` manages multiple underlying transports. Sends go on the
-preferred transport; receives come from any transport and are delivered
-in sequence order. Upgrading and downgrading are transparent to the
-caller.
-
-- **Weight**: 0.8 (value 5 / cost 6)
-- **Status**: not started
-- **Depends on**: 🎯T5.2, 🎯T5.3
-
----
-
-### 🎯T6 Investigate STUN/NAT hole-punching as a transport
-
-STUN-based peer-to-peer connectivity as a middle tier between relay
-and LAN direct. Uses a STUN server to discover public IP/port
-mappings, then both peers attempt UDP hole-punching to establish a
-direct path without relaying traffic.
-
-Sits between relay and LAN in the transport priority:
-1. LAN (same network)
-2. STUN/P2P (different networks, direct via hole-punch)
-3. Relay (always works, fallback)
-
-Same cutover protocol as 🎯T5.3 applies — it's just another transport.
-
-Needs investigation:
-- STUN server requirements (run our own, or use public ones?)
-- UDP vs TCP hole-punching (pigeon already uses QUIC/UDP via WebTransport)
-- Success rate across NAT types (symmetric NATs defeat STUN)
-- Whether to use ICE (the full WebRTC negotiation framework) or a
-  simpler STUN-only approach
-- TURN as the fallback when hole-punching fails (essentially our
-  existing relay, but standard protocol)
-- Go and Swift STUN/ICE libraries (pion/ice, libnice)
-
-- **Weight**: 1.5 (value 3 / cost 2)
-- **Status**: not started
-
----
-
-### 🎯T7 Investigate Bluetooth as proximity oracle
-
-Bluetooth as a proximity signal rather than a data channel. Possible
-uses:
-
-- **Pairing trust signal**: if both devices see each other over
-  Bluetooth during the pairing ceremony, they're physically co-located.
-  Could supplement or replace the 6-digit confirmation code.
-- **Transport upgrade hint**: Bluetooth discovery indicates the
-  devices are nearby, making LAN direct connection likely to succeed.
-- **Proximity-gated handover**: only attempt LAN upgrade when
-  Bluetooth confirms proximity, avoiding wasted connection attempts.
-
-Needs investigation: BLE advertising APIs on iOS/Android, power and
-battery implications, interaction with existing pairing ceremony,
-privacy considerations (Bluetooth MAC address rotation).
-
-- **Weight**: 1.0 (value 2 / cost 2)
-- **Status**: not started
-
----
-
-### 🎯T8 WebTransport relay
-
-WebTransport (QUIC) is the sole transport for the relay path. Enables
-both reliable streams (control, pairing) and unreliable datagrams
-(H.264 video, real-time data). WebSocket support has been removed.
-
-- **Weight**: 1.0 (value 5 / cost 5)
-
-#### 🎯T8.4 Web/TypeScript WebTransport client
-
-Browser-native WebTransport API in `web/`. Use reliable stream for
-control/pairing, datagrams for video.
-
-- **Weight**: 1.0 (value 5 / cost 5)
-- **Status**: not started
-
-#### 🎯T8.5 LAN direct WebTransport with cert fingerprint
-
-Ephemeral self-signed cert for LAN listener. Include SHA-256 hash in
-the LAN offer control message. Browser peers use
-`serverCertificateHashes` to accept it (Chromium-only for now; others
-fall back to relay-only).
-
-- **Weight**: 1.0 (value 3 / cost 3)
-- **Status**: not started
-- **Depends on**: 🎯T8.4
-
----
-
-### 🎯T10 TLA+ model for cutover protocol
-
-Model the transport cutover protocol in TLA+ to verify liveness and
-correctness properties:
-- No message lost during cutover
-- No message duplicated
-- No message delivered out of order
-- No deadlock (both sides eventually complete the transition)
-- Concurrent cutover initiation from both sides is safe
-
-The E2E encryption provides security (verified by the existing pairing
-ceremony TLA+ spec). This model focuses on the transport switching
-logic: CUTOVER markers, reorder buffer, and the transition from relay
-to LAN transport.
-
-- **Weight**: 0.6 (value 3 / cost 5)
-- **Status**: not started
-
----
-
----
-
-### 🎯T14 Browser WebTransport E2E
-
-Prove the browser WebTransport path works end-to-end.
-
-Playwright headless Chromium does NOT support WebTransport/QUIC —
-tested against both carrier-pigeon.fly.dev and Google's webtransport.day echo
-server; both fail with ERR_QUIC_PROTOCOL_ERROR. The Go WebTransport
-client connects to the same server successfully, confirming the server
-is correct.
-
-Options:
-1. Use Playwright with `headless: false` (headed Chrome) — requires
-   a display (CI won't work without Xvfb)
-2. Use Selenium + headless Chrome (webtransport-go's own tests do this)
-3. Manual verification with a real browser
-
-Server config verified correct: EnableDatagrams on both http3.Server
-and quic.Config. Let's Encrypt cert persisted and valid.
-
-- **Weight**: 1.0 (value 3 / cost 3)
-- **Status**: blocked on Playwright headless Chromium QUIC support
-
----
-
-### 🎯T15 Gomobile bindings for iOS and Android
-
-Wrap the Go QUIC client via gomobile to give native iOS and Android
-apps the same proven QUIC stack. Replaces the need for platform-specific
-QUIC libraries (Network.framework quirks, kwik builder bugs).
-
-Produces:
-- iOS: XCFramework importable from Swift
-- Android: AAR importable from Kotlin
-
-- **Weight**: 1.0 (value 5 / cost 5)
-- **Status**: not started
-
----
-
-### 🎯T17 Makefile deploy target
-
-`make deploy` that deploys to Fly.io, starts the machine, and waits
-for it to be healthy. `make e2e-live` should depend on this so live
-tests work without manual machine management.
-
-- **Weight**: 1.5 (value 3 / cost 2)
-- **Status**: not started
-
----
-
-### 🎯T20 Cross-language E2E test parity
-
-Every language that has a generated state machine and client library
-has automated E2E tests that connect to a real Go relay, exercise the
-full pairing ceremony (ECDH + confirmation code), and exchange
-encrypted messages. Tests run in CI without manual intervention.
-
-- **Weight**: 2.5 (value 5 / cost 2)
-- **Status**: not started
-
-#### 🎯T20.1 Swift E2E integrated into `swift test`
-
-The standalone E2E binary (`e2e/swift/main.swift`) works but is not
-run by `swift test`. Integrate it as an XCTest target that starts a
-Go relay subprocess and exercises register, connect, stream round-trip,
-encrypted round-trip, and confirmation code verification.
-
-- **Weight**: 2.5 (value 5 / cost 2)
-- **Status**: not started (standalone binary exists, needs test target integration)
-
-#### 🎯T20.2 State machine unit tests for Swift/Kotlin/TypeScript
-
-The generated `handleEvent` machines are only tested implicitly through
-relay E2E tests. Each language should have explicit unit tests that
-verify: state transitions for the transport phase (relay → LAN offered
-→ LAN active → degraded → fallback → backoff → re-establish), correct
-command emission per transition, and guard evaluation.
-
-- **Weight**: 1.7 (value 5 / cost 3)
-- **Status**: not started
-
-#### 🎯T20.3 Cross-language confirmation code interop test
-
-A Go backend and each non-Go client (Swift, Kotlin, TypeScript) perform
-a full ECDH key exchange through a live relay and independently derive
-the 6-digit confirmation code. The test asserts both sides compute the
-same code. Currently each language hardcodes "629624" in unit tests but
-no test verifies agreement through an actual relay.
-
-- **Weight**: 2.5 (value 5 / cost 2)
-- **Status**: not started
-- **Depends on**: 🎯T20.1 (Swift), 🎯T20.2 implicitly
-
-#### 🎯T20.4 TypeScript local E2E tests
-
-TypeScript tests currently only run against a live relay (requiring
-PIGEON_TOKEN). Add local E2E tests that start a Go relay subprocess
-(like Kotlin does) so they run in CI without credentials.
-
-- **Weight**: 2.0 (value 4 / cost 2)
-- **Status**: not started
-
----
+- **Value**: 5
+- **Cost**: 3
+- **Acceptance**:
+  - All crypto, protocol state machines, code generators, QR helper, and Swift package live in pigeon
+  - Applications import pigeon rather than duplicating relay/pairing logic
+- **Context**: Parent target for the pigeon library. 7/8 sub-targets achieved — only T1.8 (jevon imports) remains.
+- **Depends on**: 🎯T1.1
+- **Origin**: bootstrap from targets.md (T1)
+- **Status**: Converging
+- **Discovered**: 2026-04-08
+
+### 🎯T1.1 Jevon imports pigeon's packages
+- **Value**: 5
+- **Cost**: 3
+- **Acceptance**:
+  - Jevon's internal/crypto/, internal/protocol/, internal/qr/, and cmd/protogen/ are replaced by imports from pigeon
+  - iOS app imports the Pigeon SPM package
+- **Context**: Requires pigeon to be tagged and pushed. v0.15.0 released.
+- **Origin**: bootstrap from targets.md (T1.8)
+- **Status**: Identified
+- **Discovered**: 2026-04-08
+
+### 🎯T2 Multi-transport with LAN upgrade
+- **Value**: 5
+- **Cost**: 6
+- **Acceptance**:
+  - Devices connected through relay can discover same LAN and upgrade to direct connection
+  - pigeon.Conn abstraction hides transport — callers see single ordered message stream
+- **Context**: Parent target. 1/4 sub-targets achieved (T5.1 reorder-tolerant decryption).
+- **Depends on**: 🎯T2.1, 🎯T2.2, 🎯T3.1
+- **Origin**: bootstrap from targets.md (T5)
+- **Status**: Converging
+- **Discovered**: 2026-04-08
+
+### 🎯T2.1 Cutover protocol
+- **Value**: 5
+- **Cost**: 5
+- **Acceptance**:
+  - Each side sends CUTOVER marker as final message on old transport
+  - Receiver reads from both transports, orders by sequence number
+  - Old transport closed after receiving CUTOVER
+- **Context**: Depends on TLA+ model (T3). Part of multi-transport LAN upgrade.
+- **Depends on**: 🎯T3
+- **Origin**: bootstrap from targets.md (T5.3)
+- **Status**: Identified
+- **Discovered**: 2026-04-08
+
+### 🎯T2.2 Transport-agnostic Conn
+- **Value**: 5
+- **Cost**: 6
+- **Acceptance**:
+  - pigeon.Conn manages multiple underlying transports
+  - Sends go on preferred transport; receives from any transport in sequence order
+  - Upgrading and downgrading transparent to caller
+- **Context**: Depends on LAN discovery (T3.1) and cutover protocol (T2.1). Final piece of multi-transport.
+- **Depends on**: 🎯T3.1, 🎯T2.1
+- **Origin**: bootstrap from targets.md (T5.4)
+- **Status**: Identified
+- **Discovered**: 2026-04-08
+
+### 🎯T3 TLA+ model for cutover protocol
+- **Value**: 3
+- **Cost**: 5
+- **Acceptance**:
+  - TLA+ spec verifies no message lost during cutover
+  - No message duplicated
+  - No message delivered out of order
+  - No deadlock
+  - Concurrent cutover initiation from both sides is safe
+- **Context**: Formal verification of transport switching logic. Blocks T5.3 (cutover protocol implementation).
+- **Origin**: bootstrap from targets.md (T10)
+- **Status**: Identified
+- **Discovered**: 2026-04-08
+
+### 🎯T3.1 LAN discovery via relay
+- **Value**: 5
+- **Cost**: 5
+- **Acceptance**:
+  - Both sides exchange local IP addresses through relay after encrypted channel established
+  - Each attempts direct WebTransport connection to peer's local address
+- **Context**: First step in LAN upgrade path. No dependencies — can start immediately.
+- **Origin**: bootstrap from targets.md (T5.2)
+- **Status**: Identified
+- **Discovered**: 2026-04-08
+
+### 🎯T4 Investigate STUN/NAT hole-punching as a transport
+- **Value**: 3
+- **Cost**: 2
+- **Acceptance**:
+  - Investigation complete: STUN server requirements documented
+  - UDP vs TCP hole-punching evaluated
+  - Success rate across NAT types assessed
+  - ICE vs simple STUN approach decided
+  - Go and Swift library options identified
+- **Context**: Middle-tier transport between relay and LAN. Pure research target.
+- **Origin**: bootstrap from targets.md (T6)
+- **Status**: Identified
+- **Discovered**: 2026-04-08
+
+### 🎯T5 Investigate Bluetooth as proximity oracle
+- **Value**: 2
+- **Cost**: 2
+- **Acceptance**:
+  - BLE advertising APIs on iOS/Android evaluated
+  - Power/battery implications assessed
+  - Interaction with pairing ceremony documented
+  - Privacy considerations (MAC rotation) addressed
+- **Context**: Bluetooth as proximity signal, not data channel. Could supplement confirmation code or gate LAN upgrade.
+- **Origin**: bootstrap from targets.md (T7)
+- **Status**: Identified
+- **Discovered**: 2026-04-08
+
+### 🎯T6 WebTransport relay
+- **Value**: 5
+- **Cost**: 5
+- **Acceptance**:
+  - WebTransport (QUIC) is sole transport for relay path
+  - Reliable streams for control/pairing
+  - Unreliable datagrams for video/real-time data
+- **Context**: Parent target. 3/5 sub-targets achieved. T8.4 (TypeScript client) and T8.5 (LAN direct) remain.
+- **Depends on**: 🎯T6.1, 🎯T6.2
+- **Origin**: bootstrap from targets.md (T8)
+- **Status**: Converging
+- **Discovered**: 2026-04-08
+
+### 🎯T6.1 Web/TypeScript WebTransport client
+- **Value**: 5
+- **Cost**: 5
+- **Acceptance**:
+  - Browser-native WebTransport API in web/
+  - Reliable stream for control/pairing
+  - Datagrams for video
+- **Context**: Unblocked. Part of WebTransport relay target.
+- **Origin**: bootstrap from targets.md (T8.4)
+- **Status**: Identified
+- **Discovered**: 2026-04-08
+
+### 🎯T6.2 LAN direct WebTransport with cert fingerprint
+- **Value**: 3
+- **Cost**: 3
+- **Acceptance**:
+  - Ephemeral self-signed cert for LAN listener
+  - SHA-256 hash in LAN offer control message
+  - Browser peers use serverCertificateHashes
+- **Context**: Depends on T6.1 (Web/TypeScript client). Chromium-only initially.
+- **Depends on**: 🎯T6.1
+- **Origin**: bootstrap from targets.md (T8.5)
+- **Status**: Identified
+- **Discovered**: 2026-04-08
+
+### 🎯T7 Browser WebTransport E2E
+- **Value**: 3
+- **Cost**: 3
+- **Acceptance**:
+  - Browser WebTransport path works end-to-end against relay
+  - Automated or documented manual verification process
+- **Context**: Blocked on Playwright headless Chromium QUIC support. Alternatives: headed Chrome, Selenium, or manual.
+- **Origin**: bootstrap from targets.md (T14)
+- **Status**: Identified
+- **Discovered**: 2026-04-08
+
+### 🎯T8 Gomobile bindings for iOS and Android
+- **Value**: 5
+- **Cost**: 5
+- **Acceptance**:
+  - iOS XCFramework importable from Swift
+  - Android AAR importable from Kotlin
+  - Go QUIC stack used by native apps
+- **Context**: Replaces platform-specific QUIC libraries (Network.framework quirks, kwik bugs).
+- **Origin**: bootstrap from targets.md (T15)
+- **Status**: Identified
+- **Discovered**: 2026-04-08
+
+### 🎯T9 Makefile deploy target
+- **Value**: 3
+- **Cost**: 2
+- **Acceptance**:
+  - make deploy deploys to Fly.io, starts machine, waits for healthy
+  - make e2e-live depends on deploy target
+- **Context**: Deploy currently broken (Fly.io auth token). Fixing that is a prerequisite.
+- **Origin**: bootstrap from targets.md (T17)
+- **Status**: Identified
+- **Discovered**: 2026-04-08
 
 ## Achieved
 
-### 🎯T19 Hierarchical state machines in protocol framework
-
-- **Weight**: 1 (value 1 / cost 1)
-- **Status**: done — `StateNode` hierarchy in `protocol.go`,
-  `states:` section in YAML parser, `FlattenedTransitions()` expansion,
-  all generators updated, session.yaml refactored (~50 self-loops
-  eliminated via Connected/LANPath superstates). PlantUML nested
-  rendering deferred as cosmetic follow-up.
-
-### 🎯T5.1 Reorder-tolerant decryption
-
-- **Weight**: 1 (value 1 / cost 1)
-- **Status**: done — `ModeDatagrams` in `crypto/crypto.go` accepts
-  gaps and rejects replays. `NewDatagramChannel` convenience constructor.
-  Full test coverage including reorder, replay, and 50% packet loss.
-
-### 🎯T16 Fly.io auto-start for UDP
-
-- **Weight**: 1 (value 1 / cost 1)
-- **Status**: done — TCP service on port 443 with auto_start_machines=true.
-  Fly proxy wakes the machine on TCP/HTTPS, then UDP flows to the running
-  machine. WakeRelay() helper for clients.
-
-### 🎯T3 Fly.io deployment via CI
-
-- **Weight**: 1 (value 1 / cost 1)
-- **Status**: done — deploy job in ci.yml runs after tests pass on master push
-
-### 🎯T12 Channel API
-
-- **Weight**: 1 (value 1 / cost 1)
-- **Status**: done — streaming and datagram channels implemented in channel.go
-
-### 🎯T12.1 Streaming channels
-
-- **Weight**: 1 (value 1 / cost 1)
-- **Status**: done — OpenChannel/AcceptChannel with per-channel encryption
-
-### 🎯T12.2 Datagram channels
-
-- **Weight**: 1 (value 1 / cost 1)
-- **Status**: done — DatagramChannel with CRC16 demux and fragmentation support
-
-### 🎯T18 State machine mediates all Conn behavior
-
-- **Weight**: 1 (value 1 / cost 1)
-- **Status**: done — Machine drives all I/O via events/commands. Executor
-  is a thin event loop. TLA+ emits EVT_*/CMD_* constants. Health monitor
-  detects stale LAN via pong timeout. DatagramChannel routed through
-  executor. All legacy Conn dispatch removed.
-
-### 🎯T13 Certmagic storage alignment
-
-- **Weight**: 1 (value 1 / cost 1)
-- **Status**: done — verified 2026-03-28. ACME account, cert, and key
-  persist in /data/certmagic on the Fly volume. Cert is reused on
-  restart without re-provisioning.
-
-### 🎯T1.1 Crypto library migrated from jevon
-
-- **Weight**: 1 (value 1 / cost 1)
-- **Status**: done
-
-### 🎯T1.2 Pairing protocol spec migrated from jevon
-
-- **Weight**: 1 (value 1 / cost 1)
-- **Status**: done
-
-### 🎯T1.3 TLA+ formal model migrated from jevon
-
-- **Weight**: 1 (value 1 / cost 1)
-- **Status**: done
-
-### 🎯T1.4 Protocol state machine framework migrated from jevon
-
-- **Weight**: 1 (value 1 / cost 1)
-- **Status**: done
-
-### 🎯T1.5 QR helper migrated from jevon
-
-- **Weight**: 1 (value 1 / cost 1)
-- **Status**: done
-
-### 🎯T1.6 Swift package (SPM)
-
-- **Weight**: 1 (value 1 / cost 1)
-- **Status**: done
-
-### 🎯T1.7 E2E integration test
-
-- **Weight**: 1 (value 1 / cost 1)
-- **Status**: done
-
-### 🎯T2 Open-source ready — gates v0.1.0
-
-All sub-targets done. Pigeon is a credible public project with correct
-code, proper licensing, documentation, and CI.
-
-- **Weight**: 1 (value 1 / cost 1)
-- **Status**: done
-
-### 🎯T2.1 Relay enforces single client per instance
-
-- **Weight**: 1 (value 1 / cost 1)
-- **Status**: done
-
-### 🎯T2.2 Swift E2EChannel.encrypt() is concurrency-safe
-
-- **Weight**: 1 (value 1 / cost 1)
-- **Status**: done
-
-### 🎯T2.3 NOTICES file exists with third-party attribution
-
-- **Weight**: 1 (value 1 / cost 1)
-- **Status**: done
-
-### 🎯T2.4 README.md exists
-
-- **Weight**: 1 (value 1 / cost 1)
-- **Status**: done
-
-### 🎯T2.5 GitHub repo settings enforce squash-only merges
-
-- **Weight**: 1 (value 1 / cost 1)
-- **Status**: done
-
-### 🎯T2.6 ExportGo emits ChannelBound and OneShot
-
-- **Weight**: 1 (value 1 / cost 1)
-- **Status**: done
-
-### 🎯T2.7 ExportGo emits PropertyKind as named constant
-
-- **Weight**: 1 (value 1 / cost 1)
-- **Status**: done
-
-### 🎯T2.8 Relay binary supports --version, --help, --help-agent
-
-- **Weight**: 1 (value 1 / cost 1)
-- **Status**: done
-
-### 🎯T2.9 Generated files have SPDX headers
-
-- **Weight**: 1 (value 1 / cost 1)
-- **Status**: done
-
-### 🎯T2.10 Test coverage for qr, YAML parser, and code generators
-
-- **Weight**: 1 (value 1 / cost 1)
-- **Status**: done
-
-### 🎯T2.11 CORS wildcard documented as intentional
-
-- **Weight**: 1 (value 1 / cost 1)
-- **Status**: done
-
-### 🎯T2.12 go-qrcode dependency evaluated
-
-- **Weight**: 1 (value 1 / cost 1)
-- **Status**: done
-
-### 🎯T2.13 Private project name "jevon" removed from public files
-
-- **Weight**: 1 (value 1 / cost 1)
-- **Status**: done
-
-### 🎯T2.14 Health handler w.Write return value handled
-
-- **Weight**: 1 (value 1 / cost 1)
-- **Status**: done
-
-### 🎯T2.15 Test for concurrent clients per instance
-
-- **Weight**: 1 (value 1 / cost 1)
-- **Status**: done
-
-### 🎯T2.16 formal/tlc uses portable shebang
-
-- **Weight**: 1 (value 1 / cost 1)
-- **Status**: done
-
-### 🎯T2.17 Explicit WebSocket read limit
-
-- **Weight**: 1 (value 1 / cost 1)
-- **Status**: done
-
-### 🎯T2.18 Instance ID entropy documented
-
-- **Weight**: 1 (value 1 / cost 1)
-- **Status**: done
-
-### 🎯T2.19 go.mod uses minor version only
-
-- **Weight**: 1 (value 1 / cost 1)
-- **Status**: done
-
-### 🎯T4 Bearer token auth on /register
-
-- **Weight**: 1 (value 1 / cost 1)
-- **Status**: done
-
-### 🎯T8.1 WebTransport relay server
-
-- **Weight**: 1 (value 1 / cost 1)
-- **Status**: done
-
-### 🎯T8.2 Non-strict Channel.Decrypt for datagrams
-
-- **Weight**: 1 (value 1 / cost 1)
-- **Status**: done
-
-### 🎯T8.3 Go WebTransport client
-
-- **Weight**: 1 (value 1 / cost 1)
-- **Status**: done
-
-### 🎯T9 Raw QUIC protocol for native clients
-
-All sub-targets done.
-
-- **Weight**: 1 (value 1 / cost 1)
-- **Status**: done
-
-### 🎯T9.1 relaySession interface and shared hub
-
-- **Weight**: 1 (value 1 / cost 1)
-- **Status**: done
-
-### 🎯T9.2 Raw QUIC server listener
-
-- **Weight**: 1 (value 1 / cost 1)
-- **Status**: done
-
-### 🎯T9.3 Go client uses raw QUIC
-
-- **Weight**: 1 (value 1 / cost 1)
-- **Status**: done
-
-### 🎯T9.4 Deployment supports both ports
-
-- **Weight**: 1 (value 1 / cost 1)
-- **Status**: done
-
-### 🎯T9.5 Tests pass against raw QUIC
-
-- **Weight**: 1 (value 1 / cost 1)
-- **Status**: done
-
-### 🎯T11 Swift relay client (Network.framework QUIC)
-
-All sub-targets done.
-
-- **Weight**: 1 (value 1 / cost 1)
-- **Status**: done
-
-### 🎯T11.1 Core PigeonConn with register/connect/send/recv
-
-- **Weight**: 1 (value 1 / cost 1)
-- **Status**: done
-
-### 🎯T11.2 Integration tests against live QUIC server
-
-- **Weight**: 1 (value 1 / cost 1)
-- **Status**: done (6/6 local + live via raw NWConnection E2E binary)
+### 🎯T10 Cross-language E2E test parity
+- **Value**: 5
+- **Cost**: 2
+- **Acceptance**:
+  - Every language with generated state machine has automated E2E tests
+  - Tests connect to real Go relay, exercise full pairing ceremony
+  - Tests run in CI without manual intervention
+- **Context**: Parent target. 3/4 sub-targets achieved (T10.1 Swift E2E, T10.2 state machine tests, T10.4 TypeScript local E2E). Only T10.3 (cross-language interop) remains.
+- **Depends on**: 🎯T10.1, 🎯T10.3, 🎯T10.4, 🎯T10.2
+- **Origin**: bootstrap from targets.md (T20)
+- **Status**: Achieved
+- **Discovered**: 2026-04-08
+- **Achieved**: 2026-04-11
+- **Actual-cost**: 8
+
+### 🎯T10.1 Swift E2E integrated into swift test
+- **Value**: 1
+- **Cost**: 1
+- **Acceptance**: TODO
+- **Context**: PigeonRelayE2ETests target in Package.swift with RelayE2ETests.swift. 6 tests pass via `swift test`.
+- **Status**: Achieved
+- **Discovered**: 2026-04-09
+- **Achieved**: 2026-04-10
+- **Actual-cost**: 1
+
+### 🎯T10.2 State machine unit tests for Swift/Kotlin/TypeScript
+- **Value**: 5
+- **Cost**: 3
+- **Acceptance**:
+  - Each language has explicit unit tests for handleEvent
+  - Tests verify state transitions for transport phase
+  - Tests verify correct command emission per transition
+  - Tests verify guard evaluation
+- **Context**: Swift (22 tests) and TypeScript (22 tests) pass. Kotlin tests written but blocked on pre-existing codegen compilation errors (CmdID undefined, namespace collisions between SessionMachine/PathSwitchMachine).
+- **Origin**: bootstrap from targets.md (T20.2)
+- **Status**: Achieved
+- **Discovered**: 2026-04-08
+- **Achieved**: 2026-04-10
+- **Actual-cost**: 3
+
+### 🎯T10.3 Cross-language confirmation code interop test
+- **Value**: 5
+- **Cost**: 2
+- **Acceptance**:
+  - Go backend and each non-Go client perform full ECDH key exchange through live relay
+  - Both sides independently derive 6-digit confirmation code
+  - Test asserts both compute same code
+- **Context**: Currently hardcoded '629624' in unit tests. No actual relay interop test. Depends on T10.1 (Swift) and T10.2.
+- **Depends on**: 🎯T10.1, 🎯T10.2
+- **Origin**: bootstrap from targets.md (T20.3)
+- **Status**: Achieved
+- **Discovered**: 2026-04-08
+- **Achieved**: 2026-04-10
+- **Actual-cost**: 3
+
+### 🎯T10.4 TypeScript local E2E tests
+- **Value**: 1
+- **Cost**: 1
+- **Acceptance**: TODO
+- **Context**: relay.local.e2e.ts with GoRelayProcess.ts helper. 3 tests (register, round-trip, ordering). Fixed pigeon-bridge port extraction bug.
+- **Status**: Achieved
+- **Discovered**: 2026-04-09
+- **Achieved**: 2026-04-10
+- **Actual-cost**: 2
+
+## Graph
+
+```mermaid
+graph TD
+    T1["Pigeon is a complete library …"]
+    T1_1["Jevon imports pigeon's packag…"]
+    T2["Multi-transport with LAN upgr…"]
+    T2_1["Cutover protocol"]
+    T2_2["Transport-agnostic Conn"]
+    T3["TLA+ model for cutover protoc…"]
+    T3_1["LAN discovery via relay"]
+    T4["Investigate STUN/NAT hole-pun…"]
+    T5["Investigate Bluetooth as prox…"]
+    T6["WebTransport relay"]
+    T6_1["Web/TypeScript WebTransport c…"]
+    T6_2["LAN direct WebTransport with …"]
+    T7["Browser WebTransport E2E"]
+    T8["Gomobile bindings for iOS and…"]
+    T9["Makefile deploy target"]
+    T1 -.->|needs| T1_1
+    T2 -.->|needs| T2_1
+    T2 -.->|needs| T2_2
+    T2 -.->|needs| T3_1
+    T2_1 -.->|needs| T3
+    T2_2 -.->|needs| T3_1
+    T2_2 -.->|needs| T2_1
+    T6 -.->|needs| T6_1
+    T6 -.->|needs| T6_2
+    T6_2 -.->|needs| T6_1
+```

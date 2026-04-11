@@ -1,0 +1,271 @@
+targets:
+  T1:
+    name: Pigeon is a complete library for opaque authenticated relay
+    status: converging
+    value: 5.0
+    cost: 3.0
+    acceptance:
+    - All crypto, protocol state machines, code generators, QR helper, and Swift package live in pigeon
+    - Applications import pigeon rather than duplicating relay/pairing logic
+    context: Parent target for the pigeon library. 7/8 sub-targets achieved — only T1.8 (jevon imports) remains.
+    depends_on:
+    - T1.1
+    origin: bootstrap from targets.md (T1)
+    discovered: 2026-04-08
+  T1.1:
+    name: Jevon imports pigeon's packages
+    status: identified
+    value: 5.0
+    cost: 3.0
+    acceptance:
+    - Jevon's internal/crypto/, internal/protocol/, internal/qr/, and cmd/protogen/ are replaced by imports from pigeon
+    - iOS app imports the Pigeon SPM package
+    context: Requires pigeon to be tagged and pushed. v0.15.0 released.
+    origin: bootstrap from targets.md (T1.8)
+    discovered: 2026-04-08
+  T10:
+    name: Cross-language E2E test parity
+    status: achieved
+    value: 5.0
+    cost: 2.0
+    actual_cost: 8.0
+    acceptance:
+    - Every language with generated state machine has automated E2E tests
+    - Tests connect to real Go relay, exercise full pairing ceremony
+    - Tests run in CI without manual intervention
+    context: Parent target. 3/4 sub-targets achieved (T10.1 Swift E2E, T10.2 state machine tests, T10.4 TypeScript local E2E). Only T10.3 (cross-language interop) remains.
+    depends_on:
+    - T10.1
+    - T10.3
+    - T10.4
+    - T10.2
+    origin: bootstrap from targets.md (T20)
+    discovered: 2026-04-08
+    achieved: 2026-04-11
+  T10.1:
+    name: Swift E2E integrated into swift test
+    status: achieved
+    value: 1.0
+    cost: 1.0
+    actual_cost: 1.0
+    acceptance:
+    - TODO
+    context: PigeonRelayE2ETests target in Package.swift with RelayE2ETests.swift. 6 tests pass via `swift test`.
+    origin: manual
+    discovered: 2026-04-09
+    achieved: 2026-04-10
+  T10.2:
+    name: State machine unit tests for Swift/Kotlin/TypeScript
+    status: achieved
+    value: 5.0
+    cost: 3.0
+    actual_cost: 3.0
+    acceptance:
+    - Each language has explicit unit tests for handleEvent
+    - Tests verify state transitions for transport phase
+    - Tests verify correct command emission per transition
+    - Tests verify guard evaluation
+    context: Swift (22 tests) and TypeScript (22 tests) pass. Kotlin tests written but blocked on pre-existing codegen compilation errors (CmdID undefined, namespace collisions between SessionMachine/PathSwitchMachine).
+    origin: bootstrap from targets.md (T20.2)
+    discovered: 2026-04-08
+    achieved: 2026-04-10
+  T10.3:
+    name: Cross-language confirmation code interop test
+    status: achieved
+    value: 5.0
+    cost: 2.0
+    actual_cost: 3.0
+    acceptance:
+    - Go backend and each non-Go client perform full ECDH key exchange through live relay
+    - Both sides independently derive 6-digit confirmation code
+    - Test asserts both compute same code
+    context: Currently hardcoded '629624' in unit tests. No actual relay interop test. Depends on T10.1 (Swift) and T10.2.
+    depends_on:
+    - T10.1
+    - T10.2
+    origin: bootstrap from targets.md (T20.3)
+    discovered: 2026-04-08
+    achieved: 2026-04-10
+  T10.4:
+    name: TypeScript local E2E tests
+    status: achieved
+    value: 1.0
+    cost: 1.0
+    actual_cost: 2.0
+    acceptance:
+    - TODO
+    context: relay.local.e2e.ts with GoRelayProcess.ts helper. 3 tests (register, round-trip, ordering). Fixed pigeon-bridge port extraction bug.
+    origin: manual
+    discovered: 2026-04-09
+    achieved: 2026-04-10
+  T2:
+    name: Multi-transport with LAN upgrade
+    status: converging
+    value: 5.0
+    cost: 6.0
+    acceptance:
+    - Devices connected through relay can discover same LAN and upgrade to direct connection
+    - pigeon.Conn abstraction hides transport — callers see single ordered message stream
+    context: Parent target. 1/4 sub-targets achieved (T5.1 reorder-tolerant decryption).
+    depends_on:
+    - T2.1
+    - T2.2
+    - T3.1
+    origin: bootstrap from targets.md (T5)
+    discovered: 2026-04-08
+  T2.1:
+    name: Cutover protocol
+    status: identified
+    value: 5.0
+    cost: 5.0
+    acceptance:
+    - Each side sends CUTOVER marker as final message on old transport
+    - Receiver reads from both transports, orders by sequence number
+    - Old transport closed after receiving CUTOVER
+    context: Depends on TLA+ model (T3). Part of multi-transport LAN upgrade.
+    depends_on:
+    - T3
+    origin: bootstrap from targets.md (T5.3)
+    discovered: 2026-04-08
+  T2.2:
+    name: Transport-agnostic Conn
+    status: identified
+    value: 5.0
+    cost: 6.0
+    acceptance:
+    - pigeon.Conn manages multiple underlying transports
+    - Sends go on preferred transport; receives from any transport in sequence order
+    - Upgrading and downgrading transparent to caller
+    context: Depends on LAN discovery (T3.1) and cutover protocol (T2.1). Final piece of multi-transport.
+    depends_on:
+    - T3.1
+    - T2.1
+    origin: bootstrap from targets.md (T5.4)
+    discovered: 2026-04-08
+  T3:
+    name: TLA+ model for cutover protocol
+    status: identified
+    value: 3.0
+    cost: 5.0
+    acceptance:
+    - TLA+ spec verifies no message lost during cutover
+    - No message duplicated
+    - No message delivered out of order
+    - No deadlock
+    - Concurrent cutover initiation from both sides is safe
+    context: Formal verification of transport switching logic. Blocks T5.3 (cutover protocol implementation).
+    origin: bootstrap from targets.md (T10)
+    discovered: 2026-04-08
+  T3.1:
+    name: LAN discovery via relay
+    status: identified
+    value: 5.0
+    cost: 5.0
+    acceptance:
+    - Both sides exchange local IP addresses through relay after encrypted channel established
+    - Each attempts direct WebTransport connection to peer's local address
+    context: First step in LAN upgrade path. No dependencies — can start immediately.
+    origin: bootstrap from targets.md (T5.2)
+    discovered: 2026-04-08
+  T4:
+    name: Investigate STUN/NAT hole-punching as a transport
+    status: identified
+    value: 3.0
+    cost: 2.0
+    acceptance:
+    - 'Investigation complete: STUN server requirements documented'
+    - UDP vs TCP hole-punching evaluated
+    - Success rate across NAT types assessed
+    - ICE vs simple STUN approach decided
+    - Go and Swift library options identified
+    context: Middle-tier transport between relay and LAN. Pure research target.
+    origin: bootstrap from targets.md (T6)
+    discovered: 2026-04-08
+  T5:
+    name: Investigate Bluetooth as proximity oracle
+    status: identified
+    value: 2.0
+    cost: 2.0
+    acceptance:
+    - BLE advertising APIs on iOS/Android evaluated
+    - Power/battery implications assessed
+    - Interaction with pairing ceremony documented
+    - Privacy considerations (MAC rotation) addressed
+    context: Bluetooth as proximity signal, not data channel. Could supplement confirmation code or gate LAN upgrade.
+    origin: bootstrap from targets.md (T7)
+    discovered: 2026-04-08
+  T6:
+    name: WebTransport relay
+    status: converging
+    value: 5.0
+    cost: 5.0
+    acceptance:
+    - WebTransport (QUIC) is sole transport for relay path
+    - Reliable streams for control/pairing
+    - Unreliable datagrams for video/real-time data
+    context: Parent target. 3/5 sub-targets achieved. T8.4 (TypeScript client) and T8.5 (LAN direct) remain.
+    depends_on:
+    - T6.1
+    - T6.2
+    origin: bootstrap from targets.md (T8)
+    discovered: 2026-04-08
+  T6.1:
+    name: Web/TypeScript WebTransport client
+    status: identified
+    value: 5.0
+    cost: 5.0
+    acceptance:
+    - Browser-native WebTransport API in web/
+    - Reliable stream for control/pairing
+    - Datagrams for video
+    context: Unblocked. Part of WebTransport relay target.
+    origin: bootstrap from targets.md (T8.4)
+    discovered: 2026-04-08
+  T6.2:
+    name: LAN direct WebTransport with cert fingerprint
+    status: identified
+    value: 3.0
+    cost: 3.0
+    acceptance:
+    - Ephemeral self-signed cert for LAN listener
+    - SHA-256 hash in LAN offer control message
+    - Browser peers use serverCertificateHashes
+    context: Depends on T6.1 (Web/TypeScript client). Chromium-only initially.
+    depends_on:
+    - T6.1
+    origin: bootstrap from targets.md (T8.5)
+    discovered: 2026-04-08
+  T7:
+    name: Browser WebTransport E2E
+    status: identified
+    value: 3.0
+    cost: 3.0
+    acceptance:
+    - Browser WebTransport path works end-to-end against relay
+    - Automated or documented manual verification process
+    context: 'Blocked on Playwright headless Chromium QUIC support. Alternatives: headed Chrome, Selenium, or manual.'
+    origin: bootstrap from targets.md (T14)
+    discovered: 2026-04-08
+  T8:
+    name: Gomobile bindings for iOS and Android
+    status: identified
+    value: 5.0
+    cost: 5.0
+    acceptance:
+    - iOS XCFramework importable from Swift
+    - Android AAR importable from Kotlin
+    - Go QUIC stack used by native apps
+    context: Replaces platform-specific QUIC libraries (Network.framework quirks, kwik bugs).
+    origin: bootstrap from targets.md (T15)
+    discovered: 2026-04-08
+  T9:
+    name: Makefile deploy target
+    status: identified
+    value: 3.0
+    cost: 2.0
+    acceptance:
+    - make deploy deploys to Fly.io, starts machine, waits for healthy
+    - make e2e-live depends on deploy target
+    context: Deploy currently broken (Fly.io auth token). Fixing that is a prerequisite.
+    origin: bootstrap from targets.md (T17)
+    discovered: 2026-04-08

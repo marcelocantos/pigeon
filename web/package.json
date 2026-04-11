@@ -7,7 +7,8 @@
   "main": "./src/index.ts",
   "scripts": {
     "test": "npx tsx --test src/crypto.test.ts",
-    "test:e2e": "npx playwright test"
+    "test:e2e": "npx playwright test",
+    "test:e2e:local": "npx tsx --test src/relay.local.e2e.ts"
   },
   "devDependencies": {
     "@playwright/test": "^1.58.2",

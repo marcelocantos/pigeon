@@ -26,13 +26,14 @@ func (p *Protocol) ExportTypeScript(w io.Writer) error {
 	protoName := tsTypeName(p.Name)
 	nsName := protoName + "Protocol"
 
-	// Per-actor state enums at module scope (names are already unique because
-	// they are prefixed with the actor name, e.g. ServerState, IosState).
+	// Per-actor state enums at module scope — prefixed with protocol name
+	// to avoid collisions when multiple protocols share actor names.
 	for _, a := range p.Actors {
 		typeName := tsTypeName(a.Name)
+		stateEnum := protoName + typeName + "State"
 		states := collectStates(a)
 
-		fmt.Fprintf(&b, "export enum %sState {\n", typeName)
+		fmt.Fprintf(&b, "export enum %s {\n", stateEnum)
 		for _, s := range states {
 			fmt.Fprintf(&b, "    %s = \"%s\",\n", string(s), s)
 		}
@@ -130,9 +131,10 @@ func (p *Protocol) ExportTypeScript(w io.Writer) error {
 	// Per-actor transition tables (nested).
 	for _, a := range p.Actors {
 		typeName := tsTypeName(a.Name)
+		stateEnum := protoName + typeName + "State"
 		fmt.Fprintf(&b, "    /** %s transition table. */\n", a.Name)
 		fmt.Fprintf(&b, "    export const %sTable: ActorTable = {\n", strings.ToLower(typeName[:1])+typeName[1:])
-		fmt.Fprintf(&b, "        initial: %sState.%s,\n", typeName, a.Initial)
+		fmt.Fprintf(&b, "        initial: %s.%s,\n", stateEnum, a.Initial)
 		b.WriteString("        transitions: [\n")
 
 		for _, t := range a.FlattenedTransitions() {
@@ -183,12 +185,16 @@ func (p *Protocol) ExportTypeScript(w io.Writer) error {
 			}
 		}
 
-		// Machine class.
-		fmt.Fprintf(&b, "/** %sMachine is the generated state machine for the %s actor. */\n", typeName, a.Name)
-		fmt.Fprintf(&b, "export class %sMachine {\n", typeName)
+		// Machine class — prefix with protocol name to avoid collisions when
+		// multiple protocols share actor names (e.g. session and pathswitch
+		// both have "relay").
+		machinePrefix := protoName + typeName
+		stateEnum := protoName + typeName + "State"
+		fmt.Fprintf(&b, "/** %sMachine is the generated state machine for the %s actor. */\n", machinePrefix, a.Name)
+		fmt.Fprintf(&b, "export class %sMachine {\n", machinePrefix)
 		// Convenience type aliases so callers can write machine.EventID etc.
 		fmt.Fprintf(&b, "    readonly protocol = %s;\n", nsName)
-		fmt.Fprintf(&b, "    state: %sState;\n", typeName)
+		fmt.Fprintf(&b, "    state: %s;\n", stateEnum)
 
 		// Typed variable fields owned by this actor.
 		for _, v := range p.Vars {
@@ -214,11 +220,15 @@ func (p *Protocol) ExportTypeScript(w io.Writer) error {
 
 		// Constructor.
 		fmt.Fprintf(&b, "    constructor() {\n")
-		fmt.Fprintf(&b, "        this.state = %sState.%s;\n", typeName, a.Initial)
+		fmt.Fprintf(&b, "        this.state = %s.%s;\n", stateEnum, a.Initial)
 		b.WriteString("    }\n\n")
 
 		// handleEvent method.
-		fmt.Fprintf(&b, "    handleEvent(ev: %s.EventID): %s.CmdID[] {\n", nsName, nsName)
+		if len(p.Commands) > 0 {
+			fmt.Fprintf(&b, "    handleEvent(ev: %s.EventID): %s.CmdID[] {\n", nsName, nsName)
+		} else {
+			fmt.Fprintf(&b, "    handleEvent(ev: %s.EventID): string[] {\n", nsName)
+		}
 		b.WriteString("        switch (true) {\n")
 
 		for _, t := range a.FlattenedTransitions() {
@@ -238,8 +248,8 @@ func (p *Protocol) ExportTypeScript(w io.Writer) error {
 				guardCond = fmt.Sprintf(" && this.guards.get(%s.GuardID.%s)?.() === true", nsName, guardVal)
 			}
 
-			fmt.Fprintf(&b, "            case this.state === %sState.%s && ev === %s.EventID.%s%s: {\n",
-				typeName, t.From, nsName, eventVal, guardCond)
+			fmt.Fprintf(&b, "            case this.state === %s.%s && ev === %s.EventID.%s%s: {\n",
+				stateEnum, t.From, nsName, eventVal, guardCond)
 
 			// Action call.
 			if t.Do != "" {
@@ -258,7 +268,7 @@ func (p *Protocol) ExportTypeScript(w io.Writer) error {
 			}
 
 			// State transition.
-			fmt.Fprintf(&b, "                this.state = %sState.%s;\n", typeName, t.To)
+			fmt.Fprintf(&b, "                this.state = %s.%s;\n", stateEnum, t.To)
 
 			// Return commands.
 			if len(t.Emits) > 0 {

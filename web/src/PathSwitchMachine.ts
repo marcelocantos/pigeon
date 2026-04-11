@@ -4,7 +4,7 @@
 // Auto-generated from protocol definition. Do not edit.
 // Source of truth: protocol/*.yaml
 
-export enum BackendState {
+export enum PathSwitchBackendState {
     RelayConnected = "RelayConnected",
     LANOffered = "LANOffered",
     LANActive = "LANActive",
@@ -12,7 +12,7 @@ export enum BackendState {
     LANDegraded = "LANDegraded",
 }
 
-export enum ClientState {
+export enum PathSwitchClientState {
     RelayConnected = "RelayConnected",
     LANConnecting = "LANConnecting",
     LANVerifying = "LANVerifying",
@@ -20,7 +20,7 @@ export enum ClientState {
     RelayFallback = "RelayFallback",
 }
 
-export enum RelayState {
+export enum PathSwitchRelayState {
     Idle = "Idle",
     BackendRegistered = "BackendRegistered",
     Bridged = "Bridged",
@@ -101,7 +101,7 @@ export namespace PathSwitchProtocol {
 
     /** backend transition table. */
     export const backendTable: ActorTable = {
-        initial: BackendState.RelayConnected,
+        initial: PathSwitchBackendState.RelayConnected,
         transitions: [
             { from: "RelayConnected", to: "LANOffered", on: "lan_server_ready", onKind: "internal", sends: [{ to: "client", msg: "lan_offer" }] },
             { from: "LANOffered", to: "LANActive", on: "lan_verify", onKind: "recv", guard: "challenge_valid", action: "activate_lan", sends: [{ to: "client", msg: "lan_confirm" }] },
@@ -121,7 +121,7 @@ export namespace PathSwitchProtocol {
 
     /** client transition table. */
     export const clientTable: ActorTable = {
-        initial: ClientState.RelayConnected,
+        initial: PathSwitchClientState.RelayConnected,
         transitions: [
             { from: "RelayConnected", to: "LANConnecting", on: "lan_offer", onKind: "recv", guard: "lan_enabled", action: "dial_lan" },
             { from: "RelayConnected", to: "RelayConnected", on: "lan_offer", onKind: "recv", guard: "lan_disabled" },
@@ -138,7 +138,7 @@ export namespace PathSwitchProtocol {
 
     /** relay transition table. */
     export const relayTable: ActorTable = {
-        initial: RelayState.Idle,
+        initial: PathSwitchRelayState.Idle,
         transitions: [
             { from: "Idle", to: "BackendRegistered", on: "backend_register", onKind: "internal" },
             { from: "BackendRegistered", to: "Bridged", on: "client_connect", onKind: "internal", action: "bridge_streams" },
@@ -150,10 +150,10 @@ export namespace PathSwitchProtocol {
 
 }
 
-/** BackendMachine is the generated state machine for the backend actor. */
-export class BackendMachine {
+/** PathSwitchBackendMachine is the generated state machine for the backend actor. */
+export class PathSwitchBackendMachine {
     readonly protocol = PathSwitchProtocol;
-    state: BackendState;
+    state: PathSwitchBackendState;
     pingFailures: number = 0; // consecutive failed pings on the direct path
     backoffLevel: number = 0; // current exponential backoff level (0 = no backoff)
     activePath: string = "relay"; // "relay" or "lan" — which path carries application traffic
@@ -164,16 +164,16 @@ export class BackendMachine {
     actions: Map<PathSwitchProtocol.ActionID, () => void> = new Map();
 
     constructor() {
-        this.state = BackendState.RelayConnected;
+        this.state = PathSwitchBackendState.RelayConnected;
     }
 
-    handleEvent(ev: PathSwitchProtocol.EventID): PathSwitchProtocol.CmdID[] {
+    handleEvent(ev: PathSwitchProtocol.EventID): string[] {
         switch (true) {
-            case this.state === BackendState.RelayConnected && ev === PathSwitchProtocol.EventID.LanServerReady: {
-                this.state = BackendState.LANOffered;
+            case this.state === PathSwitchBackendState.RelayConnected && ev === PathSwitchProtocol.EventID.LanServerReady: {
+                this.state = PathSwitchBackendState.LANOffered;
                 return [];
             }
-            case this.state === BackendState.LANOffered && ev === PathSwitchProtocol.EventID.RecvLanVerify && this.guards.get(PathSwitchProtocol.GuardID.ChallengeValid)?.() === true: {
+            case this.state === PathSwitchBackendState.LANOffered && ev === PathSwitchProtocol.EventID.RecvLanVerify && this.guards.get(PathSwitchProtocol.GuardID.ChallengeValid)?.() === true: {
                 this.actions.get(PathSwitchProtocol.ActionID.ActivateLan)?.();
                 this.pingFailures = 0;
                 this.backoffLevel = 0;
@@ -181,43 +181,43 @@ export class BackendMachine {
                 this.monitorTarget = "lan";
                 this.dispatcherPath = "lan";
                 this.lanSignal = "ready";
-                this.state = BackendState.LANActive;
+                this.state = PathSwitchBackendState.LANActive;
                 return [];
             }
-            case this.state === BackendState.LANOffered && ev === PathSwitchProtocol.EventID.RecvLanVerify && this.guards.get(PathSwitchProtocol.GuardID.ChallengeInvalid)?.() === true: {
-                this.state = BackendState.RelayConnected;
+            case this.state === PathSwitchBackendState.LANOffered && ev === PathSwitchProtocol.EventID.RecvLanVerify && this.guards.get(PathSwitchProtocol.GuardID.ChallengeInvalid)?.() === true: {
+                this.state = PathSwitchBackendState.RelayConnected;
                 return [];
             }
-            case this.state === BackendState.LANOffered && ev === PathSwitchProtocol.EventID.OfferTimeout: {
+            case this.state === PathSwitchBackendState.LANOffered && ev === PathSwitchProtocol.EventID.OfferTimeout: {
                 // backoff_level: Min(backoff_level + 1, max_backoff_level) (set by action)
-                this.state = BackendState.RelayBackoff;
+                this.state = PathSwitchBackendState.RelayBackoff;
                 return [];
             }
-            case this.state === BackendState.LANActive && ev === PathSwitchProtocol.EventID.PingTick: {
-                this.state = BackendState.LANActive;
+            case this.state === PathSwitchBackendState.LANActive && ev === PathSwitchProtocol.EventID.PingTick: {
+                this.state = PathSwitchBackendState.LANActive;
                 return [];
             }
-            case this.state === BackendState.LANActive && ev === PathSwitchProtocol.EventID.PingTimeout: {
+            case this.state === PathSwitchBackendState.LANActive && ev === PathSwitchProtocol.EventID.PingTimeout: {
                 this.pingFailures = 1;
-                this.state = BackendState.LANDegraded;
+                this.state = PathSwitchBackendState.LANDegraded;
                 return [];
             }
-            case this.state === BackendState.LANDegraded && ev === PathSwitchProtocol.EventID.PingTick: {
-                this.state = BackendState.LANDegraded;
+            case this.state === PathSwitchBackendState.LANDegraded && ev === PathSwitchProtocol.EventID.PingTick: {
+                this.state = PathSwitchBackendState.LANDegraded;
                 return [];
             }
-            case this.state === BackendState.LANDegraded && ev === PathSwitchProtocol.EventID.RecvPathPong: {
+            case this.state === PathSwitchBackendState.LANDegraded && ev === PathSwitchProtocol.EventID.RecvPathPong: {
                 this.actions.get(PathSwitchProtocol.ActionID.ResetFailures)?.();
                 this.pingFailures = 0;
-                this.state = BackendState.LANActive;
+                this.state = PathSwitchBackendState.LANActive;
                 return [];
             }
-            case this.state === BackendState.LANDegraded && ev === PathSwitchProtocol.EventID.PingTimeout && this.guards.get(PathSwitchProtocol.GuardID.UnderMaxFailures)?.() === true: {
+            case this.state === PathSwitchBackendState.LANDegraded && ev === PathSwitchProtocol.EventID.PingTimeout && this.guards.get(PathSwitchProtocol.GuardID.UnderMaxFailures)?.() === true: {
                 // ping_failures: ping_failures + 1 (set by action)
-                this.state = BackendState.LANDegraded;
+                this.state = PathSwitchBackendState.LANDegraded;
                 return [];
             }
-            case this.state === BackendState.LANDegraded && ev === PathSwitchProtocol.EventID.PingTimeout && this.guards.get(PathSwitchProtocol.GuardID.AtMaxFailures)?.() === true: {
+            case this.state === PathSwitchBackendState.LANDegraded && ev === PathSwitchProtocol.EventID.PingTimeout && this.guards.get(PathSwitchProtocol.GuardID.AtMaxFailures)?.() === true: {
                 this.actions.get(PathSwitchProtocol.ActionID.FallbackToRelay)?.();
                 // backoff_level: Min(backoff_level + 1, max_backoff_level) (set by action)
                 this.activePath = "relay";
@@ -225,20 +225,20 @@ export class BackendMachine {
                 this.dispatcherPath = "relay";
                 this.lanSignal = "pending";
                 this.pingFailures = 0;
-                this.state = BackendState.RelayBackoff;
+                this.state = PathSwitchBackendState.RelayBackoff;
                 return [];
             }
-            case this.state === BackendState.RelayBackoff && ev === PathSwitchProtocol.EventID.BackoffExpired: {
-                this.state = BackendState.LANOffered;
+            case this.state === PathSwitchBackendState.RelayBackoff && ev === PathSwitchProtocol.EventID.BackoffExpired: {
+                this.state = PathSwitchBackendState.LANOffered;
                 return [];
             }
-            case this.state === BackendState.RelayBackoff && ev === PathSwitchProtocol.EventID.LanServerChanged: {
+            case this.state === PathSwitchBackendState.RelayBackoff && ev === PathSwitchProtocol.EventID.LanServerChanged: {
                 this.backoffLevel = 0;
-                this.state = BackendState.LANOffered;
+                this.state = PathSwitchBackendState.LANOffered;
                 return [];
             }
-            case this.state === BackendState.RelayConnected && ev === PathSwitchProtocol.EventID.ReadvertiseTick && this.guards.get(PathSwitchProtocol.GuardID.LanServerAvailable)?.() === true: {
-                this.state = BackendState.LANOffered;
+            case this.state === PathSwitchBackendState.RelayConnected && ev === PathSwitchProtocol.EventID.ReadvertiseTick && this.guards.get(PathSwitchProtocol.GuardID.LanServerAvailable)?.() === true: {
+                this.state = PathSwitchBackendState.LANOffered;
                 return [];
             }
         }
@@ -246,10 +246,10 @@ export class BackendMachine {
     }
 }
 
-/** ClientMachine is the generated state machine for the client actor. */
-export class ClientMachine {
+/** PathSwitchClientMachine is the generated state machine for the client actor. */
+export class PathSwitchClientMachine {
     readonly protocol = PathSwitchProtocol;
-    state: ClientState;
+    state: PathSwitchClientState;
     activePath: string = "relay"; // "relay" or "lan" — which path carries application traffic
     dispatcherPath: string = "relay"; // which path the datagram dispatcher reads from ("relay", "lan", "none")
     lanSignal: string = "pending"; // LANReady notification state ("pending" = not yet, "ready" = closed/signalled)
@@ -257,60 +257,60 @@ export class ClientMachine {
     actions: Map<PathSwitchProtocol.ActionID, () => void> = new Map();
 
     constructor() {
-        this.state = ClientState.RelayConnected;
+        this.state = PathSwitchClientState.RelayConnected;
     }
 
-    handleEvent(ev: PathSwitchProtocol.EventID): PathSwitchProtocol.CmdID[] {
+    handleEvent(ev: PathSwitchProtocol.EventID): string[] {
         switch (true) {
-            case this.state === ClientState.RelayConnected && ev === PathSwitchProtocol.EventID.RecvLanOffer && this.guards.get(PathSwitchProtocol.GuardID.LanEnabled)?.() === true: {
+            case this.state === PathSwitchClientState.RelayConnected && ev === PathSwitchProtocol.EventID.RecvLanOffer && this.guards.get(PathSwitchProtocol.GuardID.LanEnabled)?.() === true: {
                 this.actions.get(PathSwitchProtocol.ActionID.DialLan)?.();
-                this.state = ClientState.LANConnecting;
+                this.state = PathSwitchClientState.LANConnecting;
                 return [];
             }
-            case this.state === ClientState.RelayConnected && ev === PathSwitchProtocol.EventID.RecvLanOffer && this.guards.get(PathSwitchProtocol.GuardID.LanDisabled)?.() === true: {
-                this.state = ClientState.RelayConnected;
+            case this.state === PathSwitchClientState.RelayConnected && ev === PathSwitchProtocol.EventID.RecvLanOffer && this.guards.get(PathSwitchProtocol.GuardID.LanDisabled)?.() === true: {
+                this.state = PathSwitchClientState.RelayConnected;
                 return [];
             }
-            case this.state === ClientState.LANConnecting && ev === PathSwitchProtocol.EventID.LanDialOk: {
-                this.state = ClientState.LANVerifying;
+            case this.state === PathSwitchClientState.LANConnecting && ev === PathSwitchProtocol.EventID.LanDialOk: {
+                this.state = PathSwitchClientState.LANVerifying;
                 return [];
             }
-            case this.state === ClientState.LANConnecting && ev === PathSwitchProtocol.EventID.LanDialFailed: {
-                this.state = ClientState.RelayConnected;
+            case this.state === PathSwitchClientState.LANConnecting && ev === PathSwitchProtocol.EventID.LanDialFailed: {
+                this.state = PathSwitchClientState.RelayConnected;
                 return [];
             }
-            case this.state === ClientState.LANVerifying && ev === PathSwitchProtocol.EventID.RecvLanConfirm: {
+            case this.state === PathSwitchClientState.LANVerifying && ev === PathSwitchProtocol.EventID.RecvLanConfirm: {
                 this.actions.get(PathSwitchProtocol.ActionID.ActivateLan)?.();
                 this.activePath = "lan";
                 this.dispatcherPath = "lan";
                 this.lanSignal = "ready";
-                this.state = ClientState.LANActive;
+                this.state = PathSwitchClientState.LANActive;
                 return [];
             }
-            case this.state === ClientState.LANVerifying && ev === PathSwitchProtocol.EventID.VerifyTimeout: {
+            case this.state === PathSwitchClientState.LANVerifying && ev === PathSwitchProtocol.EventID.VerifyTimeout: {
                 this.dispatcherPath = "relay";
-                this.state = ClientState.RelayConnected;
+                this.state = PathSwitchClientState.RelayConnected;
                 return [];
             }
-            case this.state === ClientState.LANActive && ev === PathSwitchProtocol.EventID.RecvPathPing: {
-                this.state = ClientState.LANActive;
+            case this.state === PathSwitchClientState.LANActive && ev === PathSwitchProtocol.EventID.RecvPathPing: {
+                this.state = PathSwitchClientState.LANActive;
                 return [];
             }
-            case this.state === ClientState.LANActive && ev === PathSwitchProtocol.EventID.LanError: {
+            case this.state === PathSwitchClientState.LANActive && ev === PathSwitchProtocol.EventID.LanError: {
                 this.actions.get(PathSwitchProtocol.ActionID.FallbackToRelay)?.();
                 this.activePath = "relay";
                 this.dispatcherPath = "relay";
                 this.lanSignal = "pending";
-                this.state = ClientState.RelayFallback;
+                this.state = PathSwitchClientState.RelayFallback;
                 return [];
             }
-            case this.state === ClientState.RelayFallback && ev === PathSwitchProtocol.EventID.RelayOk: {
-                this.state = ClientState.RelayConnected;
+            case this.state === PathSwitchClientState.RelayFallback && ev === PathSwitchProtocol.EventID.RelayOk: {
+                this.state = PathSwitchClientState.RelayConnected;
                 return [];
             }
-            case this.state === ClientState.LANActive && ev === PathSwitchProtocol.EventID.RecvLanOffer && this.guards.get(PathSwitchProtocol.GuardID.LanEnabled)?.() === true: {
+            case this.state === PathSwitchClientState.LANActive && ev === PathSwitchProtocol.EventID.RecvLanOffer && this.guards.get(PathSwitchProtocol.GuardID.LanEnabled)?.() === true: {
                 this.actions.get(PathSwitchProtocol.ActionID.DialLan)?.();
-                this.state = ClientState.LANConnecting;
+                this.state = PathSwitchClientState.LANConnecting;
                 return [];
             }
         }
@@ -318,43 +318,43 @@ export class ClientMachine {
     }
 }
 
-/** RelayMachine is the generated state machine for the relay actor. */
-export class RelayMachine {
+/** PathSwitchRelayMachine is the generated state machine for the relay actor. */
+export class PathSwitchRelayMachine {
     readonly protocol = PathSwitchProtocol;
-    state: RelayState;
+    state: PathSwitchRelayState;
     relayBridge: string = "idle"; // relay bridge state ("active" = bridging, "idle" = backend registered but no client)
     guards: Map<PathSwitchProtocol.GuardID, () => boolean> = new Map();
     actions: Map<PathSwitchProtocol.ActionID, () => void> = new Map();
 
     constructor() {
-        this.state = RelayState.Idle;
+        this.state = PathSwitchRelayState.Idle;
     }
 
-    handleEvent(ev: PathSwitchProtocol.EventID): PathSwitchProtocol.CmdID[] {
+    handleEvent(ev: PathSwitchProtocol.EventID): string[] {
         switch (true) {
-            case this.state === RelayState.Idle && ev === PathSwitchProtocol.EventID.BackendRegister: {
-                this.state = RelayState.BackendRegistered;
+            case this.state === PathSwitchRelayState.Idle && ev === PathSwitchProtocol.EventID.BackendRegister: {
+                this.state = PathSwitchRelayState.BackendRegistered;
                 return [];
             }
-            case this.state === RelayState.BackendRegistered && ev === PathSwitchProtocol.EventID.ClientConnect: {
+            case this.state === PathSwitchRelayState.BackendRegistered && ev === PathSwitchProtocol.EventID.ClientConnect: {
                 this.actions.get(PathSwitchProtocol.ActionID.BridgeStreams)?.();
                 this.relayBridge = "active";
-                this.state = RelayState.Bridged;
+                this.state = PathSwitchRelayState.Bridged;
                 return [];
             }
-            case this.state === RelayState.Bridged && ev === PathSwitchProtocol.EventID.ClientDisconnect: {
+            case this.state === PathSwitchRelayState.Bridged && ev === PathSwitchProtocol.EventID.ClientDisconnect: {
                 this.actions.get(PathSwitchProtocol.ActionID.Unbridge)?.();
                 this.relayBridge = "idle";
-                this.state = RelayState.BackendRegistered;
+                this.state = PathSwitchRelayState.BackendRegistered;
                 return [];
             }
-            case this.state === RelayState.Bridged && ev === PathSwitchProtocol.EventID.RecvRelayResume: {
+            case this.state === PathSwitchRelayState.Bridged && ev === PathSwitchProtocol.EventID.RecvRelayResume: {
                 this.actions.get(PathSwitchProtocol.ActionID.RebridgeStreams)?.();
-                this.state = RelayState.Bridged;
+                this.state = PathSwitchRelayState.Bridged;
                 return [];
             }
-            case this.state === RelayState.BackendRegistered && ev === PathSwitchProtocol.EventID.BackendDisconnect: {
-                this.state = RelayState.Idle;
+            case this.state === PathSwitchRelayState.BackendRegistered && ev === PathSwitchProtocol.EventID.BackendDisconnect: {
+                this.state = PathSwitchRelayState.Idle;
                 return [];
             }
         }
