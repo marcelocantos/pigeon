@@ -10,7 +10,14 @@
 
 import { describe, it, before, after } from "node:test";
 import assert from "node:assert/strict";
-import { startRelay, spawnBridge, type RelayProcess } from "./test-helpers/GoRelayProcess.js";
+import { spawn } from "node:child_process";
+import {
+  startRelay,
+  spawnBridge,
+  CRYPTO_PEER_BIN,
+  type RelayProcess,
+} from "./test-helpers/GoRelayProcess.js";
+import { E2EKeyPair, deriveConfirmationCode } from "./crypto.js";
 
 let relay: RelayProcess;
 
@@ -75,6 +82,69 @@ describe("Local relay E2E (via pigeon-bridge)", () => {
     } finally {
       client.close();
       backend.close();
+    }
+  });
+
+  it("cross-language confirmation code", async () => {
+    // Start crypto-peer (Go binary) with the local relay URL.
+    const peerProc = spawn(CRYPTO_PEER_BIN, [relayURL()], {
+      stdio: ["ignore", "pipe", "pipe"],
+      env: { ...process.env, PIGEON_INSECURE: "1" },
+    });
+    let instanceID = "";
+
+    // Read instance ID from crypto-peer's stderr (first line).
+    await new Promise<void>((resolve, reject) => {
+      const timeout = setTimeout(
+        () => reject(new Error("timeout waiting for crypto-peer instance ID")),
+        10000,
+      );
+      let stderrBuf = "";
+      let resolved = false;
+      peerProc.stderr!.on("data", (chunk: Buffer) => {
+        stderrBuf += chunk.toString();
+        const nl = stderrBuf.indexOf("\n");
+        if (nl !== -1 && !resolved) {
+          instanceID = stderrBuf.slice(0, nl).trim();
+          resolved = true;
+          clearTimeout(timeout);
+          resolve();
+        }
+      });
+      peerProc.on("error", (err) => {
+        clearTimeout(timeout);
+        reject(err);
+      });
+    });
+
+    assert.ok(instanceID.length > 0, "instance ID from crypto-peer should be non-empty");
+
+    // Connect pigeon-bridge in connect mode to the crypto-peer instance.
+    const bridge = spawnBridge("connect", relayURL(), instanceID);
+
+    try {
+      // Receive crypto-peer's 32-byte public key.
+      const peerPubKey = await bridge.recvBytes();
+      assert.equal(peerPubKey.length, 32, "peer public key should be 32 bytes");
+
+      // Generate own X25519 keypair.
+      const myKeyPair = await E2EKeyPair.create();
+
+      // Send our 32-byte public key to crypto-peer.
+      bridge.send(myKeyPair.publicKeyData);
+
+      // Receive crypto-peer's 6-byte ASCII confirmation code.
+      const peerCodeStr = await bridge.recv();
+      assert.equal(peerCodeStr.length, 6, "peer confirmation code should be 6 characters");
+
+      // Derive our own confirmation code.
+      const myCode = await deriveConfirmationCode(myKeyPair.publicKeyData, peerPubKey);
+
+      // Assert both codes match.
+      assert.equal(myCode, peerCodeStr, "TypeScript and Go confirmation codes should match");
+    } finally {
+      bridge.close();
+      peerProc.kill();
     }
   });
 });

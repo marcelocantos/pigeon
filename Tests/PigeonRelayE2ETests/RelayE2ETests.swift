@@ -155,6 +155,119 @@ final class RelayE2ETests: XCTestCase {
         backend.cancel(); client.cancel()
     }
 
+    func testCrossLanguageConfirmationCode() async throws {
+        // Build the crypto-peer binary.
+        let repoRoot = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent()  // PigeonRelayE2ETests/
+            .deletingLastPathComponent()  // Tests/
+            .deletingLastPathComponent()  // repo root
+
+        let buildPeer = Process()
+        buildPeer.executableURL = URL(fileURLWithPath: "/usr/bin/env")
+        buildPeer.arguments = ["go", "build", "-o", "/tmp/pigeon-crypto-peer", "./cmd/crypto-peer"]
+        buildPeer.currentDirectoryURL = repoRoot
+        buildPeer.standardOutput = FileHandle.nullDevice
+        buildPeer.standardError = FileHandle.nullDevice
+        try buildPeer.run()
+        buildPeer.waitUntilExit()
+        guard buildPeer.terminationStatus == 0 else {
+            throw NSError(domain: "Build", code: 1,
+                          userInfo: [NSLocalizedDescriptionKey: "go build crypto-peer failed (\(buildPeer.terminationStatus))"])
+        }
+
+        // Start crypto-peer subprocess pointing to the relay.
+        let peer = Process()
+        peer.executableURL = URL(fileURLWithPath: "/tmp/pigeon-crypto-peer")
+        peer.arguments = ["https://127.0.0.1:\(relayPort!)"]
+        peer.environment = ProcessInfo.processInfo.environment.merging(
+            ["PIGEON_INSECURE": "1"]) { _, new in new }
+        peer.standardOutput = FileHandle.nullDevice
+        let peerStderr = Pipe()
+        peer.standardError = peerStderr
+        try peer.run()
+        defer { peer.terminate(); peer.waitUntilExit() }
+
+        // Close the write end of the pipe in the parent process so that
+        // read() on the read end will see EOF when the child exits.
+        peerStderr.fileHandleForWriting.closeFile()
+
+        // Read instance ID from crypto-peer's stderr (first line).
+        // Use a DispatchSemaphore for a reliable timeout: schedule a
+        // 15-second timeout that kills the peer, which unblocks read().
+        let sem = DispatchSemaphore(value: 0)
+        var instanceIDResult = ""
+        let readFD = peerStderr.fileHandleForReading.fileDescriptor
+        DispatchQueue.global(qos: .userInitiated).async {
+            var lineData = Data()
+            var buf = [UInt8](repeating: 0, count: 1)
+            while true {
+                let n = read(readFD, &buf, 1)
+                if n <= 0 { break }
+                if buf[0] == UInt8(ascii: "\n") { break }
+                lineData.append(buf[0])
+            }
+            instanceIDResult = String(decoding: lineData, as: UTF8.self)
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+            sem.signal()
+        }
+
+        // Wait up to 15s for the instance ID; on timeout, kill peer to
+        // unblock read() and then check what we got.
+        if sem.wait(timeout: .now() + 15) == .timedOut {
+            peer.terminate()
+            sem.wait()  // wait for read() to return after kill
+        }
+
+        guard !instanceIDResult.isEmpty else {
+            XCTFail("crypto-peer did not print an instance ID (pipe returned EOF with no data)")
+            return
+        }
+        let instanceID = instanceIDResult
+
+        // Connect to relay using the instance ID.
+        let client = try await connect(instanceID)
+        defer { client.cancel() }
+
+        // Receive crypto-peer's 32-byte public key. The connection is
+        // cancelled after 10 seconds to ensure readMsg cannot hang.
+        let peerPublicKey = try await readMsgWithTimeout(client, 10)
+        XCTAssertEqual(peerPublicKey.count, 32, "peer public key should be 32 bytes")
+
+        // Generate own X25519 keypair.
+        let myKeyPair = E2EKeyPair()
+
+        // Start reading the confirmation code BEFORE sending our pubkey.
+        // This ensures NWConnection.receive() is already posted when the
+        // code arrives, avoiding a race where data arrives before receive
+        // is posted and NWConnection may not deliver it.
+        async let peerCodeFuture = readMsgWithTimeout(client, 10)
+
+        // Send our 32-byte public key. Crypto-peer will respond with the code.
+        try await writeMsg(client, myKeyPair.publicKeyData)
+
+        // Await the confirmation code.
+        let peerCodeData = try await peerCodeFuture
+        let peerCode = String(decoding: peerCodeData, as: UTF8.self)
+
+        // Derive own confirmation code and assert cross-language agreement.
+        let myCode = deriveConfirmationCode(myKeyPair.publicKeyData, peerPublicKey)
+        XCTAssertEqual(myCode, peerCode,
+                       "Swift and Go confirmation codes must match (cross-language HKDF verification)")
+        XCTAssertEqual(myCode.count, 6, "confirmation code should be 6 digits")
+    }
+
+    /// Reads one length-prefixed message from `c`, cancelling `c` after
+    /// `seconds` if no data arrives. Cancelling the connection guarantees
+    /// the underlying NWConnection.receive() callback fires, so the caller
+    /// is never left waiting forever.
+    private func readMsgWithTimeout(_ c: NWConnection, _ seconds: Double) async throws -> Data {
+        // Schedule connection cancellation after the timeout.
+        let item = DispatchWorkItem { c.cancel() }
+        DispatchQueue.global().asyncAfter(deadline: .now() + seconds, execute: item)
+        defer { item.cancel() }
+        return try await readMsg(c)
+    }
+
     func testConfirmationCodeCrossplatformVector() {
         let code = deriveConfirmationCode(
             Data(repeating: 0x01, count: 32),

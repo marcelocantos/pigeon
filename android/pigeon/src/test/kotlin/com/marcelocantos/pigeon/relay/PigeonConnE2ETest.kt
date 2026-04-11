@@ -8,6 +8,10 @@ import com.marcelocantos.pigeon.crypto.E2EChannel
 import com.marcelocantos.pigeon.crypto.E2EKeyPair
 import com.marcelocantos.pigeon.crypto.deriveConfirmationCode
 import com.marcelocantos.pigeon.crypto.deriveKeyFromSecret
+import java.io.BufferedReader
+import java.io.InputStreamReader
+import java.nio.file.Path
+import java.util.concurrent.TimeUnit
 import kotlin.test.Test
 import kotlin.test.assertContentEquals
 import kotlin.test.assertEquals
@@ -429,6 +433,87 @@ class PigeonConnE2ETest {
                 // Also acceptable: failure at connect time.
             } finally {
                 transport.close()
+            }
+        }
+    }
+
+    /**
+     * Cross-language confirmation code interop: Go crypto-peer and Kotlin
+     * client perform a full ECDH key exchange through a live relay. Both
+     * sides independently derive a 6-digit confirmation code, and the test
+     * asserts they match — proving the HKDF derivation is identical across
+     * Go and Kotlin implementations.
+     */
+    @Test
+    fun `cross-language confirmation code via relay`() {
+        GoRelayProcess.start().use { relay ->
+            // Find the project root the same way GoRelayProcess does.
+            var projectRoot = Path.of(System.getProperty("user.dir"))
+            while (projectRoot.parent != null) {
+                if (projectRoot.resolve("go.mod").toFile().exists() &&
+                    projectRoot.resolve("cmd/pigeon/main.go").toFile().exists()) {
+                    break
+                }
+                projectRoot = projectRoot.parent
+            }
+
+            // Build the crypto-peer binary.
+            val cryptoPeerBinary = "/tmp/pigeon-crypto-peer"
+            val buildResult = ProcessBuilder(
+                "go", "build", "-o", cryptoPeerBinary, "./cmd/crypto-peer"
+            ).directory(projectRoot.toFile())
+             .redirectErrorStream(true)
+             .start()
+            val buildOutput = buildResult.inputStream.bufferedReader().readText()
+            val buildExit = buildResult.waitFor()
+            if (buildExit != 0) {
+                throw IllegalStateException(
+                    "Failed to build crypto-peer (exit $buildExit):\n$buildOutput"
+                )
+            }
+
+            // Start crypto-peer with the relay URL.
+            val relayURL = "https://127.0.0.1:${relay.quicPort}"
+            val peerProcess = ProcessBuilder(cryptoPeerBinary, relayURL)
+                .directory(projectRoot.toFile())
+                .also { pb -> pb.environment()["PIGEON_INSECURE"] = "1" }
+                .start()
+
+            try {
+                // Read instance ID from crypto-peer's stderr (first line).
+                val stderrReader = BufferedReader(InputStreamReader(peerProcess.errorStream))
+                val instanceID = stderrReader.readLine()?.trim()
+                    ?: throw IllegalStateException("crypto-peer did not print instance ID")
+
+                // Connect to the relay as the Kotlin client.
+                val transport = KwikQuicTransport.connect("127.0.0.1", relay.quicPort)
+                val client = connect(transport, instanceID)
+
+                try {
+                    // 1. Receive crypto-peer's 32-byte X25519 public key.
+                    val peerPubKey = client.recv()
+                    assertEquals(32, peerPubKey.size, "peer public key must be 32 bytes")
+
+                    // 2. Generate our own X25519 keypair and send our public key.
+                    val myKeyPair = E2EKeyPair()
+                    client.send(myKeyPair.publicKeyData)
+
+                    // 3. Receive crypto-peer's 6-byte ASCII confirmation code.
+                    val peerCodeBytes = client.recv()
+                    val peerCode = String(peerCodeBytes)
+
+                    // 4. Derive our own confirmation code using the same HKDF logic.
+                    val myCode = deriveConfirmationCode(myKeyPair.publicKeyData, peerPubKey)
+
+                    // 5. Assert codes match — proves Go and Kotlin HKDF derivations agree.
+                    assertEquals(myCode, peerCode,
+                        "Confirmation codes must match across Go and Kotlin")
+                } finally {
+                    client.close()
+                }
+            } finally {
+                peerProcess.destroyForcibly()
+                peerProcess.waitFor(5, TimeUnit.SECONDS)
             }
         }
     }

@@ -18,6 +18,7 @@ export interface RelayProcess {
 const REPO_ROOT = path.resolve(import.meta.dirname, "../../..");
 const RELAY_BIN = "/tmp/pigeon-e2e-server";
 const BRIDGE_BIN = "/tmp/pigeon-bridge";
+export const CRYPTO_PEER_BIN = "/tmp/pigeon-crypto-peer";
 
 /**
  * Find an available UDP port by briefly binding a socket to port 0.
@@ -34,12 +35,12 @@ function findAvailablePort(): Promise<number> {
 }
 
 /**
- * Build both Go binaries (relay server and pigeon-bridge) and start
- * the relay on an ephemeral port. Waits for the "pigeon starting"
+ * Build all Go binaries (relay server, pigeon-bridge, and crypto-peer) and
+ * start the relay on ephemeral ports. Waits for the "pigeon starting"
  * log line before resolving.
  */
 export async function startRelay(): Promise<RelayProcess> {
-  // Build relay and bridge binaries.
+  // Build relay, bridge, and crypto-peer binaries.
   execSync(`go build -o ${RELAY_BIN} ./cmd/pigeon/`, {
     cwd: REPO_ROOT,
     stdio: "inherit",
@@ -48,12 +49,20 @@ export async function startRelay(): Promise<RelayProcess> {
     cwd: REPO_ROOT,
     stdio: "inherit",
   });
+  execSync(`go build -o ${CRYPTO_PEER_BIN} ./cmd/crypto-peer`, {
+    cwd: REPO_ROOT,
+    stdio: "inherit",
+  });
 
-  const quicPort = await findAvailablePort();
+  // Allocate two ephemeral ports: one for WebTransport (HTTP/3) and one for raw QUIC.
+  const [wtPort, quicPort] = await Promise.all([
+    findAvailablePort(),
+    findAvailablePort(),
+  ]);
 
   const proc = spawn(
     RELAY_BIN,
-    ["--quic-port", String(quicPort)],
+    ["--port", String(wtPort), "--quic-port", String(quicPort)],
     {
       cwd: REPO_ROOT,
       stdio: ["ignore", "pipe", "pipe"],
@@ -109,8 +118,9 @@ export function spawnBridge(
   ...args: string[]
 ): {
   proc: ChildProcess;
-  send: (data: string) => void;
+  send: (data: string | Uint8Array) => void;
   recv: () => Promise<string>;
+  recvBytes: () => Promise<Uint8Array>;
   close: () => void;
 } {
   const proc = spawn(BRIDGE_BIN, args, {
@@ -137,15 +147,15 @@ export function spawnBridge(
     }
   }
 
-  function send(data: string) {
-    const payload = Buffer.from(data, "utf-8");
+  function send(data: string | Uint8Array) {
+    const payload = typeof data === "string" ? Buffer.from(data, "utf-8") : Buffer.from(data);
     const hdr = Buffer.alloc(4);
     hdr.writeUInt32BE(payload.length, 0);
     proc.stdin!.write(hdr);
     proc.stdin!.write(payload);
   }
 
-  function recv(): Promise<string> {
+  function recvBytes(): Promise<Uint8Array> {
     return new Promise((resolve, reject) => {
       const timeout = setTimeout(
         () => reject(new Error("recv timeout")),
@@ -153,10 +163,14 @@ export function spawnBridge(
       );
       waiters.push((msg) => {
         clearTimeout(timeout);
-        resolve(msg.toString("utf-8"));
+        resolve(new Uint8Array(msg));
       });
       drain(); // check buffer in case data already arrived
     });
+  }
+
+  function recv(): Promise<string> {
+    return recvBytes().then((bytes) => Buffer.from(bytes).toString("utf-8"));
   }
 
   function close() {
@@ -164,5 +178,5 @@ export function spawnBridge(
     proc.kill();
   }
 
-  return { proc, send, recv, close };
+  return { proc, send, recv, recvBytes, close };
 }
