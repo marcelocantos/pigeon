@@ -188,6 +188,7 @@ void pigeon_cli_machine_init(pigeon_cli_machine *m);
 int  pigeon_cli_handle_message(pigeon_cli_machine *m, pairing_ceremony_msg_type msg);
 int  pigeon_cli_step(pigeon_cli_machine *m, pairing_ceremony_event_id event);
 
+
 #ifndef PIGEON_MAX_MSG
 #define PIGEON_MAX_MSG 1048576
 #endif

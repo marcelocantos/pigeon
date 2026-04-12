@@ -25,7 +25,7 @@ cat "$SRCDIR/include/pigeon/pairingceremony_gen.h" \
     | sed '/^\/\/ Copyright/d' \
     | sed '/^\/\/ SPDX/d' \
     | sed '/^\/\/ Code generated/d' \
-    | sed '/^$/N;/^\n$/d' \
+    | awk 'NF{p=1} p' \
     > "$OUTDIR/.gen_fragment.h"
 
 # Replace the #include directive with the fragment content, then clean up
