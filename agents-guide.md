@@ -2,12 +2,13 @@
 
 ## What Is Pigeon?
 
-Pigeon is a Go + Swift library for opaque authenticated WebTransport relay. It provides:
+Pigeon is a Go + Swift + Kotlin + C + TypeScript library for opaque authenticated WebTransport relay. It provides:
 
 - A relay server that bridges WebTransport sessions without seeing plaintext
 - E2E encryption (X25519 ECDH + AES-256-GCM) with a pairing ceremony and MitM detection
-- A declarative protocol state machine framework with code generation (Go, Swift, TLA+, PlantUML)
+- A declarative protocol state machine framework with code generation (Go, Swift, Kotlin, C, TypeScript, TLA+, PlantUML)
 - A Swift package (`Pigeon`) for iOS 16+/macOS 13+
+- A pure C client library (`dist/pigeon.h` + `dist/pigeon.c`) with zero heap allocations
 
 ## Go Packages
 
@@ -109,6 +110,39 @@ let channel = E2EChannel(sharedKey: sessionKey, isServer: false)
 let encrypted = try channel.encrypt(plaintext)
 let plaintext = try channel.decrypt(ciphertext)
 ```
+
+## C Client Library
+
+Distributed as two files: `dist/pigeon.h` + `dist/pigeon.c`. Compile with
+`-DPIGEON_CRYPTO_LIBSODIUM` and link `-lsodium`.
+
+```c
+// All state lives in a struct — allocate on stack, static, or embedded.
+pigeon_ctx ctx;
+pigeon_init(&ctx, &transport);  // transport = user-provided QUIC callbacks
+
+// Crypto
+pigeon_keypair kp;
+pigeon_generate_keypair(&kp);
+pigeon_derive_session_key(kp.private_key, peer_pub, info, info_len, out_key);
+
+char code[7];
+pigeon_derive_confirmation_code(pub_a, pub_b, code);  // "123456"
+
+// Encrypted channel
+pigeon_channel ch;
+pigeon_channel_init(&ch, send_key, recv_key, PIGEON_MODE_STRICT);
+pigeon_channel_encrypt(&ch, plaintext, pt_len, out, out_len);
+pigeon_channel_decrypt(&ch, ciphertext, ct_len, out, out_len);
+
+// Wire framing (4-byte big-endian length prefix)
+pigeon_frame_message(payload, len, buf, buf_len);
+pigeon_send(&ctx, data, len);     // length-prefixed stream message
+pigeon_recv(&ctx, buf, buf_len);  // returns message length
+```
+
+Zero heap allocations. `PIGEON_MAX_MSG` (default 1 MiB) is the sole build-time knob.
+Generated pairing state machine included — all three actors (server, ios, cli).
 
 ## Pairing Ceremony Flow
 

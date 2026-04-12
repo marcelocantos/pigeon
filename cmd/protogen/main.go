@@ -1,7 +1,7 @@
 // Copyright 2026 Marcelo Cantos
 // SPDX-License-Identifier: Apache-2.0
 
-// protogen generates Go, Swift, Kotlin, TypeScript, TLA+, and PlantUML from a
+// protogen generates Go, Swift, Kotlin, TypeScript, C, TLA+, and PlantUML from a
 // YAML protocol definition.
 //
 // Usage:
@@ -141,6 +141,24 @@ func main() {
 				return writeFile(
 					filepath.Join("web", "src", p.Name+"Machine.ts"),
 					func(f *os.File) error { return p.ExportTypeScript(f) },
+				)
+			},
+		},
+		{
+			path: filepath.Join("c", "include", "pigeon", lowerName+"_gen.h"),
+			gen: func() error {
+				return writeFile(
+					filepath.Join("c", "include", "pigeon", lowerName+"_gen.h"),
+					func(f *os.File) error { return p.ExportCHeader(f) },
+				)
+			},
+		},
+		{
+			path: filepath.Join("c", "src", lowerName+"_gen.c"),
+			gen: func() error {
+				return writeFile(
+					filepath.Join("c", "src", lowerName+"_gen.c"),
+					func(f *os.File) error { return p.ExportCImpl(f) },
 				)
 			},
 		},

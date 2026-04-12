@@ -91,9 +91,19 @@ server:
 generate:
 	go run ./cmd/protogen protocol/pairing.yaml
 
+# --- C library ---
+
+amalgamate: generate
+	./c/amalgamate.sh dist
+
+test-c: amalgamate
+	clang -DPIGEON_CRYPTO_LIBSODIUM -Idist $$(pkg-config --cflags --libs libsodium) \
+		dist/pigeon.c c/test/test_pigeon.c -o c/test/test_pigeon
+	./c/test/test_pigeon
+
 # --- Clean ---
 
 clean:
 	rm -rf .build/
-	rm -f pigeon pigeon-test-binary pigeon-e2e-server
+	rm -f pigeon pigeon-test-binary pigeon-e2e-server c/test/test_pigeon
 	go clean -testcache

@@ -83,3 +83,8 @@ maintenance activities. Append-only — newest entries at the bottom.
 
 - **Commit**: `7bed6ca`
 - **Outcome**: Released v0.15.0 (darwin-arm64, linux-amd64, linux-arm64). Codegen namespace collisions fixed across all four generators (Go, Swift, Kotlin, TypeScript) — multiple protocols now coexist safely. Complete tern→pigeon rename (zero stale references). Swift E2E relay tests added (6 tests via XCTest). Flaky TestChaosMultiPair fixed (faultproxy reset bug, QUIC keepalives, CI UDP buffer sizing). Homebrew formula updated.
+
+## 2026-04-12 — /release v0.16.0
+
+- **Commit**: pending
+- **Outcome**: Released v0.16.0 (darwin-arm64, linux-amd64, linux-arm64). Pure C client library added — zero-allocation struct-based API, distributed as amalgamated pigeon.h/pigeon.c pair. C code generator (cgen.go) added to protogen. 15 C tests including cross-language crypto vector validation (Go→C). CI amalgamation staleness check. Homebrew formula updated.

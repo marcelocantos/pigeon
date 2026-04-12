@@ -6,48 +6,9 @@ skinparam state {
   BorderColor #888
 }
 
-title PathSwitch — Transport
-
-state "backend" as B {
-  [*] --> B_RelayConnected
-  B_RelayConnected --> B_LANOffered : lan_server_ready
-  B_LANOffered --> B_LANActive : recv lan_verify\n[challenge_valid]\nactivate_lan
-  B_LANOffered --> B_RelayConnected : recv lan_verify\n[challenge_invalid]
-  B_LANOffered --> B_RelayBackoff : offer_timeout
-  B_LANActive --> B_LANActive : ping_tick
-  B_LANActive --> B_LANDegraded : ping_timeout
-  B_LANDegraded --> B_LANDegraded : ping_tick
-  B_LANDegraded --> B_LANActive : recv path_pong\nreset_failures
-  B_LANDegraded --> B_LANDegraded : ping_timeout\n[under_max_failures]
-  B_LANDegraded --> B_RelayBackoff : ping_timeout\n[at_max_failures]\nfallback_to_relay
-  B_RelayBackoff --> B_LANOffered : backoff_expired\nlan_server_changed
-  B_RelayConnected --> B_LANOffered : readvertise_tick\n[lan_server_available]
-}
-
-state "client" as C {
-  [*] --> C_RelayConnected
-  C_RelayConnected --> C_LANConnecting : recv lan_offer\n[lan_enabled]\ndial_lan
-  C_RelayConnected --> C_RelayConnected : recv lan_offer\n[lan_disabled]
-  C_LANConnecting --> C_LANVerifying : lan_dial_ok
-  C_LANConnecting --> C_RelayConnected : lan_dial_failed
-  C_LANVerifying --> C_LANActive : recv lan_confirm\nactivate_lan
-  C_LANVerifying --> C_RelayConnected : verify_timeout
-  C_LANActive --> C_LANActive : recv path_ping
-  C_LANActive --> C_RelayFallback : lan_error\nfallback_to_relay
-  C_RelayFallback --> C_RelayConnected : relay_ok
-  C_LANActive --> C_LANConnecting : recv lan_offer\n[lan_enabled]\ndial_lan
-}
+title PairingCeremony — Transport
 
 ' === Cross-actor interactions ===
 
-B_RelayConnected -[#888,dashed]-> C_RelayConnected : lan_offer\n{addr, challenge}
-B_LANOffered -[#888,dashed]-> C_LANVerifying : lan_confirm
-B_LANActive -[#888,dashed]-> C_LANActive : path_ping
-B_LANDegraded -[#888,dashed]-> C_LANActive : path_ping
-B_RelayBackoff -[#888,dashed]-> C_RelayConnected : lan_offer\n{addr, challenge}
-B_RelayBackoff -[#888,dashed]-> C_RelayConnected : lan_offer\n{addr, challenge}
-B_RelayConnected -[#888,dashed]-> C_RelayConnected : lan_offer\n{addr, challenge}
-C_LANConnecting -[#888,dashed]-> B_LANOffered : lan_verify\n{challenge, instance_id}
-C_LANActive -[#888,dashed]-> B_LANDegraded : path_pong
 
 @enduml

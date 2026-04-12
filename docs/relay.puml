@@ -6,16 +6,7 @@ skinparam state {
   BorderColor #888
 }
 
-title PathSwitch — Relay
-
-state "relay" as R {
-  [*] --> R_Idle
-  R_Idle --> R_BackendRegistered : backend_register
-  R_BackendRegistered --> R_Bridged : client_connect\nbridge_streams
-  R_Bridged --> R_BackendRegistered : client_disconnect\nunbridge
-  R_Bridged --> R_Bridged : recv relay_resume\nrebridge_streams
-  R_BackendRegistered --> R_Idle : backend_disconnect
-}
+title PairingCeremony — Relay
 
 ' === Cross-actor interactions ===
 

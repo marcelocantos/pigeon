@@ -1,6 +1,6 @@
 # Pigeon
 
-Pigeon is a WebTransport relay library and server (Go + Swift) that enables
+Pigeon is a WebTransport relay library and server (Go + Swift + Kotlin + C + TypeScript) that enables
 connections between devices where the backend sits on a private network
 with no ingress. The relay forwards opaque ciphertext over QUIC — it never
 sees plaintext traffic. Applications import pigeon's packages rather than
@@ -155,6 +155,29 @@ val channel = E2EChannel(sharedKey, isServer = false)
 val encrypted = channel.encrypt(plaintext)
 val plaintext = channel.decrypt(ciphertext)
 ```
+
+## C Client Library
+
+Pure C client library distributed as two files: `dist/pigeon.h` + `dist/pigeon.c`.
+Zero heap allocations — all state lives in a `pigeon_ctx` struct sized at compile time.
+
+```c
+#include "pigeon.h"
+// Compile: clang -DPIGEON_CRYPTO_LIBSODIUM $(pkg-config --cflags --libs libsodium) pigeon.c your_app.c
+
+pigeon_ctx ctx;
+pigeon_init(&ctx, &transport);  // transport = your QUIC callbacks
+
+pigeon_keypair kp;
+pigeon_generate_keypair(&kp);
+
+pigeon_channel ch;
+pigeon_channel_init_symmetric(&ch, session_key, /*is_server=*/false);
+pigeon_channel_encrypt(&ch, plaintext, pt_len, out, out_len);
+```
+
+Includes generated pairing state machine, crypto (X25519 + AES-256-GCM + HKDF),
+and wire framing. `PIGEON_MAX_MSG` is the sole build-time knob.
 
 ## Pairing Ceremony
 
@@ -321,7 +344,7 @@ swift test
 ## Protocol Code Generation
 
 Protocols are defined in YAML (`protocol/pairing.yaml`) and used to
-generate Go, Swift, TLA+, and PlantUML outputs:
+generate Go, Swift, Kotlin, C, TypeScript, TLA+, and PlantUML outputs:
 
 ```bash
 go run ./cmd/protogen protocol/pairing.yaml

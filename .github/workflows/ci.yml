@@ -17,6 +17,23 @@ jobs:
         run: sudo sysctl -w net.core.rmem_max=7340032 net.core.wmem_max=7340032
       - run: go test ./...
 
+  amalgamate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - name: Regenerate and amalgamate
+        run: make amalgamate
+      - name: Check for stale dist files
+        run: |
+          if ! git diff --exit-code dist/; then
+            echo "::error::dist/ is out of date. Run 'make amalgamate' and commit the result."
+            git diff dist/
+            exit 1
+          fi
+
   deploy:
     name: Deploy to Fly.io
     needs: test

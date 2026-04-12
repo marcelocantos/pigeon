@@ -10,7 +10,7 @@ The pre-1.0 period (currently v0.x.x) exists to get the interaction surface righ
 
 ## Interaction Surface Catalogue
 
-*Snapshot as of v0.15.0.*
+*Snapshot as of v0.16.0.*
 
 ### Relay API (the binary's external interface)
 
@@ -327,6 +327,80 @@ func LanIP() string
 
 *Stability: Stable.*
 
+### C client library (`dist/pigeon.h` + `dist/pigeon.c`)
+
+Distributed as an amalgamated single-header/single-source pair. Requires
+libsodium for crypto primitives. Zero heap allocations — all state lives in
+a `pigeon_ctx` struct sized at compile time.
+
+```c
+// Configuration
+#define PIGEON_MAX_MSG 1048576  // sole build-time knob
+
+// Crypto types
+typedef struct { uint8_t private_key[32]; uint8_t public_key[32]; } pigeon_keypair;
+typedef enum { PIGEON_MODE_STRICT, PIGEON_MODE_DATAGRAMS } pigeon_channel_mode;
+typedef struct { uint8_t send_key[32]; uint8_t recv_key[32]; uint64_t send_seq, recv_seq; pigeon_channel_mode mode; } pigeon_channel;
+typedef struct { char peer_instance_id[64]; char relay_url[256]; uint8_t local_private_key[32]; uint8_t local_public_key[32]; uint8_t peer_public_key[32]; } pigeon_pairing_record;
+
+// Transport abstraction (user-provided callbacks)
+typedef struct {
+    void *userdata;
+    int (*send_stream)(void *, const uint8_t *, size_t);
+    int (*recv_stream)(void *, uint8_t *, size_t, size_t *);
+    int (*send_datagram)(void *, const uint8_t *, size_t);
+    int (*recv_datagram)(void *, uint8_t *, size_t, size_t *);
+} pigeon_transport;
+
+// Client context — all library state
+typedef struct {
+    pigeon_keypair keypair;
+    uint8_t peer_pubkey[32];
+    pigeon_channel stream_channel, datagram_channel;
+    uint8_t hkdf_scratch[96];
+    pigeon_pairing_record record;
+    pigeon_ios_machine pairing;
+    pigeon_transport transport;
+    uint8_t read_buf[PIGEON_MAX_MSG];
+    uint8_t write_buf[PIGEON_MAX_MSG];
+} pigeon_ctx;
+
+// API
+void pigeon_init(pigeon_ctx *ctx, const pigeon_transport *transport);
+int  pigeon_generate_keypair(pigeon_keypair *kp);
+int  pigeon_derive_session_key(const uint8_t *priv, const uint8_t *peer_pub, const uint8_t *info, size_t info_len, uint8_t *out);
+int  pigeon_derive_confirmation_code(const uint8_t *pub_a, const uint8_t *pub_b, char *out_code);
+void pigeon_channel_init(pigeon_channel *ch, const uint8_t *send_key, const uint8_t *recv_key, pigeon_channel_mode mode);
+int  pigeon_channel_init_symmetric(pigeon_channel *ch, const uint8_t *master_key, bool is_server);
+int  pigeon_channel_encrypt(pigeon_channel *ch, const uint8_t *pt, size_t pt_len, uint8_t *out, size_t out_len);
+int  pigeon_channel_decrypt(pigeon_channel *ch, const uint8_t *data, size_t data_len, uint8_t *out, size_t out_len);
+int  pigeon_send(pigeon_ctx *ctx, const uint8_t *data, size_t len);
+int  pigeon_recv(pigeon_ctx *ctx, uint8_t *out, size_t out_len);
+int  pigeon_send_datagram(pigeon_ctx *ctx, const uint8_t *data, size_t len);
+int  pigeon_recv_datagram(pigeon_ctx *ctx, uint8_t *out, size_t out_len);
+int  pigeon_frame_message(const uint8_t *payload, size_t len, uint8_t *buf, size_t buf_len);
+uint32_t pigeon_read_frame_length(const uint8_t *buf);
+
+// Callback types
+typedef bool (*pigeon_guard_fn)(void *ctx);
+typedef int  (*pigeon_action_fn)(void *ctx);
+typedef void (*pigeon_change_fn)(const char *var_name, void *ctx);
+
+// Generated state machines (per-actor: server, ios, cli)
+// Each has: _machine struct, _machine_init(), _handle_message(), _step()
+```
+
+*Stability: Fluid — new in v0.16.0, API surface may evolve before 1.0.*
+
+### `protocol/` C code generator
+
+```go
+func (*Protocol) ExportCHeader(w io.Writer) error
+func (*Protocol) ExportCImpl(w io.Writer) error
+```
+
+*Stability: Fluid — new in v0.16.0.*
+
 ### Swift `Pigeon` package (SPM)
 
 ```swift
@@ -414,6 +488,8 @@ func WithPacketHook(fn func(pktNum int, data []byte) Action) Option
 - **No published Go module docs** until the first tag is pushed (pkg.go.dev
   indexes on tags).
 - **No protocol framework usage example** (`Example_test.go` in `protocol/`).
+- **C library API stabilisation**: New in v0.16.0, the C API surface is Fluid
+  and needs real-world usage feedback before freezing. No version macros yet.
 - **Settling period** (see below): 2-month minimum required after last breaking
   change before 1.0 eligibility.
 
