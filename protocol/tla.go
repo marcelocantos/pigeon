@@ -15,6 +15,19 @@ func (p *Protocol) ExportTLA(w io.Writer) error {
 	return p.ExportTLAPhase(w, "")
 }
 
+// composedActorTransition records a sub-machine transition for a composed actor.
+type composedActorTransition struct {
+	actor      Actor
+	machine    SubMachine
+	transition Transition
+}
+
+// composedRouteAction records a route for a composed actor.
+type composedRouteAction struct {
+	actor Actor
+	route Route
+}
+
 // ExportTLAPhase writes a pure TLA+ spec for a specific phase, or the
 // full protocol if phaseName is empty. The generated spec is optimised:
 // only phase-relevant variables, messages, and channels are included.
@@ -51,6 +64,10 @@ func (p *Protocol) ExportTLAPhase(w io.Writer, phaseName string) error {
 	}
 	var phaseTransitions []actorTransition
 	for _, a := range p.Actors {
+		if a.IsComposed() {
+			// Flat transitions not applicable; sub-machine transitions handled separately.
+			continue
+		}
 		for _, t := range a.FlattenedTransitions() {
 			if len(phaseStates) > 0 {
 				if !phaseStates[t.From] || !phaseStates[t.To] {
@@ -62,6 +79,23 @@ func (p *Protocol) ExportTLAPhase(w io.Writer, phaseName string) error {
 		}
 	}
 
+	// Collect sub-machine transitions and route actions for composed actors.
+	var composedTransitions []composedActorTransition
+	var routeActions []composedRouteAction
+	for _, a := range p.Actors {
+		if !a.IsComposed() {
+			continue
+		}
+		for _, m := range a.Machines {
+			for _, t := range m.FlattenedTransitions() {
+				composedTransitions = append(composedTransitions, composedActorTransition{a, m, t})
+			}
+		}
+		for _, r := range a.Routes {
+			routeActions = append(routeActions, composedRouteAction{a, r})
+		}
+	}
+
 	// Collect messages actually used in phase transitions.
 	usedMsgs := map[MsgType]bool{}
 	for _, at := range phaseTransitions {
@@ -69,6 +103,14 @@ func (p *Protocol) ExportTLAPhase(w io.Writer, phaseName string) error {
 			usedMsgs[at.transition.On.Msg] = true
 		}
 		for _, s := range at.transition.Sends {
+			usedMsgs[s.Msg] = true
+		}
+	}
+	for _, ct := range composedTransitions {
+		if ct.transition.On.Kind == TriggerRecv {
+			usedMsgs[ct.transition.On.Msg] = true
+		}
+		for _, s := range ct.transition.Sends {
 			usedMsgs[s.Msg] = true
 		}
 	}
@@ -85,6 +127,17 @@ func (p *Protocol) ExportTLAPhase(w io.Writer, phaseName string) error {
 			usedEvents[EventID("recv_"+string(at.transition.On.Msg))] = true
 		}
 		for _, cmd := range at.transition.Emits {
+			usedCmds[cmd] = true
+		}
+	}
+	for _, ct := range composedTransitions {
+		if ct.transition.On.Kind == TriggerInternal && ct.transition.On.Desc != "" {
+			usedEvents[EventID(ct.transition.On.Desc)] = true
+		}
+		if ct.transition.On.Kind == TriggerRecv {
+			usedEvents[EventID("recv_"+string(ct.transition.On.Msg))] = true
+		}
+		for _, cmd := range ct.transition.Emits {
 			usedCmds[cmd] = true
 		}
 	}
@@ -110,21 +163,41 @@ func (p *Protocol) ExportTLAPhase(w io.Writer, phaseName string) error {
 
 	// --- State constants (phase-scoped) ---
 	for _, a := range p.Actors {
-		states := collectStates(a)
-		var emitted bool
-		for _, s := range states {
-			if len(phaseStates) > 0 && !phaseStates[s] && !isNeighbour(a, s, phaseStates) {
-				continue
+		if a.IsComposed() {
+			// Emit per-sub-machine state constants.
+			for _, m := range a.Machines {
+				states := collectSubMachineStates(m)
+				var emitted bool
+				for _, s := range states {
+					if !emitted {
+						fmt.Fprintf(&b, "\\* States for %s/%s\n", a.Name, m.Name)
+						emitted = true
+					}
+					varPrefix := sanitiseTLA(a.Name) + "_" + sanitiseTLA(m.Name)
+					fmt.Fprintf(&b, "%s_%s == \"%s_%s_%s\"\n",
+						varPrefix, sanitiseTLA(string(s)), a.Name, m.Name, s)
+				}
+				if emitted {
+					b.WriteString("\n")
+				}
 			}
-			if !emitted {
-				fmt.Fprintf(&b, "\\* States for %s\n", a.Name)
-				emitted = true
+		} else {
+			states := collectStates(a)
+			var emitted bool
+			for _, s := range states {
+				if len(phaseStates) > 0 && !phaseStates[s] && !isNeighbour(a, s, phaseStates) {
+					continue
+				}
+				if !emitted {
+					fmt.Fprintf(&b, "\\* States for %s\n", a.Name)
+					emitted = true
+				}
+				fmt.Fprintf(&b, "%s_%s == \"%s_%s\"\n",
+					sanitiseTLA(a.Name), sanitiseTLA(string(s)), a.Name, s)
 			}
-			fmt.Fprintf(&b, "%s_%s == \"%s_%s\"\n",
-				sanitiseTLA(a.Name), sanitiseTLA(string(s)), a.Name, s)
-		}
-		if emitted {
-			b.WriteString("\n")
+			if emitted {
+				b.WriteString("\n")
+			}
 		}
 	}
 
@@ -194,6 +267,11 @@ func (p *Protocol) ExportTLAPhase(w io.Writer, phaseName string) error {
 			modifiedVars[u.Var] = true
 		}
 	}
+	for _, ct := range composedTransitions {
+		for _, u := range ct.transition.Updates {
+			modifiedVars[u.Var] = true
+		}
+	}
 
 	// --- CONSTANTS ---
 	// Variables that exist in the phase but are never updated become constants.
@@ -225,8 +303,11 @@ func (p *Protocol) ExportTLAPhase(w io.Writer, phaseName string) error {
 		}
 	}
 
-	// Add constant-state actors.
+	// Add constant-state flat actors.
 	for _, a := range p.Actors {
+		if a.IsComposed() {
+			continue
+		}
 		hasTransitions := false
 		for _, at := range phaseTransitions {
 			if at.actor.Name == a.Name {
@@ -269,12 +350,29 @@ func (p *Protocol) ExportTLAPhase(w io.Writer, phaseName string) error {
 			}
 		}
 	}
+	for _, ct := range composedTransitions {
+		if ct.transition.On.Kind == TriggerRecv {
+			varName := "received_" + sanitiseTLA(string(ct.transition.On.Msg))
+			if !recvVarSet[varName] {
+				recvVarSet[varName] = true
+				recvVars = append(recvVars, recvInfo{
+					actorName: ct.actor.Name,
+					msgType:   ct.transition.On.Msg,
+					varName:   varName,
+				})
+			}
+		}
+	}
 
 	// --- Variables ---
 	b.WriteString("VARIABLES\n")
 	var allVarNames []string
 
+	// Flat actors.
 	for _, a := range p.Actors {
+		if a.IsComposed() {
+			continue
+		}
 		hasTransitions := false
 		for _, at := range phaseTransitions {
 			if at.actor.Name == a.Name {
@@ -288,6 +386,18 @@ func (p *Protocol) ExportTLAPhase(w io.Writer, phaseName string) error {
 		name := sanitiseTLA(a.Name) + "_state"
 		allVarNames = append(allVarNames, name)
 		fmt.Fprintf(&b, "    %s,\n", name)
+	}
+
+	// Composed actors: one state variable per sub-machine.
+	for _, a := range p.Actors {
+		if !a.IsComposed() {
+			continue
+		}
+		for _, m := range a.Machines {
+			name := sanitiseTLA(a.Name) + "_" + sanitiseTLA(m.Name) + "_state"
+			allVarNames = append(allVarNames, name)
+			fmt.Fprintf(&b, "    %s,\n", name)
+		}
 	}
 
 	// No channel variables — channels eliminated via received_<msg> structs.
@@ -336,6 +446,17 @@ func (p *Protocol) ExportTLAPhase(w io.Writer, phaseName string) error {
 			sanitiseTLA(at.actor.Name),
 			sanitiseTLA(at.actor.Name), sanitiseTLA(string(init)))
 	}
+	// Composed actors: init each sub-machine state.
+	for _, a := range p.Actors {
+		if !a.IsComposed() {
+			continue
+		}
+		for _, m := range a.Machines {
+			varName := sanitiseTLA(a.Name) + "_" + sanitiseTLA(m.Name) + "_state"
+			constName := sanitiseTLA(a.Name) + "_" + sanitiseTLA(m.Name) + "_" + sanitiseTLA(string(m.Initial))
+			fmt.Fprintf(&b, "    /\\ %s = %s\n", varName, constName)
+		}
+	}
 	// No channel init — channels eliminated.
 	for _, v := range p.Vars {
 		if v.Name == "recv_msg" {
@@ -358,7 +479,11 @@ func (p *Protocol) ExportTLAPhase(w io.Writer, phaseName string) error {
 	// --- Actions ---
 	var actionNames []string
 
+	// Flat actor actions.
 	for _, a := range p.Actors {
+		if a.IsComposed() {
+			continue
+		}
 		var actorActions []string
 		for _, t := range a.FlattenedTransitions() {
 			if len(phaseStates) > 0 && (!phaseStates[t.From] || !phaseStates[t.To]) {
@@ -472,6 +597,205 @@ func (p *Protocol) ExportTLAPhase(w io.Writer, phaseName string) error {
 		}
 	}
 
+	// Composed actor sub-machine actions.
+	for _, a := range p.Actors {
+		if !a.IsComposed() {
+			continue
+		}
+		for _, m := range a.Machines {
+			machVarPrefix := sanitiseTLA(a.Name) + "_" + sanitiseTLA(m.Name)
+			var machActions []string
+
+			for _, t := range m.FlattenedTransitions() {
+				actionName := makeComposedActionName(a.Name, m.Name, t)
+				actionNames = append(actionNames, actionName)
+				machActions = append(machActions, actionName)
+
+				stateVar := machVarPrefix + "_state"
+				fromConst := machVarPrefix + "_" + sanitiseTLA(string(t.From))
+				toConst := machVarPrefix + "_" + sanitiseTLA(string(t.To))
+
+				// Comment.
+				fmt.Fprintf(&b, "\\* %s/%s: %s -> %s", a.Name, m.Name, t.From, t.To)
+				if t.On.Kind == TriggerRecv {
+					fmt.Fprintf(&b, " on recv %s", t.On.Msg)
+				} else if t.On.Desc != "" {
+					fmt.Fprintf(&b, " (%s)", t.On.Desc)
+				}
+				if t.Guard != "" {
+					fmt.Fprintf(&b, " [%s]", t.Guard)
+				}
+				b.WriteString("\n")
+
+				fmt.Fprintf(&b, "%s ==\n", actionName)
+
+				// State guard.
+				fmt.Fprintf(&b, "    /\\ %s = %s\n", stateVar, fromConst)
+
+				// Message guard.
+				var recvVar string
+				if t.On.Kind == TriggerRecv {
+					recvVar = "received_" + sanitiseTLA(string(t.On.Msg))
+					fmt.Fprintf(&b, "    /\\ %s.type = MSG_%s\n", recvVar, sanitiseTLA(string(t.On.Msg)))
+				}
+
+				// Guard expression.
+				if t.Guard != "" {
+					expr := guardExpr(p, t.Guard)
+					if recvVar != "" {
+						expr = strings.ReplaceAll(expr, "recv_msg", recvVar)
+					}
+					fmt.Fprintf(&b, "    /\\ %s\n", expr)
+				}
+
+				// --- Primed assignments ---
+				modified := map[string]bool{stateVar: true}
+
+				// Consume received message.
+				if recvVar != "" {
+					fmt.Fprintf(&b, "    /\\ %s' = [type |-> \"none\"]\n", recvVar)
+					modified[recvVar] = true
+				}
+
+				// Sends (to external actors via received_<msg>).
+				for _, s := range t.Sends {
+					targetRecvVar := "received_" + sanitiseTLA(string(s.Msg))
+					var sb strings.Builder
+					writeRecord(&sb, s.Msg, s.Fields)
+					fmt.Fprintf(&b, "    /\\ %s' = %s\n", targetRecvVar, sb.String())
+					modified[targetRecvVar] = true
+				}
+
+				// State update.
+				fmt.Fprintf(&b, "    /\\ %s' = %s\n", stateVar, toConst)
+
+				// Variable updates.
+				for _, u := range t.Updates {
+					expr := u.Expr
+					if recvVar != "" {
+						expr = strings.ReplaceAll(expr, "recv_msg", recvVar)
+					}
+					fmt.Fprintf(&b, "    /\\ %s' = %s\n", sanitiseTLA(u.Var), expr)
+					modified[sanitiseTLA(u.Var)] = true
+				}
+
+				// UNCHANGED.
+				var unchanged []string
+				for _, v := range allVarNames {
+					if !modified[v] {
+						unchanged = append(unchanged, v)
+					}
+				}
+				if len(unchanged) > 0 {
+					fmt.Fprintf(&b, "    /\\ UNCHANGED <<%s>>\n", strings.Join(unchanged, ", "))
+				}
+				b.WriteString("\n")
+
+				// Command set operator.
+				if len(t.Emits) > 0 {
+					fmt.Fprintf(&b, "Cmds_%s == {", actionName)
+					for i, cmd := range t.Emits {
+						if i > 0 {
+							b.WriteString(", ")
+						}
+						fmt.Fprintf(&b, "CMD_%s", sanitiseTLA(string(cmd)))
+					}
+					b.WriteString("}\n\n")
+				}
+			}
+
+			if len(machActions) > 0 {
+				b.WriteString("\n")
+			}
+		}
+
+		// Route actions for composed actor.
+		for _, r := range a.Routes {
+			actionName := makeRouteActionName(a.Name, r)
+			actionNames = append(actionNames, actionName)
+
+			fromMachineVar := sanitiseTLA(a.Name) + "_" + sanitiseTLA(r.From) + "_state"
+
+			// The route fires when the source machine is in a state that
+			// reports the trigger event. We model this by guarding on the
+			// source machine having reached any state associated with the
+			// reported event (by convention, event name matches state name).
+			// Since TLA+ is state-based, we model routes as enabling whenever
+			// a guard condition holds — here we use a non-deterministic
+			// enablement: the action is always enabled (TRUE) as a
+			// simplification; a precise model would require tracking which
+			// events have been reported. For now we use a comment-marked stub.
+			fmt.Fprintf(&b, "\\* Route: %s reports %s -> delivers to targets\n",
+				r.From, r.On)
+			if r.Guard != "" {
+				fmt.Fprintf(&b, "\\* Guard: %s\n", r.Guard)
+			}
+			fmt.Fprintf(&b, "%s ==\n", actionName)
+
+			// Guard: source machine must be in a state that reports the event.
+			// We model "reports ready" as the machine being in any non-initial
+			// state that matches the event name heuristically. For a sound
+			// model, we look for states named after the event across the
+			// source sub-machine's transitions.
+			sourceStates := reportingStates(a, r.From, r.On)
+			if len(sourceStates) > 0 {
+				if len(sourceStates) == 1 {
+					fmt.Fprintf(&b, "    /\\ %s = %s_%s_%s\n",
+						fromMachineVar,
+						sanitiseTLA(a.Name), sanitiseTLA(r.From),
+						sanitiseTLA(string(sourceStates[0])))
+				} else {
+					b.WriteString("    /\\ \\/ ")
+					for i, st := range sourceStates {
+						if i > 0 {
+							b.WriteString("       \\/ ")
+						}
+						fmt.Fprintf(&b, "%s = %s_%s_%s\n",
+							fromMachineVar,
+							sanitiseTLA(a.Name), sanitiseTLA(r.From),
+							sanitiseTLA(string(st)))
+					}
+				}
+			} else {
+				// No matching state found — emit a TRUE guard with comment.
+				b.WriteString("    /\\ TRUE  \\* route guard: no matching reporting state found\n")
+			}
+
+			// Route guard.
+			if r.Guard != "" {
+				fmt.Fprintf(&b, "    /\\ %s\n", guardExpr(p, r.Guard))
+			}
+
+			// Apply sends: update target sub-machine states.
+			modified := map[string]bool{}
+			for _, s := range r.Sends {
+				targetVar := sanitiseTLA(a.Name) + "_" + sanitiseTLA(s.To) + "_state"
+				// Find the target state for accepting this event.
+				targetState := acceptingState(a, s.To, s.Event)
+				if targetState != "" {
+					toConst := sanitiseTLA(a.Name) + "_" + sanitiseTLA(s.To) + "_" + sanitiseTLA(string(targetState))
+					fmt.Fprintf(&b, "    /\\ %s' = %s\n", targetVar, toConst)
+				} else {
+					fmt.Fprintf(&b, "    /\\ %s' = %s  \\* no accepting state found for event %s\n",
+						targetVar, targetVar, s.Event)
+				}
+				modified[targetVar] = true
+			}
+
+			// UNCHANGED.
+			var unchanged []string
+			for _, v := range allVarNames {
+				if !modified[v] {
+					unchanged = append(unchanged, v)
+				}
+			}
+			if len(unchanged) > 0 {
+				fmt.Fprintf(&b, "    /\\ UNCHANGED <<%s>>\n", strings.Join(unchanged, ", "))
+			}
+			b.WriteString("\n")
+		}
+	}
+
 	// --- Next ---
 	b.WriteString("Next ==\n")
 	for _, name := range actionNames {
@@ -505,13 +829,27 @@ func (p *Protocol) ExportTLAPhase(w io.Writer, phaseName string) error {
 	// from the relationship between commands and state variables.
 	hasCommands := false
 	for _, a := range p.Actors {
-		for _, t := range a.FlattenedTransitions() {
-			if len(phaseStates) > 0 && (!phaseStates[t.From] || !phaseStates[t.To]) {
-				continue
+		if a.IsComposed() {
+			for _, m := range a.Machines {
+				for _, t := range m.FlattenedTransitions() {
+					if len(t.Emits) > 0 {
+						hasCommands = true
+						break
+					}
+				}
+				if hasCommands {
+					break
+				}
 			}
-			if len(t.Emits) > 0 {
-				hasCommands = true
-				break
+		} else {
+			for _, t := range a.FlattenedTransitions() {
+				if len(phaseStates) > 0 && (!phaseStates[t.From] || !phaseStates[t.To]) {
+					continue
+				}
+				if len(t.Emits) > 0 {
+					hasCommands = true
+					break
+				}
 			}
 		}
 		if hasCommands {
@@ -529,21 +867,39 @@ func (p *Protocol) ExportTLAPhase(w io.Writer, phaseName string) error {
 		// Emit one consistency operator per actor showing what commands
 		// each transport state implies when entered.
 		for _, a := range p.Actors {
-			for _, t := range a.FlattenedTransitions() {
-				if len(phaseStates) > 0 && (!phaseStates[t.From] || !phaseStates[t.To]) {
-					continue
+			if a.IsComposed() {
+				for _, m := range a.Machines {
+					for _, t := range m.FlattenedTransitions() {
+						if len(t.Emits) == 0 {
+							continue
+						}
+						actionName := makeComposedActionName(a.Name, m.Name, t)
+						cmds := make([]string, len(t.Emits))
+						for i, c := range t.Emits {
+							cmds[i] = "CMD_" + sanitiseTLA(string(c))
+						}
+						fmt.Fprintf(&b, "\\* %s emits: %s\n",
+							actionName,
+							strings.Join(cmds, ", "))
+					}
 				}
-				if len(t.Emits) == 0 {
-					continue
+			} else {
+				for _, t := range a.FlattenedTransitions() {
+					if len(phaseStates) > 0 && (!phaseStates[t.From] || !phaseStates[t.To]) {
+						continue
+					}
+					if len(t.Emits) == 0 {
+						continue
+					}
+					actionName := makeActionName(a.Name, t)
+					cmds := make([]string, len(t.Emits))
+					for i, c := range t.Emits {
+						cmds[i] = "CMD_" + sanitiseTLA(string(c))
+					}
+					fmt.Fprintf(&b, "\\* %s emits: %s\n",
+						actionName,
+						strings.Join(cmds, ", "))
 				}
-				actionName := makeActionName(a.Name, t)
-				cmds := make([]string, len(t.Emits))
-				for i, c := range t.Emits {
-					cmds[i] = "CMD_" + sanitiseTLA(string(c))
-				}
-				fmt.Fprintf(&b, "\\* %s emits: %s\n",
-					actionName,
-					strings.Join(cmds, ", "))
 			}
 		}
 	}
@@ -568,6 +924,94 @@ func makeActionName(actorName string, t Transition) string {
 		name += "_" + sanitiseTLA(string(t.Guard))
 	}
 	return name
+}
+
+// makeComposedActionName generates a TLA+ action name for a sub-machine transition.
+// Format: <actor>_<machine>_<from>_to_<to>[_on_<msg>|_<desc>][_<guard>]
+func makeComposedActionName(actorName, machineName string, t Transition) string {
+	name := fmt.Sprintf("%s_%s_%s_to_%s",
+		sanitiseTLA(actorName),
+		sanitiseTLA(machineName),
+		sanitiseTLA(string(t.From)),
+		sanitiseTLA(string(t.To)))
+	if t.On.Kind == TriggerRecv {
+		name += "_on_" + sanitiseTLA(string(t.On.Msg))
+	} else if t.On.Desc != "" {
+		name += "_" + sanitiseTLA(t.On.Desc)
+	}
+	if t.Guard != "" {
+		name += "_" + sanitiseTLA(string(t.Guard))
+	}
+	return name
+}
+
+// makeRouteActionName generates a TLA+ action name for a composed actor route.
+// Format: <actor>_route_<from>_<event>
+func makeRouteActionName(actorName string, r Route) string {
+	return fmt.Sprintf("%s_route_%s_%s",
+		sanitiseTLA(actorName),
+		sanitiseTLA(r.From),
+		sanitiseTLA(string(r.On)))
+}
+
+// reportingStates returns the states of sub-machine machineName within actor a
+// that are associated with reporting the given event. We look for destination
+// states of transitions whose description matches the event name, as well as
+// states whose name matches the event name (case-insensitive prefix).
+func reportingStates(a Actor, machineName string, event EventID) []State {
+	var machine *SubMachine
+	for i := range a.Machines {
+		if a.Machines[i].Name == machineName {
+			machine = &a.Machines[i]
+			break
+		}
+	}
+	if machine == nil {
+		return nil
+	}
+	eventStr := string(event)
+	seen := map[State]bool{}
+	var states []State
+	add := func(s State) {
+		if !seen[s] {
+			seen[s] = true
+			states = append(states, s)
+		}
+	}
+	for _, t := range machine.FlattenedTransitions() {
+		// Match by transition description.
+		if t.On.Kind == TriggerInternal && t.On.Desc == eventStr {
+			add(t.To)
+		}
+		// Match by destination state name (state name == event name).
+		if strings.EqualFold(string(t.To), eventStr) {
+			add(t.To)
+		}
+	}
+	return states
+}
+
+// acceptingState returns the destination state of sub-machine machineName
+// within actor a for accepting the given event. We look for transitions
+// triggered by an internal event whose description matches eventStr.
+func acceptingState(a Actor, machineName string, event EventID) State {
+	var machine *SubMachine
+	for i := range a.Machines {
+		if a.Machines[i].Name == machineName {
+			machine = &a.Machines[i]
+			break
+		}
+	}
+	if machine == nil {
+		return ""
+	}
+	eventStr := string(event)
+	for _, t := range machine.FlattenedTransitions() {
+		if t.On.Kind == TriggerInternal && t.On.Desc == eventStr {
+			return t.To
+		}
+	}
+	return ""
 }
 
 func isNeighbour(a Actor, s State, phaseStates map[State]bool) bool {
