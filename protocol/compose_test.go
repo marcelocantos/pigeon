@@ -376,6 +376,167 @@ func TestExportSwiftComposed(t *testing.T) {
 	}
 }
 
+func TestExportTLAComposed(t *testing.T) {
+	p, err := ParseYAML([]byte(composeTestYAML))
+	if err != nil {
+		t.Fatalf("ParseYAML: %v", err)
+	}
+
+	var buf bytes.Buffer
+	if err := p.ExportTLA(&buf); err != nil {
+		t.Fatalf("ExportTLA: %v", err)
+	}
+
+	out := buf.String()
+
+	// Per-sub-machine state variables.
+	for _, want := range []string{
+		"backend_relay_state",
+		"backend_lan_state",
+		"backend_session_state",
+	} {
+		if !bytes.Contains(buf.Bytes(), []byte(want)) {
+			t.Errorf("missing state variable %q", want)
+		}
+	}
+
+	// Per-sub-machine state constants.
+	for _, want := range []string{
+		`backend_relay_Connecting == "backend_relay_Connecting"`,
+		`backend_relay_Active == "backend_relay_Active"`,
+		`backend_lan_Idle == "backend_lan_Idle"`,
+		`backend_lan_Discovering == "backend_lan_Discovering"`,
+		`backend_session_WaitTransport == "backend_session_WaitTransport"`,
+		`backend_session_Ready == "backend_session_Ready"`,
+	} {
+		if !bytes.Contains(buf.Bytes(), []byte(want)) {
+			t.Errorf("missing state constant %q", want)
+		}
+	}
+
+	// Per-sub-machine transition actions.
+	for _, want := range []string{
+		"backend_relay_Connecting_to_Active",
+		"backend_relay_Active_to_Quiescent",
+		"backend_lan_Idle_to_Discovering",
+		"backend_lan_Active_to_Idle",
+		"backend_session_WaitTransport_to_Ready",
+	} {
+		if !bytes.Contains(buf.Bytes(), []byte(want)) {
+			t.Errorf("missing transition action %q", want)
+		}
+	}
+
+	// Route actions.
+	for _, want := range []string{
+		"backend_route_relay_ready",
+		"backend_route_lan_ready",
+		"backend_route_lan_lost",
+	} {
+		if !bytes.Contains(buf.Bytes(), []byte(want)) {
+			t.Errorf("missing route action %q", want)
+		}
+	}
+
+	// Flat client actor still present.
+	if !bytes.Contains(buf.Bytes(), []byte("client_Idle_to_Connected")) {
+		t.Error("missing flat client transition action")
+	}
+
+	// Init block should initialise all sub-machine states.
+	for _, want := range []string{
+		"/\\ backend_relay_state = backend_relay_Connecting",
+		"/\\ backend_lan_state = backend_lan_Idle",
+		"/\\ backend_session_state = backend_session_WaitTransport",
+	} {
+		if !bytes.Contains(buf.Bytes(), []byte(want)) {
+			t.Errorf("missing Init clause %q", want)
+		}
+	}
+
+	_ = out
+}
+
+func TestExportKotlinComposed(t *testing.T) {
+	p, err := ParseYAML([]byte(composeTestYAML))
+	if err != nil {
+		t.Fatalf("ParseYAML: %v", err)
+	}
+
+	var buf bytes.Buffer
+	if err := p.ExportKotlin(&buf, "com.example"); err != nil {
+		t.Fatalf("ExportKotlin: %v", err)
+	}
+
+	// Per-sub-machine state enums.
+	for _, want := range []string{
+		"enum class TransportTestBackendRelayState(val value: String)",
+		"enum class TransportTestBackendLanState(val value: String)",
+		"enum class TransportTestBackendSessionState(val value: String)",
+	} {
+		if !bytes.Contains(buf.Bytes(), []byte(want)) {
+			t.Errorf("missing state enum %q", want)
+		}
+	}
+
+	// No flat backend state enum — composed actors don't have one.
+	if bytes.Contains(buf.Bytes(), []byte("enum class TransportTestBackendState")) {
+		t.Error("unexpected flat BackendState enum for composed actor")
+	}
+
+	// Per-sub-machine machine classes.
+	for _, want := range []string{
+		"class TransportTestBackendRelayMachine",
+		"class TransportTestBackendLanMachine",
+		"class TransportTestBackendSessionMachine",
+	} {
+		if !bytes.Contains(buf.Bytes(), []byte(want)) {
+			t.Errorf("missing machine class %q", want)
+		}
+	}
+
+	// Composite class.
+	if !bytes.Contains(buf.Bytes(), []byte("class TransportTestBackendComposite")) {
+		t.Error("missing composite class TransportTestBackendComposite")
+	}
+
+	// route(from, event) method.
+	if !bytes.Contains(buf.Bytes(), []byte("fun route(from: String, event:")) {
+		t.Error("missing route(from:, event:) method")
+	}
+
+	// Route sends should call handleEvent on the target sub-machine.
+	if !bytes.Contains(buf.Bytes(), []byte("session.handleEvent(")) {
+		t.Error("missing session.handleEvent() call in route body")
+	}
+
+	// Flat client actor still present.
+	if !bytes.Contains(buf.Bytes(), []byte("class TransportTestClientMachine")) {
+		t.Error("missing flat ClientMachine")
+	}
+
+	// EventID enum should include events from sub-machine transitions.
+	for _, want := range []string{
+		"Connected(\"connected\")",
+		"TransportAvailable(\"transport available\")",
+	} {
+		if !bytes.Contains(buf.Bytes(), []byte(want)) {
+			t.Errorf("EventID missing %q", want)
+		}
+	}
+
+	// Sub-machine transition tables should be present.
+	for _, want := range []string{
+		"object BackendRelayTable",
+		"object BackendLanTable",
+		"object BackendSessionTable",
+	} {
+		if !bytes.Contains(buf.Bytes(), []byte(want)) {
+			t.Errorf("missing transition table %q", want)
+		}
+	}
+}
+
 func TestValidateComposedBadRoute(t *testing.T) {
 	yaml := `
 name: BadRoute

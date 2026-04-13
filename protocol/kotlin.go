@@ -31,11 +31,28 @@ func (p *Protocol) ExportKotlin(w io.Writer, pkg string) error {
 
 	// Per-actor state enums at package scope — prefixed with protocol name
 	// to avoid collisions when multiple protocols share actor names.
+	// For composed actors, emit one enum per sub-machine instead.
 	for _, a := range p.Actors {
 		typeName := kotlinTypeName(a.Name)
+		if a.IsComposed() {
+			for _, m := range a.Machines {
+				machTypeName := kotlinTypeName(m.Name)
+				stateEnum := protoName + typeName + machTypeName + "State"
+				states := collectSubMachineStates(m)
+				fmt.Fprintf(&b, "enum class %s(val value: String) {\n", stateEnum)
+				for i, s := range states {
+					comma := ","
+					if i == len(states)-1 {
+						comma = ";"
+					}
+					fmt.Fprintf(&b, "    %s(\"%s\")%s\n", string(s), s, comma)
+				}
+				b.WriteString("}\n\n")
+			}
+			continue
+		}
 		stateEnum := protoName + typeName + "State"
 		states := collectStates(a)
-
 		fmt.Fprintf(&b, "enum class %s(val value: String) {\n", stateEnum)
 		for i, s := range states {
 			comma := ","
@@ -140,52 +157,35 @@ func (p *Protocol) ExportKotlin(w io.Writer, pkg string) error {
 	}
 
 	// Transition table per actor (nested).
+	// For composed actors, emit one table per sub-machine.
 	for _, a := range p.Actors {
 		typeName := kotlinTypeName(a.Name)
+		if a.IsComposed() {
+			for _, m := range a.Machines {
+				machTypeName := kotlinTypeName(m.Name)
+				stateEnum := protoName + typeName + machTypeName + "State"
+				tableObj := typeName + machTypeName
+				fmt.Fprintf(&b, "    /** %s/%s transition table. */\n", a.Name, m.Name)
+				fmt.Fprintf(&b, "    object %sTable {\n", tableObj)
+				fmt.Fprintf(&b, "        val initial = %s.%s\n\n", stateEnum, m.Initial)
+				b.WriteString(kotlinTransitionDataClass("        "))
+				b.WriteString("        val transitions = listOf(\n")
+				for _, t := range m.FlattenedTransitions() {
+					kotlinWriteTransitionEntry(&b, t, "            ")
+				}
+				b.WriteString("        )\n")
+				b.WriteString("    }\n\n")
+			}
+			continue
+		}
 		stateEnum := protoName + typeName + "State"
 		fmt.Fprintf(&b, "    /** %s transition table. */\n", a.Name)
 		fmt.Fprintf(&b, "    object %sTable {\n", typeName)
 		fmt.Fprintf(&b, "        val initial = %s.%s\n\n", stateEnum, a.Initial)
-
-		fmt.Fprintf(&b, "        data class Transition(\n")
-		b.WriteString("            val from: String,\n")
-		b.WriteString("            val to: String,\n")
-		b.WriteString("            val on: String,\n")
-		b.WriteString("            val onKind: String,\n")
-		b.WriteString("            val guard: String? = null,\n")
-		b.WriteString("            val action: String? = null,\n")
-		b.WriteString("            val sends: List<Pair<String, String>> = emptyList(),\n")
-		b.WriteString("        )\n\n")
-
+		b.WriteString(kotlinTransitionDataClass("        "))
 		b.WriteString("        val transitions = listOf(\n")
 		for _, t := range a.FlattenedTransitions() {
-			onKind := "internal"
-			onValue := t.On.Desc
-			if t.On.Kind == TriggerRecv {
-				onKind = "recv"
-				onValue = string(t.On.Msg)
-			}
-
-			guardStr := "null"
-			if t.Guard != "" {
-				guardStr = fmt.Sprintf("%q", string(t.Guard))
-			}
-			actionStr := "null"
-			if t.Do != "" {
-				actionStr = fmt.Sprintf("%q", string(t.Do))
-			}
-
-			sends := "emptyList()"
-			if len(t.Sends) > 0 {
-				var parts []string
-				for _, s := range t.Sends {
-					parts = append(parts, fmt.Sprintf("%q to %q", s.To, s.Msg))
-				}
-				sends = "listOf(" + strings.Join(parts, ", ") + ")"
-			}
-
-			fmt.Fprintf(&b, "            Transition(%q, %q, %q, %q, %s, %s, %s),\n",
-				t.From, t.To, onValue, onKind, guardStr, actionStr, sends)
+			kotlinWriteTransitionEntry(&b, t, "            ")
 		}
 		b.WriteString("        )\n")
 		b.WriteString("    }\n\n")
@@ -195,8 +195,13 @@ func (p *Protocol) ExportKotlin(w io.Writer, pkg string) error {
 	b.WriteString("}\n\n")
 
 	// Per-actor typed machine classes with handleEvent.
+	// For composed actors, emit per-sub-machine classes and a composite class.
 	for _, a := range p.Actors {
 		typeName := kotlinTypeName(a.Name)
+		if a.IsComposed() {
+			writeKotlinComposedActor(&b, p, a, protoName, protoPrefix, actions)
+			continue
+		}
 
 		// Collect vars updated by this actor's transitions.
 		actorVarSet := map[string]bool{}
@@ -317,17 +322,36 @@ func (p *Protocol) ExportKotlin(w io.Writer, pkg string) error {
 
 // collectKotlinEvents returns a sorted, deduplicated list of all event IDs:
 // declared events, internal transition events, and recv_* events.
+// For composed actors, sub-machine transitions are included.
 func collectKotlinEvents(p *Protocol) []string {
 	seen := map[string]bool{}
 	for _, e := range p.Events {
 		seen[string(e.ID)] = true
 	}
+	addTransition := func(t Transition) {
+		if t.On.Kind == TriggerInternal {
+			seen[t.On.Desc] = true
+		} else if t.On.Kind == TriggerRecv {
+			seen["recv_"+string(t.On.Msg)] = true
+		}
+	}
 	for _, a := range p.Actors {
-		for _, t := range a.FlattenedTransitions() {
-			if t.On.Kind == TriggerInternal {
-				seen[t.On.Desc] = true
-			} else if t.On.Kind == TriggerRecv {
-				seen["recv_"+string(t.On.Msg)] = true
+		if a.IsComposed() {
+			for _, m := range a.Machines {
+				for _, t := range m.FlattenedTransitions() {
+					addTransition(t)
+				}
+			}
+			// Also include route event IDs (events reported by sub-machines).
+			for _, r := range a.Routes {
+				seen[string(r.On)] = true
+				for _, s := range r.Sends {
+					seen[string(s.Event)] = true
+				}
+			}
+		} else {
+			for _, t := range a.FlattenedTransitions() {
+				addTransition(t)
 			}
 		}
 	}
@@ -440,4 +464,185 @@ func kotlinPascalCase(s string) string {
 		}
 	}
 	return string(result)
+}
+
+// kotlinTransitionDataClass returns the shared Transition data class definition
+// used in every transition table, indented by the given prefix.
+func kotlinTransitionDataClass(indent string) string {
+	var b strings.Builder
+	fmt.Fprintf(&b, "%sdata class Transition(\n", indent)
+	fmt.Fprintf(&b, "%s    val from: String,\n", indent)
+	fmt.Fprintf(&b, "%s    val to: String,\n", indent)
+	fmt.Fprintf(&b, "%s    val on: String,\n", indent)
+	fmt.Fprintf(&b, "%s    val onKind: String,\n", indent)
+	fmt.Fprintf(&b, "%s    val guard: String? = null,\n", indent)
+	fmt.Fprintf(&b, "%s    val action: String? = null,\n", indent)
+	fmt.Fprintf(&b, "%s    val sends: List<Pair<String, String>> = emptyList(),\n", indent)
+	fmt.Fprintf(&b, "%s)\n\n", indent)
+	return b.String()
+}
+
+// kotlinWriteTransitionEntry writes a single Transition(...) list entry for the table.
+func kotlinWriteTransitionEntry(b *strings.Builder, t Transition, indent string) {
+	onKind := "internal"
+	onValue := t.On.Desc
+	if t.On.Kind == TriggerRecv {
+		onKind = "recv"
+		onValue = string(t.On.Msg)
+	}
+	guardStr := "null"
+	if t.Guard != "" {
+		guardStr = fmt.Sprintf("%q", string(t.Guard))
+	}
+	actionStr := "null"
+	if t.Do != "" {
+		actionStr = fmt.Sprintf("%q", string(t.Do))
+	}
+	sends := "emptyList()"
+	if len(t.Sends) > 0 {
+		var parts []string
+		for _, s := range t.Sends {
+			parts = append(parts, fmt.Sprintf("%q to %q", s.To, s.Msg))
+		}
+		sends = "listOf(" + strings.Join(parts, ", ") + ")"
+	}
+	fmt.Fprintf(b, "%sTransition(%q, %q, %q, %q, %s, %s, %s),\n",
+		indent, t.From, t.To, onValue, onKind, guardStr, actionStr, sends)
+}
+
+// writeKotlinComposedActor emits per-sub-machine machine classes and a
+// composite class with a route method for a composed actor.
+func writeKotlinComposedActor(b *strings.Builder, p *Protocol, a Actor, protoName, protoPrefix string, actions []string) {
+	typeName := kotlinTypeName(a.Name)
+	cmdType := "String"
+	if len(p.Commands) > 0 {
+		cmdType = protoPrefix + ".CmdID"
+	}
+
+	// Per-sub-machine machine classes.
+	for _, m := range a.Machines {
+		machTypeName := kotlinTypeName(m.Name)
+		machineClass := protoName + typeName + machTypeName + "Machine"
+		stateEnum := protoName + typeName + machTypeName + "State"
+
+		// Collect vars updated by this sub-machine.
+		varSet := map[string]bool{}
+		for _, t := range m.FlattenedTransitions() {
+			for _, u := range t.Updates {
+				varSet[u.Var] = true
+			}
+		}
+
+		fmt.Fprintf(b, "/** %s is the generated state machine for %s/%s. */\n", machineClass, a.Name, m.Name)
+		fmt.Fprintf(b, "class %s {\n", machineClass)
+		fmt.Fprintf(b, "    var state: %s = %s.%s\n", stateEnum, stateEnum, m.Initial)
+		b.WriteString("        private set\n")
+
+		for _, v := range p.Vars {
+			if !varSet[v.Name] {
+				continue
+			}
+			comment := ""
+			if v.Desc != "" {
+				comment = " // " + v.Desc
+			}
+			fmt.Fprintf(b, "    var %s: %s = %s%s\n",
+				kotlinCamelCase(v.Name), kotlinType(v.Type), kotlinInitialValue(v), comment)
+		}
+		if len(p.Guards) > 0 {
+			fmt.Fprintf(b, "    val guards = mutableMapOf<%s.GuardID, () -> Boolean>()\n", protoPrefix)
+		}
+		if len(actions) > 0 {
+			fmt.Fprintf(b, "    val actions = mutableMapOf<%s.ActionID, () -> Unit>()\n", protoPrefix)
+		}
+		b.WriteString("\n")
+
+		// handleEvent — handles both internal and recv triggers.
+		b.WriteString("    /** Handle an event and return the list of commands to execute. */\n")
+		fmt.Fprintf(b, "    fun handleEvent(ev: %s.EventID): List<%s> {\n", protoPrefix, cmdType)
+		fmt.Fprintf(b, "        val cmds: List<%s> = when {\n", cmdType)
+
+		for _, t := range m.FlattenedTransitions() {
+			var eventConst string
+			if t.On.Kind == TriggerRecv {
+				eventConst = protoPrefix + ".EventID." + kotlinPascalCase("recv_"+string(t.On.Msg))
+			} else {
+				eventConst = protoPrefix + ".EventID." + kotlinPascalCase(t.On.Desc)
+			}
+			guardCond := ""
+			if t.Guard != "" {
+				guardCond = fmt.Sprintf(" && guards[%s.GuardID.%s]?.invoke() == true",
+					protoPrefix, kotlinPascalCase(string(t.Guard)))
+			}
+			fmt.Fprintf(b, "            state == %s.%s && ev == %s%s ->\n",
+				stateEnum, t.From, eventConst, guardCond)
+			b.WriteString("                run {\n")
+			if t.Do != "" {
+				fmt.Fprintf(b, "                    actions[%s.ActionID.%s]?.invoke()\n",
+					protoPrefix, kotlinPascalCase(string(t.Do)))
+			}
+			for _, u := range t.Updates {
+				if lit, ok := kotlinSimpleLiteral(u.Expr); ok {
+					fmt.Fprintf(b, "                    %s = %s\n", kotlinCamelCase(u.Var), lit)
+				} else {
+					fmt.Fprintf(b, "                    // %s: %s (set by action)\n", u.Var, u.Expr)
+				}
+			}
+			fmt.Fprintf(b, "                    state = %s.%s\n", stateEnum, t.To)
+			if len(t.Emits) > 0 {
+				b.WriteString("                    listOf(")
+				for i, cmd := range t.Emits {
+					if i > 0 {
+						b.WriteString(", ")
+					}
+					fmt.Fprintf(b, "%s.CmdID.%s", protoPrefix, kotlinPascalCase(string(cmd)))
+				}
+				b.WriteString(")\n")
+			} else {
+				b.WriteString("                    emptyList()\n")
+			}
+			b.WriteString("                }\n")
+		}
+
+		b.WriteString("            else -> emptyList()\n")
+		b.WriteString("        }\n")
+		b.WriteString("        return cmds\n")
+		b.WriteString("    }\n")
+		b.WriteString("}\n\n")
+	}
+
+	// Composite class.
+	compositeClass := protoName + typeName + "Composite"
+	fmt.Fprintf(b, "/** %s holds all sub-machines for the %s actor. */\n", compositeClass, a.Name)
+	fmt.Fprintf(b, "class %s {\n", compositeClass)
+	for _, m := range a.Machines {
+		machTypeName := kotlinTypeName(m.Name)
+		machineClass := protoName + typeName + machTypeName + "Machine"
+		fmt.Fprintf(b, "    val %s = %s()\n", kotlinCamelCase(m.Name), machineClass)
+	}
+	b.WriteString("\n")
+
+	// route method.
+	b.WriteString("    /** Route dispatches inter-machine events according to the routing table. */\n")
+	fmt.Fprintf(b, "    fun route(from: String, event: %s.EventID) {\n", protoPrefix)
+	if len(a.Routes) > 0 {
+		b.WriteString("        when {\n")
+		for _, r := range a.Routes {
+			guardCond := ""
+			if r.Guard != "" {
+				// Route guards are not yet supported in Kotlin composite — emit a comment.
+				guardCond = fmt.Sprintf(" /* guard: %s */", r.Guard)
+			}
+			eventConst := protoPrefix + ".EventID." + kotlinPascalCase(string(r.On))
+			fmt.Fprintf(b, "            from == %q && event == %s%s -> {\n", r.From, eventConst, guardCond)
+			for _, s := range r.Sends {
+				deliverEvent := protoPrefix + ".EventID." + kotlinPascalCase(string(s.Event))
+				fmt.Fprintf(b, "                %s.handleEvent(%s)\n", kotlinCamelCase(s.To), deliverEvent)
+			}
+			b.WriteString("            }\n")
+		}
+		b.WriteString("        }\n")
+	}
+	b.WriteString("    }\n")
+	b.WriteString("}\n\n")
 }
