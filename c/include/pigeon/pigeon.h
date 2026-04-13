@@ -71,7 +71,7 @@ typedef struct {
 
     // Pairing
     pigeon_pairing_record record;
-    pigeon_ios_machine pairing;
+    pigeon_ios_composite pairing;
 
     // Transport
     pigeon_transport transport;

@@ -10,7 +10,7 @@ void pigeon_init(pigeon_ctx *ctx, const pigeon_transport *transport)
     if (transport) {
         ctx->transport = *transport;
     }
-    pigeon_ios_machine_init(&ctx->pairing);
+    pigeon_ios_composite_init(&ctx->pairing);
 }
 
 int pigeon_send(pigeon_ctx *ctx, const uint8_t *data, size_t len)

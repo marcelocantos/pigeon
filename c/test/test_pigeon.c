@@ -228,9 +228,9 @@ static void test_framing(void)
 static void test_state_machine_init(void)
 {
     TEST("pairing machine init (ios actor)");
-    pigeon_ios_machine m;
-    pigeon_ios_machine_init(&m);
-    if (m.state != PIGEON_APP_IDLE) { FAIL("wrong initial state"); return; }
+    pigeon_ios_pairing_machine m;
+    pigeon_ios_pairing_machine_init(&m);
+    if (m.state != PIGEON_APP_PAIRING_IDLE) { FAIL("wrong initial state"); return; }
 
     PASS();
 }
@@ -245,7 +245,7 @@ static void test_ctx_init(void)
     // Just verify that init works with a NULL transport.
     static pigeon_ctx ctx;
     pigeon_init(&ctx, NULL);
-    if (ctx.pairing.state != PIGEON_APP_IDLE) { FAIL("wrong pairing state"); return; }
+    if (ctx.pairing.pairing.state != PIGEON_APP_PAIRING_IDLE) { FAIL("wrong pairing state"); return; }
     if (ctx.stream_channel.send_seq != 0) { FAIL("send_seq not zero"); return; }
 
     PASS();
@@ -397,31 +397,31 @@ static int action_set_derive_secret_flag(void *ctx)
 static void test_state_machine_transitions(void)
 {
     TEST("ios state machine transitions");
-    pigeon_ios_machine m;
-    pigeon_ios_machine_init(&m);
+    pigeon_ios_pairing_machine m;
+    pigeon_ios_pairing_machine_init(&m);
 
     // Initial state must be IDLE.
-    if (m.state != PIGEON_APP_IDLE) { FAIL("expected IDLE after init"); return; }
+    if (m.state != PIGEON_APP_PAIRING_IDLE) { FAIL("expected IDLE after init"); return; }
 
     // IDLE + USER_SCANS_QR → SCAN_QR
-    if (pigeon_ios_step(&m, PIGEON_EVENT_USER_SCANS_QR) != 1) { FAIL("step USER_SCANS_QR failed"); return; }
-    if (m.state != PIGEON_APP_SCAN_QR) { FAIL("expected SCAN_QR"); return; }
+    if (pigeon_ios_pairing_step(&m, PIGEON_EVENT_USER_SCANS_QR) != 1) { FAIL("step USER_SCANS_QR failed"); return; }
+    if (m.state != PIGEON_APP_PAIRING_SCAN_QR) { FAIL("expected SCAN_QR"); return; }
 
     // SCAN_QR + QR_PARSED → CONNECT_RELAY
-    if (pigeon_ios_step(&m, PIGEON_EVENT_QR_PARSED) != 1) { FAIL("step QR_PARSED failed"); return; }
-    if (m.state != PIGEON_APP_CONNECT_RELAY) { FAIL("expected CONNECT_RELAY"); return; }
+    if (pigeon_ios_pairing_step(&m, PIGEON_EVENT_QR_PARSED) != 1) { FAIL("step QR_PARSED failed"); return; }
+    if (m.state != PIGEON_APP_PAIRING_CONNECT_RELAY) { FAIL("expected CONNECT_RELAY"); return; }
 
     // CONNECT_RELAY + RELAY_CONNECTED → GEN_KEY_PAIR
-    if (pigeon_ios_step(&m, PIGEON_EVENT_RELAY_CONNECTED) != 1) { FAIL("step RELAY_CONNECTED failed"); return; }
-    if (m.state != PIGEON_APP_GEN_KEY_PAIR) { FAIL("expected GEN_KEY_PAIR"); return; }
+    if (pigeon_ios_pairing_step(&m, PIGEON_EVENT_RELAY_CONNECTED) != 1) { FAIL("step RELAY_CONNECTED failed"); return; }
+    if (m.state != PIGEON_APP_PAIRING_GEN_KEY_PAIR) { FAIL("expected GEN_KEY_PAIR"); return; }
 
     // Register SEND_PAIR_HELLO action before triggering KEY_PAIR_GENERATED.
     s_send_pair_hello_called = 0;
     m.actions[PIGEON_ACTION_SEND_PAIR_HELLO] = action_set_send_pair_hello_flag;
 
     // GEN_KEY_PAIR + KEY_PAIR_GENERATED → WAIT_ACK; action must fire.
-    if (pigeon_ios_step(&m, PIGEON_EVENT_KEY_PAIR_GENERATED) != 1) { FAIL("step KEY_PAIR_GENERATED failed"); return; }
-    if (m.state != PIGEON_APP_WAIT_ACK) { FAIL("expected WAIT_ACK"); return; }
+    if (pigeon_ios_pairing_step(&m, PIGEON_EVENT_KEY_PAIR_GENERATED) != 1) { FAIL("step KEY_PAIR_GENERATED failed"); return; }
+    if (m.state != PIGEON_APP_PAIRING_WAIT_ACK) { FAIL("expected WAIT_ACK"); return; }
     if (!s_send_pair_hello_called) { FAIL("SEND_PAIR_HELLO action did not fire"); return; }
 
     // Register DERIVE_SECRET action before the handle_message call.
@@ -429,9 +429,9 @@ static void test_state_machine_transitions(void)
     m.actions[PIGEON_ACTION_DERIVE_SECRET] = action_set_derive_secret_flag;
 
     // WAIT_ACK + PAIR_HELLO_ACK message → E2E_READY; DERIVE_SECRET action must fire.
-    int ret = pigeon_ios_handle_message(&m, PIGEON_MSG_PAIR_HELLO_ACK);
+    int ret = pigeon_ios_pairing_handle_message(&m, PIGEON_MSG_PAIR_HELLO_ACK);
     if (ret != 1) { FAIL("handle_message PAIR_HELLO_ACK should return 1"); return; }
-    if (m.state != PIGEON_APP_E2E_READY) { FAIL("expected E2E_READY"); return; }
+    if (m.state != PIGEON_APP_PAIRING_E2E_READY) { FAIL("expected E2E_READY"); return; }
     if (!s_derive_secret_called) { FAIL("DERIVE_SECRET action did not fire"); return; }
 
     PASS();

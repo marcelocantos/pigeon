@@ -11,6 +11,7 @@ targets:
     context: Parent target for the pigeon library. 7/8 sub-targets achieved — only T1.8 (jevon imports) remains.
     depends_on:
     - T1.1
+    - T15
     origin: bootstrap from targets.md (T1)
     discovered: 2026-04-08
   T1.1:
@@ -117,8 +118,73 @@ targets:
     - Send/Recv (reliable) and SendDatagram/RecvDatagram (unreliable) work end-to-end through relay
     - PairingRecord serialisation without cJSON — hand-coded fixed-schema parser to stay zero-alloc
     context: 'Pigeon currently has Go, Swift, and Kotlin clients. A pure C library maximises portability — embedded targets, game engines, FFI from any language — with no hidden allocations. The entire library state lives in a pigeon_ctx struct sized at compile time. The only dependency choice that matters is QUIC: ngtcp2 over quiche to keep the whole chain redirectable to caller-controlled memory. C23 constexpr would eliminate the last #define but C11/C17 compatibility requires it. Protogen needs a new cgen.go backend to emit the pairing state machine as C structs and dispatch tables.'
+    depends_on:
+    - T11.1
+    - T11.2
+    - T11.3
+    - T11.4
     origin: manual
     discovered: 2026-04-12
+  T11.1:
+    name: C codegen naming matches pigeon.h and test expectations
+    status: identified
+    value: 5.0
+    cost: 3.0
+    acceptance:
+    - C library compiles with generated state machine headers without type errors
+    - pigeon_ctx uses generated types directly (no manual typedefs bridging old/new names)
+    - test_pigeon.c compiles and passes against the generated machine
+    - make test-c passes
+    context: cgen.go generates composed-actor names like pigeon_ios_pairing_machine / pigeon_ios_pairing_step, but pigeon.h and test_pigeon.c reference the flat names pigeon_ios_machine / pigeon_ios_step / PIGEON_APP_IDLE. The build can't compile as-is. Either cgen.go needs to emit flat aliases for the top-level composed actor, or pigeon.h and tests need to use the composed names. The codegen approach is preferable — the C API should present flat names for the top-level machine the app uses.
+    origin: manual
+    discovered: 2026-04-14
+  T11.2:
+    name: Send/Recv path integrates E2E encryption
+    status: identified
+    value: 5.0
+    cost: 3.0
+    acceptance:
+    - pigeon_send encrypts via stream_channel before framing when channel is established
+    - pigeon_recv decrypts after deframing when channel is established
+    - pigeon_send_datagram / pigeon_recv_datagram use datagram_channel similarly
+    - Cross-language test vectors still pass
+    context: pigeon_send/pigeon_recv do raw framing but don't call channel encrypt/decrypt. The crypto API exists (pigeon_channel_encrypt/decrypt) but isn't wired into the send/recv path. After pairing establishes session keys, all traffic should be encrypted.
+    depends_on:
+    - T11.1
+    origin: manual
+    discovered: 2026-04-14
+  T11.3:
+    name: PairingRecord hand-coded fixed-schema serialisation
+    status: identified
+    value: 3.0
+    cost: 2.0
+    acceptance:
+    - pigeon_pairing_record_serialize writes to caller-provided buffer
+    - pigeon_pairing_record_deserialize reads from buffer into caller-provided struct
+    - 'Round-trip test: serialize then deserialize produces identical record'
+    - No heap allocations in either path
+    context: 'pigeon_pairing_record struct exists but has no serialise/deserialise. Must be zero-alloc (no cJSON). Fixed schema: write fields in known order with length prefixes or fixed offsets.'
+    depends_on:
+    - T11.1
+    origin: manual
+    discovered: 2026-04-14
+  T11.4:
+    name: ngtcp2 QUIC transport implementation
+    status: identified
+    value: 5.0
+    cost: 8.0
+    acceptance:
+    - pigeon_transport_ngtcp2 struct implements the pigeon_transport interface
+    - QUIC connection to relay server establishes successfully
+    - Stream send/recv works through relay
+    - Datagram send/recv works through relay
+    - Zero heap allocations in the transport layer (caller provides all buffers)
+    - TLS backend (BoringSSL or OpenSSL) is integrated for QUIC handshake
+    context: The transport is currently an abstract callback struct. ngtcp2 is the chosen QUIC library (pure C, custom allocator capable). This is the largest piece — requires QUIC connection setup, stream management, datagram support, and TLS integration (likely via BoringSSL since ngtcp2 requires a TLS backend). May want to further decompose when starting.
+    depends_on:
+    - T11.2
+    origin: manual
+    discovered: 2026-04-14
   T12:
     name: Cascading relay architecture explored
     status: identified
@@ -166,6 +232,27 @@ targets:
     origin: manual
     discovered: 2026-04-13
     achieved: 2026-04-13
+  T15:
+    name: One-time token pairing with credential issuance and multi-client relay
+    status: identified
+    value: 8.0
+    cost: 8.0
+    acceptance:
+    - One-time pairing token is consumed at pair_hello acceptance, not at pairing completion — closing the concurrent-race window
+    - IssueCredential() server-side API generates and registers credentials without running the pairing ceremony
+    - Auth sub-machine validates credentials identically regardless of origin (ceremony or injection)
+    - Relay supports multiple concurrent authenticated clients per backend registration
+    - TLA+ model includes a second device actor that verifies spent tokens are rejected
+    - 'SecondDeviceRejected property: a consumed token causes any subsequent pair_hello to fail'
+    - Confirmation code ceremony is implemented in Go/Swift runtime (not just modeled in TLA+)
+    - Credential format is defined by pigeon — apps store and present opaque blobs
+    context: 'Pigeon''s current relay is 1:1 (one backend, one client) with reusable instance IDs. The target use case (ged + ge) requires: (1) one-time QR tokens consumed on first use, (2) credential issuance so devices can reconnect without re-scanning, (3) multiple authorized clients connected to one backend concurrently. The pairing ceremony handles interactive auth (QR + ECDH + confirmation code); an IssueCredential() API supports automated injection (xcrun, simulators). Pigeon owns credential format and validation; apps own storage (enclave, keychain, etc).'
+    tags:
+    - security
+    - protocol
+    - relay
+    origin: manual
+    discovered: 2026-04-13
   T2:
     name: Multi-transport with LAN upgrade
     status: converging

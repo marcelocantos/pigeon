@@ -123,6 +123,7 @@ public enum PairingCeremonyProtocol {
         case recvTokenResponse = "recv_token_response"
         case recvWaitingForCode = "recv_waiting_for_code"
         case recvPairStatus = "recv_pair_status"
+        case paired = "paired"
     }
 
 

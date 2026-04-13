@@ -711,6 +711,12 @@ func collectAllEvents(p *Protocol) []string {
 			}
 		}
 	}
+	// Route trigger events (reports from sub-machines).
+	for _, a := range p.Actors {
+		for _, r := range a.Routes {
+			add(string(r.On))
+		}
+	}
 	return result
 }
 
