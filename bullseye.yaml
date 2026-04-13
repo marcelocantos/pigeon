@@ -133,7 +133,7 @@ targets:
     discovered: 2026-04-12
   T13:
     name: Protocol framework supports composable parallel sub-machines per actor
-    status: identified
+    status: achieved
     value: 8.0
     cost: 8.0
     observable: true
@@ -149,9 +149,10 @@ targets:
     context: 'Currently each actor in a protocol has one flat state machine. The pathswitch protocol entangles transport lifecycle, path selection, and session management in a single machine. Composable sub-machines let each concern be a small independent machine (3-5 states) that reports events upward and receives events from peers via a declared routing table. The routing table is the composition model — visible to TLA+ for formal verification of interleavings. This enables: (1) refactoring pathswitch into relay/LAN/session sub-machines, (2) adding localhost as a trivial new sub-machine, (3) adding future transports (Bluetooth, STUN) without touching existing machines. Design discussion in session 2026-04-12 established the architecture.'
     origin: manual
     discovered: 2026-04-13
+    achieved: 2026-04-13
   T14:
     name: Pairing ceremony decomposed into pairing and auth sub-machines
-    status: identified
+    status: achieved
     value: 5.0
     cost: 3.0
     observable: true
@@ -164,6 +165,7 @@ targets:
     context: 'The current pairing.yaml has one flat machine per actor that handles both the initial pairing ceremony (QR, ECDH, confirmation codes) and the reconnection auth flow (auth_request/auth_ok). These are logically independent — pairing runs once, auth runs on every reconnect. Splitting them into composable sub-machines using the new composition framework enables future work: decoupling auth credentials from transport topology (relay URL, instance ID), persistent tokens, and alternative auth mechanisms. The coupling between pairing and auth is light — pairing produces a PairingRecord, auth consumes it. Cost is low because it''s a YAML restructuring + verification, not new logic.'
     origin: manual
     discovered: 2026-04-13
+    achieved: 2026-04-13
   T2:
     name: Multi-transport with LAN upgrade
     status: converging
