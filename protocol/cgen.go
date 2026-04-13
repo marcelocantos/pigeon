@@ -27,19 +27,39 @@ func (p *Protocol) ExportCHeader(w io.Writer) error {
 
 	// --- Per-actor state enums ---
 	for _, a := range p.Actors {
-		states := collectStates(a)
+		actorSnake := cSnake(a.Name)
 		actorUpper := cConstPrefix(a.Name)
-		fmt.Fprintf(&b, "// %s %s states.\n", p.Name, a.Name)
-		fmt.Fprintf(&b, "typedef enum {\n")
-		for i, s := range states {
-			fmt.Fprintf(&b, "\tPIGEON_%s_%s", actorUpper, cConstName(string(s)))
-			if i == 0 {
-				b.WriteString(" = 0")
+		if a.IsComposed() {
+			for _, m := range a.Machines {
+				states := collectSubMachineStates(m)
+				machSnake := cSnake(m.Name)
+				machUpper := cConstName(m.Name)
+				fmt.Fprintf(&b, "// %s %s/%s states.\n", p.Name, a.Name, m.Name)
+				fmt.Fprintf(&b, "typedef enum {\n")
+				for i, s := range states {
+					fmt.Fprintf(&b, "\tPIGEON_%s_%s_%s", actorUpper, machUpper, cConstName(string(s)))
+					if i == 0 {
+						b.WriteString(" = 0")
+					}
+					b.WriteString(",\n")
+				}
+				fmt.Fprintf(&b, "\tPIGEON_%s_%s_STATE_COUNT\n", actorUpper, machUpper)
+				fmt.Fprintf(&b, "} pigeon_%s_%s_state;\n\n", actorSnake, machSnake)
 			}
-			b.WriteString(",\n")
+		} else {
+			states := collectStates(a)
+			fmt.Fprintf(&b, "// %s %s states.\n", p.Name, a.Name)
+			fmt.Fprintf(&b, "typedef enum {\n")
+			for i, s := range states {
+				fmt.Fprintf(&b, "\tPIGEON_%s_%s", actorUpper, cConstName(string(s)))
+				if i == 0 {
+					b.WriteString(" = 0")
+				}
+				b.WriteString(",\n")
+			}
+			fmt.Fprintf(&b, "\tPIGEON_%s_STATE_COUNT\n", actorUpper)
+			fmt.Fprintf(&b, "} pigeon_%s_state;\n\n", actorSnake)
 		}
-		fmt.Fprintf(&b, "\tPIGEON_%s_STATE_COUNT\n", actorUpper)
-		fmt.Fprintf(&b, "} pigeon_%s_state;\n\n", cSnake(a.Name))
 	}
 
 	// --- Message type enum ---
@@ -149,55 +169,134 @@ func (p *Protocol) ExportCHeader(w io.Writer) error {
 	// --- Per-actor machine structs ---
 	for _, a := range p.Actors {
 		actorSnake := cSnake(a.Name)
+		actorUpper := cConstPrefix(a.Name)
 
-		// Collect vars updated by this actor.
-		actorVarSet := map[string]bool{}
-		for _, t := range a.FlattenedTransitions() {
-			for _, u := range t.Updates {
-				actorVarSet[u.Var] = true
-			}
-		}
+		if a.IsComposed() {
+			guardCount := "PIGEON_GUARD_COUNT"
+			actionCount := "PIGEON_ACTION_COUNT"
 
-		fmt.Fprintf(&b, "// %s %s state machine.\n", p.Name, a.Name)
-		fmt.Fprintf(&b, "typedef struct {\n")
-		fmt.Fprintf(&b, "\tpigeon_%s_state state;\n", actorSnake)
+			// Per-sub-machine structs and function declarations.
+			for _, m := range a.Machines {
+				machSnake := cSnake(m.Name)
 
-		// Typed variable fields (skip set types — managed by actions).
-		for _, v := range p.Vars {
-			if !actorVarSet[v.Name] {
-				continue
+				// Collect vars updated by this sub-machine.
+				varSet := map[string]bool{}
+				for _, t := range m.FlattenedTransitions() {
+					for _, u := range t.Updates {
+						varSet[u.Var] = true
+					}
+				}
+
+				fmt.Fprintf(&b, "// %s %s/%s state machine.\n", p.Name, a.Name, m.Name)
+				fmt.Fprintf(&b, "typedef struct {\n")
+				fmt.Fprintf(&b, "\tpigeon_%s_%s_state state;\n", actorSnake, machSnake)
+
+				for _, v := range p.Vars {
+					if !varSet[v.Name] {
+						continue
+					}
+					ct := cType(v.Type)
+					if ct == "" {
+						continue
+					}
+					fmt.Fprintf(&b, "\t%s %s;", ct, cSnake(v.Name))
+					if v.Desc != "" {
+						fmt.Fprintf(&b, " // %s", v.Desc)
+					}
+					b.WriteString("\n")
+				}
+
+				if len(p.Guards) > 0 {
+					fmt.Fprintf(&b, "\tpigeon_guard_fn guards[%s];\n", guardCount)
+				}
+				if len(actions) > 0 {
+					fmt.Fprintf(&b, "\tpigeon_action_fn actions[%s];\n", actionCount)
+				}
+				b.WriteString("\tpigeon_change_fn on_change;\n")
+				b.WriteString("\tvoid *userdata;\n")
+				fmt.Fprintf(&b, "} pigeon_%s_%s_machine;\n\n", actorSnake, machSnake)
+
+				// Function declarations for this sub-machine.
+				fmt.Fprintf(&b, "void pigeon_%s_%s_machine_init(pigeon_%s_%s_machine *m);\n",
+					actorSnake, machSnake, actorSnake, machSnake)
+				fmt.Fprintf(&b, "int  pigeon_%s_%s_handle_message(pigeon_%s_%s_machine *m, %s_msg_type msg);\n",
+					actorSnake, machSnake, actorSnake, machSnake, prefix)
+				fmt.Fprintf(&b, "int  pigeon_%s_%s_step(pigeon_%s_%s_machine *m, %s_event_id event);\n",
+					actorSnake, machSnake, actorSnake, machSnake, prefix)
+				b.WriteString("\n")
 			}
-			ct := cType(v.Type)
-			if ct == "" {
-				continue // set<string> etc. — action-managed
+
+			// Composite struct.
+			compositeType := fmt.Sprintf("pigeon_%s_composite", actorSnake)
+			fmt.Fprintf(&b, "// %s %s composite actor.\n", p.Name, a.Name)
+			fmt.Fprintf(&b, "typedef struct {\n")
+			for _, m := range a.Machines {
+				machSnake := cSnake(m.Name)
+				fmt.Fprintf(&b, "\tpigeon_%s_%s_machine %s;\n", actorSnake, machSnake, machSnake)
 			}
-			fmt.Fprintf(&b, "\t%s %s;", ct, cSnake(v.Name))
-			if v.Desc != "" {
-				fmt.Fprintf(&b, " // %s", v.Desc)
+			if len(p.Guards) > 0 {
+				fmt.Fprintf(&b, "\tpigeon_guard_fn route_guards[%s];\n", guardCount)
 			}
+			b.WriteString("\tvoid *userdata;\n")
+			fmt.Fprintf(&b, "} %s;\n\n", compositeType)
+
+			// Composite init and route declarations.
+			fmt.Fprintf(&b, "void pigeon_%s_composite_init(%s *c);\n", actorSnake, compositeType)
+			fmt.Fprintf(&b, "int  pigeon_%s_route(%s *c, const char *from, %s_event_id event);\n",
+				actorSnake, compositeType, prefix)
+
+			b.WriteString("\n")
+		} else {
+			// Collect vars updated by this actor.
+			actorVarSet := map[string]bool{}
+			for _, t := range a.FlattenedTransitions() {
+				for _, u := range t.Updates {
+					actorVarSet[u.Var] = true
+				}
+			}
+
+			fmt.Fprintf(&b, "// %s %s state machine.\n", p.Name, a.Name)
+			fmt.Fprintf(&b, "typedef struct {\n")
+			fmt.Fprintf(&b, "\tpigeon_%s_state state;\n", actorSnake)
+
+			// Typed variable fields (skip set types — managed by actions).
+			for _, v := range p.Vars {
+				if !actorVarSet[v.Name] {
+					continue
+				}
+				ct := cType(v.Type)
+				if ct == "" {
+					continue // set<string> etc. — action-managed
+				}
+				fmt.Fprintf(&b, "\t%s %s;", ct, cSnake(v.Name))
+				if v.Desc != "" {
+					fmt.Fprintf(&b, " // %s", v.Desc)
+				}
+				b.WriteString("\n")
+			}
+
+			guardCount := "PIGEON_GUARD_COUNT"
+			actionCount := "PIGEON_ACTION_COUNT"
+			if len(p.Guards) > 0 {
+				fmt.Fprintf(&b, "\tpigeon_guard_fn guards[%s];\n", guardCount)
+			}
+			if len(actions) > 0 {
+				fmt.Fprintf(&b, "\tpigeon_action_fn actions[%s];\n", actionCount)
+			}
+			b.WriteString("\tpigeon_change_fn on_change;\n")
+			b.WriteString("\tvoid *userdata;\n")
+			fmt.Fprintf(&b, "} pigeon_%s_machine;\n\n", actorSnake)
+
+			// Function declarations.
+			fmt.Fprintf(&b, "void pigeon_%s_machine_init(pigeon_%s_machine *m);\n", actorSnake, actorSnake)
+			fmt.Fprintf(&b, "int  pigeon_%s_handle_message(pigeon_%s_machine *m, %s_msg_type msg);\n",
+				actorSnake, actorSnake, prefix)
+			fmt.Fprintf(&b, "int  pigeon_%s_step(pigeon_%s_machine *m, %s_event_id event);\n",
+				actorSnake, actorSnake, prefix)
+
 			b.WriteString("\n")
 		}
-
-		guardCount := "PIGEON_GUARD_COUNT"
-		actionCount := "PIGEON_ACTION_COUNT"
-		if len(p.Guards) > 0 {
-			fmt.Fprintf(&b, "\tpigeon_guard_fn guards[%s];\n", guardCount)
-		}
-		if len(actions) > 0 {
-			fmt.Fprintf(&b, "\tpigeon_action_fn actions[%s];\n", actionCount)
-		}
-		b.WriteString("\tpigeon_change_fn on_change;\n")
-		b.WriteString("\tvoid *userdata;\n")
-		fmt.Fprintf(&b, "} pigeon_%s_machine;\n\n", actorSnake)
-
-		// Function declarations.
-		fmt.Fprintf(&b, "void pigeon_%s_machine_init(pigeon_%s_machine *m);\n", actorSnake, actorSnake)
-		fmt.Fprintf(&b, "int  pigeon_%s_handle_message(pigeon_%s_machine *m, %s_msg_type msg);\n",
-			actorSnake, actorSnake, prefix)
-		fmt.Fprintf(&b, "int  pigeon_%s_step(pigeon_%s_machine *m, %s_event_id event);\n",
-			actorSnake, actorSnake, prefix)
-
-		b.WriteString("\n")
+		_ = actorUpper // suppress unused warning for composed path
 	}
 
 	fmt.Fprintf(&b, "#endif // PIGEON_%s_GEN_H\n", upper)
@@ -221,6 +320,11 @@ func (p *Protocol) ExportCImpl(w io.Writer) error {
 	for _, a := range p.Actors {
 		actorSnake := cSnake(a.Name)
 		actorUpper := cConstPrefix(a.Name)
+
+		if a.IsComposed() {
+			writeCComposedActorImpl(&b, p, a, prefix, actorSnake, actorUpper)
+			continue
+		}
 
 		// Collect vars updated by this actor.
 		actorVarSet := map[string]bool{}
@@ -321,6 +425,167 @@ func (p *Protocol) ExportCImpl(w io.Writer) error {
 
 	_, err := io.WriteString(w, b.String())
 	return err
+}
+
+// writeCComposedActorImpl emits init/handle_message/step for each sub-machine,
+// a composite init, and a route dispatcher for a composed actor.
+func writeCComposedActorImpl(b *strings.Builder, p *Protocol, a Actor, prefix, actorSnake, actorUpper string) {
+	compositeType := fmt.Sprintf("pigeon_%s_composite", actorSnake)
+
+	for _, m := range a.Machines {
+		machSnake := cSnake(m.Name)
+		machUpper := cConstName(m.Name)
+		statePrefix := actorUpper + "_" + machUpper // e.g. "BACKEND_RELAY"
+
+		// Collect vars updated by this sub-machine.
+		varSet := map[string]bool{}
+		for _, t := range m.FlattenedTransitions() {
+			for _, u := range t.Updates {
+				varSet[u.Var] = true
+			}
+		}
+
+		// --- Sub-machine Init ---
+		fmt.Fprintf(b, "void pigeon_%s_%s_machine_init(pigeon_%s_%s_machine *m)\n{\n",
+			actorSnake, machSnake, actorSnake, machSnake)
+		b.WriteString("\tmemset(m, 0, sizeof(*m));\n")
+		fmt.Fprintf(b, "\tm->state = PIGEON_%s_%s;\n", statePrefix, cConstName(string(m.Initial)))
+		for _, v := range p.Vars {
+			if !varSet[v.Name] {
+				continue
+			}
+			if cType(v.Type) == "" {
+				continue
+			}
+			if init := cInitialValue(v); init != "" {
+				fmt.Fprintf(b, "\tm->%s = %s;\n", cSnake(v.Name), init)
+			}
+		}
+		b.WriteString("}\n\n")
+
+		// --- Sub-machine HandleMessage ---
+		fmt.Fprintf(b, "int pigeon_%s_%s_handle_message(pigeon_%s_%s_machine *m, %s_msg_type msg)\n{\n",
+			actorSnake, machSnake, actorSnake, machSnake, prefix)
+
+		hasRecv := false
+		for _, t := range m.FlattenedTransitions() {
+			if t.On.Kind == TriggerRecv {
+				hasRecv = true
+				break
+			}
+		}
+		if hasRecv {
+			for _, t := range m.FlattenedTransitions() {
+				if t.On.Kind != TriggerRecv {
+					continue
+				}
+				guard := ""
+				if t.Guard != "" {
+					guard = fmt.Sprintf(" && m->guards[PIGEON_GUARD_%s] && m->guards[PIGEON_GUARD_%s](m->userdata)",
+						cConstName(string(t.Guard)), cConstName(string(t.Guard)))
+				}
+				fmt.Fprintf(b, "\tif (m->state == PIGEON_%s_%s && msg == PIGEON_MSG_%s%s) {\n",
+					statePrefix, cConstName(string(t.From)),
+					cConstName(string(t.On.Msg)), guard)
+				writeCSubTransitionBody(b, t, statePrefix)
+				b.WriteString("\t\treturn 1;\n")
+				b.WriteString("\t}\n")
+			}
+		}
+		b.WriteString("\treturn 0;\n}\n\n")
+
+		// --- Sub-machine Step ---
+		fmt.Fprintf(b, "int pigeon_%s_%s_step(pigeon_%s_%s_machine *m, %s_event_id event)\n{\n",
+			actorSnake, machSnake, actorSnake, machSnake, prefix)
+
+		hasInternal := false
+		for _, t := range m.FlattenedTransitions() {
+			if t.On.Kind == TriggerInternal {
+				hasInternal = true
+				break
+			}
+		}
+		if hasInternal {
+			for _, t := range m.FlattenedTransitions() {
+				if t.On.Kind != TriggerInternal {
+					continue
+				}
+				guard := ""
+				if t.Guard != "" {
+					guard = fmt.Sprintf(" && m->guards[PIGEON_GUARD_%s] && m->guards[PIGEON_GUARD_%s](m->userdata)",
+						cConstName(string(t.Guard)), cConstName(string(t.Guard)))
+				}
+				fmt.Fprintf(b, "\tif (m->state == PIGEON_%s_%s && event == PIGEON_EVENT_%s%s) {\n",
+					statePrefix, cConstName(string(t.From)),
+					cConstName(t.On.Desc), guard)
+				writeCSubTransitionBody(b, t, statePrefix)
+				b.WriteString("\t\treturn 1;\n")
+				b.WriteString("\t}\n")
+			}
+		}
+		b.WriteString("\treturn 0;\n}\n\n")
+	}
+
+	// --- Composite Init ---
+	fmt.Fprintf(b, "void pigeon_%s_composite_init(%s *c)\n{\n", actorSnake, compositeType)
+	b.WriteString("\tmemset(c, 0, sizeof(*c));\n")
+	for _, m := range a.Machines {
+		machSnake := cSnake(m.Name)
+		fmt.Fprintf(b, "\tpigeon_%s_%s_machine_init(&c->%s);\n", actorSnake, machSnake, machSnake)
+	}
+	b.WriteString("}\n\n")
+
+	// --- Route ---
+	fmt.Fprintf(b, "int pigeon_%s_route(%s *c, const char *from, %s_event_id event)\n{\n",
+		actorSnake, compositeType, prefix)
+	if len(a.Routes) > 0 {
+		first := true
+		for _, r := range a.Routes {
+			guard := ""
+			if r.Guard != "" {
+				guard = fmt.Sprintf(" && c->route_guards[PIGEON_GUARD_%s] && c->route_guards[PIGEON_GUARD_%s](c->userdata)",
+					cConstName(string(r.Guard)), cConstName(string(r.Guard)))
+			}
+			ifKw := "if"
+			if !first {
+				ifKw = "else if"
+			}
+			first = false
+			fmt.Fprintf(b, "\t%s (strcmp(from, %q) == 0 && event == PIGEON_EVENT_%s%s) {\n",
+				ifKw, r.From, cConstName(string(r.On)), guard)
+			for _, s := range r.Sends {
+				machSnake := cSnake(s.To)
+				fmt.Fprintf(b, "\t\tpigeon_%s_%s_step(&c->%s, PIGEON_EVENT_%s);\n",
+					actorSnake, machSnake, machSnake, cConstName(string(s.Event)))
+			}
+			b.WriteString("\t}\n")
+		}
+	}
+	b.WriteString("\treturn 0;\n}\n\n")
+}
+
+// writeCSubTransitionBody is like writeCTransitionBody but uses a
+// pre-composed statePrefix (e.g. "BACKEND_RELAY") instead of an actorUpper.
+func writeCSubTransitionBody(b *strings.Builder, t Transition, statePrefix string) {
+	if t.Do != "" {
+		fmt.Fprintf(b, "\t\tif (m->actions[PIGEON_ACTION_%s]) {\n", cConstName(string(t.Do)))
+		fmt.Fprintf(b, "\t\t\tint err = m->actions[PIGEON_ACTION_%s](m->userdata);\n", cConstName(string(t.Do)))
+		b.WriteString("\t\t\tif (err) return -err;\n")
+		b.WriteString("\t\t}\n")
+	}
+	for _, u := range t.Updates {
+		field := cSnake(u.Var)
+		if lit, ok := cSimpleLiteral(u.Expr); ok {
+			fmt.Fprintf(b, "\t\tm->%s = %s;\n", field, lit)
+			fmt.Fprintf(b, "\t\tif (m->on_change) m->on_change(%q, m->userdata);\n", u.Var)
+		} else if cExpr, ok := cSelfUpdate(u.Var, u.Expr); ok {
+			fmt.Fprintf(b, "\t\tm->%s = %s;\n", field, cExpr)
+			fmt.Fprintf(b, "\t\tif (m->on_change) m->on_change(%q, m->userdata);\n", u.Var)
+		} else {
+			fmt.Fprintf(b, "\t\t// %s: %s (set by action)\n", u.Var, u.Expr)
+		}
+	}
+	fmt.Fprintf(b, "\t\tm->state = PIGEON_%s_%s;\n", statePrefix, cConstName(string(t.To)))
 }
 
 // writeCTransitionBody emits the action call, variable updates, and state

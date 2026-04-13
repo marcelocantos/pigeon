@@ -237,6 +237,96 @@ func TestExportGoComposed(t *testing.T) {
 	_ = out
 }
 
+func TestExportCComposed(t *testing.T) {
+	p, err := ParseYAML([]byte(composeTestYAML))
+	if err != nil {
+		t.Fatalf("ParseYAML: %v", err)
+	}
+
+	var hdr bytes.Buffer
+	if err := p.ExportCHeader(&hdr); err != nil {
+		t.Fatalf("ExportCHeader: %v", err)
+	}
+
+	var impl bytes.Buffer
+	if err := p.ExportCImpl(&impl); err != nil {
+		t.Fatalf("ExportCImpl: %v", err)
+	}
+
+	h := hdr.String()
+	c := impl.String()
+
+	// State enum types for each sub-machine.
+	for _, want := range []string{
+		"pigeon_backend_relay_state",
+		"pigeon_backend_lan_state",
+		"pigeon_backend_session_state",
+	} {
+		if !bytes.Contains(hdr.Bytes(), []byte(want)) {
+			t.Errorf("header: missing state type %q", want)
+		}
+	}
+
+	// State enum constants.
+	for _, want := range []string{
+		"PIGEON_BACKEND_RELAY_CONNECTING",
+		"PIGEON_BACKEND_RELAY_ACTIVE",
+		"PIGEON_BACKEND_LAN_IDLE",
+		"PIGEON_BACKEND_LAN_DISCOVERING",
+		"PIGEON_BACKEND_SESSION_WAIT_TRANSPORT",
+		"PIGEON_BACKEND_SESSION_READY",
+	} {
+		if !bytes.Contains(hdr.Bytes(), []byte(want)) {
+			t.Errorf("header: missing state constant %q", want)
+		}
+	}
+
+	// Per-sub-machine machine struct types.
+	for _, want := range []string{
+		"pigeon_backend_relay_machine",
+		"pigeon_backend_lan_machine",
+		"pigeon_backend_session_machine",
+	} {
+		if !bytes.Contains(hdr.Bytes(), []byte(want)) {
+			t.Errorf("header: missing machine struct %q", want)
+		}
+	}
+
+	// Composite struct and functions.
+	for _, want := range []string{
+		"pigeon_backend_composite",
+		"pigeon_backend_composite_init",
+		"pigeon_backend_route",
+	} {
+		if !bytes.Contains(hdr.Bytes(), []byte(want)) {
+			t.Errorf("header: missing composite declaration %q", want)
+		}
+	}
+
+	// Flat client actor still present.
+	if !bytes.Contains(hdr.Bytes(), []byte("pigeon_client_machine")) {
+		t.Error("header: missing flat client machine struct")
+	}
+
+	// Implementation: per-sub-machine init/handle_message/step.
+	for _, want := range []string{
+		"pigeon_backend_relay_machine_init",
+		"pigeon_backend_relay_handle_message",
+		"pigeon_backend_relay_step",
+		"pigeon_backend_lan_machine_init",
+		"pigeon_backend_session_machine_init",
+		"pigeon_backend_composite_init",
+		"pigeon_backend_route",
+	} {
+		if !bytes.Contains(impl.Bytes(), []byte(want)) {
+			t.Errorf("impl: missing function %q", want)
+		}
+	}
+
+	_ = h
+	_ = c
+}
+
 func TestValidateComposedBadRoute(t *testing.T) {
 	yaml := `
 name: BadRoute
