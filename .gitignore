@@ -29,3 +29,4 @@ states/
 formal/*_TTrace_*.tla
 .sawmill/
 c/test/test_pigeon
+.claude/
