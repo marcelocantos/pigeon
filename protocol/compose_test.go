@@ -327,6 +327,55 @@ func TestExportCComposed(t *testing.T) {
 	_ = c
 }
 
+func TestExportSwiftComposed(t *testing.T) {
+	p, err := ParseYAML([]byte(composeTestYAML))
+	if err != nil {
+		t.Fatalf("ParseYAML: %v", err)
+	}
+
+	var buf bytes.Buffer
+	if err := p.ExportSwift(&buf); err != nil {
+		t.Fatalf("ExportSwift: %v", err)
+	}
+
+	// Per-sub-machine state enums.
+	for _, want := range []string{
+		"public enum TransportTestBackendRelayState: String, Sendable",
+		"public enum TransportTestBackendLanState: String, Sendable",
+		"public enum TransportTestBackendSessionState: String, Sendable",
+	} {
+		if !bytes.Contains(buf.Bytes(), []byte(want)) {
+			t.Errorf("missing state enum %q", want)
+		}
+	}
+
+	// Per-sub-machine machine classes.
+	for _, want := range []string{
+		"public final class TransportTestBackendRelayMachine",
+		"public final class TransportTestBackendLanMachine",
+		"public final class TransportTestBackendSessionMachine",
+	} {
+		if !bytes.Contains(buf.Bytes(), []byte(want)) {
+			t.Errorf("missing machine class %q", want)
+		}
+	}
+
+	// Composite class.
+	if !bytes.Contains(buf.Bytes(), []byte("public final class TransportTestBackendComposite")) {
+		t.Error("missing composite class TransportTestBackendComposite")
+	}
+
+	// route(from:event:) method.
+	if !bytes.Contains(buf.Bytes(), []byte("public func route(from: String, event:")) {
+		t.Error("missing route(from:event:) method")
+	}
+
+	// Flat client actor still present.
+	if !bytes.Contains(buf.Bytes(), []byte("public final class TransportTestClientMachine")) {
+		t.Error("missing flat ClientMachine")
+	}
+}
+
 func TestValidateComposedBadRoute(t *testing.T) {
 	yaml := `
 name: BadRoute

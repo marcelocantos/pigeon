@@ -29,14 +29,26 @@ func (p *Protocol) ExportSwift(w io.Writer) error {
 
 	// Per-actor state enums (at module scope — names are already unique per protocol).
 	for _, a := range p.Actors {
-		typeName := swiftTypeName(a.Name)
-		states := collectStates(a)
-
-		fmt.Fprintf(&b, "public enum %s%sState: String, Sendable {\n", protoName, typeName)
-		for _, s := range states {
-			fmt.Fprintf(&b, "    case %s = \"%s\"\n", swiftCase(string(s)), s)
+		if a.IsComposed() {
+			// Emit per-sub-machine state enums.
+			for _, m := range a.Machines {
+				states := collectSubMachineStates(m)
+				typeName := swiftTypeName(a.Name) + swiftTypeName(m.Name)
+				fmt.Fprintf(&b, "public enum %s%sState: String, Sendable {\n", protoName, typeName)
+				for _, s := range states {
+					fmt.Fprintf(&b, "    case %s = \"%s\"\n", swiftCase(string(s)), s)
+				}
+				b.WriteString("}\n\n")
+			}
+		} else {
+			typeName := swiftTypeName(a.Name)
+			states := collectStates(a)
+			fmt.Fprintf(&b, "public enum %s%sState: String, Sendable {\n", protoName, typeName)
+			for _, s := range states {
+				fmt.Fprintf(&b, "    case %s = \"%s\"\n", swiftCase(string(s)), s)
+			}
+			b.WriteString("}\n\n")
 		}
-		b.WriteString("}\n\n")
 	}
 
 	// Wire constants (at module scope — already prefixed with protocol name).
@@ -111,46 +123,61 @@ func (p *Protocol) ExportSwift(w io.Writer) error {
 	// Transition tables.
 
 	for _, a := range p.Actors {
-		typeName := swiftTypeName(a.Name)
-		fmt.Fprintf(&b, "\n    /// %s transitions.\n", a.Name)
-		fmt.Fprintf(&b, "    public static let %sInitial: %s%sState = .%s\n\n",
-			strings.ToLower(a.Name[:1])+a.Name[1:],
-			protoName, typeName,
-			swiftCase(string(a.Initial)))
+		if a.IsComposed() {
+			// Emit per-sub-machine transition tables.
+			for _, m := range a.Machines {
+				tableKey := strings.ToLower(a.Name[:1]) + a.Name[1:] +
+					swiftTypeName(m.Name)
+				typeName := swiftTypeName(a.Name) + swiftTypeName(m.Name)
+				fmt.Fprintf(&b, "\n    /// %s/%s transitions.\n", a.Name, m.Name)
+				fmt.Fprintf(&b, "    public static let %sInitial: %s%sState = .%s\n\n",
+					tableKey, protoName, typeName, swiftCase(string(m.Initial)))
 
-		fmt.Fprintf(&b, "    public static let %sTransitions: [(from: String, to: String, on: String, onKind: String, guard: String?, action: String?, sends: [(to: String, msg: String)])] = [\n",
-			strings.ToLower(a.Name[:1])+a.Name[1:])
-
-		for _, t := range a.FlattenedTransitions() {
-			onKind := "internal"
-			onValue := t.On.Desc
-			if t.On.Kind == TriggerRecv {
-				onKind = "recv"
-				onValue = string(t.On.Msg)
-			}
-
-			guardStr := "nil"
-			if t.Guard != "" {
-				guardStr = fmt.Sprintf("%q", string(t.Guard))
-			}
-			actionStr := "nil"
-			if t.Do != "" {
-				actionStr = fmt.Sprintf("%q", string(t.Do))
-			}
-
-			sends := "[]"
-			if len(t.Sends) > 0 {
-				var parts []string
-				for _, s := range t.Sends {
-					parts = append(parts, fmt.Sprintf("(to: %q, msg: %q)", s.To, s.Msg))
+				fmt.Fprintf(&b, "    public static let %sTransitions: [(from: String, to: String, on: String, onKind: String, guard: String?, action: String?, sends: [(to: String, msg: String)])] = [\n",
+					tableKey)
+				for _, t := range m.FlattenedTransitions() {
+					b.WriteString(swiftTransitionTableEntry(t))
 				}
-				sends = "[" + strings.Join(parts, ", ") + "]"
+				b.WriteString("    ]\n")
 			}
+			// Emit route table.
+			actorKey := strings.ToLower(a.Name[:1]) + a.Name[1:]
+			fmt.Fprintf(&b, "\n    /// %s routes.\n", a.Name)
+			fmt.Fprintf(&b, "    public static let %sRoutes: [(on: String, from: String, guard: String?, sends: [(to: String, event: String)])] = [\n",
+				actorKey)
+			for _, r := range a.Routes {
+				guardStr := "nil"
+				if r.Guard != "" {
+					guardStr = fmt.Sprintf("%q", string(r.Guard))
+				}
+				var sendParts []string
+				for _, s := range r.Sends {
+					sendParts = append(sendParts, fmt.Sprintf("(to: %q, event: %q)", s.To, string(s.Event)))
+				}
+				sendsLit := "[]"
+				if len(sendParts) > 0 {
+					sendsLit = "[" + strings.Join(sendParts, ", ") + "]"
+				}
+				fmt.Fprintf(&b, "        (on: %q, from: %q, guard: %s, sends: %s),\n",
+					string(r.On), r.From, guardStr, sendsLit)
+			}
+			b.WriteString("    ]\n")
+		} else {
+			typeName := swiftTypeName(a.Name)
+			fmt.Fprintf(&b, "\n    /// %s transitions.\n", a.Name)
+			fmt.Fprintf(&b, "    public static let %sInitial: %s%sState = .%s\n\n",
+				strings.ToLower(a.Name[:1])+a.Name[1:],
+				protoName, typeName,
+				swiftCase(string(a.Initial)))
 
-			fmt.Fprintf(&b, "        (from: %q, to: %q, on: %q, onKind: %q, guard: %s, action: %s, sends: %s),\n",
-				t.From, t.To, onValue, onKind, guardStr, actionStr, sends)
+			fmt.Fprintf(&b, "    public static let %sTransitions: [(from: String, to: String, on: String, onKind: String, guard: String?, action: String?, sends: [(to: String, msg: String)])] = [\n",
+				strings.ToLower(a.Name[:1])+a.Name[1:])
+
+			for _, t := range a.FlattenedTransitions() {
+				b.WriteString(swiftTransitionTableEntry(t))
+			}
+			b.WriteString("    ]\n")
 		}
-		b.WriteString("    ]\n")
 	}
 
 	b.WriteString("}\n\n")
@@ -158,6 +185,11 @@ func (p *Protocol) ExportSwift(w io.Writer) error {
 	// Per-actor typed state machines.
 	protoPrefix := protoName + "Protocol"
 	for _, a := range p.Actors {
+		if a.IsComposed() {
+			writeSwiftComposedActor(&b, p, a, protoName, protoPrefix)
+			continue
+		}
+
 		typeName := swiftTypeName(a.Name)
 
 		// Collect vars updated by this actor's transitions.
@@ -344,6 +376,260 @@ func (p *Protocol) ExportSwift(w io.Writer) error {
 
 	_, err := io.WriteString(w, b.String())
 	return err
+}
+
+// swiftTransitionTableEntry formats one transition as a Swift tuple literal line.
+func swiftTransitionTableEntry(t Transition) string {
+	onKind := "internal"
+	onValue := t.On.Desc
+	if t.On.Kind == TriggerRecv {
+		onKind = "recv"
+		onValue = string(t.On.Msg)
+	}
+	guardStr := "nil"
+	if t.Guard != "" {
+		guardStr = fmt.Sprintf("%q", string(t.Guard))
+	}
+	actionStr := "nil"
+	if t.Do != "" {
+		actionStr = fmt.Sprintf("%q", string(t.Do))
+	}
+	sends := "[]"
+	if len(t.Sends) > 0 {
+		var parts []string
+		for _, s := range t.Sends {
+			parts = append(parts, fmt.Sprintf("(to: %q, msg: %q)", s.To, s.Msg))
+		}
+		sends = "[" + strings.Join(parts, ", ") + "]"
+	}
+	return fmt.Sprintf("        (from: %q, to: %q, on: %q, onKind: %q, guard: %s, action: %s, sends: %s),\n",
+		t.From, t.To, onValue, onKind, guardStr, actionStr, sends)
+}
+
+// writeSwiftComposedActor emits per-sub-machine classes, a composite class,
+// and a route(from:event:) dispatcher for a composed actor.
+func writeSwiftComposedActor(b *strings.Builder, p *Protocol, a Actor, protoName, protoPrefix string) {
+	actorTypeName := swiftTypeName(a.Name) // e.g. "Backend"
+
+	// --- Per-sub-machine machine classes ---
+	for _, m := range a.Machines {
+		machTypeName := protoName + actorTypeName + swiftTypeName(m.Name) // e.g. "TransportTestBackendRelay"
+		stateTypeName := machTypeName + "State"                            // e.g. "TransportTestBackendRelayState"
+
+		// Collect vars updated by this sub-machine.
+		varSet := map[string]bool{}
+		for _, t := range m.FlattenedTransitions() {
+			for _, u := range t.Updates {
+				varSet[u.Var] = true
+			}
+		}
+
+		fmt.Fprintf(b, "/// %sMachine is the generated state machine for %s/%s.\n", machTypeName, a.Name, m.Name)
+		fmt.Fprintf(b, "public final class %sMachine: @unchecked Sendable {\n", machTypeName)
+		fmt.Fprintf(b, "    public typealias MessageType = %s.MessageType\n", protoPrefix)
+		fmt.Fprintf(b, "    public typealias GuardID = %s.GuardID\n", protoPrefix)
+		fmt.Fprintf(b, "    public typealias ActionID = %s.ActionID\n", protoPrefix)
+		fmt.Fprintf(b, "    public typealias EventID = %s.EventID\n", protoPrefix)
+		if len(p.Commands) > 0 {
+			fmt.Fprintf(b, "    public typealias CmdID = %s.CmdID\n", protoPrefix)
+		}
+		b.WriteString("\n")
+		fmt.Fprintf(b, "    public private(set) var state: %s\n", stateTypeName)
+
+		for _, v := range p.Vars {
+			if !varSet[v.Name] {
+				continue
+			}
+			swiftT := swiftType(v.Type)
+			comment := ""
+			if v.Desc != "" {
+				comment = " // " + v.Desc
+			}
+			fmt.Fprintf(b, "    public var %s: %s%s\n", swiftCamelField(v.Name), swiftT, comment)
+		}
+
+		b.WriteString("\n")
+		b.WriteString("    public var guards: [GuardID: () -> Bool] = [:]\n")
+		b.WriteString("    public var actions: [ActionID: () throws -> Void] = [:]\n")
+		b.WriteString("\n")
+
+		// Constructor.
+		b.WriteString("    public init() {\n")
+		fmt.Fprintf(b, "        self.state = .%s\n", swiftCase(string(m.Initial)))
+		for _, v := range p.Vars {
+			if !varSet[v.Name] {
+				continue
+			}
+			init_ := swiftInitialValue(v)
+			if init_ != "" {
+				fmt.Fprintf(b, "        self.%s = %s\n", swiftCamelField(v.Name), init_)
+			}
+		}
+		b.WriteString("    }\n\n")
+
+		// handleEvent.
+		b.WriteString("    /// Handle any event (message receipt or internal). Returns emitted commands.\n")
+		b.WriteString("    @discardableResult\n")
+		if len(p.Commands) > 0 {
+			b.WriteString("    public func handleEvent(_ ev: EventID) throws -> [CmdID] {\n")
+		} else {
+			b.WriteString("    public func handleEvent(_ ev: EventID) throws -> [String] {\n")
+		}
+		b.WriteString("        switch (state, ev) {\n")
+		for _, t := range m.FlattenedTransitions() {
+			var eventCase string
+			if t.On.Kind == TriggerRecv {
+				eventCase = swiftCase("recv_" + string(t.On.Msg))
+			} else {
+				eventCase = swiftCase(t.On.Desc)
+			}
+			if t.Guard != "" {
+				fmt.Fprintf(b, "        case (.%s, .%s) where guards[.%s]?() == true:\n",
+					swiftCase(string(t.From)), eventCase, swiftCase(string(t.Guard)))
+			} else {
+				fmt.Fprintf(b, "        case (.%s, .%s):\n",
+					swiftCase(string(t.From)), eventCase)
+			}
+			writeSwiftEventTransitionBody(b, t, p)
+		}
+		b.WriteString("        default:\n")
+		b.WriteString("            return []\n")
+		b.WriteString("        }\n")
+		b.WriteString("    }\n\n")
+
+		// handleMessage.
+		b.WriteString("    /// Process a received message. Returns the new state, or nil if rejected.\n")
+		b.WriteString("    @discardableResult\n")
+		fmt.Fprintf(b, "    public func handleMessage(_ msg: MessageType) throws -> %s? {\n", stateTypeName)
+		b.WriteString("        switch (state, msg) {\n")
+		for _, t := range m.FlattenedTransitions() {
+			if t.On.Kind != TriggerRecv {
+				continue
+			}
+			msgCase := swiftCase(string(t.On.Msg))
+			if t.Guard != "" {
+				fmt.Fprintf(b, "        case (.%s, .%s) where guards[.%s]?() == true:\n",
+					swiftCase(string(t.From)), msgCase, swiftCase(string(t.Guard)))
+			} else {
+				fmt.Fprintf(b, "        case (.%s, .%s):\n",
+					swiftCase(string(t.From)), msgCase)
+			}
+			writeSwiftTransitionBody(b, t, p)
+			b.WriteString("            return state\n")
+		}
+		b.WriteString("        default:\n")
+		b.WriteString("            return nil\n")
+		b.WriteString("        }\n")
+		b.WriteString("    }\n\n")
+
+		// step.
+		b.WriteString("    /// Attempt an internal transition. Returns the new state, or nil if none available.\n")
+		b.WriteString("    @discardableResult\n")
+		fmt.Fprintf(b, "    public func step() throws -> %s? {\n", stateTypeName)
+		b.WriteString("        switch state {\n")
+
+		type internalT struct {
+			guard GuardID
+			t     Transition
+		}
+		fromMap := map[State][]internalT{}
+		fromEventCount := map[State]map[string]bool{}
+		fromOrder := []State{}
+		seenFrom := map[State]bool{}
+		for _, t := range m.FlattenedTransitions() {
+			if t.On.Kind != TriggerInternal {
+				continue
+			}
+			if !seenFrom[t.From] {
+				seenFrom[t.From] = true
+				fromOrder = append(fromOrder, t.From)
+				fromEventCount[t.From] = map[string]bool{}
+			}
+			fromMap[t.From] = append(fromMap[t.From], internalT{t.Guard, t})
+			fromEventCount[t.From][t.On.Desc] = true
+		}
+		for _, from := range fromOrder {
+			ts := fromMap[from]
+			if len(fromEventCount[from]) != 1 {
+				continue
+			}
+			fmt.Fprintf(b, "        case .%s:\n", swiftCase(string(from)))
+			for _, it := range ts {
+				if it.guard != "" {
+					fmt.Fprintf(b, "            if guards[.%s]?() == true {\n", swiftCase(string(it.guard)))
+					writeSwiftTransitionBodyIndented(b, it.t, p, "                ")
+					b.WriteString("                return state\n")
+					b.WriteString("            }\n")
+				} else {
+					writeSwiftTransitionBodyIndented(b, it.t, p, "            ")
+					b.WriteString("            return state\n")
+				}
+			}
+			allGuarded := true
+			for _, it := range ts {
+				if it.guard == "" {
+					allGuarded = false
+					break
+				}
+			}
+			if allGuarded {
+				b.WriteString("            return nil\n")
+			}
+		}
+		b.WriteString("        default:\n")
+		b.WriteString("            return nil\n")
+		b.WriteString("        }\n")
+		b.WriteString("    }\n")
+		b.WriteString("}\n\n")
+	}
+
+	// --- Composite class ---
+	compositeTypeName := protoName + actorTypeName + "Composite"
+	fmt.Fprintf(b, "/// %s holds all sub-machines for the %s actor.\n", compositeTypeName, a.Name)
+	fmt.Fprintf(b, "public final class %s: @unchecked Sendable {\n", compositeTypeName)
+	for _, m := range a.Machines {
+		machTypeName := protoName + actorTypeName + swiftTypeName(m.Name)
+		fmt.Fprintf(b, "    public let %s: %sMachine\n", swiftCase(m.Name), machTypeName)
+	}
+	fmt.Fprintf(b, "\n    public var routeGuards: [%sProtocol.GuardID: () -> Bool] = [:]\n", protoName)
+	b.WriteString("\n")
+
+	// Constructor.
+	b.WriteString("    public init() {\n")
+	for _, m := range a.Machines {
+		machTypeName := protoName + actorTypeName + swiftTypeName(m.Name)
+		fmt.Fprintf(b, "        %s = %sMachine()\n", swiftCase(m.Name), machTypeName)
+	}
+	b.WriteString("    }\n\n")
+
+	// route(from:event:) dispatcher.
+	b.WriteString("    /// Dispatch inter-machine events according to the routing table.\n")
+	b.WriteString("    @discardableResult\n")
+	fmt.Fprintf(b, "    public func route(from: String, event: %sProtocol.EventID) throws -> Bool {\n", protoName)
+	if len(a.Routes) > 0 {
+		b.WriteString("        switch (from, event) {\n")
+		for _, r := range a.Routes {
+			eventCase := swiftCase(string(r.On))
+			if r.Guard != "" {
+				fmt.Fprintf(b, "        case (%q, .%s) where routeGuards[.%s]?() == true:\n",
+					r.From, eventCase, swiftCase(string(r.Guard)))
+			} else {
+				fmt.Fprintf(b, "        case (%q, .%s):\n", r.From, eventCase)
+			}
+			for _, s := range r.Sends {
+				fmt.Fprintf(b, "            try %s.handleEvent(.%s)\n",
+					swiftCase(s.To), swiftCase(string(s.Event)))
+			}
+			b.WriteString("            return true\n")
+		}
+		b.WriteString("        default:\n")
+		b.WriteString("            return false\n")
+		b.WriteString("        }\n")
+	} else {
+		b.WriteString("        return false\n")
+	}
+	b.WriteString("    }\n")
+	b.WriteString("}\n\n")
 }
 
 // writeSwiftEventTransitionBody emits action, var updates, state change,
