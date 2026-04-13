@@ -144,7 +144,7 @@ func (p *Protocol) ExportGo(w io.Writer, pkgName, funcName string) error {
 	actions := map[string]bool{}
 	events := map[string]bool{}
 	for _, a := range p.Actors {
-		for _, t := range a.FlattenedTransitions() {
+		for _, t := range allActorTransitions(a) {
 			if t.Do != "" {
 				actions[string(t.Do)] = true
 			}
@@ -164,7 +164,7 @@ func (p *Protocol) ExportGo(w io.Writer, pkgName, funcName string) error {
 
 	// Collect message-receipt events (recv X → EventRecvX).
 	for _, a := range p.Actors {
-		for _, t := range a.FlattenedTransitions() {
+		for _, t := range allActorTransitions(a) {
 			if t.On.Kind == TriggerRecv {
 				events["recv_"+string(t.On.Msg)] = true
 			}
@@ -173,6 +173,24 @@ func (p *Protocol) ExportGo(w io.Writer, pkgName, funcName string) error {
 	// Add declared events from the events: section.
 	for _, e := range p.Events {
 		events[string(e.ID)] = true
+	}
+
+	// Add inter-machine events (reports, accepts, route events).
+	for _, a := range p.Actors {
+		for _, m := range a.Machines {
+			for _, id := range m.Reports {
+				events[string(id)] = true
+			}
+			for _, id := range m.Accepts {
+				events[string(id)] = true
+			}
+		}
+		for _, r := range a.Routes {
+			events[string(r.On)] = true
+			for _, s := range r.Sends {
+				events[string(s.Event)] = true
+			}
+		}
 	}
 
 	if len(events) > 0 {
@@ -236,46 +254,45 @@ func (p *Protocol) ExportGo(w io.Writer, pkgName, funcName string) error {
 
 	b.WriteString("\t\tActors: []Actor{\n")
 	for _, a := range p.Actors {
-		fmt.Fprintf(&b, "\t\t\t{Name: %q, Initial: %q, Transitions: []Transition{\n", a.Name, a.Initial)
-		for _, t := range a.FlattenedTransitions() {
-			b.WriteString("\t\t\t\t{")
-			fmt.Fprintf(&b, "From: %q, To: %q, ", t.From, t.To)
-			if t.On.Kind == TriggerRecv {
-				fmt.Fprintf(&b, "On: Recv(%q)", t.On.Msg)
-			} else {
-				fmt.Fprintf(&b, "On: Internal(%q)", t.On.Desc)
+		if a.IsComposed() {
+			// Emit a composed actor with full Machines slice so IsComposed() works
+			// correctly at runtime (for TLA+ export, Machine initialisation, etc.).
+			fmt.Fprintf(&b, "\t\t\t{Name: %q, Machines: []SubMachine{\n", a.Name)
+			for _, sm := range a.Machines {
+				fmt.Fprintf(&b, "\t\t\t\t{Name: %q, Initial: %q, Transitions: []Transition{\n", sm.Name, sm.Initial)
+				for _, t := range sm.FlattenedTransitions() {
+					writeGoTransitionLiteral(&b, t, "\t\t\t\t\t")
+				}
+				b.WriteString("\t\t\t\t}},\n")
 			}
-			if t.Guard != "" {
-				fmt.Fprintf(&b, ", Guard: %q", t.Guard)
-			}
-			if t.Do != "" {
-				fmt.Fprintf(&b, ", Do: %q", t.Do)
-			}
-			if len(t.Sends) > 0 {
-				b.WriteString(", Sends: []Send{")
-				for _, s := range t.Sends {
-					fmt.Fprintf(&b, "{To: %q, Msg: %q", s.To, s.Msg)
-					if len(s.Fields) > 0 {
-						b.WriteString(", Fields: map[string]string{")
-						for _, k := range sortedKeys(s.Fields) {
-							fmt.Fprintf(&b, "%q: %q, ", k, s.Fields[k])
+			b.WriteString("\t\t\t\t},\n")
+			// Emit Routes.
+			if len(a.Routes) > 0 {
+				b.WriteString("\t\t\t\tRoutes: []Route{\n")
+				for _, r := range a.Routes {
+					fmt.Fprintf(&b, "\t\t\t\t\t{On: %q, From: %q", r.On, r.From)
+					if r.Guard != "" {
+						fmt.Fprintf(&b, ", Guard: %q", r.Guard)
+					}
+					if len(r.Sends) > 0 {
+						b.WriteString(", Sends: []RouteSend{")
+						for _, s := range r.Sends {
+							fmt.Fprintf(&b, "{To: %q, Event: %q}, ", s.To, s.Event)
 						}
 						b.WriteString("}")
 					}
-					b.WriteString("}, ")
+					b.WriteString("},\n")
 				}
-				b.WriteString("}")
+				b.WriteString("\t\t\t\t},\n")
 			}
-			if len(t.Updates) > 0 {
-				b.WriteString(", Updates: []VarUpdate{")
-				for _, u := range t.Updates {
-					fmt.Fprintf(&b, "{Var: %q, Expr: %q}, ", u.Var, u.Expr)
-				}
-				b.WriteString("}")
+			b.WriteString("\t\t\t},\n")
+		} else {
+			fmt.Fprintf(&b, "\t\t\t{Name: %q, Initial: %q, Transitions: []Transition{\n", a.Name, a.Initial)
+			for _, t := range a.FlattenedTransitions() {
+				writeGoTransitionLiteral(&b, t, "\t\t\t\t")
 			}
-			b.WriteString("},\n")
+			b.WriteString("\t\t\t}},\n")
 		}
-		b.WriteString("\t\t\t}},\n")
 	}
 	b.WriteString("\t\t},\n")
 
@@ -595,8 +612,9 @@ func writeGoComposedActor(b *strings.Builder, p *Protocol, a Actor, cPrefix stri
 	b.WriteString("\t}\n")
 	for _, m := range a.Machines {
 		machPrefix := cPrefix + goCamel(actorPrefix) + goCamel(m.Name)
-		fmt.Fprintf(b, "\tinit := New%sMachine()\n", machPrefix)
-		fmt.Fprintf(b, "\tc.%s = *init\n", goCamel(m.Name))
+		initVar := "init" + goCamel(m.Name)
+		fmt.Fprintf(b, "\t%s := New%sMachine()\n", initVar, machPrefix)
+		fmt.Fprintf(b, "\tc.%s = *%s\n", goCamel(m.Name), initVar)
 	}
 	b.WriteString("\treturn c\n}\n\n")
 
@@ -627,6 +645,47 @@ func writeGoComposedActor(b *strings.Builder, p *Protocol, a Actor, cPrefix stri
 	}
 
 	b.WriteString("\treturn nil\n}\n\n")
+}
+
+// writeGoTransitionLiteral emits a single Transition struct literal with the
+// given indent prefix. Used when building the protocol table literal.
+func writeGoTransitionLiteral(b *strings.Builder, t Transition, indent string) {
+	b.WriteString(indent + "{")
+	fmt.Fprintf(b, "From: %q, To: %q, ", t.From, t.To)
+	if t.On.Kind == TriggerRecv {
+		fmt.Fprintf(b, "On: Recv(%q)", t.On.Msg)
+	} else {
+		fmt.Fprintf(b, "On: Internal(%q)", t.On.Desc)
+	}
+	if t.Guard != "" {
+		fmt.Fprintf(b, ", Guard: %q", t.Guard)
+	}
+	if t.Do != "" {
+		fmt.Fprintf(b, ", Do: %q", t.Do)
+	}
+	if len(t.Sends) > 0 {
+		b.WriteString(", Sends: []Send{")
+		for _, s := range t.Sends {
+			fmt.Fprintf(b, "{To: %q, Msg: %q", s.To, s.Msg)
+			if len(s.Fields) > 0 {
+				b.WriteString(", Fields: map[string]string{")
+				for _, k := range sortedKeys(s.Fields) {
+					fmt.Fprintf(b, "%q: %q, ", k, s.Fields[k])
+				}
+				b.WriteString("}")
+			}
+			b.WriteString("}, ")
+		}
+		b.WriteString("}")
+	}
+	if len(t.Updates) > 0 {
+		b.WriteString(", Updates: []VarUpdate{")
+		for _, u := range t.Updates {
+			fmt.Fprintf(b, "{Var: %q, Expr: %q}, ", u.Var, u.Expr)
+		}
+		b.WriteString("}")
+	}
+	b.WriteString("},\n")
 }
 
 // writeGoTransitionBody emits the action call, variable updates, state

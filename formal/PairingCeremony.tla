@@ -3,33 +3,41 @@
 
 EXTENDS Integers, Sequences, FiniteSets, TLC
 
-\* States for server
-server_Idle == "server_Idle"
-server_GenerateToken == "server_GenerateToken"
-server_RegisterRelay == "server_RegisterRelay"
-server_WaitingForClient == "server_WaitingForClient"
-server_DeriveSecret == "server_DeriveSecret"
-server_SendAck == "server_SendAck"
-server_WaitingForCode == "server_WaitingForCode"
-server_ValidateCode == "server_ValidateCode"
-server_StorePaired == "server_StorePaired"
-server_Paired == "server_Paired"
-server_AuthCheck == "server_AuthCheck"
-server_SessionActive == "server_SessionActive"
+\* States for server/pairing
+server_pairing_Idle == "server_pairing_Idle"
+server_pairing_GenerateToken == "server_pairing_GenerateToken"
+server_pairing_RegisterRelay == "server_pairing_RegisterRelay"
+server_pairing_WaitingForClient == "server_pairing_WaitingForClient"
+server_pairing_DeriveSecret == "server_pairing_DeriveSecret"
+server_pairing_SendAck == "server_pairing_SendAck"
+server_pairing_WaitingForCode == "server_pairing_WaitingForCode"
+server_pairing_ValidateCode == "server_pairing_ValidateCode"
+server_pairing_StorePaired == "server_pairing_StorePaired"
+server_pairing_PairingComplete == "server_pairing_PairingComplete"
 
-\* States for ios
-ios_Idle == "ios_Idle"
-ios_ScanQR == "ios_ScanQR"
-ios_ConnectRelay == "ios_ConnectRelay"
-ios_GenKeyPair == "ios_GenKeyPair"
-ios_WaitAck == "ios_WaitAck"
-ios_E2EReady == "ios_E2EReady"
-ios_ShowCode == "ios_ShowCode"
-ios_WaitPairComplete == "ios_WaitPairComplete"
-ios_Paired == "ios_Paired"
-ios_Reconnect == "ios_Reconnect"
-ios_SendAuth == "ios_SendAuth"
-ios_SessionActive == "ios_SessionActive"
+\* States for server/auth
+server_auth_Idle == "server_auth_Idle"
+server_auth_Paired == "server_auth_Paired"
+server_auth_AuthCheck == "server_auth_AuthCheck"
+server_auth_SessionActive == "server_auth_SessionActive"
+
+\* States for ios/pairing
+ios_pairing_Idle == "ios_pairing_Idle"
+ios_pairing_ScanQR == "ios_pairing_ScanQR"
+ios_pairing_ConnectRelay == "ios_pairing_ConnectRelay"
+ios_pairing_GenKeyPair == "ios_pairing_GenKeyPair"
+ios_pairing_WaitAck == "ios_pairing_WaitAck"
+ios_pairing_E2EReady == "ios_pairing_E2EReady"
+ios_pairing_ShowCode == "ios_pairing_ShowCode"
+ios_pairing_WaitPairComplete == "ios_pairing_WaitPairComplete"
+ios_pairing_PairingComplete == "ios_pairing_PairingComplete"
+
+\* States for ios/auth
+ios_auth_Idle == "ios_auth_Idle"
+ios_auth_Paired == "ios_auth_Paired"
+ios_auth_Reconnect == "ios_auth_Reconnect"
+ios_auth_SendAuth == "ios_auth_SendAuth"
+ios_auth_SessionActive == "ios_auth_SessionActive"
 
 \* States for cli
 cli_Idle == "cli_Idle"
@@ -60,6 +68,7 @@ EVT_app_launch == "app launch"
 EVT_check_code == "check code"
 EVT_cli___init == "cli --init"
 EVT_code_displayed == "code displayed"
+EVT_credential_ready == "credential_ready"
 EVT_disconnect == "disconnect"
 EVT_finalise == "finalise"
 EVT_key_pair_generated == "key pair generated"
@@ -95,9 +104,11 @@ DeriveCode(a, b) == IF KeyRank(a) <= KeyRank(b) THEN <<"code", a, b>> ELSE <<"co
 CONSTANTS adversary_keys, adv_ecdh_pub, adv_saved_client_pub, adv_saved_server_pub
 
 VARIABLES
-    server_state,
-    ios_state,
     cli_state,
+    server_pairing_state,
+    server_auth_state,
+    ios_pairing_state,
+    ios_auth_state,
     current_token,
     active_tokens,
     used_tokens,
@@ -115,6 +126,9 @@ VARIABLES
     received_device_id,
     auth_nonces_used,
     received_auth_nonce,
+    received_token_response,
+    received_waiting_for_code,
+    received_pair_status,
     received_pair_begin,
     received_pair_hello,
     received_code_submit,
@@ -122,17 +136,16 @@ VARIABLES
     received_pair_hello_ack,
     received_pair_confirm,
     received_pair_complete,
-    received_auth_ok,
-    received_token_response,
-    received_waiting_for_code,
-    received_pair_status
+    received_auth_ok
 
-vars == <<server_state, ios_state, cli_state, current_token, active_tokens, used_tokens, server_ecdh_pub, received_client_pub, received_server_pub, server_shared_key, client_shared_key, server_code, ios_code, received_code, code_attempts, device_secret, paired_devices, received_device_id, auth_nonces_used, received_auth_nonce, received_pair_begin, received_pair_hello, received_code_submit, received_auth_request, received_pair_hello_ack, received_pair_confirm, received_pair_complete, received_auth_ok, received_token_response, received_waiting_for_code, received_pair_status>>
+vars == <<cli_state, server_pairing_state, server_auth_state, ios_pairing_state, ios_auth_state, current_token, active_tokens, used_tokens, server_ecdh_pub, received_client_pub, received_server_pub, server_shared_key, client_shared_key, server_code, ios_code, received_code, code_attempts, device_secret, paired_devices, received_device_id, auth_nonces_used, received_auth_nonce, received_token_response, received_waiting_for_code, received_pair_status, received_pair_begin, received_pair_hello, received_code_submit, received_auth_request, received_pair_hello_ack, received_pair_confirm, received_pair_complete, received_auth_ok>>
 
 Init ==
-    /\ server_state = server_Idle
-    /\ ios_state = ios_Idle
     /\ cli_state = cli_Idle
+    /\ server_pairing_state = server_pairing_Idle
+    /\ server_auth_state = server_auth_Idle
+    /\ ios_pairing_state = ios_pairing_Idle
+    /\ ios_auth_state = ios_auth_Idle
     /\ current_token = "none"
     /\ active_tokens = {}
     /\ used_tokens = {}
@@ -150,6 +163,9 @@ Init ==
     /\ received_device_id = "none"
     /\ auth_nonces_used = {}
     /\ received_auth_nonce = "none"
+    /\ received_token_response = [type |-> "none"]
+    /\ received_waiting_for_code = [type |-> "none"]
+    /\ received_pair_status = [type |-> "none"]
     /\ received_pair_begin = [type |-> "none"]
     /\ received_pair_hello = [type |-> "none"]
     /\ received_code_submit = [type |-> "none"]
@@ -158,237 +174,19 @@ Init ==
     /\ received_pair_confirm = [type |-> "none"]
     /\ received_pair_complete = [type |-> "none"]
     /\ received_auth_ok = [type |-> "none"]
-    /\ received_token_response = [type |-> "none"]
-    /\ received_waiting_for_code = [type |-> "none"]
-    /\ received_pair_status = [type |-> "none"]
-
-\* server: Idle -> GenerateToken on recv pair_begin
-server_Idle_to_GenerateToken_on_pair_begin ==
-    /\ server_state = server_Idle
-    /\ received_pair_begin.type = MSG_pair_begin
-    /\ received_pair_begin' = [type |-> "none"]
-    /\ server_state' = server_GenerateToken
-    /\ current_token' = "tok_1"
-    /\ active_tokens' = active_tokens \union {"tok_1"}
-    /\ UNCHANGED <<ios_state, cli_state, used_tokens, server_ecdh_pub, received_client_pub, received_server_pub, server_shared_key, client_shared_key, server_code, ios_code, received_code, code_attempts, device_secret, paired_devices, received_device_id, auth_nonces_used, received_auth_nonce, received_pair_hello, received_code_submit, received_auth_request, received_pair_hello_ack, received_pair_confirm, received_pair_complete, received_auth_ok, received_token_response, received_waiting_for_code, received_pair_status>>
-
-\* server: GenerateToken -> RegisterRelay (token created)
-server_GenerateToken_to_RegisterRelay_token_created ==
-    /\ server_state = server_GenerateToken
-    /\ server_state' = server_RegisterRelay
-    /\ UNCHANGED <<ios_state, cli_state, current_token, active_tokens, used_tokens, server_ecdh_pub, received_client_pub, received_server_pub, server_shared_key, client_shared_key, server_code, ios_code, received_code, code_attempts, device_secret, paired_devices, received_device_id, auth_nonces_used, received_auth_nonce, received_pair_begin, received_pair_hello, received_code_submit, received_auth_request, received_pair_hello_ack, received_pair_confirm, received_pair_complete, received_auth_ok, received_token_response, received_waiting_for_code, received_pair_status>>
-
-\* server: RegisterRelay -> WaitingForClient (relay registered)
-server_RegisterRelay_to_WaitingForClient_relay_registered ==
-    /\ server_state = server_RegisterRelay
-    /\ received_token_response' = [type |-> MSG_token_response, instance_id |-> "inst_1", token |-> current_token]
-    /\ server_state' = server_WaitingForClient
-    /\ UNCHANGED <<ios_state, cli_state, current_token, active_tokens, used_tokens, server_ecdh_pub, received_client_pub, received_server_pub, server_shared_key, client_shared_key, server_code, ios_code, received_code, code_attempts, device_secret, paired_devices, received_device_id, auth_nonces_used, received_auth_nonce, received_pair_begin, received_pair_hello, received_code_submit, received_auth_request, received_pair_hello_ack, received_pair_confirm, received_pair_complete, received_auth_ok, received_waiting_for_code, received_pair_status>>
-
-\* server: WaitingForClient -> DeriveSecret on recv pair_hello [token_valid]
-server_WaitingForClient_to_DeriveSecret_on_pair_hello_token_valid ==
-    /\ server_state = server_WaitingForClient
-    /\ received_pair_hello.type = MSG_pair_hello
-    /\ received_pair_hello.token \in active_tokens
-    /\ received_pair_hello' = [type |-> "none"]
-    /\ server_state' = server_DeriveSecret
-    /\ received_client_pub' = received_pair_hello.pubkey
-    /\ server_ecdh_pub' = "server_pub"
-    /\ server_shared_key' = DeriveKey("server_pub", received_pair_hello.pubkey)
-    /\ server_code' = DeriveCode("server_pub", received_pair_hello.pubkey)
-    /\ UNCHANGED <<ios_state, cli_state, current_token, active_tokens, used_tokens, received_server_pub, client_shared_key, ios_code, received_code, code_attempts, device_secret, paired_devices, received_device_id, auth_nonces_used, received_auth_nonce, received_pair_begin, received_code_submit, received_auth_request, received_pair_hello_ack, received_pair_confirm, received_pair_complete, received_auth_ok, received_token_response, received_waiting_for_code, received_pair_status>>
-
-\* server: WaitingForClient -> Idle on recv pair_hello [token_invalid]
-server_WaitingForClient_to_Idle_on_pair_hello_token_invalid ==
-    /\ server_state = server_WaitingForClient
-    /\ received_pair_hello.type = MSG_pair_hello
-    /\ received_pair_hello.token \notin active_tokens
-    /\ received_pair_hello' = [type |-> "none"]
-    /\ server_state' = server_Idle
-    /\ UNCHANGED <<ios_state, cli_state, current_token, active_tokens, used_tokens, server_ecdh_pub, received_client_pub, received_server_pub, server_shared_key, client_shared_key, server_code, ios_code, received_code, code_attempts, device_secret, paired_devices, received_device_id, auth_nonces_used, received_auth_nonce, received_pair_begin, received_code_submit, received_auth_request, received_pair_hello_ack, received_pair_confirm, received_pair_complete, received_auth_ok, received_token_response, received_waiting_for_code, received_pair_status>>
-
-\* server: DeriveSecret -> SendAck (ECDH complete)
-server_DeriveSecret_to_SendAck_ECDH_complete ==
-    /\ server_state = server_DeriveSecret
-    /\ received_pair_hello_ack' = [type |-> MSG_pair_hello_ack, pubkey |-> server_ecdh_pub]
-    /\ server_state' = server_SendAck
-    /\ UNCHANGED <<ios_state, cli_state, current_token, active_tokens, used_tokens, server_ecdh_pub, received_client_pub, received_server_pub, server_shared_key, client_shared_key, server_code, ios_code, received_code, code_attempts, device_secret, paired_devices, received_device_id, auth_nonces_used, received_auth_nonce, received_pair_begin, received_pair_hello, received_code_submit, received_auth_request, received_pair_confirm, received_pair_complete, received_auth_ok, received_token_response, received_waiting_for_code, received_pair_status>>
-
-\* server: SendAck -> WaitingForCode (signal code display)
-server_SendAck_to_WaitingForCode_signal_code_display ==
-    /\ server_state = server_SendAck
-    /\ received_pair_confirm' = [type |-> MSG_pair_confirm]
-    /\ received_waiting_for_code' = [type |-> MSG_waiting_for_code]
-    /\ server_state' = server_WaitingForCode
-    /\ UNCHANGED <<ios_state, cli_state, current_token, active_tokens, used_tokens, server_ecdh_pub, received_client_pub, received_server_pub, server_shared_key, client_shared_key, server_code, ios_code, received_code, code_attempts, device_secret, paired_devices, received_device_id, auth_nonces_used, received_auth_nonce, received_pair_begin, received_pair_hello, received_code_submit, received_auth_request, received_pair_hello_ack, received_pair_complete, received_auth_ok, received_token_response, received_pair_status>>
-
-\* server: WaitingForCode -> ValidateCode on recv code_submit
-server_WaitingForCode_to_ValidateCode_on_code_submit ==
-    /\ server_state = server_WaitingForCode
-    /\ received_code_submit.type = MSG_code_submit
-    /\ received_code_submit' = [type |-> "none"]
-    /\ server_state' = server_ValidateCode
-    /\ received_code' = received_code_submit.code
-    /\ UNCHANGED <<ios_state, cli_state, current_token, active_tokens, used_tokens, server_ecdh_pub, received_client_pub, received_server_pub, server_shared_key, client_shared_key, server_code, ios_code, code_attempts, device_secret, paired_devices, received_device_id, auth_nonces_used, received_auth_nonce, received_pair_begin, received_pair_hello, received_auth_request, received_pair_hello_ack, received_pair_confirm, received_pair_complete, received_auth_ok, received_token_response, received_waiting_for_code, received_pair_status>>
-
-\* server: ValidateCode -> StorePaired (check code) [code_correct]
-server_ValidateCode_to_StorePaired_check_code_code_correct ==
-    /\ server_state = server_ValidateCode
-    /\ received_code = server_code
-    /\ server_state' = server_StorePaired
-    /\ UNCHANGED <<ios_state, cli_state, current_token, active_tokens, used_tokens, server_ecdh_pub, received_client_pub, received_server_pub, server_shared_key, client_shared_key, server_code, ios_code, received_code, code_attempts, device_secret, paired_devices, received_device_id, auth_nonces_used, received_auth_nonce, received_pair_begin, received_pair_hello, received_code_submit, received_auth_request, received_pair_hello_ack, received_pair_confirm, received_pair_complete, received_auth_ok, received_token_response, received_waiting_for_code, received_pair_status>>
-
-\* server: ValidateCode -> Idle (check code) [code_wrong]
-server_ValidateCode_to_Idle_check_code_code_wrong ==
-    /\ server_state = server_ValidateCode
-    /\ received_code /= server_code
-    /\ server_state' = server_Idle
-    /\ code_attempts' = code_attempts + 1
-    /\ UNCHANGED <<ios_state, cli_state, current_token, active_tokens, used_tokens, server_ecdh_pub, received_client_pub, received_server_pub, server_shared_key, client_shared_key, server_code, ios_code, received_code, device_secret, paired_devices, received_device_id, auth_nonces_used, received_auth_nonce, received_pair_begin, received_pair_hello, received_code_submit, received_auth_request, received_pair_hello_ack, received_pair_confirm, received_pair_complete, received_auth_ok, received_token_response, received_waiting_for_code, received_pair_status>>
-
-\* server: StorePaired -> Paired (finalise)
-server_StorePaired_to_Paired_finalise ==
-    /\ server_state = server_StorePaired
-    /\ received_pair_complete' = [type |-> MSG_pair_complete, key |-> server_shared_key, secret |-> "dev_secret_1"]
-    /\ received_pair_status' = [type |-> MSG_pair_status, status |-> "paired"]
-    /\ server_state' = server_Paired
-    /\ device_secret' = "dev_secret_1"
-    /\ paired_devices' = paired_devices \union {"device_1"}
-    /\ active_tokens' = active_tokens \ {current_token}
-    /\ used_tokens' = used_tokens \union {current_token}
-    /\ UNCHANGED <<ios_state, cli_state, current_token, server_ecdh_pub, received_client_pub, received_server_pub, server_shared_key, client_shared_key, server_code, ios_code, received_code, code_attempts, received_device_id, auth_nonces_used, received_auth_nonce, received_pair_begin, received_pair_hello, received_code_submit, received_auth_request, received_pair_hello_ack, received_pair_confirm, received_auth_ok, received_token_response, received_waiting_for_code>>
-
-\* server: Paired -> AuthCheck on recv auth_request
-server_Paired_to_AuthCheck_on_auth_request ==
-    /\ server_state = server_Paired
-    /\ received_auth_request.type = MSG_auth_request
-    /\ received_auth_request' = [type |-> "none"]
-    /\ server_state' = server_AuthCheck
-    /\ received_device_id' = received_auth_request.device_id
-    /\ received_auth_nonce' = received_auth_request.nonce
-    /\ UNCHANGED <<ios_state, cli_state, current_token, active_tokens, used_tokens, server_ecdh_pub, received_client_pub, received_server_pub, server_shared_key, client_shared_key, server_code, ios_code, received_code, code_attempts, device_secret, paired_devices, auth_nonces_used, received_pair_begin, received_pair_hello, received_code_submit, received_pair_hello_ack, received_pair_confirm, received_pair_complete, received_auth_ok, received_token_response, received_waiting_for_code, received_pair_status>>
-
-\* server: AuthCheck -> SessionActive (verify) [device_known]
-server_AuthCheck_to_SessionActive_verify_device_known ==
-    /\ server_state = server_AuthCheck
-    /\ received_device_id \in paired_devices
-    /\ received_auth_ok' = [type |-> MSG_auth_ok]
-    /\ server_state' = server_SessionActive
-    /\ auth_nonces_used' = auth_nonces_used \union {received_auth_nonce}
-    /\ UNCHANGED <<ios_state, cli_state, current_token, active_tokens, used_tokens, server_ecdh_pub, received_client_pub, received_server_pub, server_shared_key, client_shared_key, server_code, ios_code, received_code, code_attempts, device_secret, paired_devices, received_device_id, received_auth_nonce, received_pair_begin, received_pair_hello, received_code_submit, received_auth_request, received_pair_hello_ack, received_pair_confirm, received_pair_complete, received_token_response, received_waiting_for_code, received_pair_status>>
-
-\* server: AuthCheck -> Idle (verify) [device_unknown]
-server_AuthCheck_to_Idle_verify_device_unknown ==
-    /\ server_state = server_AuthCheck
-    /\ received_device_id \notin paired_devices
-    /\ server_state' = server_Idle
-    /\ UNCHANGED <<ios_state, cli_state, current_token, active_tokens, used_tokens, server_ecdh_pub, received_client_pub, received_server_pub, server_shared_key, client_shared_key, server_code, ios_code, received_code, code_attempts, device_secret, paired_devices, received_device_id, auth_nonces_used, received_auth_nonce, received_pair_begin, received_pair_hello, received_code_submit, received_auth_request, received_pair_hello_ack, received_pair_confirm, received_pair_complete, received_auth_ok, received_token_response, received_waiting_for_code, received_pair_status>>
-
-\* server: SessionActive -> Paired (disconnect)
-server_SessionActive_to_Paired_disconnect ==
-    /\ server_state = server_SessionActive
-    /\ server_state' = server_Paired
-    /\ UNCHANGED <<ios_state, cli_state, current_token, active_tokens, used_tokens, server_ecdh_pub, received_client_pub, received_server_pub, server_shared_key, client_shared_key, server_code, ios_code, received_code, code_attempts, device_secret, paired_devices, received_device_id, auth_nonces_used, received_auth_nonce, received_pair_begin, received_pair_hello, received_code_submit, received_auth_request, received_pair_hello_ack, received_pair_confirm, received_pair_complete, received_auth_ok, received_token_response, received_waiting_for_code, received_pair_status>>
-
-
-\* ios: Idle -> ScanQR (user scans QR)
-ios_Idle_to_ScanQR_user_scans_QR ==
-    /\ ios_state = ios_Idle
-    /\ ios_state' = ios_ScanQR
-    /\ UNCHANGED <<server_state, cli_state, current_token, active_tokens, used_tokens, server_ecdh_pub, received_client_pub, received_server_pub, server_shared_key, client_shared_key, server_code, ios_code, received_code, code_attempts, device_secret, paired_devices, received_device_id, auth_nonces_used, received_auth_nonce, received_pair_begin, received_pair_hello, received_code_submit, received_auth_request, received_pair_hello_ack, received_pair_confirm, received_pair_complete, received_auth_ok, received_token_response, received_waiting_for_code, received_pair_status>>
-
-\* ios: ScanQR -> ConnectRelay (QR parsed)
-ios_ScanQR_to_ConnectRelay_QR_parsed ==
-    /\ ios_state = ios_ScanQR
-    /\ ios_state' = ios_ConnectRelay
-    /\ UNCHANGED <<server_state, cli_state, current_token, active_tokens, used_tokens, server_ecdh_pub, received_client_pub, received_server_pub, server_shared_key, client_shared_key, server_code, ios_code, received_code, code_attempts, device_secret, paired_devices, received_device_id, auth_nonces_used, received_auth_nonce, received_pair_begin, received_pair_hello, received_code_submit, received_auth_request, received_pair_hello_ack, received_pair_confirm, received_pair_complete, received_auth_ok, received_token_response, received_waiting_for_code, received_pair_status>>
-
-\* ios: ConnectRelay -> GenKeyPair (relay connected)
-ios_ConnectRelay_to_GenKeyPair_relay_connected ==
-    /\ ios_state = ios_ConnectRelay
-    /\ ios_state' = ios_GenKeyPair
-    /\ UNCHANGED <<server_state, cli_state, current_token, active_tokens, used_tokens, server_ecdh_pub, received_client_pub, received_server_pub, server_shared_key, client_shared_key, server_code, ios_code, received_code, code_attempts, device_secret, paired_devices, received_device_id, auth_nonces_used, received_auth_nonce, received_pair_begin, received_pair_hello, received_code_submit, received_auth_request, received_pair_hello_ack, received_pair_confirm, received_pair_complete, received_auth_ok, received_token_response, received_waiting_for_code, received_pair_status>>
-
-\* ios: GenKeyPair -> WaitAck (key pair generated)
-ios_GenKeyPair_to_WaitAck_key_pair_generated ==
-    /\ ios_state = ios_GenKeyPair
-    /\ received_pair_hello' = [type |-> MSG_pair_hello, pubkey |-> "client_pub", token |-> current_token]
-    /\ ios_state' = ios_WaitAck
-    /\ UNCHANGED <<server_state, cli_state, current_token, active_tokens, used_tokens, server_ecdh_pub, received_client_pub, received_server_pub, server_shared_key, client_shared_key, server_code, ios_code, received_code, code_attempts, device_secret, paired_devices, received_device_id, auth_nonces_used, received_auth_nonce, received_pair_begin, received_code_submit, received_auth_request, received_pair_hello_ack, received_pair_confirm, received_pair_complete, received_auth_ok, received_token_response, received_waiting_for_code, received_pair_status>>
-
-\* ios: WaitAck -> E2EReady on recv pair_hello_ack
-ios_WaitAck_to_E2EReady_on_pair_hello_ack ==
-    /\ ios_state = ios_WaitAck
-    /\ received_pair_hello_ack.type = MSG_pair_hello_ack
-    /\ received_pair_hello_ack' = [type |-> "none"]
-    /\ ios_state' = ios_E2EReady
-    /\ received_server_pub' = received_pair_hello_ack.pubkey
-    /\ client_shared_key' = DeriveKey("client_pub", received_pair_hello_ack.pubkey)
-    /\ UNCHANGED <<server_state, cli_state, current_token, active_tokens, used_tokens, server_ecdh_pub, received_client_pub, server_shared_key, server_code, ios_code, received_code, code_attempts, device_secret, paired_devices, received_device_id, auth_nonces_used, received_auth_nonce, received_pair_begin, received_pair_hello, received_code_submit, received_auth_request, received_pair_confirm, received_pair_complete, received_auth_ok, received_token_response, received_waiting_for_code, received_pair_status>>
-
-\* ios: E2EReady -> ShowCode on recv pair_confirm
-ios_E2EReady_to_ShowCode_on_pair_confirm ==
-    /\ ios_state = ios_E2EReady
-    /\ received_pair_confirm.type = MSG_pair_confirm
-    /\ received_pair_confirm' = [type |-> "none"]
-    /\ ios_state' = ios_ShowCode
-    /\ ios_code' = DeriveCode(received_server_pub, "client_pub")
-    /\ UNCHANGED <<server_state, cli_state, current_token, active_tokens, used_tokens, server_ecdh_pub, received_client_pub, received_server_pub, server_shared_key, client_shared_key, server_code, received_code, code_attempts, device_secret, paired_devices, received_device_id, auth_nonces_used, received_auth_nonce, received_pair_begin, received_pair_hello, received_code_submit, received_auth_request, received_pair_hello_ack, received_pair_complete, received_auth_ok, received_token_response, received_waiting_for_code, received_pair_status>>
-
-\* ios: ShowCode -> WaitPairComplete (code displayed)
-ios_ShowCode_to_WaitPairComplete_code_displayed ==
-    /\ ios_state = ios_ShowCode
-    /\ ios_state' = ios_WaitPairComplete
-    /\ UNCHANGED <<server_state, cli_state, current_token, active_tokens, used_tokens, server_ecdh_pub, received_client_pub, received_server_pub, server_shared_key, client_shared_key, server_code, ios_code, received_code, code_attempts, device_secret, paired_devices, received_device_id, auth_nonces_used, received_auth_nonce, received_pair_begin, received_pair_hello, received_code_submit, received_auth_request, received_pair_hello_ack, received_pair_confirm, received_pair_complete, received_auth_ok, received_token_response, received_waiting_for_code, received_pair_status>>
-
-\* ios: WaitPairComplete -> Paired on recv pair_complete
-ios_WaitPairComplete_to_Paired_on_pair_complete ==
-    /\ ios_state = ios_WaitPairComplete
-    /\ received_pair_complete.type = MSG_pair_complete
-    /\ received_pair_complete' = [type |-> "none"]
-    /\ ios_state' = ios_Paired
-    /\ UNCHANGED <<server_state, cli_state, current_token, active_tokens, used_tokens, server_ecdh_pub, received_client_pub, received_server_pub, server_shared_key, client_shared_key, server_code, ios_code, received_code, code_attempts, device_secret, paired_devices, received_device_id, auth_nonces_used, received_auth_nonce, received_pair_begin, received_pair_hello, received_code_submit, received_auth_request, received_pair_hello_ack, received_pair_confirm, received_auth_ok, received_token_response, received_waiting_for_code, received_pair_status>>
-
-\* ios: Paired -> Reconnect (app launch)
-ios_Paired_to_Reconnect_app_launch ==
-    /\ ios_state = ios_Paired
-    /\ ios_state' = ios_Reconnect
-    /\ UNCHANGED <<server_state, cli_state, current_token, active_tokens, used_tokens, server_ecdh_pub, received_client_pub, received_server_pub, server_shared_key, client_shared_key, server_code, ios_code, received_code, code_attempts, device_secret, paired_devices, received_device_id, auth_nonces_used, received_auth_nonce, received_pair_begin, received_pair_hello, received_code_submit, received_auth_request, received_pair_hello_ack, received_pair_confirm, received_pair_complete, received_auth_ok, received_token_response, received_waiting_for_code, received_pair_status>>
-
-\* ios: Reconnect -> SendAuth (relay connected)
-ios_Reconnect_to_SendAuth_relay_connected ==
-    /\ ios_state = ios_Reconnect
-    /\ received_auth_request' = [type |-> MSG_auth_request, device_id |-> "device_1", key |-> client_shared_key, nonce |-> "nonce_1", secret |-> device_secret]
-    /\ ios_state' = ios_SendAuth
-    /\ UNCHANGED <<server_state, cli_state, current_token, active_tokens, used_tokens, server_ecdh_pub, received_client_pub, received_server_pub, server_shared_key, client_shared_key, server_code, ios_code, received_code, code_attempts, device_secret, paired_devices, received_device_id, auth_nonces_used, received_auth_nonce, received_pair_begin, received_pair_hello, received_code_submit, received_pair_hello_ack, received_pair_confirm, received_pair_complete, received_auth_ok, received_token_response, received_waiting_for_code, received_pair_status>>
-
-\* ios: SendAuth -> SessionActive on recv auth_ok
-ios_SendAuth_to_SessionActive_on_auth_ok ==
-    /\ ios_state = ios_SendAuth
-    /\ received_auth_ok.type = MSG_auth_ok
-    /\ received_auth_ok' = [type |-> "none"]
-    /\ ios_state' = ios_SessionActive
-    /\ UNCHANGED <<server_state, cli_state, current_token, active_tokens, used_tokens, server_ecdh_pub, received_client_pub, received_server_pub, server_shared_key, client_shared_key, server_code, ios_code, received_code, code_attempts, device_secret, paired_devices, received_device_id, auth_nonces_used, received_auth_nonce, received_pair_begin, received_pair_hello, received_code_submit, received_auth_request, received_pair_hello_ack, received_pair_confirm, received_pair_complete, received_token_response, received_waiting_for_code, received_pair_status>>
-
-\* ios: SessionActive -> Paired (disconnect)
-ios_SessionActive_to_Paired_disconnect ==
-    /\ ios_state = ios_SessionActive
-    /\ ios_state' = ios_Paired
-    /\ UNCHANGED <<server_state, cli_state, current_token, active_tokens, used_tokens, server_ecdh_pub, received_client_pub, received_server_pub, server_shared_key, client_shared_key, server_code, ios_code, received_code, code_attempts, device_secret, paired_devices, received_device_id, auth_nonces_used, received_auth_nonce, received_pair_begin, received_pair_hello, received_code_submit, received_auth_request, received_pair_hello_ack, received_pair_confirm, received_pair_complete, received_auth_ok, received_token_response, received_waiting_for_code, received_pair_status>>
-
 
 \* cli: Idle -> GetKey (cli --init)
 cli_Idle_to_GetKey_cli___init ==
     /\ cli_state = cli_Idle
     /\ cli_state' = cli_GetKey
-    /\ UNCHANGED <<server_state, ios_state, current_token, active_tokens, used_tokens, server_ecdh_pub, received_client_pub, received_server_pub, server_shared_key, client_shared_key, server_code, ios_code, received_code, code_attempts, device_secret, paired_devices, received_device_id, auth_nonces_used, received_auth_nonce, received_pair_begin, received_pair_hello, received_code_submit, received_auth_request, received_pair_hello_ack, received_pair_confirm, received_pair_complete, received_auth_ok, received_token_response, received_waiting_for_code, received_pair_status>>
+    /\ UNCHANGED <<server_pairing_state, server_auth_state, ios_pairing_state, ios_auth_state, current_token, active_tokens, used_tokens, server_ecdh_pub, received_client_pub, received_server_pub, server_shared_key, client_shared_key, server_code, ios_code, received_code, code_attempts, device_secret, paired_devices, received_device_id, auth_nonces_used, received_auth_nonce, received_token_response, received_waiting_for_code, received_pair_status, received_pair_begin, received_pair_hello, received_code_submit, received_auth_request, received_pair_hello_ack, received_pair_confirm, received_pair_complete, received_auth_ok>>
 
 \* cli: GetKey -> BeginPair (key stored)
 cli_GetKey_to_BeginPair_key_stored ==
     /\ cli_state = cli_GetKey
     /\ received_pair_begin' = [type |-> MSG_pair_begin]
     /\ cli_state' = cli_BeginPair
-    /\ UNCHANGED <<server_state, ios_state, current_token, active_tokens, used_tokens, server_ecdh_pub, received_client_pub, received_server_pub, server_shared_key, client_shared_key, server_code, ios_code, received_code, code_attempts, device_secret, paired_devices, received_device_id, auth_nonces_used, received_auth_nonce, received_pair_hello, received_code_submit, received_auth_request, received_pair_hello_ack, received_pair_confirm, received_pair_complete, received_auth_ok, received_token_response, received_waiting_for_code, received_pair_status>>
+    /\ UNCHANGED <<server_pairing_state, server_auth_state, ios_pairing_state, ios_auth_state, current_token, active_tokens, used_tokens, server_ecdh_pub, received_client_pub, received_server_pub, server_shared_key, client_shared_key, server_code, ios_code, received_code, code_attempts, device_secret, paired_devices, received_device_id, auth_nonces_used, received_auth_nonce, received_token_response, received_waiting_for_code, received_pair_status, received_pair_hello, received_code_submit, received_auth_request, received_pair_hello_ack, received_pair_confirm, received_pair_complete, received_auth_ok>>
 
 \* cli: BeginPair -> ShowQR on recv token_response
 cli_BeginPair_to_ShowQR_on_token_response ==
@@ -396,7 +194,7 @@ cli_BeginPair_to_ShowQR_on_token_response ==
     /\ received_token_response.type = MSG_token_response
     /\ received_token_response' = [type |-> "none"]
     /\ cli_state' = cli_ShowQR
-    /\ UNCHANGED <<server_state, ios_state, current_token, active_tokens, used_tokens, server_ecdh_pub, received_client_pub, received_server_pub, server_shared_key, client_shared_key, server_code, ios_code, received_code, code_attempts, device_secret, paired_devices, received_device_id, auth_nonces_used, received_auth_nonce, received_pair_begin, received_pair_hello, received_code_submit, received_auth_request, received_pair_hello_ack, received_pair_confirm, received_pair_complete, received_auth_ok, received_waiting_for_code, received_pair_status>>
+    /\ UNCHANGED <<server_pairing_state, server_auth_state, ios_pairing_state, ios_auth_state, current_token, active_tokens, used_tokens, server_ecdh_pub, received_client_pub, received_server_pub, server_shared_key, client_shared_key, server_code, ios_code, received_code, code_attempts, device_secret, paired_devices, received_device_id, auth_nonces_used, received_auth_nonce, received_waiting_for_code, received_pair_status, received_pair_begin, received_pair_hello, received_code_submit, received_auth_request, received_pair_hello_ack, received_pair_confirm, received_pair_complete, received_auth_ok>>
 
 \* cli: ShowQR -> PromptCode on recv waiting_for_code
 cli_ShowQR_to_PromptCode_on_waiting_for_code ==
@@ -404,14 +202,14 @@ cli_ShowQR_to_PromptCode_on_waiting_for_code ==
     /\ received_waiting_for_code.type = MSG_waiting_for_code
     /\ received_waiting_for_code' = [type |-> "none"]
     /\ cli_state' = cli_PromptCode
-    /\ UNCHANGED <<server_state, ios_state, current_token, active_tokens, used_tokens, server_ecdh_pub, received_client_pub, received_server_pub, server_shared_key, client_shared_key, server_code, ios_code, received_code, code_attempts, device_secret, paired_devices, received_device_id, auth_nonces_used, received_auth_nonce, received_pair_begin, received_pair_hello, received_code_submit, received_auth_request, received_pair_hello_ack, received_pair_confirm, received_pair_complete, received_auth_ok, received_token_response, received_pair_status>>
+    /\ UNCHANGED <<server_pairing_state, server_auth_state, ios_pairing_state, ios_auth_state, current_token, active_tokens, used_tokens, server_ecdh_pub, received_client_pub, received_server_pub, server_shared_key, client_shared_key, server_code, ios_code, received_code, code_attempts, device_secret, paired_devices, received_device_id, auth_nonces_used, received_auth_nonce, received_token_response, received_pair_status, received_pair_begin, received_pair_hello, received_code_submit, received_auth_request, received_pair_hello_ack, received_pair_confirm, received_pair_complete, received_auth_ok>>
 
 \* cli: PromptCode -> SubmitCode (user enters code)
 cli_PromptCode_to_SubmitCode_user_enters_code ==
     /\ cli_state = cli_PromptCode
     /\ received_code_submit' = [type |-> MSG_code_submit, code |-> ios_code]
     /\ cli_state' = cli_SubmitCode
-    /\ UNCHANGED <<server_state, ios_state, current_token, active_tokens, used_tokens, server_ecdh_pub, received_client_pub, received_server_pub, server_shared_key, client_shared_key, server_code, ios_code, received_code, code_attempts, device_secret, paired_devices, received_device_id, auth_nonces_used, received_auth_nonce, received_pair_begin, received_pair_hello, received_auth_request, received_pair_hello_ack, received_pair_confirm, received_pair_complete, received_auth_ok, received_token_response, received_waiting_for_code, received_pair_status>>
+    /\ UNCHANGED <<server_pairing_state, server_auth_state, ios_pairing_state, ios_auth_state, current_token, active_tokens, used_tokens, server_ecdh_pub, received_client_pub, received_server_pub, server_shared_key, client_shared_key, server_code, ios_code, received_code, code_attempts, device_secret, paired_devices, received_device_id, auth_nonces_used, received_auth_nonce, received_token_response, received_waiting_for_code, received_pair_status, received_pair_begin, received_pair_hello, received_auth_request, received_pair_hello_ack, received_pair_confirm, received_pair_complete, received_auth_ok>>
 
 \* cli: SubmitCode -> Done on recv pair_status
 cli_SubmitCode_to_Done_on_pair_status ==
@@ -419,43 +217,288 @@ cli_SubmitCode_to_Done_on_pair_status ==
     /\ received_pair_status.type = MSG_pair_status
     /\ received_pair_status' = [type |-> "none"]
     /\ cli_state' = cli_Done
-    /\ UNCHANGED <<server_state, ios_state, current_token, active_tokens, used_tokens, server_ecdh_pub, received_client_pub, received_server_pub, server_shared_key, client_shared_key, server_code, ios_code, received_code, code_attempts, device_secret, paired_devices, received_device_id, auth_nonces_used, received_auth_nonce, received_pair_begin, received_pair_hello, received_code_submit, received_auth_request, received_pair_hello_ack, received_pair_confirm, received_pair_complete, received_auth_ok, received_token_response, received_waiting_for_code>>
+    /\ UNCHANGED <<server_pairing_state, server_auth_state, ios_pairing_state, ios_auth_state, current_token, active_tokens, used_tokens, server_ecdh_pub, received_client_pub, received_server_pub, server_shared_key, client_shared_key, server_code, ios_code, received_code, code_attempts, device_secret, paired_devices, received_device_id, auth_nonces_used, received_auth_nonce, received_token_response, received_waiting_for_code, received_pair_begin, received_pair_hello, received_code_submit, received_auth_request, received_pair_hello_ack, received_pair_confirm, received_pair_complete, received_auth_ok>>
 
+
+\* server/pairing: Idle -> GenerateToken on recv pair_begin
+server_pairing_Idle_to_GenerateToken_on_pair_begin ==
+    /\ server_pairing_state = server_pairing_Idle
+    /\ received_pair_begin.type = MSG_pair_begin
+    /\ received_pair_begin' = [type |-> "none"]
+    /\ server_pairing_state' = server_pairing_GenerateToken
+    /\ current_token' = "tok_1"
+    /\ active_tokens' = active_tokens \union {"tok_1"}
+    /\ UNCHANGED <<cli_state, server_auth_state, ios_pairing_state, ios_auth_state, used_tokens, server_ecdh_pub, received_client_pub, received_server_pub, server_shared_key, client_shared_key, server_code, ios_code, received_code, code_attempts, device_secret, paired_devices, received_device_id, auth_nonces_used, received_auth_nonce, received_token_response, received_waiting_for_code, received_pair_status, received_pair_hello, received_code_submit, received_auth_request, received_pair_hello_ack, received_pair_confirm, received_pair_complete, received_auth_ok>>
+
+\* server/pairing: GenerateToken -> RegisterRelay (token created)
+server_pairing_GenerateToken_to_RegisterRelay_token_created ==
+    /\ server_pairing_state = server_pairing_GenerateToken
+    /\ server_pairing_state' = server_pairing_RegisterRelay
+    /\ UNCHANGED <<cli_state, server_auth_state, ios_pairing_state, ios_auth_state, current_token, active_tokens, used_tokens, server_ecdh_pub, received_client_pub, received_server_pub, server_shared_key, client_shared_key, server_code, ios_code, received_code, code_attempts, device_secret, paired_devices, received_device_id, auth_nonces_used, received_auth_nonce, received_token_response, received_waiting_for_code, received_pair_status, received_pair_begin, received_pair_hello, received_code_submit, received_auth_request, received_pair_hello_ack, received_pair_confirm, received_pair_complete, received_auth_ok>>
+
+\* server/pairing: RegisterRelay -> WaitingForClient (relay registered)
+server_pairing_RegisterRelay_to_WaitingForClient_relay_registered ==
+    /\ server_pairing_state = server_pairing_RegisterRelay
+    /\ received_token_response' = [type |-> MSG_token_response, instance_id |-> "inst_1", token |-> current_token]
+    /\ server_pairing_state' = server_pairing_WaitingForClient
+    /\ UNCHANGED <<cli_state, server_auth_state, ios_pairing_state, ios_auth_state, current_token, active_tokens, used_tokens, server_ecdh_pub, received_client_pub, received_server_pub, server_shared_key, client_shared_key, server_code, ios_code, received_code, code_attempts, device_secret, paired_devices, received_device_id, auth_nonces_used, received_auth_nonce, received_waiting_for_code, received_pair_status, received_pair_begin, received_pair_hello, received_code_submit, received_auth_request, received_pair_hello_ack, received_pair_confirm, received_pair_complete, received_auth_ok>>
+
+\* server/pairing: WaitingForClient -> DeriveSecret on recv pair_hello [token_valid]
+server_pairing_WaitingForClient_to_DeriveSecret_on_pair_hello_token_valid ==
+    /\ server_pairing_state = server_pairing_WaitingForClient
+    /\ received_pair_hello.type = MSG_pair_hello
+    /\ received_pair_hello.token \in active_tokens
+    /\ received_pair_hello' = [type |-> "none"]
+    /\ server_pairing_state' = server_pairing_DeriveSecret
+    /\ received_client_pub' = received_pair_hello.pubkey
+    /\ server_ecdh_pub' = "server_pub"
+    /\ server_shared_key' = DeriveKey("server_pub", received_pair_hello.pubkey)
+    /\ server_code' = DeriveCode("server_pub", received_pair_hello.pubkey)
+    /\ UNCHANGED <<cli_state, server_auth_state, ios_pairing_state, ios_auth_state, current_token, active_tokens, used_tokens, received_server_pub, client_shared_key, ios_code, received_code, code_attempts, device_secret, paired_devices, received_device_id, auth_nonces_used, received_auth_nonce, received_token_response, received_waiting_for_code, received_pair_status, received_pair_begin, received_code_submit, received_auth_request, received_pair_hello_ack, received_pair_confirm, received_pair_complete, received_auth_ok>>
+
+\* server/pairing: WaitingForClient -> Idle on recv pair_hello [token_invalid]
+server_pairing_WaitingForClient_to_Idle_on_pair_hello_token_invalid ==
+    /\ server_pairing_state = server_pairing_WaitingForClient
+    /\ received_pair_hello.type = MSG_pair_hello
+    /\ received_pair_hello.token \notin active_tokens
+    /\ received_pair_hello' = [type |-> "none"]
+    /\ server_pairing_state' = server_pairing_Idle
+    /\ UNCHANGED <<cli_state, server_auth_state, ios_pairing_state, ios_auth_state, current_token, active_tokens, used_tokens, server_ecdh_pub, received_client_pub, received_server_pub, server_shared_key, client_shared_key, server_code, ios_code, received_code, code_attempts, device_secret, paired_devices, received_device_id, auth_nonces_used, received_auth_nonce, received_token_response, received_waiting_for_code, received_pair_status, received_pair_begin, received_code_submit, received_auth_request, received_pair_hello_ack, received_pair_confirm, received_pair_complete, received_auth_ok>>
+
+\* server/pairing: DeriveSecret -> SendAck (ECDH complete)
+server_pairing_DeriveSecret_to_SendAck_ECDH_complete ==
+    /\ server_pairing_state = server_pairing_DeriveSecret
+    /\ received_pair_hello_ack' = [type |-> MSG_pair_hello_ack, pubkey |-> server_ecdh_pub]
+    /\ server_pairing_state' = server_pairing_SendAck
+    /\ UNCHANGED <<cli_state, server_auth_state, ios_pairing_state, ios_auth_state, current_token, active_tokens, used_tokens, server_ecdh_pub, received_client_pub, received_server_pub, server_shared_key, client_shared_key, server_code, ios_code, received_code, code_attempts, device_secret, paired_devices, received_device_id, auth_nonces_used, received_auth_nonce, received_token_response, received_waiting_for_code, received_pair_status, received_pair_begin, received_pair_hello, received_code_submit, received_auth_request, received_pair_confirm, received_pair_complete, received_auth_ok>>
+
+\* server/pairing: SendAck -> WaitingForCode (signal code display)
+server_pairing_SendAck_to_WaitingForCode_signal_code_display ==
+    /\ server_pairing_state = server_pairing_SendAck
+    /\ received_pair_confirm' = [type |-> MSG_pair_confirm]
+    /\ received_waiting_for_code' = [type |-> MSG_waiting_for_code]
+    /\ server_pairing_state' = server_pairing_WaitingForCode
+    /\ UNCHANGED <<cli_state, server_auth_state, ios_pairing_state, ios_auth_state, current_token, active_tokens, used_tokens, server_ecdh_pub, received_client_pub, received_server_pub, server_shared_key, client_shared_key, server_code, ios_code, received_code, code_attempts, device_secret, paired_devices, received_device_id, auth_nonces_used, received_auth_nonce, received_token_response, received_pair_status, received_pair_begin, received_pair_hello, received_code_submit, received_auth_request, received_pair_hello_ack, received_pair_complete, received_auth_ok>>
+
+\* server/pairing: WaitingForCode -> ValidateCode on recv code_submit
+server_pairing_WaitingForCode_to_ValidateCode_on_code_submit ==
+    /\ server_pairing_state = server_pairing_WaitingForCode
+    /\ received_code_submit.type = MSG_code_submit
+    /\ received_code_submit' = [type |-> "none"]
+    /\ server_pairing_state' = server_pairing_ValidateCode
+    /\ received_code' = received_code_submit.code
+    /\ UNCHANGED <<cli_state, server_auth_state, ios_pairing_state, ios_auth_state, current_token, active_tokens, used_tokens, server_ecdh_pub, received_client_pub, received_server_pub, server_shared_key, client_shared_key, server_code, ios_code, code_attempts, device_secret, paired_devices, received_device_id, auth_nonces_used, received_auth_nonce, received_token_response, received_waiting_for_code, received_pair_status, received_pair_begin, received_pair_hello, received_auth_request, received_pair_hello_ack, received_pair_confirm, received_pair_complete, received_auth_ok>>
+
+\* server/pairing: ValidateCode -> StorePaired (check code) [code_correct]
+server_pairing_ValidateCode_to_StorePaired_check_code_code_correct ==
+    /\ server_pairing_state = server_pairing_ValidateCode
+    /\ received_code = server_code
+    /\ server_pairing_state' = server_pairing_StorePaired
+    /\ UNCHANGED <<cli_state, server_auth_state, ios_pairing_state, ios_auth_state, current_token, active_tokens, used_tokens, server_ecdh_pub, received_client_pub, received_server_pub, server_shared_key, client_shared_key, server_code, ios_code, received_code, code_attempts, device_secret, paired_devices, received_device_id, auth_nonces_used, received_auth_nonce, received_token_response, received_waiting_for_code, received_pair_status, received_pair_begin, received_pair_hello, received_code_submit, received_auth_request, received_pair_hello_ack, received_pair_confirm, received_pair_complete, received_auth_ok>>
+
+\* server/pairing: ValidateCode -> Idle (check code) [code_wrong]
+server_pairing_ValidateCode_to_Idle_check_code_code_wrong ==
+    /\ server_pairing_state = server_pairing_ValidateCode
+    /\ received_code /= server_code
+    /\ server_pairing_state' = server_pairing_Idle
+    /\ code_attempts' = code_attempts + 1
+    /\ UNCHANGED <<cli_state, server_auth_state, ios_pairing_state, ios_auth_state, current_token, active_tokens, used_tokens, server_ecdh_pub, received_client_pub, received_server_pub, server_shared_key, client_shared_key, server_code, ios_code, received_code, device_secret, paired_devices, received_device_id, auth_nonces_used, received_auth_nonce, received_token_response, received_waiting_for_code, received_pair_status, received_pair_begin, received_pair_hello, received_code_submit, received_auth_request, received_pair_hello_ack, received_pair_confirm, received_pair_complete, received_auth_ok>>
+
+\* server/pairing: StorePaired -> PairingComplete (finalise)
+server_pairing_StorePaired_to_PairingComplete_finalise ==
+    /\ server_pairing_state = server_pairing_StorePaired
+    /\ received_pair_complete' = [type |-> MSG_pair_complete, key |-> server_shared_key, secret |-> "dev_secret_1"]
+    /\ received_pair_status' = [type |-> MSG_pair_status, status |-> "paired"]
+    /\ server_pairing_state' = server_pairing_PairingComplete
+    /\ device_secret' = "dev_secret_1"
+    /\ paired_devices' = paired_devices \union {"device_1"}
+    /\ active_tokens' = active_tokens \ {current_token}
+    /\ used_tokens' = used_tokens \union {current_token}
+    /\ UNCHANGED <<cli_state, server_auth_state, ios_pairing_state, ios_auth_state, current_token, server_ecdh_pub, received_client_pub, received_server_pub, server_shared_key, client_shared_key, server_code, ios_code, received_code, code_attempts, received_device_id, auth_nonces_used, received_auth_nonce, received_token_response, received_waiting_for_code, received_pair_begin, received_pair_hello, received_code_submit, received_auth_request, received_pair_hello_ack, received_pair_confirm, received_auth_ok>>
+
+
+\* server/auth: Idle -> Paired (credential_ready)
+server_auth_Idle_to_Paired_credential_ready ==
+    /\ server_auth_state = server_auth_Idle
+    /\ server_auth_state' = server_auth_Paired
+    /\ UNCHANGED <<cli_state, server_pairing_state, ios_pairing_state, ios_auth_state, current_token, active_tokens, used_tokens, server_ecdh_pub, received_client_pub, received_server_pub, server_shared_key, client_shared_key, server_code, ios_code, received_code, code_attempts, device_secret, paired_devices, received_device_id, auth_nonces_used, received_auth_nonce, received_token_response, received_waiting_for_code, received_pair_status, received_pair_begin, received_pair_hello, received_code_submit, received_auth_request, received_pair_hello_ack, received_pair_confirm, received_pair_complete, received_auth_ok>>
+
+\* server/auth: Paired -> AuthCheck on recv auth_request
+server_auth_Paired_to_AuthCheck_on_auth_request ==
+    /\ server_auth_state = server_auth_Paired
+    /\ received_auth_request.type = MSG_auth_request
+    /\ received_auth_request' = [type |-> "none"]
+    /\ server_auth_state' = server_auth_AuthCheck
+    /\ received_device_id' = received_auth_request.device_id
+    /\ received_auth_nonce' = received_auth_request.nonce
+    /\ UNCHANGED <<cli_state, server_pairing_state, ios_pairing_state, ios_auth_state, current_token, active_tokens, used_tokens, server_ecdh_pub, received_client_pub, received_server_pub, server_shared_key, client_shared_key, server_code, ios_code, received_code, code_attempts, device_secret, paired_devices, auth_nonces_used, received_token_response, received_waiting_for_code, received_pair_status, received_pair_begin, received_pair_hello, received_code_submit, received_pair_hello_ack, received_pair_confirm, received_pair_complete, received_auth_ok>>
+
+\* server/auth: AuthCheck -> SessionActive (verify) [device_known]
+server_auth_AuthCheck_to_SessionActive_verify_device_known ==
+    /\ server_auth_state = server_auth_AuthCheck
+    /\ received_device_id \in paired_devices
+    /\ received_auth_ok' = [type |-> MSG_auth_ok]
+    /\ server_auth_state' = server_auth_SessionActive
+    /\ auth_nonces_used' = auth_nonces_used \union {received_auth_nonce}
+    /\ UNCHANGED <<cli_state, server_pairing_state, ios_pairing_state, ios_auth_state, current_token, active_tokens, used_tokens, server_ecdh_pub, received_client_pub, received_server_pub, server_shared_key, client_shared_key, server_code, ios_code, received_code, code_attempts, device_secret, paired_devices, received_device_id, received_auth_nonce, received_token_response, received_waiting_for_code, received_pair_status, received_pair_begin, received_pair_hello, received_code_submit, received_auth_request, received_pair_hello_ack, received_pair_confirm, received_pair_complete>>
+
+\* server/auth: AuthCheck -> Idle (verify) [device_unknown]
+server_auth_AuthCheck_to_Idle_verify_device_unknown ==
+    /\ server_auth_state = server_auth_AuthCheck
+    /\ received_device_id \notin paired_devices
+    /\ server_auth_state' = server_auth_Idle
+    /\ UNCHANGED <<cli_state, server_pairing_state, ios_pairing_state, ios_auth_state, current_token, active_tokens, used_tokens, server_ecdh_pub, received_client_pub, received_server_pub, server_shared_key, client_shared_key, server_code, ios_code, received_code, code_attempts, device_secret, paired_devices, received_device_id, auth_nonces_used, received_auth_nonce, received_token_response, received_waiting_for_code, received_pair_status, received_pair_begin, received_pair_hello, received_code_submit, received_auth_request, received_pair_hello_ack, received_pair_confirm, received_pair_complete, received_auth_ok>>
+
+\* server/auth: SessionActive -> Paired (disconnect)
+server_auth_SessionActive_to_Paired_disconnect ==
+    /\ server_auth_state = server_auth_SessionActive
+    /\ server_auth_state' = server_auth_Paired
+    /\ UNCHANGED <<cli_state, server_pairing_state, ios_pairing_state, ios_auth_state, current_token, active_tokens, used_tokens, server_ecdh_pub, received_client_pub, received_server_pub, server_shared_key, client_shared_key, server_code, ios_code, received_code, code_attempts, device_secret, paired_devices, received_device_id, auth_nonces_used, received_auth_nonce, received_token_response, received_waiting_for_code, received_pair_status, received_pair_begin, received_pair_hello, received_code_submit, received_auth_request, received_pair_hello_ack, received_pair_confirm, received_pair_complete, received_auth_ok>>
+
+
+\* Route: pairing reports paired -> delivers to targets
+server_route_pairing_paired ==
+    /\ TRUE  \* route guard: no matching reporting state found
+    /\ server_auth_state' = server_auth_Paired
+    /\ UNCHANGED <<cli_state, server_pairing_state, ios_pairing_state, ios_auth_state, current_token, active_tokens, used_tokens, server_ecdh_pub, received_client_pub, received_server_pub, server_shared_key, client_shared_key, server_code, ios_code, received_code, code_attempts, device_secret, paired_devices, received_device_id, auth_nonces_used, received_auth_nonce, received_token_response, received_waiting_for_code, received_pair_status, received_pair_begin, received_pair_hello, received_code_submit, received_auth_request, received_pair_hello_ack, received_pair_confirm, received_pair_complete, received_auth_ok>>
+
+\* ios/pairing: Idle -> ScanQR (user scans QR)
+ios_pairing_Idle_to_ScanQR_user_scans_QR ==
+    /\ ios_pairing_state = ios_pairing_Idle
+    /\ ios_pairing_state' = ios_pairing_ScanQR
+    /\ UNCHANGED <<cli_state, server_pairing_state, server_auth_state, ios_auth_state, current_token, active_tokens, used_tokens, server_ecdh_pub, received_client_pub, received_server_pub, server_shared_key, client_shared_key, server_code, ios_code, received_code, code_attempts, device_secret, paired_devices, received_device_id, auth_nonces_used, received_auth_nonce, received_token_response, received_waiting_for_code, received_pair_status, received_pair_begin, received_pair_hello, received_code_submit, received_auth_request, received_pair_hello_ack, received_pair_confirm, received_pair_complete, received_auth_ok>>
+
+\* ios/pairing: ScanQR -> ConnectRelay (QR parsed)
+ios_pairing_ScanQR_to_ConnectRelay_QR_parsed ==
+    /\ ios_pairing_state = ios_pairing_ScanQR
+    /\ ios_pairing_state' = ios_pairing_ConnectRelay
+    /\ UNCHANGED <<cli_state, server_pairing_state, server_auth_state, ios_auth_state, current_token, active_tokens, used_tokens, server_ecdh_pub, received_client_pub, received_server_pub, server_shared_key, client_shared_key, server_code, ios_code, received_code, code_attempts, device_secret, paired_devices, received_device_id, auth_nonces_used, received_auth_nonce, received_token_response, received_waiting_for_code, received_pair_status, received_pair_begin, received_pair_hello, received_code_submit, received_auth_request, received_pair_hello_ack, received_pair_confirm, received_pair_complete, received_auth_ok>>
+
+\* ios/pairing: ConnectRelay -> GenKeyPair (relay connected)
+ios_pairing_ConnectRelay_to_GenKeyPair_relay_connected ==
+    /\ ios_pairing_state = ios_pairing_ConnectRelay
+    /\ ios_pairing_state' = ios_pairing_GenKeyPair
+    /\ UNCHANGED <<cli_state, server_pairing_state, server_auth_state, ios_auth_state, current_token, active_tokens, used_tokens, server_ecdh_pub, received_client_pub, received_server_pub, server_shared_key, client_shared_key, server_code, ios_code, received_code, code_attempts, device_secret, paired_devices, received_device_id, auth_nonces_used, received_auth_nonce, received_token_response, received_waiting_for_code, received_pair_status, received_pair_begin, received_pair_hello, received_code_submit, received_auth_request, received_pair_hello_ack, received_pair_confirm, received_pair_complete, received_auth_ok>>
+
+\* ios/pairing: GenKeyPair -> WaitAck (key pair generated)
+ios_pairing_GenKeyPair_to_WaitAck_key_pair_generated ==
+    /\ ios_pairing_state = ios_pairing_GenKeyPair
+    /\ received_pair_hello' = [type |-> MSG_pair_hello, pubkey |-> "client_pub", token |-> current_token]
+    /\ ios_pairing_state' = ios_pairing_WaitAck
+    /\ UNCHANGED <<cli_state, server_pairing_state, server_auth_state, ios_auth_state, current_token, active_tokens, used_tokens, server_ecdh_pub, received_client_pub, received_server_pub, server_shared_key, client_shared_key, server_code, ios_code, received_code, code_attempts, device_secret, paired_devices, received_device_id, auth_nonces_used, received_auth_nonce, received_token_response, received_waiting_for_code, received_pair_status, received_pair_begin, received_code_submit, received_auth_request, received_pair_hello_ack, received_pair_confirm, received_pair_complete, received_auth_ok>>
+
+\* ios/pairing: WaitAck -> E2EReady on recv pair_hello_ack
+ios_pairing_WaitAck_to_E2EReady_on_pair_hello_ack ==
+    /\ ios_pairing_state = ios_pairing_WaitAck
+    /\ received_pair_hello_ack.type = MSG_pair_hello_ack
+    /\ received_pair_hello_ack' = [type |-> "none"]
+    /\ ios_pairing_state' = ios_pairing_E2EReady
+    /\ received_server_pub' = received_pair_hello_ack.pubkey
+    /\ client_shared_key' = DeriveKey("client_pub", received_pair_hello_ack.pubkey)
+    /\ UNCHANGED <<cli_state, server_pairing_state, server_auth_state, ios_auth_state, current_token, active_tokens, used_tokens, server_ecdh_pub, received_client_pub, server_shared_key, server_code, ios_code, received_code, code_attempts, device_secret, paired_devices, received_device_id, auth_nonces_used, received_auth_nonce, received_token_response, received_waiting_for_code, received_pair_status, received_pair_begin, received_pair_hello, received_code_submit, received_auth_request, received_pair_confirm, received_pair_complete, received_auth_ok>>
+
+\* ios/pairing: E2EReady -> ShowCode on recv pair_confirm
+ios_pairing_E2EReady_to_ShowCode_on_pair_confirm ==
+    /\ ios_pairing_state = ios_pairing_E2EReady
+    /\ received_pair_confirm.type = MSG_pair_confirm
+    /\ received_pair_confirm' = [type |-> "none"]
+    /\ ios_pairing_state' = ios_pairing_ShowCode
+    /\ ios_code' = DeriveCode(received_server_pub, "client_pub")
+    /\ UNCHANGED <<cli_state, server_pairing_state, server_auth_state, ios_auth_state, current_token, active_tokens, used_tokens, server_ecdh_pub, received_client_pub, received_server_pub, server_shared_key, client_shared_key, server_code, received_code, code_attempts, device_secret, paired_devices, received_device_id, auth_nonces_used, received_auth_nonce, received_token_response, received_waiting_for_code, received_pair_status, received_pair_begin, received_pair_hello, received_code_submit, received_auth_request, received_pair_hello_ack, received_pair_complete, received_auth_ok>>
+
+\* ios/pairing: ShowCode -> WaitPairComplete (code displayed)
+ios_pairing_ShowCode_to_WaitPairComplete_code_displayed ==
+    /\ ios_pairing_state = ios_pairing_ShowCode
+    /\ ios_pairing_state' = ios_pairing_WaitPairComplete
+    /\ UNCHANGED <<cli_state, server_pairing_state, server_auth_state, ios_auth_state, current_token, active_tokens, used_tokens, server_ecdh_pub, received_client_pub, received_server_pub, server_shared_key, client_shared_key, server_code, ios_code, received_code, code_attempts, device_secret, paired_devices, received_device_id, auth_nonces_used, received_auth_nonce, received_token_response, received_waiting_for_code, received_pair_status, received_pair_begin, received_pair_hello, received_code_submit, received_auth_request, received_pair_hello_ack, received_pair_confirm, received_pair_complete, received_auth_ok>>
+
+\* ios/pairing: WaitPairComplete -> PairingComplete on recv pair_complete
+ios_pairing_WaitPairComplete_to_PairingComplete_on_pair_complete ==
+    /\ ios_pairing_state = ios_pairing_WaitPairComplete
+    /\ received_pair_complete.type = MSG_pair_complete
+    /\ received_pair_complete' = [type |-> "none"]
+    /\ ios_pairing_state' = ios_pairing_PairingComplete
+    /\ UNCHANGED <<cli_state, server_pairing_state, server_auth_state, ios_auth_state, current_token, active_tokens, used_tokens, server_ecdh_pub, received_client_pub, received_server_pub, server_shared_key, client_shared_key, server_code, ios_code, received_code, code_attempts, device_secret, paired_devices, received_device_id, auth_nonces_used, received_auth_nonce, received_token_response, received_waiting_for_code, received_pair_status, received_pair_begin, received_pair_hello, received_code_submit, received_auth_request, received_pair_hello_ack, received_pair_confirm, received_auth_ok>>
+
+
+\* ios/auth: Idle -> Paired (credential_ready)
+ios_auth_Idle_to_Paired_credential_ready ==
+    /\ ios_auth_state = ios_auth_Idle
+    /\ ios_auth_state' = ios_auth_Paired
+    /\ UNCHANGED <<cli_state, server_pairing_state, server_auth_state, ios_pairing_state, current_token, active_tokens, used_tokens, server_ecdh_pub, received_client_pub, received_server_pub, server_shared_key, client_shared_key, server_code, ios_code, received_code, code_attempts, device_secret, paired_devices, received_device_id, auth_nonces_used, received_auth_nonce, received_token_response, received_waiting_for_code, received_pair_status, received_pair_begin, received_pair_hello, received_code_submit, received_auth_request, received_pair_hello_ack, received_pair_confirm, received_pair_complete, received_auth_ok>>
+
+\* ios/auth: Paired -> Reconnect (app launch)
+ios_auth_Paired_to_Reconnect_app_launch ==
+    /\ ios_auth_state = ios_auth_Paired
+    /\ ios_auth_state' = ios_auth_Reconnect
+    /\ UNCHANGED <<cli_state, server_pairing_state, server_auth_state, ios_pairing_state, current_token, active_tokens, used_tokens, server_ecdh_pub, received_client_pub, received_server_pub, server_shared_key, client_shared_key, server_code, ios_code, received_code, code_attempts, device_secret, paired_devices, received_device_id, auth_nonces_used, received_auth_nonce, received_token_response, received_waiting_for_code, received_pair_status, received_pair_begin, received_pair_hello, received_code_submit, received_auth_request, received_pair_hello_ack, received_pair_confirm, received_pair_complete, received_auth_ok>>
+
+\* ios/auth: Reconnect -> SendAuth (relay connected)
+ios_auth_Reconnect_to_SendAuth_relay_connected ==
+    /\ ios_auth_state = ios_auth_Reconnect
+    /\ received_auth_request' = [type |-> MSG_auth_request, device_id |-> "device_1", key |-> client_shared_key, nonce |-> "nonce_1", secret |-> device_secret]
+    /\ ios_auth_state' = ios_auth_SendAuth
+    /\ UNCHANGED <<cli_state, server_pairing_state, server_auth_state, ios_pairing_state, current_token, active_tokens, used_tokens, server_ecdh_pub, received_client_pub, received_server_pub, server_shared_key, client_shared_key, server_code, ios_code, received_code, code_attempts, device_secret, paired_devices, received_device_id, auth_nonces_used, received_auth_nonce, received_token_response, received_waiting_for_code, received_pair_status, received_pair_begin, received_pair_hello, received_code_submit, received_pair_hello_ack, received_pair_confirm, received_pair_complete, received_auth_ok>>
+
+\* ios/auth: SendAuth -> SessionActive on recv auth_ok
+ios_auth_SendAuth_to_SessionActive_on_auth_ok ==
+    /\ ios_auth_state = ios_auth_SendAuth
+    /\ received_auth_ok.type = MSG_auth_ok
+    /\ received_auth_ok' = [type |-> "none"]
+    /\ ios_auth_state' = ios_auth_SessionActive
+    /\ UNCHANGED <<cli_state, server_pairing_state, server_auth_state, ios_pairing_state, current_token, active_tokens, used_tokens, server_ecdh_pub, received_client_pub, received_server_pub, server_shared_key, client_shared_key, server_code, ios_code, received_code, code_attempts, device_secret, paired_devices, received_device_id, auth_nonces_used, received_auth_nonce, received_token_response, received_waiting_for_code, received_pair_status, received_pair_begin, received_pair_hello, received_code_submit, received_auth_request, received_pair_hello_ack, received_pair_confirm, received_pair_complete>>
+
+\* ios/auth: SessionActive -> Paired (disconnect)
+ios_auth_SessionActive_to_Paired_disconnect ==
+    /\ ios_auth_state = ios_auth_SessionActive
+    /\ ios_auth_state' = ios_auth_Paired
+    /\ UNCHANGED <<cli_state, server_pairing_state, server_auth_state, ios_pairing_state, current_token, active_tokens, used_tokens, server_ecdh_pub, received_client_pub, received_server_pub, server_shared_key, client_shared_key, server_code, ios_code, received_code, code_attempts, device_secret, paired_devices, received_device_id, auth_nonces_used, received_auth_nonce, received_token_response, received_waiting_for_code, received_pair_status, received_pair_begin, received_pair_hello, received_code_submit, received_auth_request, received_pair_hello_ack, received_pair_confirm, received_pair_complete, received_auth_ok>>
+
+
+\* Route: pairing reports paired -> delivers to targets
+ios_route_pairing_paired ==
+    /\ TRUE  \* route guard: no matching reporting state found
+    /\ ios_auth_state' = ios_auth_Paired
+    /\ UNCHANGED <<cli_state, server_pairing_state, server_auth_state, ios_pairing_state, current_token, active_tokens, used_tokens, server_ecdh_pub, received_client_pub, received_server_pub, server_shared_key, client_shared_key, server_code, ios_code, received_code, code_attempts, device_secret, paired_devices, received_device_id, auth_nonces_used, received_auth_nonce, received_token_response, received_waiting_for_code, received_pair_status, received_pair_begin, received_pair_hello, received_code_submit, received_auth_request, received_pair_hello_ack, received_pair_confirm, received_pair_complete, received_auth_ok>>
 
 Next ==
-    \/ server_Idle_to_GenerateToken_on_pair_begin
-    \/ server_GenerateToken_to_RegisterRelay_token_created
-    \/ server_RegisterRelay_to_WaitingForClient_relay_registered
-    \/ server_WaitingForClient_to_DeriveSecret_on_pair_hello_token_valid
-    \/ server_WaitingForClient_to_Idle_on_pair_hello_token_invalid
-    \/ server_DeriveSecret_to_SendAck_ECDH_complete
-    \/ server_SendAck_to_WaitingForCode_signal_code_display
-    \/ server_WaitingForCode_to_ValidateCode_on_code_submit
-    \/ server_ValidateCode_to_StorePaired_check_code_code_correct
-    \/ server_ValidateCode_to_Idle_check_code_code_wrong
-    \/ server_StorePaired_to_Paired_finalise
-    \/ server_Paired_to_AuthCheck_on_auth_request
-    \/ server_AuthCheck_to_SessionActive_verify_device_known
-    \/ server_AuthCheck_to_Idle_verify_device_unknown
-    \/ server_SessionActive_to_Paired_disconnect
-    \/ ios_Idle_to_ScanQR_user_scans_QR
-    \/ ios_ScanQR_to_ConnectRelay_QR_parsed
-    \/ ios_ConnectRelay_to_GenKeyPair_relay_connected
-    \/ ios_GenKeyPair_to_WaitAck_key_pair_generated
-    \/ ios_WaitAck_to_E2EReady_on_pair_hello_ack
-    \/ ios_E2EReady_to_ShowCode_on_pair_confirm
-    \/ ios_ShowCode_to_WaitPairComplete_code_displayed
-    \/ ios_WaitPairComplete_to_Paired_on_pair_complete
-    \/ ios_Paired_to_Reconnect_app_launch
-    \/ ios_Reconnect_to_SendAuth_relay_connected
-    \/ ios_SendAuth_to_SessionActive_on_auth_ok
-    \/ ios_SessionActive_to_Paired_disconnect
     \/ cli_Idle_to_GetKey_cli___init
     \/ cli_GetKey_to_BeginPair_key_stored
     \/ cli_BeginPair_to_ShowQR_on_token_response
     \/ cli_ShowQR_to_PromptCode_on_waiting_for_code
     \/ cli_PromptCode_to_SubmitCode_user_enters_code
     \/ cli_SubmitCode_to_Done_on_pair_status
+    \/ server_pairing_Idle_to_GenerateToken_on_pair_begin
+    \/ server_pairing_GenerateToken_to_RegisterRelay_token_created
+    \/ server_pairing_RegisterRelay_to_WaitingForClient_relay_registered
+    \/ server_pairing_WaitingForClient_to_DeriveSecret_on_pair_hello_token_valid
+    \/ server_pairing_WaitingForClient_to_Idle_on_pair_hello_token_invalid
+    \/ server_pairing_DeriveSecret_to_SendAck_ECDH_complete
+    \/ server_pairing_SendAck_to_WaitingForCode_signal_code_display
+    \/ server_pairing_WaitingForCode_to_ValidateCode_on_code_submit
+    \/ server_pairing_ValidateCode_to_StorePaired_check_code_code_correct
+    \/ server_pairing_ValidateCode_to_Idle_check_code_code_wrong
+    \/ server_pairing_StorePaired_to_PairingComplete_finalise
+    \/ server_auth_Idle_to_Paired_credential_ready
+    \/ server_auth_Paired_to_AuthCheck_on_auth_request
+    \/ server_auth_AuthCheck_to_SessionActive_verify_device_known
+    \/ server_auth_AuthCheck_to_Idle_verify_device_unknown
+    \/ server_auth_SessionActive_to_Paired_disconnect
+    \/ server_route_pairing_paired
+    \/ ios_pairing_Idle_to_ScanQR_user_scans_QR
+    \/ ios_pairing_ScanQR_to_ConnectRelay_QR_parsed
+    \/ ios_pairing_ConnectRelay_to_GenKeyPair_relay_connected
+    \/ ios_pairing_GenKeyPair_to_WaitAck_key_pair_generated
+    \/ ios_pairing_WaitAck_to_E2EReady_on_pair_hello_ack
+    \/ ios_pairing_E2EReady_to_ShowCode_on_pair_confirm
+    \/ ios_pairing_ShowCode_to_WaitPairComplete_code_displayed
+    \/ ios_pairing_WaitPairComplete_to_PairingComplete_on_pair_complete
+    \/ ios_auth_Idle_to_Paired_credential_ready
+    \/ ios_auth_Paired_to_Reconnect_app_launch
+    \/ ios_auth_Reconnect_to_SendAuth_relay_connected
+    \/ ios_auth_SendAuth_to_SessionActive_on_auth_ok
+    \/ ios_auth_SessionActive_to_Paired_disconnect
+    \/ ios_route_pairing_paired
 
 Spec == Init /\ [][Next]_vars /\ WF_vars(Next)
 
@@ -468,16 +511,16 @@ NoTokenReuse == used_tokens \intersect active_tokens = {}
 \* If the current session's shared key is compromised and both sides computed codes, the codes differ
 MitMDetectedByCodeMismatch == (server_shared_key \in adversary_keys /\ server_code /= <<"none">> /\ ios_code /= <<"none">>) => server_code /= ios_code
 \* If the current session's key is compromised, pairing never completes
-MitMPrevented == server_shared_key \in adversary_keys => server_state \notin {server_StorePaired, server_Paired, server_AuthCheck, server_SessionActive}
+MitMPrevented == server_shared_key \in adversary_keys => server_pairing_state \notin {"StorePaired", "PairingComplete"}
 \* A session is only active for a device that completed pairing
-AuthRequiresCompletedPairing == server_state = server_SessionActive => received_device_id \in paired_devices
+AuthRequiresCompletedPairing == server_auth_state = "SessionActive" => received_device_id \in paired_devices
 \* Each auth nonce is accepted at most once
-NoNonceReuse == server_state = server_SessionActive => received_auth_nonce \notin (auth_nonces_used \ {received_auth_nonce})
+NoNonceReuse == server_auth_state = "SessionActive" => received_auth_nonce \notin (auth_nonces_used \ {received_auth_nonce})
 \* Pairing only completes with the correct confirmation code
-WrongCodeDoesNotPair == (server_state = server_StorePaired \/ server_state = server_Paired) => received_code = server_code \/ received_code = <<"none">>
+WrongCodeDoesNotPair == (server_pairing_state = "StorePaired" \/ server_pairing_state = "PairingComplete") => received_code = server_code \/ received_code = <<"none">>
 \* Adversary never learns the device secret in plaintext
 DeviceSecretSecrecy == \A m \in adversary_knowledge : "type" \in DOMAIN m => m.type /= "plaintext_secret"
 \* If all actors cooperate honestly (no MitM), pairing eventually completes
-HonestPairingCompletes == <>(cli_state = cli_Done /\ ios_state = ios_Paired)
+HonestPairingCompletes == <>(cli_state = "Done" /\ ios_pairing_state = "PairingComplete")
 
 ====

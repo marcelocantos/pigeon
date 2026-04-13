@@ -54,9 +54,18 @@ func NewMachine(p *Protocol, actorName string) (*Machine, error) {
 		return nil, fmt.Errorf("actor %q not found in protocol %q", actorName, p.Name)
 	}
 
+	// For composed actors, the generic Machine flattens all sub-machine
+	// transitions and starts from the first sub-machine's initial state.
+	// Routing between sub-machines is not supported — use the generated
+	// composite type for full composition semantics.
+	initial := actor.Initial
+	if actor.IsComposed() && len(actor.Machines) > 0 {
+		initial = actor.Machines[0].Initial
+	}
+
 	m := &Machine{
 		actor:         *actor,
-		state:         actor.Initial,
+		state:         initial,
 		guards:        make(map[GuardID]GuardFunc),
 		actions:       make(map[ActionID]ActionFunc),
 		recvIndex:     make(map[stateMsg][]Transition),
@@ -92,6 +101,14 @@ func (m *Machine) State() State {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	return m.state
+}
+
+// SetState forcibly sets the current state, bypassing transition guards.
+// Intended for test setup only — use with care in production code.
+func (m *Machine) SetState(s State) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.state = s
 }
 
 // HandleMessage processes a received message. Returns the new state

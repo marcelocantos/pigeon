@@ -51,25 +51,30 @@ func TestMachineHappyPath(t *testing.T) {
 		}
 	}
 
-	assertState(PairingCeremonyServerIdle)
+	assertState(PairingCeremonyServerPairingIdle)
 	mustHandle(t, m, PairingCeremonyMsgPairBegin)
-	assertState(PairingCeremonyServerGenerateToken)
+	assertState(PairingCeremonyServerPairingGenerateToken)
 	mustStep(t, m) // -> RegisterRelay
 	mustStep(t, m) // -> WaitingForClient
 	mustHandle(t, m, PairingCeremonyMsgPairHello)
-	assertState(PairingCeremonyServerDeriveSecret)
+	assertState(PairingCeremonyServerPairingDeriveSecret)
 	mustStep(t, m) // -> SendAck
 	mustStep(t, m) // -> WaitingForCode
 	mustHandle(t, m, PairingCeremonyMsgCodeSubmit)
-	assertState(PairingCeremonyServerValidateCode)
+	assertState(PairingCeremonyServerPairingValidateCode)
 	mustStep(t, m) // -> StorePaired
-	mustStep(t, m) // -> Paired
-	assertState(PairingCeremonyServerPaired)
+	mustStep(t, m) // -> PairingComplete
+	assertState(PairingCeremonyServerPairingPairingComplete)
+
+	// Route: pairing complete → auth sub-machine starts at Paired.
+	// The generic Machine does not execute routes automatically; manually
+	// advance to auth's initial active state.
+	m.SetState(PairingCeremonyServerAuthPaired)
 
 	// Reconnection.
 	mustHandle(t, m, PairingCeremonyMsgAuthRequest)
 	mustStep(t, m) // -> SessionActive
-	assertState(PairingCeremonyServerSessionActive)
+	assertState(PairingCeremonyServerAuthSessionActive)
 }
 
 func TestMachineTokenRejection(t *testing.T) {
@@ -88,7 +93,7 @@ func TestMachineTokenRejection(t *testing.T) {
 	mustStep(t, m) // -> WaitingForClient
 	mustHandle(t, m, PairingCeremonyMsgPairHello)
 
-	if got := m.State(); got != PairingCeremonyServerIdle {
+	if got := m.State(); got != PairingCeremonyServerPairingIdle {
 		t.Fatalf("expected Idle after invalid token, got %s", got)
 	}
 }
@@ -115,7 +120,7 @@ func TestMachineCodeRejection(t *testing.T) {
 	mustHandle(t, m, PairingCeremonyMsgCodeSubmit)
 	mustStep(t, m) // -> Idle (wrong code)
 
-	if got := m.State(); got != PairingCeremonyServerIdle {
+	if got := m.State(); got != PairingCeremonyServerPairingIdle {
 		t.Fatalf("expected Idle after wrong code, got %s", got)
 	}
 }
@@ -141,29 +146,37 @@ func TestIOSMachineHappyPath(t *testing.T) {
 
 	noopActions(m, PairingCeremonyActionSendPairHello, PairingCeremonyActionDeriveSecret, PairingCeremonyActionStoreSecret)
 
-	mustStep(t, m) // -> ScanQR
-	mustStep(t, m) // -> ConnectRelay
-	mustStep(t, m) // -> GenKeyPair
-	mustStep(t, m) // -> WaitAck
+	// Use explicit events for the initial pairing steps: both the pairing and
+	// auth sub-machines have an internal transition from "Idle", so mustStep
+	// (which picks any matching transition) would be non-deterministic.
+	mustStepEvent(t, m, PairingCeremonyEventUserScansQR)  // Idle -> ScanQR
+	mustStepEvent(t, m, PairingCeremonyEventQRParsed)     // ScanQR -> ConnectRelay
+	mustStepEvent(t, m, PairingCeremonyEventRelayConnected) // ConnectRelay -> GenKeyPair
+	mustStepEvent(t, m, PairingCeremonyEventKeyPairGenerated) // GenKeyPair -> WaitAck
 	mustHandle(t, m, PairingCeremonyMsgPairHelloAck)
 	mustHandle(t, m, PairingCeremonyMsgPairConfirm)
 
-	if got := m.State(); got != PairingCeremonyAppShowCode {
+	if got := m.State(); got != PairingCeremonyAppPairingShowCode {
 		t.Fatalf("expected ShowCode, got %s", got)
 	}
 
-	mustStep(t, m) // -> WaitPairComplete
+	mustStepEvent(t, m, PairingCeremonyEventCodeDisplayed) // ShowCode -> WaitPairComplete
 	mustHandle(t, m, PairingCeremonyMsgPairComplete)
 
-	if got := m.State(); got != PairingCeremonyAppPaired {
-		t.Fatalf("expected Paired, got %s", got)
+	if got := m.State(); got != PairingCeremonyAppPairingPairingComplete {
+		t.Fatalf("expected PairingComplete, got %s", got)
 	}
 
-	mustStep(t, m) // -> Reconnect
-	mustStep(t, m) // -> SendAuth
+	// Route: pairing complete → auth sub-machine starts at Paired.
+	// The generic Machine does not execute routes automatically; manually
+	// advance to auth's initial active state.
+	m.SetState(PairingCeremonyAppAuthPaired)
+
+	mustStepEvent(t, m, PairingCeremonyEventAppLaunch)    // Paired -> Reconnect
+	mustStepEvent(t, m, PairingCeremonyEventRelayConnected) // Reconnect -> SendAuth
 	mustHandle(t, m, PairingCeremonyMsgAuthOk)
 
-	if got := m.State(); got != PairingCeremonyAppSessionActive {
+	if got := m.State(); got != PairingCeremonyAppAuthSessionActive {
 		t.Fatalf("expected SessionActive, got %s", got)
 	}
 }
@@ -200,7 +213,9 @@ func TestExportTLA(t *testing.T) {
 		"structural": {
 			"MODULE PairingCeremony",
 			"EXTENDS Integers",
-			"server_state", "ios_state", "cli_state",
+			"server_pairing_state", "server_auth_state",
+			"ios_pairing_state", "ios_auth_state",
+			"cli_state",
 			"received_", "Init ==", "Next ==", "Spec ==",
 		},
 		"variables": {
@@ -336,13 +351,13 @@ func TestNewMachineUnknownActor(t *testing.T) {
 }
 
 func TestStepNoInternalTransition(t *testing.T) {
-	// A machine in ServerPaired has no internal transitions from that state.
+	// A machine in ServerAuthPaired has no internal transitions from that state.
 	p := PairingCeremony()
 	m, err := NewMachine(p, "server")
 	if err != nil {
 		t.Fatal(err)
 	}
-	// Advance machine to Paired state via the full happy path.
+	// Advance machine to auth Paired state via the full happy path.
 	m.RegisterGuard(PairingCeremonyGuardTokenValid, func(any) bool { return true })
 	m.RegisterGuard(PairingCeremonyGuardTokenInvalid, func(any) bool { return false })
 	m.RegisterGuard(PairingCeremonyGuardCodeCorrect, func(any) bool { return true })
@@ -363,7 +378,9 @@ func TestStepNoInternalTransition(t *testing.T) {
 	mustHandle(t, m, PairingCeremonyMsgCodeSubmit)
 	mustStep(t, m)
 	mustStep(t, m)
-	// Now in ServerPaired — no internal transition.
+	// Now in PairingCeremonyServerPairingPairingComplete — route to auth Paired.
+	m.SetState(PairingCeremonyServerAuthPaired)
+	// Now in ServerAuthPaired — no internal transition.
 	if _, err := m.Step("", nil); err == nil {
 		t.Fatal("expected error for Step with no internal transition")
 	}
@@ -846,5 +863,12 @@ func mustStep(t *testing.T, m *Machine) {
 	t.Helper()
 	if _, err := m.Step("", nil); err != nil {
 		t.Fatalf("Step from %s: %v", m.State(), err)
+	}
+}
+
+func mustStepEvent(t *testing.T, m *Machine, event EventID) {
+	t.Helper()
+	if _, err := m.Step(event, nil); err != nil {
+		t.Fatalf("Step(%s) from %s: %v", event, m.State(), err)
 	}
 }

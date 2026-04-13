@@ -6,7 +6,7 @@
 
 import Foundation
 
-public enum PairingCeremonyServerState: String, Sendable {
+public enum PairingCeremonyServerPairingState: String, Sendable {
     case idle = "Idle"
     case generateToken = "GenerateToken"
     case registerRelay = "RegisterRelay"
@@ -16,12 +16,17 @@ public enum PairingCeremonyServerState: String, Sendable {
     case waitingForCode = "WaitingForCode"
     case validateCode = "ValidateCode"
     case storePaired = "StorePaired"
+    case pairingComplete = "PairingComplete"
+}
+
+public enum PairingCeremonyServerAuthState: String, Sendable {
+    case idle = "Idle"
     case paired = "Paired"
     case authCheck = "AuthCheck"
     case sessionActive = "SessionActive"
 }
 
-public enum PairingCeremonyIosState: String, Sendable {
+public enum PairingCeremonyIosPairingState: String, Sendable {
     case idle = "Idle"
     case scanQR = "ScanQR"
     case connectRelay = "ConnectRelay"
@@ -30,6 +35,11 @@ public enum PairingCeremonyIosState: String, Sendable {
     case e2EReady = "E2EReady"
     case showCode = "ShowCode"
     case waitPairComplete = "WaitPairComplete"
+    case pairingComplete = "PairingComplete"
+}
+
+public enum PairingCeremonyIosAuthState: String, Sendable {
+    case idle = "Idle"
     case paired = "Paired"
     case reconnect = "Reconnect"
     case sendAuth = "SendAuth"
@@ -90,6 +100,7 @@ public enum PairingCeremonyProtocol {
         case signalCodeDisplay = "signal code display"
         case checkCode = "check code"
         case finalise = "finalise"
+        case credentialReady = "credential_ready"
         case verify = "verify"
         case disconnect = "disconnect"
         case userScansQR = "user scans QR"
@@ -115,10 +126,10 @@ public enum PairingCeremonyProtocol {
     }
 
 
-    /// server transitions.
-    public static let serverInitial: PairingCeremonyServerState = .idle
+    /// server/pairing transitions.
+    public static let serverPairingInitial: PairingCeremonyServerPairingState = .idle
 
-    public static let serverTransitions: [(from: String, to: String, on: String, onKind: String, guard: String?, action: String?, sends: [(to: String, msg: String)])] = [
+    public static let serverPairingTransitions: [(from: String, to: String, on: String, onKind: String, guard: String?, action: String?, sends: [(to: String, msg: String)])] = [
         (from: "Idle", to: "GenerateToken", on: "pair_begin", onKind: "recv", guard: nil, action: "generate_token", sends: []),
         (from: "GenerateToken", to: "RegisterRelay", on: "token created", onKind: "internal", guard: nil, action: "register_relay", sends: []),
         (from: "RegisterRelay", to: "WaitingForClient", on: "relay registered", onKind: "internal", guard: nil, action: nil, sends: [(to: "cli", msg: "token_response")]),
@@ -129,17 +140,29 @@ public enum PairingCeremonyProtocol {
         (from: "WaitingForCode", to: "ValidateCode", on: "code_submit", onKind: "recv", guard: nil, action: nil, sends: []),
         (from: "ValidateCode", to: "StorePaired", on: "check code", onKind: "internal", guard: "code_correct", action: nil, sends: []),
         (from: "ValidateCode", to: "Idle", on: "check code", onKind: "internal", guard: "code_wrong", action: nil, sends: []),
-        (from: "StorePaired", to: "Paired", on: "finalise", onKind: "internal", guard: nil, action: "store_device", sends: [(to: "ios", msg: "pair_complete"), (to: "cli", msg: "pair_status")]),
+        (from: "StorePaired", to: "PairingComplete", on: "finalise", onKind: "internal", guard: nil, action: "store_device", sends: [(to: "ios", msg: "pair_complete"), (to: "cli", msg: "pair_status")]),
+    ]
+
+    /// server/auth transitions.
+    public static let serverAuthInitial: PairingCeremonyServerAuthState = .idle
+
+    public static let serverAuthTransitions: [(from: String, to: String, on: String, onKind: String, guard: String?, action: String?, sends: [(to: String, msg: String)])] = [
+        (from: "Idle", to: "Paired", on: "credential_ready", onKind: "internal", guard: nil, action: nil, sends: []),
         (from: "Paired", to: "AuthCheck", on: "auth_request", onKind: "recv", guard: nil, action: nil, sends: []),
         (from: "AuthCheck", to: "SessionActive", on: "verify", onKind: "internal", guard: "device_known", action: "verify_device", sends: [(to: "ios", msg: "auth_ok")]),
         (from: "AuthCheck", to: "Idle", on: "verify", onKind: "internal", guard: "device_unknown", action: nil, sends: []),
         (from: "SessionActive", to: "Paired", on: "disconnect", onKind: "internal", guard: nil, action: nil, sends: []),
     ]
 
-    /// ios transitions.
-    public static let iosInitial: PairingCeremonyIosState = .idle
+    /// server routes.
+    public static let serverRoutes: [(on: String, from: String, guard: String?, sends: [(to: String, event: String)])] = [
+        (on: "paired", from: "pairing", guard: nil, sends: [(to: "auth", event: "credential_ready")]),
+    ]
 
-    public static let iosTransitions: [(from: String, to: String, on: String, onKind: String, guard: String?, action: String?, sends: [(to: String, msg: String)])] = [
+    /// ios/pairing transitions.
+    public static let iosPairingInitial: PairingCeremonyIosPairingState = .idle
+
+    public static let iosPairingTransitions: [(from: String, to: String, on: String, onKind: String, guard: String?, action: String?, sends: [(to: String, msg: String)])] = [
         (from: "Idle", to: "ScanQR", on: "user scans QR", onKind: "internal", guard: nil, action: nil, sends: []),
         (from: "ScanQR", to: "ConnectRelay", on: "QR parsed", onKind: "internal", guard: nil, action: nil, sends: []),
         (from: "ConnectRelay", to: "GenKeyPair", on: "relay connected", onKind: "internal", guard: nil, action: nil, sends: []),
@@ -147,11 +170,23 @@ public enum PairingCeremonyProtocol {
         (from: "WaitAck", to: "E2EReady", on: "pair_hello_ack", onKind: "recv", guard: nil, action: "derive_secret", sends: []),
         (from: "E2EReady", to: "ShowCode", on: "pair_confirm", onKind: "recv", guard: nil, action: nil, sends: []),
         (from: "ShowCode", to: "WaitPairComplete", on: "code displayed", onKind: "internal", guard: nil, action: nil, sends: []),
-        (from: "WaitPairComplete", to: "Paired", on: "pair_complete", onKind: "recv", guard: nil, action: "store_secret", sends: []),
+        (from: "WaitPairComplete", to: "PairingComplete", on: "pair_complete", onKind: "recv", guard: nil, action: "store_secret", sends: []),
+    ]
+
+    /// ios/auth transitions.
+    public static let iosAuthInitial: PairingCeremonyIosAuthState = .idle
+
+    public static let iosAuthTransitions: [(from: String, to: String, on: String, onKind: String, guard: String?, action: String?, sends: [(to: String, msg: String)])] = [
+        (from: "Idle", to: "Paired", on: "credential_ready", onKind: "internal", guard: nil, action: nil, sends: []),
         (from: "Paired", to: "Reconnect", on: "app launch", onKind: "internal", guard: nil, action: nil, sends: []),
         (from: "Reconnect", to: "SendAuth", on: "relay connected", onKind: "internal", guard: nil, action: nil, sends: [(to: "server", msg: "auth_request")]),
         (from: "SendAuth", to: "SessionActive", on: "auth_ok", onKind: "recv", guard: nil, action: nil, sends: []),
         (from: "SessionActive", to: "Paired", on: "disconnect", onKind: "internal", guard: nil, action: nil, sends: []),
+    ]
+
+    /// ios routes.
+    public static let iosRoutes: [(on: String, from: String, guard: String?, sends: [(to: String, event: String)])] = [
+        (on: "paired", from: "pairing", guard: nil, sends: [(to: "auth", event: "credential_ready")]),
     ]
 
     /// cli transitions.
@@ -167,14 +202,14 @@ public enum PairingCeremonyProtocol {
     ]
 }
 
-/// PairingCeremonyServerMachine is the generated state machine for the server actor.
-public final class PairingCeremonyServerMachine: @unchecked Sendable {
+/// PairingCeremonyServerPairingMachine is the generated state machine for server/pairing.
+public final class PairingCeremonyServerPairingMachine: @unchecked Sendable {
     public typealias MessageType = PairingCeremonyProtocol.MessageType
     public typealias GuardID = PairingCeremonyProtocol.GuardID
     public typealias ActionID = PairingCeremonyProtocol.ActionID
     public typealias EventID = PairingCeremonyProtocol.EventID
 
-    public private(set) var state: PairingCeremonyServerState
+    public private(set) var state: PairingCeremonyServerPairingState
     public var currentToken: String // pairing token currently in play
     public var activeTokens: String // set of valid (non-revoked) tokens
     public var usedTokens: String // set of revoked tokens
@@ -186,9 +221,6 @@ public final class PairingCeremonyServerMachine: @unchecked Sendable {
     public var codeAttempts: Int // failed code submission attempts
     public var deviceSecret: String // persistent device secret
     public var pairedDevices: String // device IDs that completed pairing
-    public var receivedDeviceId: String // device_id from auth_request
-    public var authNoncesUsed: String // set of consumed auth nonces
-    public var receivedAuthNonce: String // nonce from auth_request
 
     public var guards: [GuardID: () -> Bool] = [:]
     public var actions: [ActionID: () throws -> Void] = [:]
@@ -206,9 +238,6 @@ public final class PairingCeremonyServerMachine: @unchecked Sendable {
         self.codeAttempts = 0
         self.deviceSecret = "none"
         self.pairedDevices = ""
-        self.receivedDeviceId = "none"
-        self.authNoncesUsed = ""
-        self.receivedAuthNonce = "none"
     }
 
     /// Handle any event (message receipt or internal). Returns emitted commands.
@@ -262,23 +291,7 @@ public final class PairingCeremonyServerMachine: @unchecked Sendable {
             // paired_devices: paired_devices \union {"device_1"} (set by action)
             // active_tokens: active_tokens \ {current_token} (set by action)
             // used_tokens: used_tokens \union {current_token} (set by action)
-            state = .paired
-            return []
-        case (.paired, .recvAuthRequest):
-            // received_device_id: recv_msg.device_id (set by action)
-            // received_auth_nonce: recv_msg.nonce (set by action)
-            state = .authCheck
-            return []
-        case (.authCheck, .verify) where guards[.deviceKnown]?() == true:
-            try actions[.verifyDevice]?()
-            // auth_nonces_used: auth_nonces_used \union {received_auth_nonce} (set by action)
-            state = .sessionActive
-            return []
-        case (.authCheck, .verify) where guards[.deviceUnknown]?() == true:
-            state = .idle
-            return []
-        case (.sessionActive, .disconnect):
-            state = .paired
+            state = .pairingComplete
             return []
         default:
             return []
@@ -287,7 +300,7 @@ public final class PairingCeremonyServerMachine: @unchecked Sendable {
 
     /// Process a received message. Returns the new state, or nil if rejected.
     @discardableResult
-    public func handleMessage(_ msg: MessageType) throws -> PairingCeremonyServerState? {
+    public func handleMessage(_ msg: MessageType) throws -> PairingCeremonyServerPairingState? {
         switch (state, msg) {
         case (.idle, .pairBegin):
             try actions[.generateToken]?()
@@ -310,11 +323,6 @@ public final class PairingCeremonyServerMachine: @unchecked Sendable {
             // received_code: recv_msg.code (set by action)
             state = .validateCode
             return state
-        case (.paired, .authRequest):
-            // received_device_id: recv_msg.device_id (set by action)
-            // received_auth_nonce: recv_msg.nonce (set by action)
-            state = .authCheck
-            return state
         default:
             return nil
         }
@@ -322,7 +330,7 @@ public final class PairingCeremonyServerMachine: @unchecked Sendable {
 
     /// Attempt an internal transition. Returns the new state, or nil if none available.
     @discardableResult
-    public func step() throws -> PairingCeremonyServerState? {
+    public func step() throws -> PairingCeremonyServerPairingState? {
         switch state {
         case .generateToken:
             try actions[.registerRelay]?()
@@ -354,6 +362,83 @@ public final class PairingCeremonyServerMachine: @unchecked Sendable {
             // paired_devices: paired_devices \union {"device_1"} (set by action)
             // active_tokens: active_tokens \ {current_token} (set by action)
             // used_tokens: used_tokens \union {current_token} (set by action)
+            state = .pairingComplete
+            return state
+        default:
+            return nil
+        }
+    }
+}
+
+/// PairingCeremonyServerAuthMachine is the generated state machine for server/auth.
+public final class PairingCeremonyServerAuthMachine: @unchecked Sendable {
+    public typealias MessageType = PairingCeremonyProtocol.MessageType
+    public typealias GuardID = PairingCeremonyProtocol.GuardID
+    public typealias ActionID = PairingCeremonyProtocol.ActionID
+    public typealias EventID = PairingCeremonyProtocol.EventID
+
+    public private(set) var state: PairingCeremonyServerAuthState
+    public var receivedDeviceId: String // device_id from auth_request
+    public var authNoncesUsed: String // set of consumed auth nonces
+    public var receivedAuthNonce: String // nonce from auth_request
+
+    public var guards: [GuardID: () -> Bool] = [:]
+    public var actions: [ActionID: () throws -> Void] = [:]
+
+    public init() {
+        self.state = .idle
+        self.receivedDeviceId = "none"
+        self.authNoncesUsed = ""
+        self.receivedAuthNonce = "none"
+    }
+
+    /// Handle any event (message receipt or internal). Returns emitted commands.
+    @discardableResult
+    public func handleEvent(_ ev: EventID) throws -> [String] {
+        switch (state, ev) {
+        case (.idle, .credentialReady):
+            state = .paired
+            return []
+        case (.paired, .recvAuthRequest):
+            // received_device_id: recv_msg.device_id (set by action)
+            // received_auth_nonce: recv_msg.nonce (set by action)
+            state = .authCheck
+            return []
+        case (.authCheck, .verify) where guards[.deviceKnown]?() == true:
+            try actions[.verifyDevice]?()
+            // auth_nonces_used: auth_nonces_used \union {received_auth_nonce} (set by action)
+            state = .sessionActive
+            return []
+        case (.authCheck, .verify) where guards[.deviceUnknown]?() == true:
+            state = .idle
+            return []
+        case (.sessionActive, .disconnect):
+            state = .paired
+            return []
+        default:
+            return []
+        }
+    }
+
+    /// Process a received message. Returns the new state, or nil if rejected.
+    @discardableResult
+    public func handleMessage(_ msg: MessageType) throws -> PairingCeremonyServerAuthState? {
+        switch (state, msg) {
+        case (.paired, .authRequest):
+            // received_device_id: recv_msg.device_id (set by action)
+            // received_auth_nonce: recv_msg.nonce (set by action)
+            state = .authCheck
+            return state
+        default:
+            return nil
+        }
+    }
+
+    /// Attempt an internal transition. Returns the new state, or nil if none available.
+    @discardableResult
+    public func step() throws -> PairingCeremonyServerAuthState? {
+        switch state {
+        case .idle:
             state = .paired
             return state
         case .authCheck:
@@ -377,14 +462,39 @@ public final class PairingCeremonyServerMachine: @unchecked Sendable {
     }
 }
 
-/// PairingCeremonyIosMachine is the generated state machine for the ios actor.
-public final class PairingCeremonyIosMachine: @unchecked Sendable {
+/// PairingCeremonyServerComposite holds all sub-machines for the server actor.
+public final class PairingCeremonyServerComposite: @unchecked Sendable {
+    public let pairing: PairingCeremonyServerPairingMachine
+    public let auth: PairingCeremonyServerAuthMachine
+
+    public var routeGuards: [PairingCeremonyProtocol.GuardID: () -> Bool] = [:]
+
+    public init() {
+        pairing = PairingCeremonyServerPairingMachine()
+        auth = PairingCeremonyServerAuthMachine()
+    }
+
+    /// Dispatch inter-machine events according to the routing table.
+    @discardableResult
+    public func route(from: String, event: PairingCeremonyProtocol.EventID) throws -> Bool {
+        switch (from, event) {
+        case ("pairing", .paired):
+            try auth.handleEvent(.credentialReady)
+            return true
+        default:
+            return false
+        }
+    }
+}
+
+/// PairingCeremonyIosPairingMachine is the generated state machine for ios/pairing.
+public final class PairingCeremonyIosPairingMachine: @unchecked Sendable {
     public typealias MessageType = PairingCeremonyProtocol.MessageType
     public typealias GuardID = PairingCeremonyProtocol.GuardID
     public typealias ActionID = PairingCeremonyProtocol.ActionID
     public typealias EventID = PairingCeremonyProtocol.EventID
 
-    public private(set) var state: PairingCeremonyIosState
+    public private(set) var state: PairingCeremonyIosPairingState
     public var receivedServerPub: String // pubkey ios received in pair_hello_ack (may be adversary's)
     public var clientSharedKey: String // ECDH key derived by ios (tuple to match DeriveKey output type)
     public var iosCode: String // code computed by ios from its view of the pubkeys (tuple to match DeriveCode output type)
@@ -431,6 +541,83 @@ public final class PairingCeremonyIosMachine: @unchecked Sendable {
             return []
         case (.waitPairComplete, .recvPairComplete):
             try actions[.storeSecret]?()
+            state = .pairingComplete
+            return []
+        default:
+            return []
+        }
+    }
+
+    /// Process a received message. Returns the new state, or nil if rejected.
+    @discardableResult
+    public func handleMessage(_ msg: MessageType) throws -> PairingCeremonyIosPairingState? {
+        switch (state, msg) {
+        case (.waitAck, .pairHelloAck):
+            try actions[.deriveSecret]?()
+            // received_server_pub: recv_msg.pubkey (set by action)
+            // client_shared_key: DeriveKey("client_pub", recv_msg.pubkey) (set by action)
+            state = .e2EReady
+            return state
+        case (.e2EReady, .pairConfirm):
+            // ios_code: DeriveCode(received_server_pub, "client_pub") (set by action)
+            state = .showCode
+            return state
+        case (.waitPairComplete, .pairComplete):
+            try actions[.storeSecret]?()
+            state = .pairingComplete
+            return state
+        default:
+            return nil
+        }
+    }
+
+    /// Attempt an internal transition. Returns the new state, or nil if none available.
+    @discardableResult
+    public func step() throws -> PairingCeremonyIosPairingState? {
+        switch state {
+        case .idle:
+            state = .scanQR
+            return state
+        case .scanQR:
+            state = .connectRelay
+            return state
+        case .connectRelay:
+            state = .genKeyPair
+            return state
+        case .genKeyPair:
+            try actions[.sendPairHello]?()
+            state = .waitAck
+            return state
+        case .showCode:
+            state = .waitPairComplete
+            return state
+        default:
+            return nil
+        }
+    }
+}
+
+/// PairingCeremonyIosAuthMachine is the generated state machine for ios/auth.
+public final class PairingCeremonyIosAuthMachine: @unchecked Sendable {
+    public typealias MessageType = PairingCeremonyProtocol.MessageType
+    public typealias GuardID = PairingCeremonyProtocol.GuardID
+    public typealias ActionID = PairingCeremonyProtocol.ActionID
+    public typealias EventID = PairingCeremonyProtocol.EventID
+
+    public private(set) var state: PairingCeremonyIosAuthState
+
+    public var guards: [GuardID: () -> Bool] = [:]
+    public var actions: [ActionID: () throws -> Void] = [:]
+
+    public init() {
+        self.state = .idle
+    }
+
+    /// Handle any event (message receipt or internal). Returns emitted commands.
+    @discardableResult
+    public func handleEvent(_ ev: EventID) throws -> [String] {
+        switch (state, ev) {
+        case (.idle, .credentialReady):
             state = .paired
             return []
         case (.paired, .appLaunch):
@@ -452,22 +639,8 @@ public final class PairingCeremonyIosMachine: @unchecked Sendable {
 
     /// Process a received message. Returns the new state, or nil if rejected.
     @discardableResult
-    public func handleMessage(_ msg: MessageType) throws -> PairingCeremonyIosState? {
+    public func handleMessage(_ msg: MessageType) throws -> PairingCeremonyIosAuthState? {
         switch (state, msg) {
-        case (.waitAck, .pairHelloAck):
-            try actions[.deriveSecret]?()
-            // received_server_pub: recv_msg.pubkey (set by action)
-            // client_shared_key: DeriveKey("client_pub", recv_msg.pubkey) (set by action)
-            state = .e2EReady
-            return state
-        case (.e2EReady, .pairConfirm):
-            // ios_code: DeriveCode(received_server_pub, "client_pub") (set by action)
-            state = .showCode
-            return state
-        case (.waitPairComplete, .pairComplete):
-            try actions[.storeSecret]?()
-            state = .paired
-            return state
         case (.sendAuth, .authOk):
             state = .sessionActive
             return state
@@ -478,23 +651,10 @@ public final class PairingCeremonyIosMachine: @unchecked Sendable {
 
     /// Attempt an internal transition. Returns the new state, or nil if none available.
     @discardableResult
-    public func step() throws -> PairingCeremonyIosState? {
+    public func step() throws -> PairingCeremonyIosAuthState? {
         switch state {
         case .idle:
-            state = .scanQR
-            return state
-        case .scanQR:
-            state = .connectRelay
-            return state
-        case .connectRelay:
-            state = .genKeyPair
-            return state
-        case .genKeyPair:
-            try actions[.sendPairHello]?()
-            state = .waitAck
-            return state
-        case .showCode:
-            state = .waitPairComplete
+            state = .paired
             return state
         case .paired:
             state = .reconnect
@@ -507,6 +667,31 @@ public final class PairingCeremonyIosMachine: @unchecked Sendable {
             return state
         default:
             return nil
+        }
+    }
+}
+
+/// PairingCeremonyIosComposite holds all sub-machines for the ios actor.
+public final class PairingCeremonyIosComposite: @unchecked Sendable {
+    public let pairing: PairingCeremonyIosPairingMachine
+    public let auth: PairingCeremonyIosAuthMachine
+
+    public var routeGuards: [PairingCeremonyProtocol.GuardID: () -> Bool] = [:]
+
+    public init() {
+        pairing = PairingCeremonyIosPairingMachine()
+        auth = PairingCeremonyIosAuthMachine()
+    }
+
+    /// Dispatch inter-machine events according to the routing table.
+    @discardableResult
+    public func route(from: String, event: PairingCeremonyProtocol.EventID) throws -> Bool {
+        switch (from, event) {
+        case ("pairing", .paired):
+            try auth.handleEvent(.credentialReady)
+            return true
+        default:
+            return false
         }
     }
 }

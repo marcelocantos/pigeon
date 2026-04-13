@@ -77,7 +77,7 @@ func TestExportGoStructure(t *testing.T) {
 
 	checks := []string{
 		"package protocol",
-		"ServerIdle",
+		"ServerPairingIdle",
 		"MsgPairBegin",
 		"GuardTokenValid",
 		"ActionGenerateToken",
@@ -104,8 +104,8 @@ func TestExportSwiftStructure(t *testing.T) {
 
 	checks := []string{
 		"MessageType",
-		"ServerState",
-		"IosState",
+		"ServerPairingState",
+		"IosAuthState",
 		"CliState",
 		"Transitions",
 		"public",
