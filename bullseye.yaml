@@ -119,6 +119,51 @@ targets:
     context: 'Pigeon currently has Go, Swift, and Kotlin clients. A pure C library maximises portability — embedded targets, game engines, FFI from any language — with no hidden allocations. The entire library state lives in a pigeon_ctx struct sized at compile time. The only dependency choice that matters is QUIC: ngtcp2 over quiche to keep the whole chain redirectable to caller-controlled memory. C23 constexpr would eliminate the last #define but C11/C17 compatibility requires it. Protogen needs a new cgen.go backend to emit the pairing state machine as C structs and dispatch tables.'
     origin: manual
     discovered: 2026-04-12
+  T12:
+    name: Cascading relay architecture explored
+    status: identified
+    value: 3.0
+    cost: 3.0
+    acceptance:
+    - 'Design document covering: local relay registers as a backend to a public relay, local relay also accepts backend registrations from game servers, players authenticate once against the local relay and get routed to game servers'
+    - Interaction model between relay-as-backend and relay-as-relay is defined
+    - Implications for auth, session multiplexing, and the 1:1 instance model are assessed
+    context: 'Motivated by squz/ge: a local development relay that fronts multiple game servers. Players authenticate once against the local relay rather than each game server individually. The local relay acts as both a backend (to the public relay) and a relay (to the game servers). This is more than transport cascading — it''s a mediation layer between player-facing auth and per-game-server identity. The current 1:1 (one backend, one client per instance) model doesn''t cover this topology.'
+    origin: manual
+    discovered: 2026-04-12
+  T13:
+    name: Protocol framework supports composable parallel sub-machines per actor
+    status: identified
+    value: 8.0
+    cost: 8.0
+    observable: true
+    acceptance:
+    - 'YAML schema supports machines: section under each actor with per-machine initial state, transitions, reports (events emitted upward), and accepts (events received from other machines)'
+    - 'YAML schema supports a routes: section declaring inter-machine event wiring with from qualifier and guard conditions'
+    - Protocol parser (yaml.go) loads and validates the composition schema
+    - Go code generator emits per-sub-machine structs with dispatch functions plus a containing struct that routes events between sub-machines
+    - C code generator emits equivalent per-sub-machine structs and dispatch
+    - Swift and Kotlin generators emit equivalent composition
+    - TLA+ generator models sub-machines as concurrent processes with shared variables for inter-machine events
+    - Existing non-composed protocols (pairing.yaml) continue to work unchanged
+    context: 'Currently each actor in a protocol has one flat state machine. The pathswitch protocol entangles transport lifecycle, path selection, and session management in a single machine. Composable sub-machines let each concern be a small independent machine (3-5 states) that reports events upward and receives events from peers via a declared routing table. The routing table is the composition model — visible to TLA+ for formal verification of interleavings. This enables: (1) refactoring pathswitch into relay/LAN/session sub-machines, (2) adding localhost as a trivial new sub-machine, (3) adding future transports (Bluetooth, STUN) without touching existing machines. Design discussion in session 2026-04-12 established the architecture.'
+    origin: manual
+    discovered: 2026-04-13
+  T14:
+    name: Pairing ceremony decomposed into pairing and auth sub-machines
+    status: identified
+    value: 5.0
+    cost: 3.0
+    observable: true
+    acceptance:
+    - 'pairing.yaml uses machines: with two sub-machines: pairing (QR→ECDH→confirmation→store) and auth (present credential→session established)'
+    - Routes wire pairing completion into auth (pairing reports paired, auth accepts credential_ready)
+    - Exact same observable behavior as today — no semantic change, just structural decomposition
+    - All codegen backends produce valid output
+    - Existing tests pass unchanged
+    context: 'The current pairing.yaml has one flat machine per actor that handles both the initial pairing ceremony (QR, ECDH, confirmation codes) and the reconnection auth flow (auth_request/auth_ok). These are logically independent — pairing runs once, auth runs on every reconnect. Splitting them into composable sub-machines using the new composition framework enables future work: decoupling auth credentials from transport topology (relay URL, instance ID), persistent tokens, and alternative auth mechanisms. The coupling between pairing and auth is light — pairing produces a PairingRecord, auth consumes it. Cost is low because it''s a YAML restructuring + verification, not new logic.'
+    origin: manual
+    discovered: 2026-04-13
   T2:
     name: Multi-transport with LAN upgrade
     status: converging
@@ -146,6 +191,7 @@ targets:
     context: 'FrameCutover (0x02) byte is defined in session_gen.go and detected in executor.go:735, but currently logged and discarded rather than processed as a state transition. The PathSwitch protocol (protocol/pathswitch.yaml) has no cutover messages at all — it uses single-active-path switching via dispatcher_path rebinding, not a sequence-numbered dual-path cutover. The acceptance criteria as written require: (1) sequence-numbered messages on the wire, (2) concurrent dual-path read, (3) deterministic ordering across paths during switch. That is a design change, not an incremental extension. Decision needed before coding: is dual-path operation worth the complexity (requires sequence numbering everywhere, affects encryption nonce design, doubles receive-loop state) vs accepting a bounded in-flight-loss window at cutover (handled today by relay_resume / rebridge). If the latter, this target should be reframed to "switching is loss-free within a documented bound" and T3''s TLA+ scope shrinks accordingly.'
     depends_on:
     - T3
+    - T13
     origin: bootstrap from targets.md (T5.3)
     discovered: 2026-04-08
   T2.2:

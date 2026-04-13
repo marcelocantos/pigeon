@@ -1,5 +1,10 @@
 # Pairing ceremony protocol definition.
 # Source of truth for: Go runtime, Swift runtime, TLA+ spec, PlantUML diagram.
+#
+# The server and ios actors use composable sub-machines:
+#   pairing — one-time QR/ECDH/confirmation ceremony
+#   auth    — reconnection using stored credentials
+# The cli actor is flat (pairing only, no reconnection).
 
 name: PairingCeremony
 one_shot: true     # pairing runs once, actors don't loop
@@ -53,177 +58,209 @@ messages:
 
 actors:
   server:
-    initial: Idle
-    transitions:
-      - from: Idle
-        to: GenerateToken
-        on: recv pair_begin
-        do: generate_token
-        updates:
-          current_token: '"tok_1"'
-          active_tokens: 'active_tokens \union {"tok_1"}'
-      - from: GenerateToken
-        to: RegisterRelay
-        on: token created
-        do: register_relay
-      - from: RegisterRelay
-        to: WaitingForClient
-        on: relay registered
+    machines:
+      pairing:
+        initial: Idle
+        reports: [paired]
+        transitions:
+          - from: Idle
+            to: GenerateToken
+            on: recv pair_begin
+            do: generate_token
+            updates:
+              current_token: '"tok_1"'
+              active_tokens: 'active_tokens \union {"tok_1"}'
+          - from: GenerateToken
+            to: RegisterRelay
+            on: token created
+            do: register_relay
+          - from: RegisterRelay
+            to: WaitingForClient
+            on: relay registered
+            sends:
+              - to: cli
+                msg: token_response
+                fields:
+                  token: current_token
+                  instance_id: '"inst_1"'
+          - from: WaitingForClient
+            to: DeriveSecret
+            on: recv pair_hello
+            guard: token_valid
+            do: derive_secret
+            updates:
+              received_client_pub: recv_msg.pubkey
+              server_ecdh_pub: '"server_pub"'
+              server_shared_key: 'DeriveKey("server_pub", recv_msg.pubkey)'
+              server_code: 'DeriveCode("server_pub", recv_msg.pubkey)'
+          - from: WaitingForClient
+            to: Idle
+            on: recv pair_hello
+            guard: token_invalid
+          - from: DeriveSecret
+            to: SendAck
+            on: ECDH complete
+            sends:
+              - to: ios
+                msg: pair_hello_ack
+                fields:
+                  pubkey: server_ecdh_pub
+          - from: SendAck
+            to: WaitingForCode
+            on: signal code display
+            sends:
+              - to: ios
+                msg: pair_confirm
+              - to: cli
+                msg: waiting_for_code
+          - from: WaitingForCode
+            to: ValidateCode
+            on: recv code_submit
+            updates:
+              received_code: recv_msg.code
+          - from: ValidateCode
+            to: StorePaired
+            on: check code
+            guard: code_correct
+          - from: ValidateCode
+            to: Idle
+            on: check code
+            guard: code_wrong
+            updates:
+              code_attempts: code_attempts + 1
+          - from: StorePaired
+            to: PairingComplete
+            on: finalise
+            do: store_device
+            sends:
+              - to: ios
+                msg: pair_complete
+                fields:
+                  key: server_shared_key
+                  secret: '"dev_secret_1"'
+              - to: cli
+                msg: pair_status
+                fields:
+                  status: '"paired"'
+            updates:
+              device_secret: '"dev_secret_1"'
+              paired_devices: 'paired_devices \union {"device_1"}'
+              active_tokens: 'active_tokens \ {current_token}'
+              used_tokens: 'used_tokens \union {current_token}'
+      auth:
+        initial: Idle
+        accepts: [credential_ready]
+        transitions:
+          - from: Idle
+            to: Paired
+            on: credential_ready
+          - from: Paired
+            to: AuthCheck
+            on: recv auth_request
+            updates:
+              received_device_id: recv_msg.device_id
+              received_auth_nonce: recv_msg.nonce
+          - from: AuthCheck
+            to: SessionActive
+            on: verify
+            guard: device_known
+            do: verify_device
+            sends:
+              - to: ios
+                msg: auth_ok
+            updates:
+              auth_nonces_used: 'auth_nonces_used \union {received_auth_nonce}'
+          - from: AuthCheck
+            to: Idle
+            on: verify
+            guard: device_unknown
+          - from: SessionActive
+            to: Paired
+            on: disconnect
+    routes:
+      - on: paired
+        from: pairing
         sends:
-          - to: cli
-            msg: token_response
-            fields:
-              token: current_token
-              instance_id: '"inst_1"'
-      - from: WaitingForClient
-        to: DeriveSecret
-        on: recv pair_hello
-        guard: token_valid
-        do: derive_secret
-        updates:
-          received_client_pub: recv_msg.pubkey
-          server_ecdh_pub: '"server_pub"'
-          server_shared_key: 'DeriveKey("server_pub", recv_msg.pubkey)'
-          server_code: 'DeriveCode("server_pub", recv_msg.pubkey)'
-      - from: WaitingForClient
-        to: Idle
-        on: recv pair_hello
-        guard: token_invalid
-      - from: DeriveSecret
-        to: SendAck
-        on: ECDH complete
-        sends:
-          - to: ios
-            msg: pair_hello_ack
-            fields:
-              pubkey: server_ecdh_pub
-      - from: SendAck
-        to: WaitingForCode
-        on: signal code display
-        sends:
-          - to: ios
-            msg: pair_confirm
-          - to: cli
-            msg: waiting_for_code
-      - from: WaitingForCode
-        to: ValidateCode
-        on: recv code_submit
-        updates:
-          received_code: recv_msg.code
-      - from: ValidateCode
-        to: StorePaired
-        on: check code
-        guard: code_correct
-      - from: ValidateCode
-        to: Idle
-        on: check code
-        guard: code_wrong
-        updates:
-          code_attempts: code_attempts + 1
-      - from: StorePaired
-        to: Paired
-        on: finalise
-        do: store_device
-        sends:
-          - to: ios
-            msg: pair_complete
-            fields:
-              key: server_shared_key
-              secret: '"dev_secret_1"'
-          - to: cli
-            msg: pair_status
-            fields:
-              status: '"paired"'
-        updates:
-          device_secret: '"dev_secret_1"'
-          paired_devices: 'paired_devices \union {"device_1"}'
-          active_tokens: 'active_tokens \ {current_token}'
-          used_tokens: 'used_tokens \union {current_token}'
-      - from: Paired
-        to: AuthCheck
-        on: recv auth_request
-        updates:
-          received_device_id: recv_msg.device_id
-          received_auth_nonce: recv_msg.nonce
-      - from: AuthCheck
-        to: SessionActive
-        on: verify
-        guard: device_known
-        do: verify_device
-        sends:
-          - to: ios
-            msg: auth_ok
-        updates:
-          auth_nonces_used: 'auth_nonces_used \union {received_auth_nonce}'
-      - from: AuthCheck
-        to: Idle
-        on: verify
-        guard: device_unknown
-      - from: SessionActive
-        to: Paired
-        on: disconnect
+          - to: auth
+            event: credential_ready
 
   ios:
-    initial: Idle
-    transitions:
-      - from: Idle
-        to: ScanQR
-        on: user scans QR
-      - from: ScanQR
-        to: ConnectRelay
-        on: QR parsed
-      - from: ConnectRelay
-        to: GenKeyPair
-        on: relay connected
-      - from: GenKeyPair
-        to: WaitAck
-        on: key pair generated
-        do: send_pair_hello
+    machines:
+      pairing:
+        initial: Idle
+        reports: [paired]
+        transitions:
+          - from: Idle
+            to: ScanQR
+            on: user scans QR
+          - from: ScanQR
+            to: ConnectRelay
+            on: QR parsed
+          - from: ConnectRelay
+            to: GenKeyPair
+            on: relay connected
+          - from: GenKeyPair
+            to: WaitAck
+            on: key pair generated
+            do: send_pair_hello
+            sends:
+              - to: server
+                msg: pair_hello
+                fields:
+                  token: current_token
+                  pubkey: '"client_pub"'
+          - from: WaitAck
+            to: E2EReady
+            on: recv pair_hello_ack
+            do: derive_secret
+            updates:
+              received_server_pub: recv_msg.pubkey
+              client_shared_key: 'DeriveKey("client_pub", recv_msg.pubkey)'
+          - from: E2EReady
+            to: ShowCode
+            on: recv pair_confirm
+            updates:
+              ios_code: 'DeriveCode(received_server_pub, "client_pub")'
+          - from: ShowCode
+            to: WaitPairComplete
+            on: code displayed
+          - from: WaitPairComplete
+            to: PairingComplete
+            on: recv pair_complete
+            do: store_secret
+      auth:
+        initial: Idle
+        accepts: [credential_ready]
+        transitions:
+          - from: Idle
+            to: Paired
+            on: credential_ready
+          - from: Paired
+            to: Reconnect
+            on: app launch
+          - from: Reconnect
+            to: SendAuth
+            on: relay connected
+            sends:
+              - to: server
+                msg: auth_request
+                fields:
+                  device_id: '"device_1"'
+                  secret: device_secret
+                  nonce: '"nonce_1"'
+                  key: client_shared_key
+          - from: SendAuth
+            to: SessionActive
+            on: recv auth_ok
+          - from: SessionActive
+            to: Paired
+            on: disconnect
+    routes:
+      - on: paired
+        from: pairing
         sends:
-          - to: server
-            msg: pair_hello
-            fields:
-              token: current_token
-              pubkey: '"client_pub"'
-      - from: WaitAck
-        to: E2EReady
-        on: recv pair_hello_ack
-        do: derive_secret
-        updates:
-          received_server_pub: recv_msg.pubkey
-          client_shared_key: 'DeriveKey("client_pub", recv_msg.pubkey)'
-      - from: E2EReady
-        to: ShowCode
-        on: recv pair_confirm
-        updates:
-          ios_code: 'DeriveCode(received_server_pub, "client_pub")'
-      - from: ShowCode
-        to: WaitPairComplete
-        on: code displayed
-      - from: WaitPairComplete
-        to: Paired
-        on: recv pair_complete
-        do: store_secret
-      - from: Paired
-        to: Reconnect
-        on: app launch
-      - from: Reconnect
-        to: SendAuth
-        on: relay connected
-        sends:
-          - to: server
-            msg: auth_request
-            fields:
-              device_id: '"device_1"'
-              secret: device_secret
-              nonce: '"nonce_1"'
-              key: client_shared_key
-      - from: SendAuth
-        to: SessionActive
-        on: recv auth_ok
-      - from: SessionActive
-        to: Paired
-        on: disconnect
+          - to: auth
+            event: credential_ready
 
   cli:
     initial: Idle
@@ -410,19 +447,19 @@ properties:
     desc: If the current session's shared key is compromised and both sides computed codes, the codes differ
   - name: MitMPrevented
     kind: invariant
-    expr: 'server_shared_key \in adversary_keys => server_state \notin {server_StorePaired, server_Paired, server_AuthCheck, server_SessionActive}'
+    expr: 'server_shared_key \in adversary_keys => server_pairing_state \notin {"StorePaired", "PairingComplete"}'
     desc: If the current session's key is compromised, pairing never completes
   - name: AuthRequiresCompletedPairing
     kind: invariant
-    expr: 'server_state = server_SessionActive => received_device_id \in paired_devices'
+    expr: 'server_auth_state = "SessionActive" => received_device_id \in paired_devices'
     desc: A session is only active for a device that completed pairing
   - name: NoNonceReuse
     kind: invariant
-    expr: 'server_state = server_SessionActive => received_auth_nonce \notin (auth_nonces_used \ {received_auth_nonce})'
+    expr: 'server_auth_state = "SessionActive" => received_auth_nonce \notin (auth_nonces_used \ {received_auth_nonce})'
     desc: Each auth nonce is accepted at most once
   - name: WrongCodeDoesNotPair
     kind: invariant
-    expr: '(server_state = server_StorePaired \/ server_state = server_Paired) => received_code = server_code \/ received_code = <<"none">>'
+    expr: '(server_pairing_state = "StorePaired" \/ server_pairing_state = "PairingComplete") => received_code = server_code \/ received_code = <<"none">>'
     desc: Pairing only completes with the correct confirmation code
   - name: DeviceSecretSecrecy
     kind: invariant
@@ -430,5 +467,5 @@ properties:
     desc: Adversary never learns the device secret in plaintext
   - name: HonestPairingCompletes
     kind: liveness
-    expr: 'cli_state = cli_Done /\ ios_state = ios_Paired'
+    expr: 'cli_state = "Done" /\ ios_pairing_state = "PairingComplete"'
     desc: If all actors cooperate honestly (no MitM), pairing eventually completes

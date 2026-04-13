@@ -317,8 +317,12 @@ func (a *Actor) IsComposed() bool { return len(a.Machines) > 0 }
 
 // FlattenedTransitions returns all transitions including superstate
 // transitions expanded into explicit per-leaf-state self-loops.
+// For composed actors, returns the union of all sub-machine transitions.
 // The result is suitable for generators that need a flat transition list.
 func (a *Actor) FlattenedTransitions() []Transition {
+	if a.IsComposed() {
+		return allActorTransitions(*a)
+	}
 	if len(a.StateIndex) == 0 {
 		return a.Transitions
 	}
@@ -529,6 +533,19 @@ func (p *Protocol) Validate() error {
 	}
 
 	return nil
+}
+
+// allActorTransitions returns all flattened transitions from an actor,
+// including sub-machine transitions for composed actors.
+func allActorTransitions(a Actor) []Transition {
+	if !a.IsComposed() {
+		return a.FlattenedTransitions()
+	}
+	var all []Transition
+	for _, m := range a.Machines {
+		all = append(all, m.FlattenedTransitions()...)
+	}
+	return all
 }
 
 // collectSubMachineStates returns all unique leaf states for a sub-machine.
