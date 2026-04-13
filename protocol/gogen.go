@@ -106,14 +106,27 @@ func (p *Protocol) ExportGo(w io.Writer, pkgName, funcName string) error {
 	cPrefix := funcName // e.g. "PairingCeremony", "Session"
 
 	for _, a := range p.Actors {
-		states := collectStates(a)
-		prefix := cPrefix + goConstPrefix(a.Name)
-		fmt.Fprintf(&b, "// %s %s states.\n", funcName, a.Name)
-		b.WriteString("const (\n")
-		for _, s := range states {
-			fmt.Fprintf(&b, "\t%s%s State = %q\n", prefix, s, s)
+		if a.IsComposed() {
+			for _, m := range a.Machines {
+				states := collectSubMachineStates(m)
+				prefix := cPrefix + goConstPrefix(a.Name) + goCamel(m.Name)
+				fmt.Fprintf(&b, "// %s %s/%s states.\n", funcName, a.Name, m.Name)
+				b.WriteString("const (\n")
+				for _, s := range states {
+					fmt.Fprintf(&b, "\t%s%s State = %q\n", prefix, s, s)
+				}
+				b.WriteString(")\n\n")
+			}
+		} else {
+			states := collectStates(a)
+			prefix := cPrefix + goConstPrefix(a.Name)
+			fmt.Fprintf(&b, "// %s %s states.\n", funcName, a.Name)
+			b.WriteString("const (\n")
+			for _, s := range states {
+				fmt.Fprintf(&b, "\t%s%s State = %q\n", prefix, s, s)
+			}
+			b.WriteString(")\n\n")
 		}
-		b.WriteString(")\n\n")
 	}
 
 	fmt.Fprintf(&b, "// %s message types.\nconst (\n", funcName)
@@ -335,6 +348,11 @@ func (p *Protocol) ExportGo(w io.Writer, pkgName, funcName string) error {
 	// --- Per-actor typed state machines ---
 
 	for _, a := range p.Actors {
+		if a.IsComposed() {
+			writeGoComposedActor(&b, p, a, cPrefix)
+			continue
+		}
+
 		prefix := cPrefix + goCamel(goConstPrefix(a.Name))
 		stateType := cPrefix + goConstPrefix(a.Name)
 
@@ -459,6 +477,156 @@ func (p *Protocol) ExportGo(w io.Writer, pkgName, funcName string) error {
 
 	_, err := io.WriteString(w, b.String())
 	return err
+}
+
+// writeGoComposedActor emits the sub-machine structs, composite struct,
+// constructors, dispatch methods, and routing for a composed actor.
+func writeGoComposedActor(b *strings.Builder, p *Protocol, a Actor, cPrefix string) {
+	actorPrefix := goConstPrefix(a.Name) // e.g. "Server", "App"
+
+	// --- Per-sub-machine structs and methods ---
+	for _, m := range a.Machines {
+		machPrefix := cPrefix + goCamel(actorPrefix) + goCamel(m.Name) // e.g. "SessionBackendRelay"
+		stateType := cPrefix + actorPrefix + goCamel(m.Name)           // e.g. "SessionBackendRelay"
+
+		// Collect vars updated by this sub-machine.
+		varSet := map[string]bool{}
+		for _, t := range m.FlattenedTransitions() {
+			for _, u := range t.Updates {
+				varSet[u.Var] = true
+			}
+		}
+
+		// Struct.
+		fmt.Fprintf(b, "// %sMachine is the generated state machine for %s/%s.\n",
+			machPrefix, a.Name, m.Name)
+		fmt.Fprintf(b, "type %sMachine struct {\n", machPrefix)
+		fmt.Fprintf(b, "\tState State\n")
+
+		for _, v := range p.Vars {
+			if !varSet[v.Name] {
+				continue
+			}
+			fmt.Fprintf(b, "\t%s %s", goCamel(v.Name), goType(v.Type))
+			if v.Desc != "" {
+				fmt.Fprintf(b, " // %s", v.Desc)
+			}
+			b.WriteString("\n")
+		}
+
+		b.WriteString("\n\tGuards  map[GuardID]func() bool\n")
+		b.WriteString("\tActions map[ActionID]func() error\n")
+		b.WriteString("\tOnChange func(varName string)\n")
+		b.WriteString("}\n\n")
+
+		// Constructor.
+		fmt.Fprintf(b, "func New%sMachine() *%sMachine {\n", machPrefix, machPrefix)
+		fmt.Fprintf(b, "\treturn &%sMachine{\n", machPrefix)
+		fmt.Fprintf(b, "\t\tState: %s%s,\n", stateType, goCamel(string(m.Initial)))
+		for _, v := range p.Vars {
+			if !varSet[v.Name] {
+				continue
+			}
+			init := goInitialValue(v)
+			if init != "" {
+				fmt.Fprintf(b, "\t\t%s: %s,\n", goCamel(v.Name), init)
+			}
+		}
+		b.WriteString("\t\tGuards:  make(map[GuardID]func() bool),\n")
+		b.WriteString("\t\tActions: make(map[ActionID]func() error),\n")
+		b.WriteString("\t}\n}\n\n")
+
+		// Step — internal event dispatch.
+		fmt.Fprintf(b, "func (m *%sMachine) Step(event EventID) (bool, error) {\n", machPrefix)
+		b.WriteString("\tswitch {\n")
+		for _, t := range m.FlattenedTransitions() {
+			if t.On.Kind != TriggerInternal {
+				continue
+			}
+			guard := ""
+			if t.Guard != "" {
+				guard = fmt.Sprintf(" && m.Guards[%sGuard%s] != nil && m.Guards[%sGuard%s]()",
+					cPrefix, goCamel(string(t.Guard)), cPrefix, goCamel(string(t.Guard)))
+			}
+			fmt.Fprintf(b, "\tcase m.State == %s%s && event == %sEvent%s%s:\n",
+				stateType, goCamel(string(t.From)),
+				cPrefix, goCamel(t.On.Desc), guard)
+			writeGoTransitionBody(b, t, stateType, cPrefix)
+			b.WriteString("\t\treturn true, nil\n")
+		}
+		b.WriteString("\t}\n\treturn false, nil\n}\n\n")
+
+		// HandleMessage — recv message dispatch.
+		fmt.Fprintf(b, "func (m *%sMachine) HandleMessage(msg MsgType) (bool, error) {\n", machPrefix)
+		b.WriteString("\tswitch {\n")
+		for _, t := range m.FlattenedTransitions() {
+			if t.On.Kind != TriggerRecv {
+				continue
+			}
+			guard := ""
+			if t.Guard != "" {
+				guard = fmt.Sprintf(" && m.Guards[%sGuard%s] != nil && m.Guards[%sGuard%s]()",
+					cPrefix, goCamel(string(t.Guard)), cPrefix, goCamel(string(t.Guard)))
+			}
+			fmt.Fprintf(b, "\tcase m.State == %s%s && msg == %sMsg%s%s:\n",
+				stateType, goCamel(string(t.From)),
+				cPrefix, goCamel(string(t.On.Msg)), guard)
+			writeGoTransitionBody(b, t, stateType, cPrefix)
+			b.WriteString("\t\treturn true, nil\n")
+		}
+		b.WriteString("\t}\n\treturn false, nil\n}\n\n")
+	}
+
+	// --- Composite struct ---
+	compositeType := cPrefix + goCamel(actorPrefix) + "Composite"
+	fmt.Fprintf(b, "// %s holds all sub-machines for the %s actor.\n", compositeType, a.Name)
+	fmt.Fprintf(b, "type %s struct {\n", compositeType)
+	for _, m := range a.Machines {
+		machPrefix := cPrefix + goCamel(actorPrefix) + goCamel(m.Name)
+		fmt.Fprintf(b, "\t%s %sMachine\n", goCamel(m.Name), machPrefix)
+	}
+	b.WriteString("\n\tRouteGuards map[GuardID]func() bool\n")
+	b.WriteString("}\n\n")
+
+	// Composite constructor.
+	fmt.Fprintf(b, "func New%s() *%s {\n", compositeType, compositeType)
+	fmt.Fprintf(b, "\tc := &%s{\n", compositeType)
+	fmt.Fprintf(b, "\t\tRouteGuards: make(map[GuardID]func() bool),\n")
+	b.WriteString("\t}\n")
+	for _, m := range a.Machines {
+		machPrefix := cPrefix + goCamel(actorPrefix) + goCamel(m.Name)
+		fmt.Fprintf(b, "\tinit := New%sMachine()\n", machPrefix)
+		fmt.Fprintf(b, "\tc.%s = *init\n", goCamel(m.Name))
+	}
+	b.WriteString("\treturn c\n}\n\n")
+
+	// --- Route dispatcher ---
+	fmt.Fprintf(b, "// Route dispatches inter-machine events according to the routing table.\n")
+	fmt.Fprintf(b, "// Call this after a sub-machine reports an event.\n")
+	fmt.Fprintf(b, "func (c *%s) Route(from string, event EventID) error {\n", compositeType)
+
+	if len(a.Routes) > 0 {
+		b.WriteString("\tswitch {\n")
+		for _, r := range a.Routes {
+			guard := ""
+			if r.Guard != "" {
+				guard = fmt.Sprintf(" && c.RouteGuards[%sGuard%s] != nil && c.RouteGuards[%sGuard%s]()",
+					cPrefix, goCamel(string(r.Guard)), cPrefix, goCamel(string(r.Guard)))
+			}
+			fmt.Fprintf(b, "\tcase from == %q && event == %sEvent%s%s:\n",
+				r.From, cPrefix, goCamel(string(r.On)), guard)
+
+			for _, s := range r.Sends {
+				fmt.Fprintf(b, "\t\tif _, err := c.%s.Step(%sEvent%s); err != nil {\n",
+					goCamel(s.To), cPrefix, goCamel(string(s.Event)))
+				b.WriteString("\t\t\treturn err\n")
+				b.WriteString("\t\t}\n")
+			}
+		}
+		b.WriteString("\t}\n")
+	}
+
+	b.WriteString("\treturn nil\n}\n\n")
 }
 
 // writeGoTransitionBody emits the action call, variable updates, state

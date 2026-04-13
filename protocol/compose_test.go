@@ -4,6 +4,7 @@
 package protocol
 
 import (
+	"bytes"
 	"testing"
 )
 
@@ -182,6 +183,58 @@ func TestParseComposedActor(t *testing.T) {
 	if client.IsComposed() {
 		t.Fatal("client should not be composed")
 	}
+}
+
+func TestExportGoComposed(t *testing.T) {
+	p, err := ParseYAML([]byte(composeTestYAML))
+	if err != nil {
+		t.Fatalf("ParseYAML: %v", err)
+	}
+
+	var buf bytes.Buffer
+	if err := p.ExportGo(&buf, "protocol", p.Name); err != nil {
+		t.Fatalf("ExportGo: %v", err)
+	}
+
+	out := buf.String()
+
+	// Should contain per-sub-machine state constants.
+	for _, want := range []string{
+		"TransportTestBackendRelayConnecting",
+		"TransportTestBackendRelayActive",
+		"TransportTestBackendLanIdle",
+		"TransportTestBackendLanDiscovering",
+		"TransportTestBackendSessionWaitTransport",
+		"TransportTestBackendSessionReady",
+	} {
+		if !bytes.Contains(buf.Bytes(), []byte(want)) {
+			t.Errorf("missing state constant %q", want)
+		}
+	}
+
+	// Should contain sub-machine types.
+	for _, want := range []string{
+		"type TransportTestBackendRelayMachine struct",
+		"type TransportTestBackendLanMachine struct",
+		"type TransportTestBackendSessionMachine struct",
+		"type TransportTestBackendComposite struct",
+	} {
+		if !bytes.Contains(buf.Bytes(), []byte(want)) {
+			t.Errorf("missing type: %q", want)
+		}
+	}
+
+	// Should contain Route method.
+	if !bytes.Contains(buf.Bytes(), []byte("func (c *TransportTestBackendComposite) Route(")) {
+		t.Error("missing Route method")
+	}
+
+	// Should still contain flat client actor.
+	if !bytes.Contains(buf.Bytes(), []byte("type TransportTestClientMachine struct")) {
+		t.Error("missing flat ClientMachine")
+	}
+
+	_ = out
 }
 
 func TestValidateComposedBadRoute(t *testing.T) {
