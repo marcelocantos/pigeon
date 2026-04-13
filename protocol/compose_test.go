@@ -576,3 +576,112 @@ actors:
 	}
 	t.Logf("got expected error: %v", err)
 }
+
+func TestExportTypeScriptComposed(t *testing.T) {
+	p, err := ParseYAML([]byte(composeTestYAML))
+	if err != nil {
+		t.Fatalf("ParseYAML: %v", err)
+	}
+
+	var buf bytes.Buffer
+	if err := p.ExportTypeScript(&buf); err != nil {
+		t.Fatalf("ExportTypeScript: %v", err)
+	}
+
+	// Per-sub-machine state enums (not a single flat backend enum).
+	for _, want := range []string{
+		"export enum TransportTestBackendRelayState",
+		"export enum TransportTestBackendLanState",
+		"export enum TransportTestBackendSessionState",
+	} {
+		if !bytes.Contains(buf.Bytes(), []byte(want)) {
+			t.Errorf("missing sub-machine state enum %q", want)
+		}
+	}
+
+	// No flat backend state enum — composed actors don't have one.
+	if bytes.Contains(buf.Bytes(), []byte("export enum TransportTestBackendState")) {
+		t.Error("unexpected flat BackendState enum for composed actor")
+	}
+
+	// State enum values for each sub-machine.
+	for _, want := range []string{
+		`Connecting = "Connecting"`,
+		`Active = "Active"`,
+		`Idle = "Idle"`,
+		`Discovering = "Discovering"`,
+		`WaitTransport = "WaitTransport"`,
+		`Ready = "Ready"`,
+	} {
+		if !bytes.Contains(buf.Bytes(), []byte(want)) {
+			t.Errorf("missing state enum value %q", want)
+		}
+	}
+
+	// Per-sub-machine transition tables in namespace.
+	for _, want := range []string{
+		"export const backendRelayTable: ActorTable",
+		"export const backendLanTable: ActorTable",
+		"export const backendSessionTable: ActorTable",
+	} {
+		if !bytes.Contains(buf.Bytes(), []byte(want)) {
+			t.Errorf("missing transition table %q", want)
+		}
+	}
+
+	// Per-sub-machine machine classes.
+	for _, want := range []string{
+		"export class TransportTestBackendRelayMachine",
+		"export class TransportTestBackendLanMachine",
+		"export class TransportTestBackendSessionMachine",
+	} {
+		if !bytes.Contains(buf.Bytes(), []byte(want)) {
+			t.Errorf("missing sub-machine class %q", want)
+		}
+	}
+
+	// Sub-machine step() and handleMessage() methods.
+	if !bytes.Contains(buf.Bytes(), []byte("step(ev: TransportTestProtocol.EventID): boolean")) {
+		t.Error("missing step() method signature")
+	}
+	if !bytes.Contains(buf.Bytes(), []byte("handleMessage(msg: string): boolean")) {
+		t.Error("missing handleMessage() method signature")
+	}
+
+	// Composite class.
+	if !bytes.Contains(buf.Bytes(), []byte("export class TransportTestBackendComposite")) {
+		t.Error("missing composite class TransportTestBackendComposite")
+	}
+
+	// Composite holds sub-machine fields.
+	for _, want := range []string{
+		"relay = new TransportTestBackendRelayMachine()",
+		"lan = new TransportTestBackendLanMachine()",
+		"session = new TransportTestBackendSessionMachine()",
+	} {
+		if !bytes.Contains(buf.Bytes(), []byte(want)) {
+			t.Errorf("missing composite field initialiser %q", want)
+		}
+	}
+
+	// route() method.
+	if !bytes.Contains(buf.Bytes(), []byte("route(from: string, event: TransportTestProtocol.EventID): void")) {
+		t.Error("missing route() method signature")
+	}
+
+	// Route dispatches — relay ready → session transport_ready.
+	if !bytes.Contains(buf.Bytes(), []byte(`from === "relay"`)) {
+		t.Error("missing route dispatch for relay")
+	}
+	if !bytes.Contains(buf.Bytes(), []byte(`from === "lan"`)) {
+		t.Error("missing route dispatch for lan")
+	}
+
+	// Flat client actor still emitted normally.
+	if !bytes.Contains(buf.Bytes(), []byte("export class TransportTestClientMachine")) {
+		t.Error("missing flat ClientMachine class")
+	}
+	if !bytes.Contains(buf.Bytes(), []byte("export enum TransportTestClientState")) {
+		t.Error("missing flat ClientState enum")
+	}
+}
