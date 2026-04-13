@@ -51,6 +51,28 @@ type yamlActor struct {
 	Initial     string                  `yaml:"initial"`
 	States      yaml.Node               `yaml:"states"`
 	Transitions []yamlTransition        `yaml:"transitions"`
+	Machines    yaml.Node               `yaml:"machines"`
+	Routes      []yamlRoute             `yaml:"routes"`
+}
+
+type yamlSubMachine struct {
+	Initial     string           `yaml:"initial"`
+	States      yaml.Node        `yaml:"states"`
+	Transitions []yamlTransition `yaml:"transitions"`
+	Reports     []string         `yaml:"reports"`
+	Accepts     []string         `yaml:"accepts"`
+}
+
+type yamlRoute struct {
+	On    string          `yaml:"on"`
+	From  string          `yaml:"from"`
+	Guard string          `yaml:"guard"`
+	Sends []yamlRouteSend `yaml:"sends"`
+}
+
+type yamlRouteSend struct {
+	To    string `yaml:"to"`
+	Event string `yaml:"event"`
 }
 
 type yamlStateNode struct {
@@ -193,18 +215,73 @@ func ParseYAML(data []byte) (*Protocol, error) {
 			Name:    kv.key,
 			Initial: State(kv.val.Initial),
 		}
-		for i, yt := range kv.val.Transitions {
-			t, err := convertTransition(yt)
-			if err != nil {
-				return nil, fmt.Errorf("actor %s transition %d: %w", kv.key, i, err)
-			}
-			actor.Transitions = append(actor.Transitions, t)
-		}
 
-		// Parse optional states: section (hierarchical states).
-		if kv.val.States.Kind == yaml.MappingNode {
-			if err := parseStateHierarchy(&actor, &kv.val.States); err != nil {
-				return nil, fmt.Errorf("actor %s states: %w", kv.key, err)
+		if kv.val.Machines.Kind == yaml.MappingNode {
+			// Composed actor: parse sub-machines and routes.
+			machines, err := parseOrderedMap[yamlSubMachine](&kv.val.Machines)
+			if err != nil {
+				return nil, fmt.Errorf("actor %s machines: %w", kv.key, err)
+			}
+			for _, mkv := range machines {
+				sm := SubMachine{
+					Name:    mkv.key,
+					Initial: State(mkv.val.Initial),
+				}
+				for _, id := range mkv.val.Reports {
+					sm.Reports = append(sm.Reports, EventID(id))
+				}
+				for _, id := range mkv.val.Accepts {
+					sm.Accepts = append(sm.Accepts, EventID(id))
+				}
+				for i, yt := range mkv.val.Transitions {
+					t, err := convertTransition(yt)
+					if err != nil {
+						return nil, fmt.Errorf("actor %s machine %s transition %d: %w",
+							kv.key, mkv.key, i, err)
+					}
+					sm.Transitions = append(sm.Transitions, t)
+				}
+				// Parse optional states: section for sub-machine hierarchy.
+				if mkv.val.States.Kind == yaml.MappingNode {
+					sm.StateIndex = make(map[State]*StateNode)
+					if err := parseSubMachineStateHierarchy(&sm, &mkv.val.States); err != nil {
+						return nil, fmt.Errorf("actor %s machine %s states: %w",
+							kv.key, mkv.key, err)
+					}
+				}
+				actor.Machines = append(actor.Machines, sm)
+			}
+
+			// Parse routes.
+			for _, yr := range kv.val.Routes {
+				r := Route{
+					On:    EventID(yr.On),
+					From:  yr.From,
+					Guard: GuardID(yr.Guard),
+				}
+				for _, ys := range yr.Sends {
+					r.Sends = append(r.Sends, RouteSend{
+						To:    ys.To,
+						Event: EventID(ys.Event),
+					})
+				}
+				actor.Routes = append(actor.Routes, r)
+			}
+		} else {
+			// Flat actor: parse transitions directly.
+			for i, yt := range kv.val.Transitions {
+				t, err := convertTransition(yt)
+				if err != nil {
+					return nil, fmt.Errorf("actor %s transition %d: %w", kv.key, i, err)
+				}
+				actor.Transitions = append(actor.Transitions, t)
+			}
+
+			// Parse optional states: section (hierarchical states).
+			if kv.val.States.Kind == yaml.MappingNode {
+				if err := parseStateHierarchy(&actor, &kv.val.States); err != nil {
+					return nil, fmt.Errorf("actor %s states: %w", kv.key, err)
+				}
 			}
 		}
 
@@ -468,6 +545,52 @@ func parseOrderedMapString(node *yaml.Node) ([]kv[string], error) {
 		})
 	}
 	return result, nil
+}
+
+// parseSubMachineStateHierarchy builds the state hierarchy for a sub-machine.
+func parseSubMachineStateHierarchy(sm *SubMachine, node *yaml.Node) error {
+	getOrCreate := func(name State) *StateNode {
+		if n, ok := sm.StateIndex[name]; ok {
+			return n
+		}
+		n := &StateNode{Name: name}
+		sm.StateIndex[name] = n
+		return n
+	}
+
+	states, err := parseOrderedMap[yamlStateNode](node)
+	if err != nil {
+		return fmt.Errorf("parse states map: %w", err)
+	}
+
+	for _, skv := range states {
+		parent := getOrCreate(State(skv.key))
+		for _, childName := range skv.val.Children {
+			child := getOrCreate(State(childName))
+			if child.Parent != nil {
+				return fmt.Errorf("state %s has multiple parents (%s and %s)",
+					childName, child.Parent.Name, parent.Name)
+			}
+			child.Parent = parent
+			parent.Children = append(parent.Children, child)
+		}
+		for i, yt := range skv.val.Transitions {
+			t, err := convertTransition(yt)
+			if err != nil {
+				return fmt.Errorf("superstate %s transition %d: %w", skv.key, i, err)
+			}
+			parent.Transitions = append(parent.Transitions, t)
+		}
+	}
+
+	for _, skv := range states {
+		node := sm.StateIndex[State(skv.key)]
+		if node.Parent == nil && !node.IsLeaf() {
+			sm.Roots = append(sm.Roots, node)
+		}
+	}
+
+	return nil
 }
 
 // parseStateHierarchy builds the state hierarchy from the YAML states: section.

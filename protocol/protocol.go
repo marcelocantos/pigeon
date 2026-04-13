@@ -243,14 +243,77 @@ func (n *StateNode) AncestorChain() []*StateNode {
 	return chain
 }
 
+// SubMachine defines a named state machine within a composed actor.
+// Each sub-machine has its own states, transitions, and declared
+// inter-machine event interface (reports/accepts).
+type SubMachine struct {
+	Name        string
+	Initial     State
+	Transitions []Transition
+	StateIndex  map[State]*StateNode
+	Roots       []*StateNode
+	Reports     []EventID  // events this machine emits to the routing layer
+	Accepts     []EventID  // events this machine can receive from other machines
+}
+
+// FlattenedTransitions returns all transitions including superstate
+// expansions, matching Actor.FlattenedTransitions semantics.
+func (m *SubMachine) FlattenedTransitions() []Transition {
+	if len(m.StateIndex) == 0 {
+		return m.Transitions
+	}
+	result := make([]Transition, len(m.Transitions))
+	copy(result, m.Transitions)
+	var expand func(node *StateNode)
+	expand = func(node *StateNode) {
+		if !node.IsLeaf() {
+			leaves := node.LeafStates()
+			for _, t := range node.Transitions {
+				for _, leaf := range leaves {
+					expanded := t
+					expanded.From = leaf.Name
+					expanded.To = leaf.Name
+					result = append(result, expanded)
+				}
+			}
+			for _, child := range node.Children {
+				expand(child)
+			}
+		}
+	}
+	for _, root := range m.Roots {
+		expand(root)
+	}
+	return result
+}
+
+// Route defines how events flow between sub-machines within a composed actor.
+type Route struct {
+	On    EventID     // trigger event (reported by source machine)
+	From  string      // source machine name
+	Guard GuardID     // optional: must be true to fire
+	Sends []RouteSend // events to deliver to target machines
+}
+
+// RouteSend is a single event delivery within a route.
+type RouteSend struct {
+	To    string  // target machine name
+	Event EventID // event to deliver
+}
+
 // Actor defines one participant in the protocol.
 type Actor struct {
 	Name        string
 	Initial     State
-	Transitions []Transition          // leaf-level transitions
+	Transitions []Transition          // leaf-level transitions (flat actor)
 	StateIndex  map[State]*StateNode  // hierarchy (nil = flat)
 	Roots       []*StateNode          // top-level state nodes
+	Machines    []SubMachine          // non-empty = composed actor
+	Routes      []Route               // inter-machine event wiring
 }
+
+// IsComposed reports whether this actor uses sub-machine composition.
+func (a *Actor) IsComposed() bool { return len(a.Machines) > 0 }
 
 // FlattenedTransitions returns all transitions including superstate
 // transitions expanded into explicit per-leaf-state self-loops.
@@ -373,41 +436,115 @@ func (p *Protocol) Validate() error {
 	}
 
 	for _, a := range p.Actors {
-		// Validate hierarchy consistency.
-		for name, node := range a.StateIndex {
-			for _, child := range node.Children {
-				if child.Parent != node {
-					return fmt.Errorf("actor %s: state %s child %s has wrong parent", a.Name, name, child.Name)
+		if a.IsComposed() {
+			// Validate composed actor.
+			machineNames := map[string]bool{}
+			for _, m := range a.Machines {
+				if machineNames[m.Name] {
+					return fmt.Errorf("actor %s: duplicate machine name: %s", a.Name, m.Name)
 				}
-			}
-		}
+				machineNames[m.Name] = true
 
-		// Validate both explicit and superstate transitions.
-		for _, t := range a.FlattenedTransitions() {
-			if t.On.Kind == TriggerRecv && !msgTypes[t.On.Msg] {
-				return fmt.Errorf("actor %s: transition %s->%s triggers on undeclared message %s",
-					a.Name, t.From, t.To, t.On.Msg)
-			}
-			if t.Guard != "" && !guardDefs[t.Guard] {
-				return fmt.Errorf("actor %s: transition %s->%s uses undefined guard %s",
-					a.Name, t.From, t.To, t.Guard)
-			}
-			for _, s := range t.Sends {
-				if !actorNames[s.To] {
-					return fmt.Errorf("actor %s: transition %s->%s sends to unknown actor %q",
-						a.Name, t.From, t.To, s.To)
+				// Validate sub-machine hierarchy.
+				for name, node := range m.StateIndex {
+					for _, child := range node.Children {
+						if child.Parent != node {
+							return fmt.Errorf("actor %s machine %s: state %s child %s has wrong parent",
+								a.Name, m.Name, name, child.Name)
+						}
+					}
 				}
-				if !msgTypes[s.Msg] {
-					return fmt.Errorf("actor %s: transition %s->%s sends undeclared message %s",
-						a.Name, t.From, t.To, s.Msg)
+
+				// Validate sub-machine transitions.
+				for _, t := range m.FlattenedTransitions() {
+					if t.On.Kind == TriggerRecv && !msgTypes[t.On.Msg] {
+						return fmt.Errorf("actor %s machine %s: transition %s->%s triggers on undeclared message %s",
+							a.Name, m.Name, t.From, t.To, t.On.Msg)
+					}
+					if t.Guard != "" && !guardDefs[t.Guard] {
+						return fmt.Errorf("actor %s machine %s: transition %s->%s uses undefined guard %s",
+							a.Name, m.Name, t.From, t.To, t.Guard)
+					}
+					for _, s := range t.Sends {
+						if !actorNames[s.To] {
+							return fmt.Errorf("actor %s machine %s: transition %s->%s sends to unknown actor %q",
+								a.Name, m.Name, t.From, t.To, s.To)
+						}
+					}
 				}
-				if sender := msgSenders[s.Msg]; sender != a.Name {
-					return fmt.Errorf("actor %s: transition %s->%s sends message %s but declared sender is %s",
-						a.Name, t.From, t.To, s.Msg, sender)
+			}
+
+			// Validate routes reference valid machines.
+			for i, r := range a.Routes {
+				if !machineNames[r.From] {
+					return fmt.Errorf("actor %s: route %d references unknown source machine %q",
+						a.Name, i, r.From)
+				}
+				if r.Guard != "" && !guardDefs[r.Guard] {
+					return fmt.Errorf("actor %s: route %d uses undefined guard %s",
+						a.Name, i, r.Guard)
+				}
+				for _, s := range r.Sends {
+					if !machineNames[s.To] {
+						return fmt.Errorf("actor %s: route %d sends to unknown machine %q",
+							a.Name, i, s.To)
+					}
+				}
+			}
+		} else {
+			// Validate flat actor.
+			for name, node := range a.StateIndex {
+				for _, child := range node.Children {
+					if child.Parent != node {
+						return fmt.Errorf("actor %s: state %s child %s has wrong parent", a.Name, name, child.Name)
+					}
+				}
+			}
+
+			for _, t := range a.FlattenedTransitions() {
+				if t.On.Kind == TriggerRecv && !msgTypes[t.On.Msg] {
+					return fmt.Errorf("actor %s: transition %s->%s triggers on undeclared message %s",
+						a.Name, t.From, t.To, t.On.Msg)
+				}
+				if t.Guard != "" && !guardDefs[t.Guard] {
+					return fmt.Errorf("actor %s: transition %s->%s uses undefined guard %s",
+						a.Name, t.From, t.To, t.Guard)
+				}
+				for _, s := range t.Sends {
+					if !actorNames[s.To] {
+						return fmt.Errorf("actor %s: transition %s->%s sends to unknown actor %q",
+							a.Name, t.From, t.To, s.To)
+					}
+					if !msgTypes[s.Msg] {
+						return fmt.Errorf("actor %s: transition %s->%s sends undeclared message %s",
+							a.Name, t.From, t.To, s.Msg)
+					}
+					if sender := msgSenders[s.Msg]; sender != a.Name {
+						return fmt.Errorf("actor %s: transition %s->%s sends message %s but declared sender is %s",
+							a.Name, t.From, t.To, s.Msg, sender)
+					}
 				}
 			}
 		}
 	}
 
 	return nil
+}
+
+// collectSubMachineStates returns all unique leaf states for a sub-machine.
+func collectSubMachineStates(m SubMachine) []State {
+	seen := map[State]bool{}
+	var states []State
+	add := func(s State) {
+		if !seen[s] {
+			seen[s] = true
+			states = append(states, s)
+		}
+	}
+	add(m.Initial)
+	for _, t := range m.FlattenedTransitions() {
+		add(t.From)
+		add(t.To)
+	}
+	return states
 }
