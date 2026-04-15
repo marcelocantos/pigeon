@@ -33,6 +33,7 @@ typedef struct {
     uint64_t send_seq;
     uint64_t recv_seq;
     pigeon_channel_mode mode;
+    bool established; // true after pigeon_channel_init / _init_symmetric
 } pigeon_channel;
 
 typedef struct {

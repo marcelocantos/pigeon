@@ -223,6 +223,199 @@ static void test_framing(void)
     PASS();
 }
 
+// --- Mock transport for send/recv round-trip tests ---
+
+typedef struct {
+    uint8_t stream_buf[PIGEON_MAX_MSG + 64]; // stream data buffer
+    size_t  stream_write_pos;                // next byte to write
+    size_t  stream_read_pos;                 // next byte to read
+    uint8_t dgram_buf[PIGEON_MAX_MSG + 64];  // datagram buffer
+    size_t  dgram_len;                       // current datagram size
+} mock_transport_state;
+
+static int mock_send_stream(void *ud, const uint8_t *data, size_t len)
+{
+    mock_transport_state *s = (mock_transport_state *)ud;
+    if (s->stream_write_pos + len > sizeof(s->stream_buf)) return -1;
+    memcpy(s->stream_buf + s->stream_write_pos, data, len);
+    s->stream_write_pos += len;
+    return 0;
+}
+
+static int mock_recv_stream(void *ud, uint8_t *buf, size_t buf_len, size_t *out_len)
+{
+    mock_transport_state *s = (mock_transport_state *)ud;
+    size_t avail = s->stream_write_pos - s->stream_read_pos;
+    size_t to_read = buf_len < avail ? buf_len : avail;
+    if (to_read == 0) { *out_len = 0; return -1; } // nothing to read
+    memcpy(buf, s->stream_buf + s->stream_read_pos, to_read);
+    s->stream_read_pos += to_read;
+    *out_len = to_read;
+    return 0;
+}
+
+static int mock_send_datagram(void *ud, const uint8_t *data, size_t len)
+{
+    mock_transport_state *s = (mock_transport_state *)ud;
+    if (len > sizeof(s->dgram_buf)) return -1;
+    memcpy(s->dgram_buf, data, len);
+    s->dgram_len = len;
+    return 0;
+}
+
+static int mock_recv_datagram(void *ud, uint8_t *buf, size_t buf_len, size_t *out_len)
+{
+    mock_transport_state *s = (mock_transport_state *)ud;
+    if (s->dgram_len == 0) { *out_len = 0; return -1; }
+    size_t to_read = s->dgram_len < buf_len ? s->dgram_len : buf_len;
+    memcpy(buf, s->dgram_buf, to_read);
+    *out_len = to_read;
+    s->dgram_len = 0;
+    return 0;
+}
+
+static void init_mock_ctx(pigeon_ctx *ctx, mock_transport_state *state)
+{
+    memset(state, 0, sizeof(*state));
+    pigeon_transport t = {
+        .userdata     = state,
+        .send_stream  = mock_send_stream,
+        .recv_stream  = mock_recv_stream,
+        .send_datagram  = mock_send_datagram,
+        .recv_datagram  = mock_recv_datagram,
+    };
+    pigeon_init(ctx, &t);
+}
+
+// --- pigeon_send / pigeon_recv round-trip (unencrypted) ---
+
+static void test_send_recv_unencrypted(void)
+{
+    TEST("pigeon_send/recv round-trip (unencrypted)");
+    static pigeon_ctx ctx;
+    static mock_transport_state state;
+    init_mock_ctx(&ctx, &state);
+
+    const char *msg = "hello pigeon";
+    int ret = pigeon_send(&ctx, (const uint8_t *)msg, strlen(msg));
+    if (ret != 0) { FAIL("pigeon_send failed"); return; }
+
+    uint8_t out[256];
+    int len = pigeon_recv(&ctx, out, sizeof(out));
+    if (len < 0) { FAIL("pigeon_recv failed"); return; }
+    if ((size_t)len != strlen(msg)) { FAIL("length mismatch"); return; }
+    if (memcmp(out, msg, (size_t)len) != 0) { FAIL("data mismatch"); return; }
+    // Channel must not be established (no keys set).
+    if (ctx.stream_channel.established) { FAIL("channel should not be established"); return; }
+
+    PASS();
+}
+
+// --- pigeon_send / pigeon_recv round-trip (encrypted) ---
+
+static void test_send_recv_encrypted(void)
+{
+    TEST("pigeon_send/recv round-trip (encrypted)");
+    static pigeon_ctx sender_ctx, receiver_ctx;
+    static mock_transport_state state;
+    init_mock_ctx(&sender_ctx, &state);
+    // Receiver shares the same mock transport buffer.
+    receiver_ctx = sender_ctx;
+
+    // Establish symmetric channels: sender = client, receiver = server.
+    uint8_t master[32];
+    randombytes_buf(master, 32);
+    if (pigeon_channel_init_symmetric(&sender_ctx.stream_channel, master, false) != 0) {
+        FAIL("sender channel init failed"); return;
+    }
+    if (pigeon_channel_init_symmetric(&receiver_ctx.stream_channel, master, true) != 0) {
+        FAIL("receiver channel init failed"); return;
+    }
+    // Both contexts share the same transport state pointer.
+    receiver_ctx.transport = sender_ctx.transport;
+
+    if (!sender_ctx.stream_channel.established) { FAIL("sender channel not established"); return; }
+    if (!receiver_ctx.stream_channel.established) { FAIL("receiver channel not established"); return; }
+
+    const char *msg = "encrypted pigeon message";
+    int ret = pigeon_send(&sender_ctx, (const uint8_t *)msg, strlen(msg));
+    if (ret != 0) { FAIL("pigeon_send failed"); return; }
+
+    // Wire: the transport buffer now contains framed ciphertext.
+    // Verify it does NOT contain the plaintext verbatim.
+    if (memmem(state.stream_buf, state.stream_write_pos, msg, strlen(msg)) != NULL) {
+        FAIL("plaintext found in wire buffer (not encrypted)"); return;
+    }
+
+    uint8_t out[256];
+    int len = pigeon_recv(&receiver_ctx, out, sizeof(out));
+    if (len < 0) { FAIL("pigeon_recv decrypt failed"); return; }
+    if ((size_t)len != strlen(msg)) { FAIL("decrypted length mismatch"); return; }
+    if (memcmp(out, msg, (size_t)len) != 0) { FAIL("decrypted data mismatch"); return; }
+
+    PASS();
+}
+
+// --- pigeon_send_datagram / pigeon_recv_datagram round-trip (unencrypted) ---
+
+static void test_send_recv_datagram_unencrypted(void)
+{
+    TEST("pigeon_send/recv_datagram round-trip (unencrypted)");
+    static pigeon_ctx ctx;
+    static mock_transport_state state;
+    init_mock_ctx(&ctx, &state);
+
+    const char *msg = "datagram hello";
+    int ret = pigeon_send_datagram(&ctx, (const uint8_t *)msg, strlen(msg));
+    if (ret != 0) { FAIL("pigeon_send_datagram failed"); return; }
+
+    uint8_t out[256];
+    int len = pigeon_recv_datagram(&ctx, out, sizeof(out));
+    if (len < 0) { FAIL("pigeon_recv_datagram failed"); return; }
+    if ((size_t)len != strlen(msg)) { FAIL("length mismatch"); return; }
+    if (memcmp(out, msg, (size_t)len) != 0) { FAIL("data mismatch"); return; }
+
+    PASS();
+}
+
+// --- pigeon_send_datagram / pigeon_recv_datagram round-trip (encrypted) ---
+
+static void test_send_recv_datagram_encrypted(void)
+{
+    TEST("pigeon_send/recv_datagram round-trip (encrypted)");
+    static pigeon_ctx sender_ctx, receiver_ctx;
+    static mock_transport_state state;
+    init_mock_ctx(&sender_ctx, &state);
+    receiver_ctx = sender_ctx;
+
+    uint8_t master[32];
+    randombytes_buf(master, 32);
+    if (pigeon_channel_init_symmetric(&sender_ctx.datagram_channel, master, false) != 0) {
+        FAIL("sender datagram channel init failed"); return;
+    }
+    if (pigeon_channel_init_symmetric(&receiver_ctx.datagram_channel, master, true) != 0) {
+        FAIL("receiver datagram channel init failed"); return;
+    }
+    receiver_ctx.transport = sender_ctx.transport;
+
+    const char *msg = "encrypted datagram";
+    int ret = pigeon_send_datagram(&sender_ctx, (const uint8_t *)msg, strlen(msg));
+    if (ret != 0) { FAIL("pigeon_send_datagram failed"); return; }
+
+    // Wire buffer must not contain plaintext.
+    if (memmem(state.dgram_buf, state.dgram_len, msg, strlen(msg)) != NULL) {
+        FAIL("plaintext found in datagram wire buffer"); return;
+    }
+
+    uint8_t out[256];
+    int len = pigeon_recv_datagram(&receiver_ctx, out, sizeof(out));
+    if (len < 0) { FAIL("pigeon_recv_datagram decrypt failed"); return; }
+    if ((size_t)len != strlen(msg)) { FAIL("decrypted datagram length mismatch"); return; }
+    if (memcmp(out, msg, (size_t)len) != 0) { FAIL("decrypted datagram data mismatch"); return; }
+
+    PASS();
+}
+
 // --- State machine init ---
 
 static void test_state_machine_init(void)
@@ -755,6 +948,10 @@ int main(void)
     test_state_machine_transitions();
     test_cross_language_vectors();
     test_pairing_record_roundtrip();
+    test_send_recv_unencrypted();
+    test_send_recv_encrypted();
+    test_send_recv_datagram_unencrypted();
+    test_send_recv_datagram_encrypted();
 
     printf("\n%d/%d tests passed\n", tests_passed, tests_run);
     return tests_passed == tests_run ? 0 : 1;

@@ -121,6 +121,7 @@ void pigeon_channel_init(pigeon_channel *ch,
     ch->send_seq = 0;
     ch->recv_seq = 0;
     ch->mode = mode;
+    ch->established = true;
 }
 
 int pigeon_channel_init_symmetric(pigeon_channel *ch,
