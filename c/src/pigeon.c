@@ -81,3 +81,46 @@ uint32_t pigeon_read_frame_length(const uint8_t *buf)
            ((uint32_t)buf[2] << 8)  |
            ((uint32_t)buf[3]);
 }
+
+// Magic bytes and version for PairingRecord serialisation.
+#define PIGEON_PR_MAGIC0 0x50u /* 'P' */
+#define PIGEON_PR_MAGIC1 0x47u /* 'G' */
+#define PIGEON_PR_MAGIC2 0x52u /* 'R' */
+#define PIGEON_PR_VERSION 1u
+
+int pigeon_pairing_record_serialize(const pigeon_pairing_record *rec,
+                                    uint8_t *buf, size_t buf_len)
+{
+    if (buf_len < PIGEON_PAIRING_RECORD_SIZE) return -1;
+
+    buf[0] = PIGEON_PR_MAGIC0;
+    buf[1] = PIGEON_PR_MAGIC1;
+    buf[2] = PIGEON_PR_MAGIC2;
+    buf[3] = PIGEON_PR_VERSION;
+
+    memcpy(buf +   4, rec->peer_instance_id,  64);
+    memcpy(buf +  68, rec->relay_url,         256);
+    memcpy(buf + 324, rec->local_private_key,  32);
+    memcpy(buf + 356, rec->local_public_key,   32);
+    memcpy(buf + 388, rec->peer_public_key,    32);
+
+    return PIGEON_PAIRING_RECORD_SIZE;
+}
+
+int pigeon_pairing_record_deserialize(pigeon_pairing_record *rec,
+                                      const uint8_t *buf, size_t buf_len)
+{
+    if (buf_len < PIGEON_PAIRING_RECORD_SIZE) return -1;
+    if (buf[0] != PIGEON_PR_MAGIC0 ||
+        buf[1] != PIGEON_PR_MAGIC1 ||
+        buf[2] != PIGEON_PR_MAGIC2) return -1;
+    if (buf[3] != PIGEON_PR_VERSION) return -1;
+
+    memcpy(rec->peer_instance_id,  buf +   4,  64);
+    memcpy(rec->relay_url,         buf +  68, 256);
+    memcpy(rec->local_private_key, buf + 324,  32);
+    memcpy(rec->local_public_key,  buf + 356,  32);
+    memcpy(rec->peer_public_key,   buf + 388,  32);
+
+    return PIGEON_PAIRING_RECORD_SIZE;
+}

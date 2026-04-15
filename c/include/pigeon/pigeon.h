@@ -152,4 +152,29 @@ int pigeon_frame_message(const uint8_t *payload, size_t len,
 // Read the length prefix from a 4-byte buffer. Returns the payload length.
 uint32_t pigeon_read_frame_length(const uint8_t *buf);
 
+// --- PairingRecord serialisation ---
+// Fixed-schema, zero-alloc format:
+//   [0]     magic byte 0x50 ('P')
+//   [1]     magic byte 0x47 ('G')
+//   [2]     magic byte 0x52 ('R')
+//   [3]     version byte (1)
+//   [4..67]   peer_instance_id (64 bytes, null-padded)
+//   [68..323] relay_url (256 bytes, null-padded)
+//   [324..355] local_private_key (32 bytes)
+//   [356..387] local_public_key (32 bytes)
+//   [388..419] peer_public_key (32 bytes)
+// Total: 420 bytes.
+
+#define PIGEON_PAIRING_RECORD_SIZE 420
+
+// Serialise rec into buf. Returns PIGEON_PAIRING_RECORD_SIZE on success,
+// or -1 if buf_len < PIGEON_PAIRING_RECORD_SIZE.
+int pigeon_pairing_record_serialize(const pigeon_pairing_record *rec,
+                                    uint8_t *buf, size_t buf_len);
+
+// Deserialise rec from buf. Returns PIGEON_PAIRING_RECORD_SIZE on success,
+// or -1 if buf_len < PIGEON_PAIRING_RECORD_SIZE or the header is malformed.
+int pigeon_pairing_record_deserialize(pigeon_pairing_record *rec,
+                                      const uint8_t *buf, size_t buf_len);
+
 #endif // PIGEON_H

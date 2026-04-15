@@ -671,6 +671,65 @@ static void test_cross_language_vectors(void)
     PASS();
 }
 
+// --- PairingRecord serialisation round-trip ---
+
+static void test_pairing_record_roundtrip(void)
+{
+    TEST("pairing record serialize/deserialize round-trip");
+
+    pigeon_pairing_record orig;
+    memset(&orig, 0, sizeof(orig));
+
+    // Fill with recognisable data.
+    strncpy(orig.peer_instance_id, "instance-abc-123", sizeof(orig.peer_instance_id) - 1);
+    strncpy(orig.relay_url, "https://relay.example.com:443", sizeof(orig.relay_url) - 1);
+    for (int i = 0; i < 32; i++) {
+        orig.local_private_key[i] = (uint8_t)(0x10 + i);
+        orig.local_public_key[i]  = (uint8_t)(0x20 + i);
+        orig.peer_public_key[i]   = (uint8_t)(0x30 + i);
+    }
+
+    uint8_t buf[PIGEON_PAIRING_RECORD_SIZE];
+    int written = pigeon_pairing_record_serialize(&orig, buf, sizeof(buf));
+    if (written != PIGEON_PAIRING_RECORD_SIZE) { FAIL("serialize returned wrong size"); return; }
+
+    pigeon_pairing_record decoded;
+    memset(&decoded, 0xff, sizeof(decoded)); // Fill with garbage before decode.
+    int consumed = pigeon_pairing_record_deserialize(&decoded, buf, sizeof(buf));
+    if (consumed != PIGEON_PAIRING_RECORD_SIZE) { FAIL("deserialize returned wrong size"); return; }
+
+    if (memcmp(&orig, &decoded, sizeof(orig)) != 0) { FAIL("round-trip mismatch"); return; }
+
+    // Buffer-too-small rejection.
+    if (pigeon_pairing_record_serialize(&orig, buf, PIGEON_PAIRING_RECORD_SIZE - 1) >= 0) {
+        FAIL("serialize with small buf should return -1"); return;
+    }
+    if (pigeon_pairing_record_deserialize(&decoded, buf, PIGEON_PAIRING_RECORD_SIZE - 1) >= 0) {
+        FAIL("deserialize with small buf should return -1"); return;
+    }
+
+    // Bad magic rejection.
+    buf[0] = 0x00;
+    if (pigeon_pairing_record_serialize(&orig, buf, sizeof(buf)) != PIGEON_PAIRING_RECORD_SIZE) {
+        FAIL("re-serialize failed"); return;
+    }
+    buf[0] = 0xFF; // Corrupt magic.
+    if (pigeon_pairing_record_deserialize(&decoded, buf, sizeof(buf)) >= 0) {
+        FAIL("deserialize with bad magic should return -1"); return;
+    }
+
+    // Bad version rejection.
+    if (pigeon_pairing_record_serialize(&orig, buf, sizeof(buf)) != PIGEON_PAIRING_RECORD_SIZE) {
+        FAIL("re-serialize failed"); return;
+    }
+    buf[3] = 99; // Corrupt version.
+    if (pigeon_pairing_record_deserialize(&decoded, buf, sizeof(buf)) >= 0) {
+        FAIL("deserialize with bad version should return -1"); return;
+    }
+
+    PASS();
+}
+
 int main(void)
 {
     if (sodium_init() < 0) {
@@ -695,6 +754,7 @@ int main(void)
     test_buffer_too_small();
     test_state_machine_transitions();
     test_cross_language_vectors();
+    test_pairing_record_roundtrip();
 
     printf("\n%d/%d tests passed\n", tests_passed, tests_run);
     return tests_passed == tests_run ? 0 : 1;
