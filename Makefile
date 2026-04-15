@@ -51,9 +51,14 @@ e2e-kotlin:
 		-p $(CURDIR)/android :pigeon:test --no-daemon --console=plain \
 		--tests "com.marcelocantos.pigeon.relay.PigeonConnE2ETest"
 
+# --- Deploy to Fly.io ---
+
+deploy:
+	flyctl deploy
+
 # --- E2E tests against live relay (require PIGEON_TOKEN) ---
 
-e2e-live: e2e-go-live e2e-swift-live
+e2e-live: deploy e2e-go-live e2e-swift-live
 
 e2e-go-live:
 ifndef PIGEON_TOKEN
