@@ -141,7 +141,7 @@ targets:
     achieved: 2026-04-14
   T11.2:
     name: Send/Recv path integrates E2E encryption
-    status: identified
+    status: achieved
     value: 5.0
     cost: 3.0
     acceptance:
@@ -154,6 +154,7 @@ targets:
     - T11.1
     origin: manual
     discovered: 2026-04-14
+    achieved: 2026-04-16
   T11.3:
     name: PairingRecord hand-coded fixed-schema serialisation
     status: achieved
@@ -404,7 +405,7 @@ targets:
     discovered: 2026-04-08
   T7:
     name: Browser WebTransport E2E
-    status: identified
+    status: achieved
     value: 3.0
     cost: 3.0
     acceptance:
@@ -413,6 +414,7 @@ targets:
     context: 'web/e2e/relay.spec.ts has Playwright tests against headless Chromium covering register, bidirectional stream round-trip, datagrams, and encrypted stream round-trip. Tests work locally when PIGEON_TOKEN is set against a live relay, but skip in CI because no token is wired. Headless Chromium WebTransport works fine — the original "blocked on Playwright Chromium QUIC support" context is stale. Gap is not test existence, it''s making them runnable unattended: (a) spin up a local relay in the Playwright global setup (likely cleanest; pigeon-bridge prototype already exists), (b) wire a PIGEON_TOKEN CI secret pointing at a test relay, or (c) document the manual token-based run as the "documented manual verification" branch of the acceptance. Option (a) would make this target close naturally.'
     origin: bootstrap from targets.md (T14)
     discovered: 2026-04-08
+    achieved: 2026-04-16
   T8:
     name: Gomobile bindings for iOS and Android
     status: identified
