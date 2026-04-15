@@ -127,7 +127,7 @@ targets:
     discovered: 2026-04-12
   T11.1:
     name: C codegen naming matches pigeon.h and test expectations
-    status: identified
+    status: achieved
     value: 5.0
     cost: 3.0
     acceptance:
@@ -138,6 +138,7 @@ targets:
     context: cgen.go generates composed-actor names like pigeon_ios_pairing_machine / pigeon_ios_pairing_step, but pigeon.h and test_pigeon.c reference the flat names pigeon_ios_machine / pigeon_ios_step / PIGEON_APP_IDLE. The build can't compile as-is. Either cgen.go needs to emit flat aliases for the top-level composed actor, or pigeon.h and tests need to use the composed names. The codegen approach is preferable — the C API should present flat names for the top-level machine the app uses.
     origin: manual
     discovered: 2026-04-14
+    achieved: 2026-04-14
   T11.2:
     name: Send/Recv path integrates E2E encryption
     status: identified
@@ -155,7 +156,7 @@ targets:
     discovered: 2026-04-14
   T11.3:
     name: PairingRecord hand-coded fixed-schema serialisation
-    status: identified
+    status: achieved
     value: 3.0
     cost: 2.0
     acceptance:
@@ -168,6 +169,7 @@ targets:
     - T11.1
     origin: manual
     discovered: 2026-04-14
+    achieved: 2026-04-15
   T11.4:
     name: ngtcp2 QUIC transport implementation
     status: identified
@@ -187,7 +189,7 @@ targets:
     discovered: 2026-04-14
   T12:
     name: Cascading relay architecture explored
-    status: identified
+    status: achieved
     value: 3.0
     cost: 3.0
     acceptance:
@@ -197,6 +199,7 @@ targets:
     context: 'Motivated by squz/ge: a local development relay that fronts multiple game servers. Players authenticate once against the local relay rather than each game server individually. The local relay acts as both a backend (to the public relay) and a relay (to the game servers). This is more than transport cascading — it''s a mediation layer between player-facing auth and per-game-server identity. The current 1:1 (one backend, one client per instance) model doesn''t cover this topology.'
     origin: manual
     discovered: 2026-04-12
+    achieved: 2026-04-15
   T13:
     name: Protocol framework supports composable parallel sub-machines per actor
     status: achieved
@@ -422,7 +425,7 @@ targets:
     discovered: 2026-04-08
   T9:
     name: Makefile deploy target
-    status: identified
+    status: achieved
     value: 3.0
     cost: 2.0
     acceptance:
@@ -431,3 +434,4 @@ targets:
     context: 'CI already auto-deploys to Fly.io via flyctl in .github/workflows/ci.yml on master push, and fly.toml has auto_start_machines = true + health checks. The missing pieces are purely local: Makefile has no `deploy` target (only `e2e-live` at line 56 which assumes the relay is already running), so there''s no one-line way for a developer to push a local change to Fly.io and wait for the machine to come back healthy. Low-cost extension: add a `deploy` target wrapping the same flyctl invocation CI uses, plus a health-wait loop polling /health, and make e2e-live depend on it. Prerequisite still stands: the Fly.io auth token is reportedly broken for local use.'
     origin: bootstrap from targets.md (T17)
     discovered: 2026-04-08
+    achieved: 2026-04-15
