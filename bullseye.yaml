@@ -330,7 +330,7 @@ targets:
     achieved: 2026-04-12
   T4:
     name: Investigate STUN/NAT hole-punching as a transport
-    status: identified
+    status: achieved
     value: 3.0
     cost: 2.0
     acceptance:
@@ -342,9 +342,10 @@ targets:
     context: Middle-tier transport between relay and LAN. Pure research target.
     origin: bootstrap from targets.md (T6)
     discovered: 2026-04-08
+    achieved: 2026-04-15
   T5:
     name: Investigate Bluetooth as proximity oracle
-    status: identified
+    status: achieved
     value: 2.0
     cost: 2.0
     acceptance:
@@ -355,6 +356,7 @@ targets:
     context: Bluetooth as proximity signal, not data channel. Could supplement confirmation code or gate LAN upgrade.
     origin: bootstrap from targets.md (T7)
     discovered: 2026-04-08
+    achieved: 2026-04-15
   T6:
     name: WebTransport relay
     status: achieved
