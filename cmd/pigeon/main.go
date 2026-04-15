@@ -23,8 +23,10 @@ import (
 	"crypto/ecdsa"
 	"crypto/elliptic"
 	"crypto/rand"
+	"crypto/sha256"
 	"crypto/tls"
 	"crypto/x509"
+	"encoding/hex"
 	"flag"
 	"fmt"
 	"log/slog"
@@ -46,21 +48,27 @@ var version = "dev"
 
 // generateSelfSignedCert creates a self-signed TLS certificate for
 // development use. Production deployments should provide a real certificate.
-func generateSelfSignedCert() (tls.Certificate, error) {
+// validityDays controls the certificate lifetime; use ≤14 for WebTransport
+// serverCertificateHashes compatibility (Chromium's limit).
+func generateSelfSignedCert(validityDays int) (tls.Certificate, error) {
 	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	if err != nil {
 		return tls.Certificate{}, fmt.Errorf("generate key: %w", err)
 	}
 
 	serialNumber, _ := rand.Int(rand.Reader, new(big.Int).Lsh(big.NewInt(1), 128))
+	notBefore := time.Now().Add(-time.Hour)
 	template := &x509.Certificate{
 		SerialNumber: serialNumber,
 		DNSNames:     []string{"localhost"},
 		IPAddresses:  []net.IP{net.IPv4(127, 0, 0, 1), net.IPv6loopback},
-		NotBefore:    time.Now().Add(-time.Hour),
-		NotAfter:     time.Now().Add(365 * 24 * time.Hour),
-		KeyUsage:     x509.KeyUsageDigitalSignature,
-		ExtKeyUsage:  []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth},
+		NotBefore:    notBefore,
+		// NotAfter is calculated from NotBefore, not from now, so the validity
+		// period is exactly validityDays. This matters for WebTransport's
+		// serverCertificateHashes, which requires validity ≤ 14 days.
+		NotAfter:    notBefore.Add(time.Duration(validityDays) * 24 * time.Hour),
+		KeyUsage:    x509.KeyUsageDigitalSignature,
+		ExtKeyUsage: []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth},
 	}
 
 	certDER, err := x509.CreateCertificate(rand.Reader, template, template, &key.PublicKey, key)
@@ -74,6 +82,16 @@ func generateSelfSignedCert() (tls.Certificate, error) {
 	}, nil
 }
 
+// certSHA256Hex returns the hex-encoded SHA-256 fingerprint of the first
+// certificate in the TLS certificate chain.
+func certSHA256Hex(cert tls.Certificate) string {
+	if len(cert.Certificate) == 0 {
+		return ""
+	}
+	sum := sha256.Sum256(cert.Certificate[0])
+	return hex.EncodeToString(sum[:])
+}
+
 func main() {
 	showVersion := flag.Bool("version", false, "print version and exit")
 	helpAgent := flag.Bool("help-agent", false, "print help and agent guide")
@@ -84,6 +102,7 @@ func main() {
 	domain := flag.String("domain", "", "domain for automatic Let's Encrypt TLS (e.g. carrier-pigeon.fly.dev)")
 	acmeEmail := flag.String("acme-email", "", "email for Let's Encrypt account (recommended)")
 	lanAddr := flag.String("lan", "", "LAN listener address for direct connections (e.g. :0, localhost:44333)")
+	certValidity := flag.Int("cert-validity", 365, "self-signed certificate validity in days (use ≤14 for WebTransport serverCertificateHashes)")
 	flag.Parse()
 
 	if *showVersion {
@@ -142,9 +161,10 @@ func main() {
 		if err := cfg.ManageSync(nil, []string{*domain}); err != nil {
 			slog.Warn("failed to provision Let's Encrypt certificate, falling back to self-signed",
 				"domain", *domain, "err", err)
-			tlsCert, _ := generateSelfSignedCert()
+			tlsCert, _ := generateSelfSignedCert(*certValidity)
 			tlsConfig = &tls.Config{Certificates: []tls.Certificate{tlsCert}}
-			slog.Info("using self-signed certificate (Let's Encrypt unavailable)")
+			slog.Info("using self-signed certificate (Let's Encrypt unavailable)",
+				"cert-hash", certSHA256Hex(tlsCert))
 		} else {
 			tlsConfig = cfg.TLSConfig()
 			slog.Info("using Let's Encrypt certificate", "domain", *domain)
@@ -162,7 +182,7 @@ func main() {
 		slog.Info("loaded TLS certificate", "cert", *certFile)
 
 	default:
-		tlsCert, err := generateSelfSignedCert()
+		tlsCert, err := generateSelfSignedCert(*certValidity)
 		if err != nil {
 			slog.Error("failed to generate self-signed certificate", "err", err)
 			os.Exit(1)
@@ -170,7 +190,11 @@ func main() {
 		tlsConfig = &tls.Config{
 			Certificates: []tls.Certificate{tlsCert},
 		}
-		slog.Info("generated self-signed TLS certificate (development mode)")
+		// Log the cert hash so test harnesses can pin it via serverCertificateHashes.
+		slog.Info("generated self-signed TLS certificate (development mode)",
+			"cert-hash", certSHA256Hex(tlsCert),
+			"cert-validity-days", *certValidity,
+		)
 	}
 
 	wtAddr := ":" + listenPort

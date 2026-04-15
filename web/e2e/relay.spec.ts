@@ -5,9 +5,16 @@ import { test, expect } from "@playwright/test";
 import { createServer } from "http";
 import type { Server } from "http";
 
-// Live relay coordinates. Tests are skipped if PIGEON_TOKEN is not set.
+// Relay coordinates. When PIGEON_TOKEN is set to "__local__" (injected by
+// globalSetup), tests run against a local relay started automatically.
+// When a real PIGEON_TOKEN is set, tests run against the live relay.
+// Tests skip if PIGEON_TOKEN is absent entirely.
 const RELAY_URL = process.env.PIGEON_RELAY_URL || "https://carrier-pigeon.fly.dev";
 const TOKEN = process.env.PIGEON_TOKEN || "";
+
+// SHA-256 fingerprint (hex) of the self-signed cert, set by globalSetup for
+// local relay. Empty when using the live relay (cert is publicly trusted).
+const CERT_HASH = process.env.PIGEON_CERT_HASH || "";
 
 /**
  * Start a minimal HTTP server on localhost that serves a blank page.
@@ -68,18 +75,24 @@ const RELAY_HELPERS = [
   "  return readExact(state, reader, len);",
   "}",
   "",
-  "async function openSession(url, handshake) {",
-  "  // Prime Alt-Svc cache: browser needs to learn HTTP/3 is available",
-  "  // via a regular HTTPS fetch before WebTransport works.",
-  "  try { await fetch(url.split('/register')[0].split('/ws/')[0] + '/health'); } catch(e) {}",
-  "  await new Promise(r => setTimeout(r, 500));",
-  "  const transport = new WebTransport(url);",
+  "async function openSession(url, handshake, certHash) {",
+  "  const opts = {};",
+  "  if (certHash) {",
+  "    const hashBytes = new Uint8Array(certHash.match(/../g).map(h => parseInt(h, 16)));",
+  "    opts.serverCertificateHashes = [{ algorithm: 'sha-256', value: hashBytes.buffer }];",
+  "  }",
+  "  const transport = new WebTransport(url, opts);",
   "  await transport.ready;",
   "  const stream = await transport.createBidirectionalStream();",
   "  const writer = stream.writable.getWriter();",
   "  const reader = stream.readable.getReader();",
+  "  const state = { remainder: null };",
   "  await writeMessage(writer, new TextEncoder().encode(handshake));",
-  "  return { transport, writer, reader };",
+  "  if (handshake === 'connect') {",
+  "    // Relay sends a one-time 'ok' ack after the connect handshake.",
+  "    await readMessage(state, reader);",
+  "  }",
+  "  return { transport, writer, reader, state };",
   "}",
 ].join("\n");
 
@@ -104,11 +117,11 @@ test.describe("WebTransport relay E2E", () => {
     await page.goto(pageUrl);
 
     const instanceID = await page.evaluate(
-      async ([relayUrl, token, helpers]: string[]) => {
+      async ([relayUrl, token, helpers, certHash]: string[]) => {
         const body = [
           helpers,
           "const registerUrl = relayUrl + '/register?token=' + encodeURIComponent(token);",
-          "const { transport, writer, reader } = await openSession(registerUrl, 'register');",
+          "const { transport, writer, reader } = await openSession(registerUrl, 'register', certHash);",
           "const state = { remainder: null };",
           "const idBytes = await readMessage(state, reader);",
           "const id = new TextDecoder().decode(idBytes);",
@@ -116,10 +129,10 @@ test.describe("WebTransport relay E2E", () => {
           "return id;",
         ].join("\n");
         const AsyncFunction = Object.getPrototypeOf(async function(){}).constructor;
-        const fn = new AsyncFunction("relayUrl", "token", body);
-        return await fn(relayUrl, token);
+        const fn = new AsyncFunction("relayUrl", "token", "certHash", body);
+        return await fn(relayUrl, token, certHash);
       },
-      [RELAY_URL, TOKEN, RELAY_HELPERS],
+      [RELAY_URL, TOKEN, RELAY_HELPERS, CERT_HASH],
     );
 
     expect(instanceID).toBeTruthy();
@@ -132,20 +145,20 @@ test.describe("WebTransport relay E2E", () => {
     await page.goto(pageUrl);
 
     const result = await page.evaluate(
-      async ([relayUrl, token, helpers]: string[]) => {
+      async ([relayUrl, token, helpers, certHash]: string[]) => {
         const body = [
           helpers,
           "const enc = new TextEncoder();",
           "const dec = new TextDecoder();",
           "",
           "const registerUrl = relayUrl + '/register?token=' + encodeURIComponent(token);",
-          "const backend = await openSession(registerUrl, 'register');",
+          "const backend = await openSession(registerUrl, 'register', certHash);",
           "const backendState = { remainder: null };",
           "const idBytes = await readMessage(backendState, backend.reader);",
           "const instanceID = dec.decode(idBytes);",
           "",
           "const connectUrl = relayUrl + '/ws/' + encodeURIComponent(instanceID);",
-          "const client = await openSession(connectUrl, 'connect');",
+          "const client = await openSession(connectUrl, 'connect', certHash);",
           "const clientState = { remainder: null };",
           "",
           "await writeMessage(client.writer, enc.encode('hello from browser'));",
@@ -160,10 +173,10 @@ test.describe("WebTransport relay E2E", () => {
           "return { received: dec.decode(received), reply: dec.decode(reply) };",
         ].join("\n");
         const AsyncFunction = Object.getPrototypeOf(async function(){}).constructor;
-        const fn = new AsyncFunction("relayUrl", "token", body);
-        return await fn(relayUrl, token);
+        const fn = new AsyncFunction("relayUrl", "token", "certHash", body);
+        return await fn(relayUrl, token, certHash);
       },
-      [RELAY_URL, TOKEN, RELAY_HELPERS],
+      [RELAY_URL, TOKEN, RELAY_HELPERS, CERT_HASH],
     );
 
     expect(result).toHaveProperty("received", "hello from browser");
@@ -175,20 +188,20 @@ test.describe("WebTransport relay E2E", () => {
     await page.goto(pageUrl);
 
     const result = await page.evaluate(
-      async ([relayUrl, token, helpers]: string[]) => {
+      async ([relayUrl, token, helpers, certHash]: string[]) => {
         const body = [
           helpers,
           "const enc = new TextEncoder();",
           "const dec = new TextDecoder();",
           "",
           "const registerUrl = relayUrl + '/register?token=' + encodeURIComponent(token);",
-          "const backend = await openSession(registerUrl, 'register');",
+          "const backend = await openSession(registerUrl, 'register', certHash);",
           "const backendState = { remainder: null };",
           "const idBytes = await readMessage(backendState, backend.reader);",
           "const instanceID = dec.decode(idBytes);",
           "",
           "const connectUrl = relayUrl + '/ws/' + encodeURIComponent(instanceID);",
-          "const client = await openSession(connectUrl, 'connect');",
+          "const client = await openSession(connectUrl, 'connect', certHash);",
           "",
           "const clientDgWriter = client.transport.datagrams.writable.getWriter();",
           "const backendDgReader = backend.transport.datagrams.readable.getReader();",
@@ -206,10 +219,10 @@ test.describe("WebTransport relay E2E", () => {
           "return { received: dec.decode(dg), reply: dec.decode(dgReply) };",
         ].join("\n");
         const AsyncFunction = Object.getPrototypeOf(async function(){}).constructor;
-        const fn = new AsyncFunction("relayUrl", "token", body);
-        return await fn(relayUrl, token);
+        const fn = new AsyncFunction("relayUrl", "token", "certHash", body);
+        return await fn(relayUrl, token, certHash);
       },
-      [RELAY_URL, TOKEN, RELAY_HELPERS],
+      [RELAY_URL, TOKEN, RELAY_HELPERS, CERT_HASH],
     );
 
     expect(result).toHaveProperty("received", "dg-from-browser");
@@ -221,7 +234,7 @@ test.describe("WebTransport relay E2E", () => {
     await page.goto(pageUrl);
 
     const result = await page.evaluate(
-      async ([relayUrl, token, helpers]: string[]) => {
+      async ([relayUrl, token, helpers, certHash]: string[]) => {
         const body = [
           helpers,
           "const enc = new TextEncoder();",
@@ -275,13 +288,13 @@ test.describe("WebTransport relay E2E", () => {
           "const backendRecvKey = await deriveKey(sharedKey, enc.encode('client-to-server'));",
           "",
           "const registerUrl = relayUrl + '/register?token=' + encodeURIComponent(token);",
-          "const backend = await openSession(registerUrl, 'register');",
+          "const backend = await openSession(registerUrl, 'register', certHash);",
           "const backendState = { remainder: null };",
           "const idBytes = await readMessage(backendState, backend.reader);",
           "const instanceID = dec.decode(idBytes);",
           "",
           "const connectUrl = relayUrl + '/ws/' + encodeURIComponent(instanceID);",
-          "const client = await openSession(connectUrl, 'connect');",
+          "const client = await openSession(connectUrl, 'connect', certHash);",
           "const clientState = { remainder: null };",
           "",
           "const plaintext = enc.encode('encrypted hello from browser');",
@@ -305,10 +318,10 @@ test.describe("WebTransport relay E2E", () => {
           "};",
         ].join("\n");
         const AsyncFunction = Object.getPrototypeOf(async function(){}).constructor;
-        const fn = new AsyncFunction("relayUrl", "token", body);
-        return await fn(relayUrl, token);
+        const fn = new AsyncFunction("relayUrl", "token", "certHash", body);
+        return await fn(relayUrl, token, certHash);
       },
-      [RELAY_URL, TOKEN, RELAY_HELPERS],
+      [RELAY_URL, TOKEN, RELAY_HELPERS, CERT_HASH],
     );
 
     expect(result).toHaveProperty("received", "encrypted hello from browser");

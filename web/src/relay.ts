@@ -264,7 +264,12 @@ export async function connect(
     opts,
   );
 
-  return new Conn(transport, writer, reader, instanceID);
+  // The relay sends a one-time "ok" acknowledgment after the handshake to
+  // signal that the session is ready and stream ordering is stable. Consume
+  // and discard it before returning the Conn to the caller.
+  const conn = new Conn(transport, writer, reader, instanceID);
+  await readMessage(conn, reader); // discard "ok"
+  return conn;
 }
 
 /**

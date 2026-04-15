@@ -17,6 +17,28 @@ jobs:
         run: sudo sysctl -w net.core.rmem_max=7340032 net.core.wmem_max=7340032
       - run: go test ./...
 
+  web-e2e:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - name: Increase UDP buffer size for QUIC
+        run: sudo sysctl -w net.core.rmem_max=7340032 net.core.wmem_max=7340032
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+      - name: Install npm dependencies
+        run: npm ci
+        working-directory: web
+      - name: Install Playwright browsers
+        run: npx playwright install --with-deps chromium
+        working-directory: web
+      - name: Run browser WebTransport E2E tests
+        run: npm run test:e2e
+        working-directory: web
+
   amalgamate:
     runs-on: ubuntu-latest
     steps:
