@@ -277,18 +277,13 @@ func (s *WebTransportServer) handleClient(w http.ResponseWriter, r *http.Request
 		return
 	}
 
-	// Enforce single client per instance.
+	// Track connected clients.
 	inst.mu.Lock()
-	if inst.occupied {
-		inst.mu.Unlock()
-		http.Error(w, `{"error":"instance already has a connected client"}`, http.StatusConflict)
-		return
-	}
-	inst.occupied = true
+	inst.clients++
 	inst.mu.Unlock()
 	defer func() {
 		inst.mu.Lock()
-		inst.occupied = false
+		inst.clients--
 		inst.mu.Unlock()
 	}()
 

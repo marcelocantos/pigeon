@@ -140,14 +140,14 @@ func PairingCeremony() *Protocol {
 					{From: "Idle", To: "GenerateToken", On: Recv("pair_begin"), Do: "generate_token", Updates: []VarUpdate{{Var: "current_token", Expr: "\"tok_1\""}, {Var: "active_tokens", Expr: "active_tokens \\union {\"tok_1\"}"}, }},
 					{From: "GenerateToken", To: "RegisterRelay", On: Internal("token created"), Do: "register_relay"},
 					{From: "RegisterRelay", To: "WaitingForClient", On: Internal("relay registered"), Sends: []Send{{To: "cli", Msg: "token_response", Fields: map[string]string{"instance_id": "\"inst_1\"", "token": "current_token", }}, }},
-					{From: "WaitingForClient", To: "DeriveSecret", On: Recv("pair_hello"), Guard: "token_valid", Do: "derive_secret", Updates: []VarUpdate{{Var: "received_client_pub", Expr: "recv_msg.pubkey"}, {Var: "server_ecdh_pub", Expr: "\"server_pub\""}, {Var: "server_shared_key", Expr: "DeriveKey(\"server_pub\", recv_msg.pubkey)"}, {Var: "server_code", Expr: "DeriveCode(\"server_pub\", recv_msg.pubkey)"}, }},
+					{From: "WaitingForClient", To: "DeriveSecret", On: Recv("pair_hello"), Guard: "token_valid", Do: "derive_secret", Updates: []VarUpdate{{Var: "received_client_pub", Expr: "recv_msg.pubkey"}, {Var: "server_ecdh_pub", Expr: "\"server_pub\""}, {Var: "server_shared_key", Expr: "DeriveKey(\"server_pub\", recv_msg.pubkey)"}, {Var: "server_code", Expr: "DeriveCode(\"server_pub\", recv_msg.pubkey)"}, {Var: "active_tokens", Expr: "active_tokens \\ {current_token}"}, {Var: "used_tokens", Expr: "used_tokens \\union {current_token}"}, }},
 					{From: "WaitingForClient", To: "Idle", On: Recv("pair_hello"), Guard: "token_invalid"},
 					{From: "DeriveSecret", To: "SendAck", On: Internal("ECDH complete"), Sends: []Send{{To: "ios", Msg: "pair_hello_ack", Fields: map[string]string{"pubkey": "server_ecdh_pub", }}, }},
 					{From: "SendAck", To: "WaitingForCode", On: Internal("signal code display"), Sends: []Send{{To: "ios", Msg: "pair_confirm"}, {To: "cli", Msg: "waiting_for_code"}, }},
 					{From: "WaitingForCode", To: "ValidateCode", On: Recv("code_submit"), Updates: []VarUpdate{{Var: "received_code", Expr: "recv_msg.code"}, }},
 					{From: "ValidateCode", To: "StorePaired", On: Internal("check code"), Guard: "code_correct"},
 					{From: "ValidateCode", To: "Idle", On: Internal("check code"), Guard: "code_wrong", Updates: []VarUpdate{{Var: "code_attempts", Expr: "code_attempts + 1"}, }},
-					{From: "StorePaired", To: "PairingComplete", On: Internal("finalise"), Do: "store_device", Sends: []Send{{To: "ios", Msg: "pair_complete", Fields: map[string]string{"key": "server_shared_key", "secret": "\"dev_secret_1\"", }}, {To: "cli", Msg: "pair_status", Fields: map[string]string{"status": "\"paired\"", }}, }, Updates: []VarUpdate{{Var: "device_secret", Expr: "\"dev_secret_1\""}, {Var: "paired_devices", Expr: "paired_devices \\union {\"device_1\"}"}, {Var: "active_tokens", Expr: "active_tokens \\ {current_token}"}, {Var: "used_tokens", Expr: "used_tokens \\union {current_token}"}, }},
+					{From: "StorePaired", To: "PairingComplete", On: Internal("finalise"), Do: "store_device", Sends: []Send{{To: "ios", Msg: "pair_complete", Fields: map[string]string{"key": "server_shared_key", "secret": "\"dev_secret_1\"", }}, {To: "cli", Msg: "pair_status", Fields: map[string]string{"status": "\"paired\"", }}, }, Updates: []VarUpdate{{Var: "device_secret", Expr: "\"dev_secret_1\""}, {Var: "paired_devices", Expr: "paired_devices \\union {\"device_1\"}"}, }},
 				}},
 				{Name: "auth", Initial: "Idle", Transitions: []Transition{
 					{From: "Idle", To: "Paired", On: Internal("credential_ready")},
@@ -340,8 +340,6 @@ func (m *PairingCeremonyServerPairingMachine) Step(event EventID) (bool, error) 
 		m.DeviceSecret = "dev_secret_1"
 		if m.OnChange != nil { m.OnChange("device_secret") }
 		// paired_devices: paired_devices \union {"device_1"} (set by action)
-		// active_tokens: active_tokens \ {current_token} (set by action)
-		// used_tokens: used_tokens \union {current_token} (set by action)
 		m.State = PairingCeremonyServerPairingPairingComplete
 		return true, nil
 	}
@@ -368,6 +366,8 @@ func (m *PairingCeremonyServerPairingMachine) HandleMessage(msg MsgType) (bool, 
 		if m.OnChange != nil { m.OnChange("server_ecdh_pub") }
 		// server_shared_key: DeriveKey("server_pub", recv_msg.pubkey) (set by action)
 		// server_code: DeriveCode("server_pub", recv_msg.pubkey) (set by action)
+		// active_tokens: active_tokens \ {current_token} (set by action)
+		// used_tokens: used_tokens \union {current_token} (set by action)
 		m.State = PairingCeremonyServerPairingDeriveSecret
 		return true, nil
 	case m.State == PairingCeremonyServerPairingWaitingForClient && msg == PairingCeremonyMsgPairHello && m.Guards[PairingCeremonyGuardTokenInvalid] != nil && m.Guards[PairingCeremonyGuardTokenInvalid]():

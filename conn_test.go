@@ -935,8 +935,9 @@ func TestConnectToNonExistentInstanceQUIC(t *testing.T) {
 	t.Logf("non-existent QUIC instance deferred: %v", err)
 }
 
-// TestSecondClientRejectedQUIC tests the QUIC handleConnect "occupied" path.
-func TestSecondClientRejectedQUIC(t *testing.T) {
+// TestMultipleClientsQUIC tests that multiple clients can connect to the
+// same backend instance concurrently via QUIC.
+func TestMultipleClientsQUIC(t *testing.T) {
 	env := localRelay(t)
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
@@ -961,21 +962,22 @@ func TestSecondClientRejectedQUIC(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// Second client via QUIC.
+	// Second client should also connect successfully.
 	c2, err := Connect(ctx, env.url, b.InstanceID(), env.cfg)
 	if err != nil {
-		t.Logf("second QUIC client rejected at connect: %v", err)
-		return
+		t.Fatal("connect c2:", err)
 	}
 	defer c2.CloseNow()
 
-	err = c2.Send(ctx, []byte("probe"))
-	if err == nil {
-		_, err = c2.Recv(ctx)
+	// Verify c2 works.
+	if err := c2.Send(ctx, []byte("c2")); err != nil {
+		t.Fatal("send c2:", err)
 	}
-	if err == nil {
-		t.Fatal("expected error for second QUIC client")
+	msg, err := b.Recv(ctx)
+	if err != nil {
+		t.Fatal("recv from c2:", err)
 	}
+	t.Logf("backend received from c2: %s", msg)
 }
 
 // TestEncryptedRecvControlMessages tests that Recv in encrypted mode
@@ -1947,9 +1949,9 @@ func TestQUICRegisterWriteIDFails(t *testing.T) {
 	time.Sleep(100 * time.Millisecond)
 }
 
-// TestConnectToOccupiedInstanceViaQUICRaw directly tests the raw QUIC
-// handleConnect "occupied" path by connecting two raw clients.
-func TestConnectToOccupiedInstanceViaQUICRaw(t *testing.T) {
+// TestMultipleClientsViaQUICRaw tests that multiple raw QUIC clients
+// can connect to the same instance concurrently.
+func TestMultipleClientsViaQUICRaw(t *testing.T) {
 	cert, pool := generateTestCert(t)
 	tlsCfg := &tls.Config{Certificates: []tls.Certificate{cert}}
 
@@ -2017,7 +2019,7 @@ func TestConnectToOccupiedInstanceViaQUICRaw(t *testing.T) {
 	// Give the first client time to be accepted.
 	time.Sleep(100 * time.Millisecond)
 
-	// Second client connects to the same instance.
+	// Second client connects to the same instance — should succeed.
 	conn3, err := quic.DialAddr(ctx, addr, clientTLS, &quic.Config{
 		EnableDatagrams: true,
 		MaxIdleTimeout:  60 * time.Second,
@@ -2035,13 +2037,12 @@ func TestConnectToOccupiedInstanceViaQUICRaw(t *testing.T) {
 		t.Fatal("write c2:", err)
 	}
 
-	// Second client should get an error (connection closed by server).
+	// Both clients should be connected — write from c2, verify no error.
 	time.Sleep(200 * time.Millisecond)
-	_, err = s3.Read(make([]byte, 1))
-	if err == nil {
-		t.Fatal("expected error for second client on occupied instance")
+	if err := writeMessage(s3, []byte("hello from c2")); err != nil {
+		t.Fatal("write from c2:", err)
 	}
-	t.Logf("occupied instance: %v", err)
+	t.Log("both clients connected successfully")
 }
 
 // TestConnectWTNilTLSConfig exercises the nil TLS config path in

@@ -50,8 +50,8 @@ type instance struct {
 	id      string
 	session relaySession
 
-	mu       sync.Mutex
-	occupied bool // true when a client is connected
+	mu      sync.Mutex
+	clients int // number of connected clients
 }
 
 func newHub() *hub {

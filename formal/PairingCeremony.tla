@@ -254,7 +254,9 @@ server_pairing_WaitingForClient_to_DeriveSecret_on_pair_hello_token_valid ==
     /\ server_ecdh_pub' = "server_pub"
     /\ server_shared_key' = DeriveKey("server_pub", received_pair_hello.pubkey)
     /\ server_code' = DeriveCode("server_pub", received_pair_hello.pubkey)
-    /\ UNCHANGED <<cli_state, server_auth_state, ios_pairing_state, ios_auth_state, current_token, active_tokens, used_tokens, received_server_pub, client_shared_key, ios_code, received_code, code_attempts, device_secret, paired_devices, received_device_id, auth_nonces_used, received_auth_nonce, received_token_response, received_waiting_for_code, received_pair_status, received_pair_begin, received_code_submit, received_auth_request, received_pair_hello_ack, received_pair_confirm, received_pair_complete, received_auth_ok>>
+    /\ active_tokens' = active_tokens \ {current_token}
+    /\ used_tokens' = used_tokens \union {current_token}
+    /\ UNCHANGED <<cli_state, server_auth_state, ios_pairing_state, ios_auth_state, current_token, received_server_pub, client_shared_key, ios_code, received_code, code_attempts, device_secret, paired_devices, received_device_id, auth_nonces_used, received_auth_nonce, received_token_response, received_waiting_for_code, received_pair_status, received_pair_begin, received_code_submit, received_auth_request, received_pair_hello_ack, received_pair_confirm, received_pair_complete, received_auth_ok>>
 
 \* server/pairing: WaitingForClient -> Idle on recv pair_hello [token_invalid]
 server_pairing_WaitingForClient_to_Idle_on_pair_hello_token_invalid ==
@@ -312,9 +314,7 @@ server_pairing_StorePaired_to_PairingComplete_finalise ==
     /\ server_pairing_state' = server_pairing_PairingComplete
     /\ device_secret' = "dev_secret_1"
     /\ paired_devices' = paired_devices \union {"device_1"}
-    /\ active_tokens' = active_tokens \ {current_token}
-    /\ used_tokens' = used_tokens \union {current_token}
-    /\ UNCHANGED <<cli_state, server_auth_state, ios_pairing_state, ios_auth_state, current_token, server_ecdh_pub, received_client_pub, received_server_pub, server_shared_key, client_shared_key, server_code, ios_code, received_code, code_attempts, received_device_id, auth_nonces_used, received_auth_nonce, received_token_response, received_waiting_for_code, received_pair_begin, received_pair_hello, received_code_submit, received_auth_request, received_pair_hello_ack, received_pair_confirm, received_auth_ok>>
+    /\ UNCHANGED <<cli_state, server_auth_state, ios_pairing_state, ios_auth_state, current_token, active_tokens, used_tokens, server_ecdh_pub, received_client_pub, received_server_pub, server_shared_key, client_shared_key, server_code, ios_code, received_code, code_attempts, received_device_id, auth_nonces_used, received_auth_nonce, received_token_response, received_waiting_for_code, received_pair_begin, received_pair_hello, received_code_submit, received_auth_request, received_pair_hello_ack, received_pair_confirm, received_auth_ok>>
 
 
 \* server/auth: Idle -> Paired (credential_ready)

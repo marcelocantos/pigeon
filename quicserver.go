@@ -237,19 +237,13 @@ func (s *QUICServer) handleConnect(conn *quic.Conn, stream *quic.Stream, msg str
 		return
 	}
 
-	// Enforce single client per instance.
+	// Track connected clients.
 	inst.mu.Lock()
-	if inst.occupied {
-		inst.mu.Unlock()
-		slog.Warn("quic connect: instance already occupied", "id", instanceID)
-		conn.CloseWithError(1, "instance already has a connected client")
-		return
-	}
-	inst.occupied = true
+	inst.clients++
 	inst.mu.Unlock()
 	defer func() {
 		inst.mu.Lock()
-		inst.occupied = false
+		inst.clients--
 		inst.mu.Unlock()
 	}()
 

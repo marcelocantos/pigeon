@@ -93,6 +93,8 @@ actors:
               server_ecdh_pub: '"server_pub"'
               server_shared_key: 'DeriveKey("server_pub", recv_msg.pubkey)'
               server_code: 'DeriveCode("server_pub", recv_msg.pubkey)'
+              active_tokens: 'active_tokens \ {current_token}'
+              used_tokens: 'used_tokens \union {current_token}'
           - from: WaitingForClient
             to: Idle
             on: recv pair_hello
@@ -145,8 +147,6 @@ actors:
             updates:
               device_secret: '"dev_secret_1"'
               paired_devices: 'paired_devices \union {"device_1"}'
-              active_tokens: 'active_tokens \ {current_token}'
-              used_tokens: 'used_tokens \union {current_token}'
       auth:
         initial: Idle
         accepts: [credential_ready]

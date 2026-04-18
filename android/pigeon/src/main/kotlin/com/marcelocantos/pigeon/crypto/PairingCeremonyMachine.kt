@@ -300,6 +300,8 @@ class PairingCeremonyServerPairingMachine {
                     serverEcdhPub = "server_pub"
                     // server_shared_key: DeriveKey("server_pub", recv_msg.pubkey) (set by action)
                     // server_code: DeriveCode("server_pub", recv_msg.pubkey) (set by action)
+                    // active_tokens: active_tokens \ {current_token} (set by action)
+                    // used_tokens: used_tokens \union {current_token} (set by action)
                     state = PairingCeremonyServerPairingState.DeriveSecret
                     emptyList()
                 }
@@ -340,8 +342,6 @@ class PairingCeremonyServerPairingMachine {
                     actions[PairingCeremonyProtocol.ActionID.StoreDevice]?.invoke()
                     deviceSecret = "dev_secret_1"
                     // paired_devices: paired_devices \union {"device_1"} (set by action)
-                    // active_tokens: active_tokens \ {current_token} (set by action)
-                    // used_tokens: used_tokens \union {current_token} (set by action)
                     state = PairingCeremonyServerPairingState.PairingComplete
                     emptyList()
                 }

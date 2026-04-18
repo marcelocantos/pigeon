@@ -264,6 +264,8 @@ public final class PairingCeremonyServerPairingMachine: @unchecked Sendable {
             serverEcdhPub = "server_pub"
             // server_shared_key: DeriveKey("server_pub", recv_msg.pubkey) (set by action)
             // server_code: DeriveCode("server_pub", recv_msg.pubkey) (set by action)
+            // active_tokens: active_tokens \ {current_token} (set by action)
+            // used_tokens: used_tokens \union {current_token} (set by action)
             state = .deriveSecret
             return []
         case (.waitingForClient, .recvPairHello) where guards[.tokenInvalid]?() == true:
@@ -290,8 +292,6 @@ public final class PairingCeremonyServerPairingMachine: @unchecked Sendable {
             try actions[.storeDevice]?()
             deviceSecret = "dev_secret_1"
             // paired_devices: paired_devices \union {"device_1"} (set by action)
-            // active_tokens: active_tokens \ {current_token} (set by action)
-            // used_tokens: used_tokens \union {current_token} (set by action)
             state = .pairingComplete
             return []
         default:
@@ -315,6 +315,8 @@ public final class PairingCeremonyServerPairingMachine: @unchecked Sendable {
             serverEcdhPub = "server_pub"
             // server_shared_key: DeriveKey("server_pub", recv_msg.pubkey) (set by action)
             // server_code: DeriveCode("server_pub", recv_msg.pubkey) (set by action)
+            // active_tokens: active_tokens \ {current_token} (set by action)
+            // used_tokens: used_tokens \union {current_token} (set by action)
             state = .deriveSecret
             return state
         case (.waitingForClient, .pairHello) where guards[.tokenInvalid]?() == true:
@@ -361,8 +363,6 @@ public final class PairingCeremonyServerPairingMachine: @unchecked Sendable {
             try actions[.storeDevice]?()
             deviceSecret = "dev_secret_1"
             // paired_devices: paired_devices \union {"device_1"} (set by action)
-            // active_tokens: active_tokens \ {current_token} (set by action)
-            // used_tokens: used_tokens \union {current_token} (set by action)
             state = .pairingComplete
             return state
         default:

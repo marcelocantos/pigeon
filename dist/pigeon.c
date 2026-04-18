@@ -46,6 +46,8 @@ int pigeon_server_pairing_handle_message(pigeon_server_pairing_machine *m, pairi
 		if (m->on_change) m->on_change("server_ecdh_pub", m->userdata);
 		// server_shared_key: DeriveKey("server_pub", recv_msg.pubkey) (set by action)
 		// server_code: DeriveCode("server_pub", recv_msg.pubkey) (set by action)
+		// active_tokens: active_tokens \ {current_token} (set by action)
+		// used_tokens: used_tokens \union {current_token} (set by action)
 		m->state = PIGEON_SERVER_PAIRING_DERIVE_SECRET;
 		return 1;
 	}
@@ -101,8 +103,6 @@ int pigeon_server_pairing_step(pigeon_server_pairing_machine *m, pairing_ceremon
 		m->device_secret = "dev_secret_1";
 		if (m->on_change) m->on_change("device_secret", m->userdata);
 		// paired_devices: paired_devices \union {"device_1"} (set by action)
-		// active_tokens: active_tokens \ {current_token} (set by action)
-		// used_tokens: used_tokens \union {current_token} (set by action)
 		m->state = PIGEON_SERVER_PAIRING_PAIRING_COMPLETE;
 		return 1;
 	}

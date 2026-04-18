@@ -950,7 +950,7 @@ func TestMessagesDontLeakBetweenInstances(t *testing.T) {
 	})
 }
 
-func TestSecondClientRejected(t *testing.T) {
+func TestMultipleClientsAccepted(t *testing.T) {
 	env := localRelay(t)
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
@@ -980,25 +980,22 @@ func TestSecondClientRejected(t *testing.T) {
 		t.Fatalf("got %q, want c1-test", data)
 	}
 
-	// Second client should be rejected (instance occupied).
+	// Second client should also connect successfully.
 	c2, err := Connect(ctx, env.url, b.InstanceID(), env.cfg)
 	if err != nil {
-		// Good: Connect itself returned an error (WebTransport path).
-		t.Logf("second client rejected at connect: %v", err)
-		return
+		t.Fatal("connect c2:", err)
 	}
 	defer c2.CloseNow()
 
-	// Raw QUIC: the server closes the connection after the handshake when
-	// it finds the instance is occupied. The error surfaces on Send/Recv.
-	err = c2.Send(ctx, []byte("probe"))
-	if err == nil {
-		_, err = c2.Recv(ctx)
+	// Verify second client works.
+	if err := c2.Send(ctx, []byte("c2-test")); err != nil {
+		t.Fatal("c2 send:", err)
 	}
-	if err == nil {
-		t.Fatal("expected error for second client, got nil")
+	data2, err := b.Recv(ctx)
+	if err != nil {
+		t.Fatal("b recv c2:", err)
 	}
-	t.Logf("second client rejected (deferred): %v", err)
+	t.Logf("backend received from c2: %s", data2)
 }
 
 func TestBackendDisconnectClosesClient(t *testing.T) {
