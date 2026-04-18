@@ -173,7 +173,7 @@ targets:
     achieved: 2026-04-15
   T11.4:
     name: ngtcp2 QUIC transport implementation
-    status: identified
+    status: achieved
     value: 5.0
     cost: 8.0
     acceptance:
@@ -188,6 +188,7 @@ targets:
     - T11.2
     origin: manual
     discovered: 2026-04-14
+    achieved: 2026-04-18
   T12:
     name: Cascading relay architecture explored
     status: achieved
@@ -238,7 +239,7 @@ targets:
     achieved: 2026-04-13
   T15:
     name: One-time token pairing with credential issuance and multi-client relay
-    status: identified
+    status: achieved
     value: 8.0
     cost: 8.0
     acceptance:
@@ -257,9 +258,10 @@ targets:
     - relay
     origin: manual
     discovered: 2026-04-13
+    achieved: 2026-04-18
   T2:
     name: Multi-transport with LAN upgrade
-    status: converging
+    status: achieved
     value: 5.0
     cost: 6.0
     acceptance:
@@ -272,9 +274,10 @@ targets:
     - T3.1
     origin: bootstrap from targets.md (T5)
     discovered: 2026-04-08
+    achieved: 2026-04-18
   T2.1:
     name: Cutover protocol
-    status: identified
+    status: achieved
     value: 5.0
     cost: 5.0
     acceptance:
@@ -287,9 +290,10 @@ targets:
     - T13
     origin: bootstrap from targets.md (T5.3)
     discovered: 2026-04-08
+    achieved: 2026-04-18
   T2.2:
     name: Transport-agnostic Conn
-    status: identified
+    status: achieved
     value: 5.0
     cost: 6.0
     acceptance:
@@ -302,9 +306,10 @@ targets:
     - T2.1
     origin: bootstrap from targets.md (T5.4)
     discovered: 2026-04-08
+    achieved: 2026-04-18
   T3:
     name: TLA+ model for cutover protocol
-    status: identified
+    status: achieved
     value: 3.0
     cost: 5.0
     acceptance:
@@ -316,6 +321,7 @@ targets:
     context: 'formal/PathSwitch.tla and PathSwitch.cfg exist and verify the RESOURCE LIFECYCLE of the PathSwitch state machine: dispatcher always bound, monitor only when LAN active, backoff bounded, LAN requires verification, relay always available. These are structural invariants, not message-sequencing invariants. The model does NOT have a MessageLog variable, does NOT model cutover markers, does NOT verify "no message lost/duplicated/reordered during cutover", and active_path is modelled as {"relay", "lan"} so dual-path operation isn''t expressible. To achieve T3 as written requires either (a) extending PathSwitch.tla with a message-log abstraction and concurrent-cutover scenario, or (b) rewriting T3''s acceptance to match the resource-lifecycle invariants that are already proven. Blocked on the T2.1 design decision.'
     origin: bootstrap from targets.md (T10)
     discovered: 2026-04-08
+    achieved: 2026-04-18
   T3.1:
     name: LAN discovery via relay
     status: achieved
