@@ -5,7 +5,8 @@ JDK21 ?= /opt/homebrew/Cellar/openjdk@21/21.0.10/libexec/openjdk.jdk/Contents/Ho
 
 .PHONY: all build test test-go test-swift test-kotlin test-web \
         e2e e2e-go e2e-swift e2e-kotlin \
-        test-live bench clean
+        test-live bench clean \
+        build-vendor-deps test-c test-c-ngtcp2
 
 # --- Build ---
 
@@ -106,9 +107,58 @@ test-c: amalgamate
 		dist/pigeon.c c/test/test_pigeon.c -o c/test/test_pigeon
 	./c/test/test_pigeon
 
+# --- Vendored C dependencies (ngtcp2 + quictls/openssl) ---
+#
+# Builds static libs under vendor/build/.
+# Outputs:
+#   vendor/build/lib/libssl.a
+#   vendor/build/lib/libcrypto.a
+#   vendor/build/lib/libngtcp2.a
+#   vendor/build/lib/libngtcp2_crypto_quictls.a
+#
+# Requires: cmake, make, perl (for OpenSSL Configure).
+# Run once; subsequent builds skip if the sentinel file exists.
+
+VENDOR_SENTINEL = c/vendor/build/lib/libngtcp2_crypto_quictls.a
+
+build-vendor-deps: $(VENDOR_SENTINEL)
+
+$(VENDOR_SENTINEL):
+	bash c/vendor/build.sh all
+
+# --- ngtcp2 QUIC transport test ---
+#
+# Links against the vendored static libraries built by build-vendor-deps.
+# Unit tests (vtable wiring, struct layout) run without a live relay.
+# Integration test skips gracefully if no relay is running on :4433.
+
+VENDOR_BUILD = c/vendor/build
+NGTCP2_CFLAGS = \
+	-I$(VENDOR_BUILD)/include \
+	-Ic/include \
+	-Idist
+
+NGTCP2_LDFLAGS = \
+	$(VENDOR_BUILD)/lib/libngtcp2_crypto_quictls.a \
+	$(VENDOR_BUILD)/lib/libngtcp2.a \
+	$(VENDOR_BUILD)/lib/libssl.a \
+	$(VENDOR_BUILD)/lib/libcrypto.a \
+	-lpthread -ldl
+
+test-c-ngtcp2: build-vendor-deps amalgamate
+	clang $(NGTCP2_CFLAGS) \
+		c/src/ngtcp2_transport.c \
+		c/test/test_ngtcp2.c \
+		dist/pigeon.c \
+		-DPIGEON_CRYPTO_LIBSODIUM \
+		$$(pkg-config --cflags --libs libsodium) \
+		$(NGTCP2_LDFLAGS) \
+		-o c/test/test_ngtcp2
+	./c/test/test_ngtcp2
+
 # --- Clean ---
 
 clean:
 	rm -rf .build/
-	rm -f pigeon pigeon-test-binary pigeon-e2e-server c/test/test_pigeon
+	rm -f pigeon pigeon-test-binary pigeon-e2e-server c/test/test_pigeon c/test/test_ngtcp2
 	go clean -testcache

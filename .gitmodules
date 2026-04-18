@@ -1,0 +1,9 @@
+[submodule "c/vendor/github.com/ngtcp2/ngtcp2"]
+	path = c/vendor/github.com/ngtcp2/ngtcp2
+	url = https://github.com/ngtcp2/ngtcp2.git
+[submodule "c/vendor/github.com/quictls/openssl"]
+	path = c/vendor/github.com/quictls/openssl
+	url = https://github.com/quictls/openssl.git
+[submodule "c/vendor/github.com/ngtcp2/nghttp3"]
+	path = c/vendor/github.com/ngtcp2/nghttp3
+	url = https://github.com/ngtcp2/nghttp3.git

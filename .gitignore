@@ -29,4 +29,5 @@ states/
 formal/*_TTrace_*.tla
 .sawmill/
 c/test/test_pigeon
+c/test/test_ngtcp2
 .claude/
