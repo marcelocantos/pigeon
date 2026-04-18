@@ -416,8 +416,8 @@ targets:
     discovered: 2026-04-08
     achieved: 2026-04-16
   T8:
-    name: Gomobile bindings for iOS and Android
-    status: identified
+    name: Gomobile bindings for iOS and Android (dropped — speculative, no hard requirement)
+    status: achieved
     value: 5.0
     cost: 5.0
     acceptance:
@@ -427,6 +427,7 @@ targets:
     context: 'The current iOS library (Sources/Pigeon/*.swift) and Android library (android/pigeon/src/main/kotlin/**) are HAND-WRITTEN ports of pigeon''s crypto, pairing, and path-switch state machines against platform crypto APIs — they do not share code with the Go implementation. T8 is a replacement strategy: use gomobile to bind pigeon''s Go code into an XCFramework (iOS) and AAR (Android), so native apps consume exactly the same QUIC stack, crypto, and state machine the Go server uses. This eliminates Network.framework quirks on iOS and removes the Android runtime''s dependency on Kotlin/JDK 17+ X25519 support. Would obsolete the hand-written Swift/Kotlin ports (or relegate them to thin façades). Decision point before starting: commit to gomobile as the canonical mobile path, or keep hand-written ports for ergonomic Swift/Kotlin APIs and use gomobile only for the transport layer.'
     origin: bootstrap from targets.md (T15)
     discovered: 2026-04-08
+    achieved: 2026-04-18
   T9:
     name: Makefile deploy target
     status: achieved
