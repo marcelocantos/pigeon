@@ -20,6 +20,11 @@ import (
 	"github.com/quic-go/quic-go"
 )
 
+// CutoverTimeoutMs is the drain window duration after sending or
+// receiving a CUTOVER marker. Messages arriving on the old path
+// within this window are still delivered; the path is closed after.
+const CutoverTimeoutMs = 2000
+
 // event carries an event ID plus optional payload into the executor.
 type event struct {
 	id      EventID
@@ -137,8 +142,9 @@ type executor struct {
 	pongCancel     context.CancelFunc // cancelled when pong received
 
 	// Configurable timing (defaults set in newExecutor).
-	pingInterval time.Duration // how often to send health pings
-	pongTimeout  time.Duration // how long to wait for a pong reply
+	pingInterval    time.Duration // how often to send health pings
+	pongTimeout     time.Duration // how long to wait for a pong reply
+	cutoverTimeout  time.Duration // how long to drain old path after CUTOVER
 
 	// LAN reader cancellation.
 	lanStreamCancel context.CancelFunc
@@ -174,10 +180,11 @@ func newExecutor(
 		lanReady:      make(chan struct{}),
 		chanDgWaiters: make(map[uint16][]chan dgRecvResult),
 		chanDgBuffers: make(map[uint16][][]byte),
-		reasm:         newReassembler(DefaultFragmentTimeout, done),
-		maxDgPayload:  MaxDatagramPayload,
-		pingInterval:  time.Duration(PingIntervalMs) * time.Millisecond,
-		pongTimeout:   time.Duration(PongTimeoutMs) * time.Millisecond,
+		reasm:          newReassembler(DefaultFragmentTimeout, done),
+		maxDgPayload:   MaxDatagramPayload,
+		pingInterval:   time.Duration(PingIntervalMs) * time.Millisecond,
+		pongTimeout:    time.Duration(PongTimeoutMs) * time.Millisecond,
+		cutoverTimeout: time.Duration(CutoverTimeoutMs) * time.Millisecond,
 		ctx:           ctx,
 		cancel:        cancel,
 	}
@@ -510,6 +517,12 @@ func (e *executor) executeCommand(cmd CmdID, payload any) {
 
 	case SessionProtocolCmdCloseLanPath:
 		if e.lan != nil {
+			// Send CUTOVER marker on the old path before closing,
+			// signalling the peer that no more messages will follow.
+			e.sendCutoverMarker(e.lan)
+			// Drain the old path for cutoverTimeout, delivering any
+			// messages that arrive within the window.
+			e.drainOldPath(e.lan)
 			e.lan.close()
 			e.lan = nil
 		}
@@ -733,7 +746,13 @@ func (e *executor) streamReader(ctx context.Context, p *path, dataEvent, errorEv
 					addr: offer.Addr, challenge: offer.Challenge,
 				}})
 			case FrameCutover:
-				slog.Debug("received cutover marker")
+				slog.Debug("received cutover marker on stream")
+				// The peer has switched to a new path. Any messages
+				// remaining on this path's stream are already queued
+				// in the reader goroutine and will be delivered before
+				// the stream EOF. Nothing to do here — the peer will
+				// close the old path after its drain window, causing
+				// the stream reader to exit naturally.
 			default:
 				slog.Warn("discarding unknown message type", "type", plaintext[0])
 			}
@@ -930,5 +949,57 @@ func (e *executor) dialLAN() {
 	// so both transitions fire in sequence.
 	e.submit(event{id: SessionProtocolEventLanDialOk, payload: result})
 	e.submit(event{id: SessionProtocolEventRecvLanConfirm, payload: result})
+}
+
+// sendCutoverMarker sends a FrameCutover marker on the given path's
+// stream. This signals the peer that no more messages will be sent
+// on this path.
+func (e *executor) sendCutoverMarker(p *path) {
+	if p.stream == nil || e.channel == nil {
+		return
+	}
+	framed := []byte{FrameCutover}
+	encrypted := e.channel.Encrypt(framed)
+	if err := writeMessage(p.stream, encrypted); err != nil {
+		slog.Debug("cutover marker send failed", "path", p.name, "err", err)
+	} else {
+		slog.Debug("cutover marker sent", "path", p.name)
+	}
+}
+
+// drainOldPath reads remaining messages from the old path's stream
+// for up to cutoverTimeout, delivering any application messages that
+// arrive within the window. This ensures bounded-loss cutover: messages
+// sent before the CUTOVER marker that are still in flight are delivered.
+func (e *executor) drainOldPath(p *path) {
+	if p.stream == nil {
+		return
+	}
+
+	// Set a read deadline on the stream to bound the drain.
+	if d, ok := p.stream.(deadliner); ok {
+		d.SetReadDeadline(time.Now().Add(e.cutoverTimeout))
+	}
+
+	for {
+		data, err := readMessage(p.stream)
+		if err != nil {
+			// Timeout or stream closed — drain complete.
+			return
+		}
+		if e.channel != nil {
+			plaintext, err := e.channel.Decrypt(data)
+			if err != nil {
+				return
+			}
+			if len(plaintext) > 0 && plaintext[0] == FrameApp {
+				e.deliverRecv(plaintext[1:])
+			}
+			// Other frame types (FrameCutover, FrameLanOffer) are
+			// ignored during drain — only app data is delivered.
+		} else {
+			e.deliverRecv(data)
+		}
+	}
 }
 

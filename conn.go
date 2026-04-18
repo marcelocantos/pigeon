@@ -252,17 +252,29 @@ func (c *Conn) Close() error {
 	return relay.closer.Close()
 }
 
-// fallbackToRelay forces an immediate fallback from the direct path
-// to relay. The machine handles this via app_force_fallback transitions
-// from any LAN-related state.
-func (c *Conn) fallbackToRelay() {
+// FallbackToRelay forces an immediate fallback from the direct path
+// to relay. In normal operation, this is not needed — the transport
+// state machine detects path failures automatically and switches to
+// relay. Use this for application-level decisions (e.g., user
+// preference, bandwidth constraints).
+//
+// The fallback sends a CUTOVER marker on the direct path, drains
+// any remaining messages, then closes the direct path. The Conn
+// continues operating transparently on the relay.
+func (c *Conn) FallbackToRelay() {
 	c.exec.submitSync(event{id: SessionProtocolEventAppForceFallback})
 }
 
-// isDirectActive returns true if the direct path is active.
-func (c *Conn) isDirectActive() bool {
+// fallbackToRelay is an internal alias used by tests.
+func (c *Conn) fallbackToRelay() { c.FallbackToRelay() }
+
+// IsDirectActive returns true if a direct (non-relay) path is active.
+func (c *Conn) IsDirectActive() bool {
 	return c.exec.lan != nil
 }
+
+// isDirectActive is an internal alias used by tests.
+func (c *Conn) isDirectActive() bool { return c.IsDirectActive() }
 
 // CloseNow immediately closes the session.
 func (c *Conn) CloseNow() error {
