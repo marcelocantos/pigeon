@@ -398,7 +398,7 @@ targets:
     achieved: 2026-04-12
   T6.2:
     name: LAN direct WebTransport with cert fingerprint
-    status: identified
+    status: achieved
     value: 3.0
     cost: 3.0
     acceptance:
@@ -410,6 +410,7 @@ targets:
     - T6.1
     origin: bootstrap from targets.md (T8.5)
     discovered: 2026-04-08
+    achieved: 2026-04-19
   T7:
     name: Browser WebTransport E2E
     status: achieved
