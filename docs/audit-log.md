@@ -91,7 +91,7 @@ maintenance activities. Append-only — newest entries at the bottom.
 
 ## 2026-04-19 — /release v0.17.0
 
-- **Commit**: `pending`
+- **Commit**: `af71c04`
 - **Outcome**: Released v0.17.0 (darwin-arm64, linux-amd64, linux-arm64). Major work: multi-client relay + one-time token pairing + credential API (🎯T15); cert-hash in LAN offer for browser direct connections (🎯T6.2); ngtcp2-based QUIC transport for the C client library (🎯T11.4); E2E encryption wired into C send/recv (🎯T11.2); PairingRecord fixed-schema serialisation (🎯T11.3); pairing ceremony decomposed into pairing + auth sub-machines (🎯T14) with composable sub-machine support across all five codegen targets (Go, Swift, Kotlin, TypeScript, C) plus TLA+; drain-window cutover protocol with TLA+ cutover model (🎯T2.1, 🎯T2.2, 🎯T3); browser WebTransport E2E tests now runnable unattended (🎯T7); `make deploy` target for Fly.io (🎯T9); STUN and Bluetooth proximity investigations (🎯T4, 🎯T5); cascading relay architecture exploration doc (🎯T12). C codegen naming fix to match composed-actor types (🎯T11.1). 🎯T8 (gomobile) dropped as speculative.
 - **Breaking changes**: C state-enum names refactored for composed actors (`pigeon_server_pairing_*` / `pigeon_server_auth_*` / `pigeon_app_*` — was `pigeon_ios_*` / `pigeon_cli_*`). Swift generated machine class names refactored to `PairingCeremony*` prefix with per-sub-machine + Composite types. STABILITY.md catalogue updated; settling clock reset.
 - **Deferred**:
