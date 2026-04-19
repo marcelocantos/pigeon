@@ -360,18 +360,34 @@ final class RelayE2ETests: XCTestCase {
     }
 
     private func readExact(_ c: NWConnection, _ count: Int) async throws -> Data {
-        try await withCheckedThrowingContinuation { cont in
-            c.receive(minimumIncompleteLength: count, maximumLength: count) { d, _, _, e in
-                if let e = e { cont.resume(throwing: e) }
-                else if let d = d, d.count >= count { cont.resume(returning: d) }
-                else {
+        // Accumulate in a loop. NWConnection.receive with
+        // `minimumIncompleteLength == maximumLength` proved unreliable on
+        // the macos-14 CI runner (ENOTCONN mid-stream), so we ask for at
+        // least one byte per call and append until we have all `count`.
+        var acc = Data()
+        acc.reserveCapacity(count)
+        while acc.count < count {
+            let remaining = count - acc.count
+            let chunk: Data = try await withCheckedThrowingContinuation { cont in
+                c.receive(minimumIncompleteLength: 1, maximumLength: remaining) { d, _, isComplete, e in
+                    if let e = e { cont.resume(throwing: e); return }
+                    if let d = d, !d.isEmpty { cont.resume(returning: d); return }
+                    if isComplete {
+                        cont.resume(throwing: NSError(
+                            domain: "EOF", code: 0,
+                            userInfo: [NSLocalizedDescriptionKey: "stream closed after \(acc.count) of \(count) bytes"]
+                        ))
+                        return
+                    }
                     cont.resume(throwing: NSError(
                         domain: "EOF", code: 0,
-                        userInfo: [NSLocalizedDescriptionKey: "expected \(count) bytes, got \(d?.count ?? 0)"]
+                        userInfo: [NSLocalizedDescriptionKey: "empty receive with no error at \(acc.count) of \(count) bytes"]
                     ))
                 }
             }
+            acc.append(chunk)
         }
+        return acc
     }
 
     // MARK: - Port helper

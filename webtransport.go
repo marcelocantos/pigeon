@@ -102,17 +102,17 @@ func generateID() string {
 }
 
 // writeMessage writes a length-prefixed binary message to a stream.
-// Format: [4-byte big-endian length][payload]
+// Format: [4-byte big-endian length][payload]. Header and payload are
+// emitted in a single Write to avoid splitting across STREAM frames —
+// NWConnection on macos-14 mishandles that fragment boundary.
 func writeMessage(stream io.Writer, data []byte) error {
 	if len(data) > maxMessageSize {
 		return fmt.Errorf("message too large: %d > %d", len(data), maxMessageSize)
 	}
-	var hdr [4]byte
-	binary.BigEndian.PutUint32(hdr[:], uint32(len(data)))
-	if _, err := stream.Write(hdr[:]); err != nil {
-		return err
-	}
-	_, err := stream.Write(data)
+	buf := make([]byte, 4+len(data))
+	binary.BigEndian.PutUint32(buf[:4], uint32(len(data)))
+	copy(buf[4:], data)
+	_, err := stream.Write(buf)
 	return err
 }
 
