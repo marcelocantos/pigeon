@@ -56,6 +56,12 @@ jobs:
             exit 1
           fi
 
+  swift-test:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: swift test
+
   deploy:
     name: Deploy to Fly.io
     needs: test
