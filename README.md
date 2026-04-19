@@ -24,9 +24,9 @@ The relay server handles only ciphertext and has no access to session keys.
 
 1. A **backend** connects to `GET /register` via WebTransport. The relay
    assigns a unique instance ID and sends it back as the first message.
-2. A **client** connects to `GET /ws/<instance-id>`. The relay bridges
-   all traffic bidirectionally between the two WebTransport sessions —
-   both reliable streams and unreliable datagrams.
+2. One or more **clients** connect to `GET /ws/<instance-id>`. The relay
+   bridges traffic bidirectionally — both reliable streams and unreliable
+   datagrams — and maintains an independent bridge per client.
 3. Pairing and encryption happen above the relay layer, in the
    application, using pigeon's crypto and protocol packages.
 

@@ -93,7 +93,9 @@ conn.SetDatagramChannel(dgCh)  // encrypts/decrypts datagrams
 | `GET /register` | Backend registers (WebTransport session); receives assigned instance ID |
 | `GET /ws/{id}` | Client connects by instance ID (WebTransport session); bridged bidirectionally to backend |
 
-One client per instance. A second client connection returns HTTP 409.
+Multiple clients can connect to the same instance ID. The relay maintains
+independent bridges for each connected client, so backends can serve more
+than one peer concurrently.
 
 ## Swift (SPM)
 

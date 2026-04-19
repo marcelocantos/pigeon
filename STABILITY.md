@@ -10,7 +10,7 @@ The pre-1.0 period (currently v0.x.x) exists to get the interaction surface righ
 
 ## Interaction Surface Catalogue
 
-*Snapshot as of v0.16.0.*
+*Snapshot as of v0.17.0.*
 
 ### Relay API (the binary's external interface)
 
@@ -23,7 +23,9 @@ The pre-1.0 period (currently v0.x.x) exists to get the interaction surface righ
 Supports both reliable streams (via `Send`/`Recv`) and unreliable datagrams (via `SendDatagram`/`RecvDatagram`).
 Relay bridges additional streams opened by either side (for channel API).
 
-Constraints: one client per instance; second client returns HTTP 409.
+Constraints: multiple clients may connect to the same instance ID; the relay
+maintains independent bridges for each. Stream/datagram traffic is fanned
+out per client.
 Max message frame size: 1 MiB.
 CORS: `Access-Control-Allow-Origin: *` on health endpoint (for browser Alt-Svc priming).
 
@@ -33,12 +35,14 @@ CORS: `Access-Control-Allow-Origin: *` on health endpoint (for browser Alt-Svc p
 
 | Flag | Type | Default | Description |
 |------|------|---------|-------------|
-| `--port` | string | `""` | Listening port (overrides `PORT` env var) |
+| `--port` | string | `""` | WebTransport listening port (overrides `PORT` env var) |
+| `--quic-port` | string | `""` | Raw QUIC listening port (overrides `QUIC_PORT` env var) |
 | `--cert` | string | `""` | TLS certificate file (PEM); generates self-signed if omitted |
 | `--key` | string | `""` | TLS private key file (PEM) |
 | `--domain` | string | `""` | Domain name for ACME (Let's Encrypt) certificate provisioning |
 | `--acme-email` | string | `""` | Contact email for ACME certificate registration |
 | `--lan` | string | `""` | LAN listener address for direct connections (e.g. `:0`, `localhost:44333`) |
+| `--cert-validity` | int | `365` | Self-signed certificate validity in days (use ≤14 for browser `serverCertificateHashes`) |
 | `--version` | bool | `false` | Print version and exit |
 | `--help-agent` | bool | `false` | Print usage + agents-guide.md and exit |
 
@@ -91,10 +95,13 @@ func (c *Conn) RecvDatagram(ctx context.Context) ([]byte, error)
 func (c *Conn) SetChannel(ch *crypto.Channel)
 func (c *Conn) SetDatagramChannel(ch *crypto.Channel)
 func (c *Conn) SetPairingRecord(rec *crypto.PairingRecord)
+func (c *Conn) OpenStream() (io.ReadWriteCloser, error)
 func (c *Conn) OpenChannel(name string) (*StreamChannel, error)
 func (c *Conn) AcceptChannel(ctx context.Context) (*StreamChannel, error)
 func (c *Conn) DatagramChannel(name string) *DatagramChannel
 func (c *Conn) LANReady() <-chan struct{}
+func (c *Conn) FallbackToRelay()
+func (c *Conn) IsDirectActive() bool
 func (c *Conn) Close() error
 func (c *Conn) CloseNow() error
 
@@ -131,7 +138,13 @@ func WakeRelay(ctx context.Context, relayURL string, c Config) error
 type LANServer struct { /* unexported fields */ }
 func NewLANServer(addr string, tlsConfig *tls.Config) (*LANServer, error)
 func (s *LANServer) Addr() string
+func (s *LANServer) CertHash() []byte
 func (s *LANServer) Close() error
+
+// Credential — opaque blob the server issues, the client stores and presents
+type Credential = crypto.PairingRecord
+func IssueCredential(peerInstanceID, relayURL string) (deviceCredential *Credential, serverRecord *crypto.PairingRecord, err error)
+func UnmarshalCredential(data []byte) (*Credential, error)
 
 // Server library — WebTransport (browsers)
 type WebTransportServer struct { /* unexported fields */ }
@@ -333,6 +346,14 @@ Distributed as an amalgamated single-header/single-source pair. Requires
 libsodium for crypto primitives. Zero heap allocations — all state lives in
 a `pigeon_ctx` struct sized at compile time.
 
+**Composed-actor state enums (v0.17 rename, breaking from v0.16):**
+The pairing-ceremony decomposition splits each composed actor into separate
+pairing and auth sub-machines. State enums are now per sub-machine:
+`pigeon_server_pairing_state` / `pigeon_server_auth_state`,
+`pigeon_app_pairing_state` / `pigeon_app_auth_state` (was `pigeon_ios_*`),
+and `pigeon_cli_state` (single sub-machine). Constants follow the same
+pattern: `PIGEON_SERVER_PAIRING_*`, `PIGEON_SERVER_AUTH_*`, etc.
+
 ```c
 // Configuration
 #define PIGEON_MAX_MSG 1048576  // sole build-time knob
@@ -392,6 +413,17 @@ typedef void (*pigeon_change_fn)(const char *var_name, void *ctx);
 
 *Stability: Fluid — new in v0.16.0, API surface may evolve before 1.0.*
 
+### C QUIC transport (`c/`, ngtcp2 backend)
+
+Native QUIC transport for C clients (added v0.17, T11.4). Built via CMake
+under `c/`, vendoring ngtcp2 and OpenSSL as submodules under `c/vendor/`.
+Provides the `pigeon_transport` callbacks expected by the amalgamated
+`pigeon_ctx`, so C apps can register/connect over raw QUIC without
+implementing the QUIC stack themselves.
+
+*Stability: Fluid — new in v0.17.0, API surface and callback contracts
+may evolve before 1.0.*
+
 ### `protocol/` C code generator
 
 ```go
@@ -436,13 +468,58 @@ public struct PairingRecord: Codable, Sendable {
 // Standalone functions
 public func deriveKeyFromSecret(_ secret: Data, info: Data) -> SymmetricKey
 
-// Generated state machines (from pairing.yaml)
-// ServerMachine, AppMachine, CLIMachine
-// MessageType enum, ServerState/AppState/CLIState enums
+// Generated state machines (from pairing.yaml — composed actors as of v0.17)
+// PairingCeremonyServerPairingMachine, PairingCeremonyServerAuthMachine,
+// PairingCeremonyServerComposite (groups the two)
+// PairingCeremonyIosPairingMachine, PairingCeremonyIosAuthMachine,
+// PairingCeremonyIosComposite
+// PairingCeremonyCliMachine (single, no decomposition)
+// State enums per sub-machine: PairingCeremonyServerPairingState,
+// PairingCeremonyServerAuthState, PairingCeremonyIosPairingState,
+// PairingCeremonyIosAuthState, PairingCeremonyCliState
+
+// Generated state machines (from session.yaml — added v0.17)
+// SessionBackendMachine, SessionClientMachine, SessionRelayMachine
+// SessionBackendState, SessionClientState, SessionRelayState
+
+// Generated state machines (from path_switch.yaml — added v0.17)
+// PathSwitchBackendMachine, PathSwitchClientMachine, PathSwitchRelayMachine
+// PathSwitchBackendState, PathSwitchClientState, PathSwitchRelayState
 ```
 
 *Stability: E2EKeyPair and E2EChannel are Stable. Generated state machines are
-Needs Review — names depend on pairing.yaml actor names.*
+Needs Review — names depend on YAML actor names. Session/PathSwitch machines
+are Fluid — new in v0.17.*
+
+### Kotlin/JVM `Pigeon` library (`android/pigeon/`)
+
+Kotlin/JVM package consumed via JitPack as
+`com.github.marcelocantos.pigeon:pigeon:<tag>`. Requires JDK 17+ /
+Android API 33+ (for X25519). Mirrors the Go API surface for JVM
+clients and ships generated state machines from the same YAML specs
+(PairingCeremony, Session, PathSwitch — with composed actors).
+
+```kotlin
+class E2EKeyPair { ... }
+class E2EChannel { ... }
+object Hkdf { ... }
+class PigeonConn { ... }
+// Generated machines mirror Swift names with Pascal-case PairingCeremony*
+```
+
+*Stability: Needs Review — generated names track YAML actor names; Hkdf and
+PigeonConn surfaces are settling.*
+
+### `web/` TypeScript package (`@marcelocantos/pigeon`)
+
+Browser-oriented WebTransport relay client and generated state machines
+(added v0.17 codegen target). Lives under `web/src/`; tested with
+Playwright under `web/e2e/`. Provides crypto primitives, relay
+connection helpers, and the same generated PairingCeremony/Session/
+PathSwitch machines as the other targets.
+
+*Stability: Fluid — new in v0.17.0; npm publication and module layout
+are still being shaped.*
 
 ### `faultproxy/` Go package (testing only)
 
@@ -488,8 +565,18 @@ func WithPacketHook(fn func(pktNum int, data []byte) Action) Option
 - **No published Go module docs** until the first tag is pushed (pkg.go.dev
   indexes on tags).
 - **No protocol framework usage example** (`Example_test.go` in `protocol/`).
-- **C library API stabilisation**: New in v0.16.0, the C API surface is Fluid
-  and needs real-world usage feedback before freezing. No version macros yet.
+- **C library API stabilisation**: Introduced in v0.16.0, refactored in v0.17.0
+  for composed actors; surface is Fluid and needs real-world usage feedback
+  before freezing. No project-version macros yet (only protocol-version
+  `PIGEON_PR_VERSION`).
+- **C QUIC transport (ngtcp2) stabilisation**: New in v0.17.0; transport
+  callback contracts and CMake build layout still settling.
+- **TypeScript/web package**: New in v0.17.0; module layout, npm
+  publication, and generated state machine API need real-world feedback.
+- **Swift composed-actor unit tests**: `Tests/PigeonTests/PairingCeremonyMachineTests.swift`
+  still references the pre-decomposition `PairingCeremonyServerMachine`
+  type. Tests are broken locally; not exercised by CI. Need to be rewritten
+  against the per-sub-machine + Composite API.
 - **Settling period** (see below): 2-month minimum required after last breaking
   change before 1.0 eligibility.
 
@@ -505,6 +592,7 @@ func WithPacketHook(fn func(pktNum int, data []byte) Action) Option
 ## 1.0 Readiness
 
 **Not yet eligible.** The settling threshold requires 2 months from the last
-breaking change (20–50 surface items). Clock starts 2026-03-22 (first public
-API surface, v0.1.0). Earliest 1.0 eligibility: 2026-05-22, provided all gaps
-above are resolved.
+breaking change (20–50 surface items). v0.17.0 introduces breaking changes
+to the C state-enum names and the Swift generated machine class names
+(composed-actor decomposition), resetting the clock. Earliest 1.0
+eligibility: 2026-06-19, provided all gaps above are resolved.
