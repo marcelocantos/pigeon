@@ -42,7 +42,9 @@ final class RelayE2ETests: XCTestCase {
         // Find a free UDP port.
         relayPort = Self.findFreePort()
 
-        // Start the relay.
+        // Start the relay. Keep its stderr streaming to the test process's
+        // stderr so CI logs capture relay-side events — useful for
+        // diagnosing failures that only reproduce in CI.
         let proc = Process()
         proc.executableURL = URL(fileURLWithPath: "/tmp/pigeon-e2e-server")
         proc.arguments = ["--quic-port", String(relayPort)]
@@ -51,21 +53,28 @@ final class RelayE2ETests: XCTestCase {
         proc.standardError = pipe
         try proc.run()
 
-        // Wait for "pigeon starting" on stderr.
-        let deadline = Date().addingTimeInterval(15)
-        var ready = false
+        // Wait for "pigeon starting" on stderr, then keep draining stderr
+        // forward to the test process's stderr so the pipe never fills up
+        // and slog lines show up in CI output.
+        let ready = DispatchSemaphore(value: 0)
+        let readyFlag = NSLock()
+        var didSignal = false
         pipe.fileHandleForReading.readabilityHandler = { h in
-            if let s = String(data: h.availableData, encoding: .utf8),
+            let data = h.availableData
+            guard !data.isEmpty else { return }
+            FileHandle.standardError.write(data)
+            readyFlag.lock()
+            let already = didSignal
+            if !already, let s = String(data: data, encoding: .utf8),
                s.contains("pigeon starting") {
-                ready = true
+                didSignal = true
             }
+            let shouldSignal = !already && didSignal
+            readyFlag.unlock()
+            if shouldSignal { ready.signal() }
         }
-        while !ready && Date() < deadline {
-            Thread.sleep(forTimeInterval: 0.1)
-        }
-        pipe.fileHandleForReading.readabilityHandler = nil
 
-        guard ready else {
+        guard ready.wait(timeout: .now() + 15) == .success else {
             proc.terminate()
             throw NSError(domain: "Server", code: 2,
                           userInfo: [NSLocalizedDescriptionKey: "relay did not start within 15s"])
@@ -175,28 +184,41 @@ final class RelayE2ETests: XCTestCase {
                           userInfo: [NSLocalizedDescriptionKey: "go build crypto-peer failed (\(buildPeer.terminationStatus))"])
         }
 
-        // Start crypto-peer subprocess pointing to the relay.
+        // Start crypto-peer subprocess pointing to the relay. Instance ID
+        // arrives on stdout; stderr carries slog + quic-go diagnostics
+        // (including the UDP-buffer warning on CI runners that used to
+        // contaminate the first stderr line when the ID was printed there).
         let peer = Process()
         peer.executableURL = URL(fileURLWithPath: "/tmp/pigeon-crypto-peer")
         peer.arguments = ["https://127.0.0.1:\(relayPort!)"]
         peer.environment = ProcessInfo.processInfo.environment.merging(
             ["PIGEON_INSECURE": "1"]) { _, new in new }
-        peer.standardOutput = FileHandle.nullDevice
+        let peerStdout = Pipe()
+        peer.standardOutput = peerStdout
         let peerStderr = Pipe()
         peer.standardError = peerStderr
         try peer.run()
         defer { peer.terminate(); peer.waitUntilExit() }
 
-        // Close the write end of the pipe in the parent process so that
-        // read() on the read end will see EOF when the child exits.
+        // Close the write ends in the parent so read() sees EOF on exit.
+        peerStdout.fileHandleForWriting.closeFile()
         peerStderr.fileHandleForWriting.closeFile()
 
-        // Read instance ID from crypto-peer's stderr (first line).
+        // Forward crypto-peer's stderr to the test process's stderr so
+        // diagnostics reach CI logs.
+        peerStderr.fileHandleForReading.readabilityHandler = { h in
+            let data = h.availableData
+            if data.isEmpty { return }
+            FileHandle.standardError.write("[crypto-peer] ".data(using: .utf8)!)
+            FileHandle.standardError.write(data)
+        }
+
+        // Read instance ID from crypto-peer's stdout (first line).
         // Use a DispatchSemaphore for a reliable timeout: schedule a
         // 15-second timeout that kills the peer, which unblocks read().
         let sem = DispatchSemaphore(value: 0)
         var instanceIDResult = ""
-        let readFD = peerStderr.fileHandleForReading.fileDescriptor
+        let readFD = peerStdout.fileHandleForReading.fileDescriptor
         DispatchQueue.global(qos: .userInitiated).async {
             var lineData = Data()
             var buf = [UInt8](repeating: 0, count: 1)

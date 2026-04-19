@@ -16,7 +16,7 @@
 //  2. client → peer: 32-byte X25519 public key
 //  3. peer → client: 6-byte ASCII confirmation code
 //
-// The instance ID is printed to stderr so the client can connect.
+// The instance ID is printed to stdout so the client can connect.
 // Set PIGEON_INSECURE=1 for self-signed relay certificates.
 package main
 
@@ -65,8 +65,10 @@ func main() {
 	}
 	defer conn.CloseNow()
 
-	// Print instance ID so the client can connect.
-	fmt.Fprintln(os.Stderr, conn.InstanceID())
+	// Print instance ID to stdout so the client can connect. stderr is
+	// reserved for slog / quic-go diagnostics, which may otherwise
+	// interleave with the ID and confuse consumers.
+	fmt.Println(conn.InstanceID())
 
 	// Generate X25519 keypair.
 	kp, err := crypto.GenerateKeyPair()
