@@ -102,7 +102,7 @@ targets:
     achieved: 2026-04-10
   T11:
     name: Pure C client library with struct-based zero-allocation API
-    status: identified
+    status: achieved
     value: 5.0
     cost: 8.0
     observable: true
@@ -125,6 +125,7 @@ targets:
     - T11.4
     origin: manual
     discovered: 2026-04-12
+    achieved: 2026-04-19
   T11.1:
     name: C codegen naming matches pigeon.h and test expectations
     status: achieved
