@@ -8,6 +8,7 @@ import (
 	"crypto/ecdsa"
 	"crypto/elliptic"
 	"crypto/rand"
+	"crypto/sha256"
 	"crypto/tls"
 	"crypto/x509"
 	"encoding/json"
@@ -43,6 +44,7 @@ import (
 type LANServer struct {
 	listener *quic.Listener
 	addr     string // "ip:port" on the LAN
+	certHash []byte // SHA-256 of DER cert for browser serverCertificateHashes
 	mu       sync.Mutex
 	conns    map[string]*pendingLAN // instance ID → pending connection
 }
@@ -95,9 +97,17 @@ func NewLANServer(addr string, tlsConfig *tls.Config) (*LANServer, error) {
 	}
 	advertised := fmt.Sprintf("%s:%d", host, listenAddr.Port)
 
+	// Compute cert hash for browser serverCertificateHashes.
+	var certHash []byte
+	if len(tlsConfig.Certificates) > 0 && len(tlsConfig.Certificates[0].Certificate) > 0 {
+		h := sha256.Sum256(tlsConfig.Certificates[0].Certificate[0])
+		certHash = h[:]
+	}
+
 	s := &LANServer{
 		listener: listener,
 		addr:     advertised,
+		certHash: certHash,
 		conns:    make(map[string]*pendingLAN),
 	}
 
@@ -109,6 +119,11 @@ func NewLANServer(addr string, tlsConfig *tls.Config) (*LANServer, error) {
 
 // Addr returns the LAN address (ip:port) that clients should dial.
 func (s *LANServer) Addr() string { return s.addr }
+
+// CertHash returns the SHA-256 hash of the LAN server's DER-encoded
+// certificate. Browser clients pass this in serverCertificateHashes
+// when connecting via WebTransport.
+func (s *LANServer) CertHash() []byte { return s.certHash }
 
 // Close stops the LAN server.
 func (s *LANServer) Close() error {
@@ -134,6 +149,7 @@ func (s *LANServer) registerConn(c *Conn) (lanOffer, error) {
 	return lanOffer{
 		Addr:      s.addr,
 		Challenge: challenge,
+		CertHash:  s.certHash,
 	}, nil
 }
 
@@ -210,6 +226,7 @@ func (s *LANServer) handleConn(conn *quic.Conn) {
 type lanOffer struct {
 	Addr      string `json:"addr"`
 	Challenge []byte `json:"challenge"`
+	CertHash  []byte `json:"cert_hash,omitempty"` // SHA-256 of DER cert for serverCertificateHashes
 }
 
 // lanVerify is sent on the direct LAN connection to prove identity.
@@ -242,13 +259,16 @@ func generateSelfSigned() (tls.Certificate, error) {
 		return tls.Certificate{}, err
 	}
 
+	notBefore := time.Now().Add(-time.Hour)
 	template := &x509.Certificate{
 		SerialNumber: big.NewInt(1),
-		NotBefore:    time.Now(),
-		NotAfter:     time.Now().Add(24 * time.Hour),
-		KeyUsage:     x509.KeyUsageDigitalSignature,
-		ExtKeyUsage:  []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth},
-		IPAddresses:  []net.IP{net.IPv4(127, 0, 0, 1)},
+		NotBefore:    notBefore,
+		// 14 days from NotBefore — Chromium's serverCertificateHashes
+		// requires validity ≤ 14 days measured from NotBefore.
+		NotAfter:    notBefore.Add(14 * 24 * time.Hour),
+		KeyUsage:    x509.KeyUsageDigitalSignature,
+		ExtKeyUsage: []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth},
+		IPAddresses: []net.IP{net.IPv4(127, 0, 0, 1)},
 	}
 
 	certDER, err := x509.CreateCertificate(rand.Reader, template, template, &key.PublicKey, key)

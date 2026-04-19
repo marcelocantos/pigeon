@@ -84,6 +84,7 @@ type lanDialResult struct {
 type lanOfferData struct {
 	addr      string
 	challenge []byte
+	certHash  []byte // SHA-256 of DER cert for browser serverCertificateHashes
 }
 
 // lanVerifyData carries the verified LAN connection from the server.
@@ -743,7 +744,7 @@ func (e *executor) streamReader(ctx context.Context, p *path, dataEvent, errorEv
 					continue
 				}
 				e.submit(event{id: SessionProtocolEventRecvLanOffer, payload: &lanOfferData{
-					addr: offer.Addr, challenge: offer.Challenge,
+					addr: offer.Addr, challenge: offer.Challenge, certHash: offer.CertHash,
 				}})
 			case FrameCutover:
 				slog.Debug("received cutover marker on stream")
@@ -851,6 +852,7 @@ func (e *executor) sendLANOffer() error {
 	offer := lanOffer{
 		Addr:      e.lanServer.addr,
 		Challenge: challenge,
+		CertHash:  e.lanServer.certHash,
 	}
 
 	// Send the offer as a control message via the relay stream.

@@ -23,7 +23,7 @@ messages:
   lan_offer:
     from: backend
     to: client
-    desc: 'LAN address + challenge (sent via relay)'
+    desc: 'LAN address + challenge + cert hash (sent via relay)'
   lan_verify:
     from: client
     to: backend
@@ -63,6 +63,7 @@ actors:
             fields:
               addr: lan_addr
               challenge: challenge_bytes
+              cert_hash: cert_hash_bytes
 
       # --- LAN verification ---
       - from: LANOffered
@@ -150,6 +151,7 @@ actors:
             fields:
               addr: lan_addr
               challenge: challenge_bytes
+              cert_hash: cert_hash_bytes
 
       - from: RelayBackoff
         to: LANOffered
@@ -160,6 +162,7 @@ actors:
             fields:
               addr: lan_addr
               challenge: challenge_bytes
+              cert_hash: cert_hash_bytes
         updates:
           backoff_level: '0'
 
@@ -174,6 +177,7 @@ actors:
             fields:
               addr: lan_addr
               challenge: challenge_bytes
+              cert_hash: cert_hash_bytes
 
   client:
     initial: RelayConnected
@@ -289,6 +293,9 @@ vars:
   challenge_bytes:
     initial: '"none"'
     desc: 32-byte random challenge for LAN verification
+  cert_hash_bytes:
+    initial: '"none"'
+    desc: SHA-256 of DER cert for browser serverCertificateHashes
   offer_challenge:
     initial: '"none"'
     desc: challenge from the most recent LAN offer
