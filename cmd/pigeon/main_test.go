@@ -483,7 +483,10 @@ func TestTokenAuth_QUIC(t *testing.T) {
 	}
 }
 
-func TestSecondClientRejected(t *testing.T) {
+func TestSecondClientAccepted(t *testing.T) {
+	// Multi-client relay (🎯T15): the relay maintains an independent bridge
+	// per client connected to the same instance ID, replacing the old
+	// one-client-per-instance constraint that returned HTTP 409.
 	url, tlsConfig := startTestRelay(t, "")
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
@@ -494,16 +497,15 @@ func TestSecondClientRejected(t *testing.T) {
 	}
 	defer backend.CloseNow()
 
-	// First client connects.
 	client1, err := pigeon.Connect(ctx, url, backend.InstanceID(), pigeon.Config{TLS: tlsConfig, WebTransport: true})
 	if err != nil {
 		t.Fatal("connect first:", err)
 	}
 	defer client1.CloseNow()
 
-	// Second client should be rejected.
-	_, err = pigeon.Connect(ctx, url, backend.InstanceID(), pigeon.Config{TLS: tlsConfig, WebTransport: true})
-	if err == nil {
-		t.Fatal("expected error for second client")
+	client2, err := pigeon.Connect(ctx, url, backend.InstanceID(), pigeon.Config{TLS: tlsConfig, WebTransport: true})
+	if err != nil {
+		t.Fatal("connect second:", err)
 	}
+	defer client2.CloseNow()
 }

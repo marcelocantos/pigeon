@@ -260,6 +260,19 @@ targets:
     origin: manual
     discovered: 2026-04-13
     achieved: 2026-04-18
+  T16:
+    name: Swift composed-actor sub-machines have unit-test coverage
+    status: identified
+    value: 0.0
+    cost: 0.0
+    observable: true
+    acceptance:
+    - Tests/PigeonTests/PairingCeremonyMachineTests.swift compiles under swift test
+    - Tests cover each of PairingCeremonyServerPairingMachine, ServerAuthMachine, IosPairingMachine, IosAuthMachine, CliMachine plus the Composite wrappers
+    - swift test passes locally and (once added) in CI
+    context: 'After T14 decomposed the pairing ceremony into pairing + auth sub-machines, the pre-existing PairingCeremonyMachineTests.swift was not updated. It still references the old monolithic PairingCeremonyServerMachine type and PairingCeremonyServerState enum, which no longer exist — the codegen now emits per-sub-machine machines plus a Composite. swift test fails to compile (`cannot infer contextual base in reference to member ''deviceUnknown''` etc.). The breakage is pre-existing (committed locally before /release ran) and isn''t caught by CI because ci.yml has no swift test job. Two follow-ups are needed: (1) rewrite the tests against the per-sub-machine + Composite API, and (2) add a swift test job to .github/workflows/ci.yml so this regression class is caught at PR time.'
+    origin: forked-from /release v0.17.0 — broken local swift test target
+    discovered: 2026-04-19
   T2:
     name: Multi-transport with LAN upgrade
     status: achieved
