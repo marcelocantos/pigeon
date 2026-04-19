@@ -184,28 +184,41 @@ final class RelayE2ETests: XCTestCase {
                           userInfo: [NSLocalizedDescriptionKey: "go build crypto-peer failed (\(buildPeer.terminationStatus))"])
         }
 
-        // Start crypto-peer subprocess pointing to the relay.
+        // Start crypto-peer subprocess pointing to the relay. Instance ID
+        // arrives on stdout; stderr carries slog + quic-go diagnostics
+        // (including the UDP-buffer warning on CI runners that used to
+        // contaminate the first stderr line when the ID was printed there).
         let peer = Process()
         peer.executableURL = URL(fileURLWithPath: "/tmp/pigeon-crypto-peer")
         peer.arguments = ["https://127.0.0.1:\(relayPort!)"]
         peer.environment = ProcessInfo.processInfo.environment.merging(
             ["PIGEON_INSECURE": "1"]) { _, new in new }
-        peer.standardOutput = FileHandle.nullDevice
+        let peerStdout = Pipe()
+        peer.standardOutput = peerStdout
         let peerStderr = Pipe()
         peer.standardError = peerStderr
         try peer.run()
         defer { peer.terminate(); peer.waitUntilExit() }
 
-        // Close the write end of the pipe in the parent process so that
-        // read() on the read end will see EOF when the child exits.
+        // Close the write ends in the parent so read() sees EOF on exit.
+        peerStdout.fileHandleForWriting.closeFile()
         peerStderr.fileHandleForWriting.closeFile()
 
-        // Read instance ID from crypto-peer's stderr (first line).
+        // Forward crypto-peer's stderr to the test process's stderr so
+        // diagnostics reach CI logs.
+        peerStderr.fileHandleForReading.readabilityHandler = { h in
+            let data = h.availableData
+            if data.isEmpty { return }
+            FileHandle.standardError.write("[crypto-peer] ".data(using: .utf8)!)
+            FileHandle.standardError.write(data)
+        }
+
+        // Read instance ID from crypto-peer's stdout (first line).
         // Use a DispatchSemaphore for a reliable timeout: schedule a
         // 15-second timeout that kills the peer, which unblocks read().
         let sem = DispatchSemaphore(value: 0)
         var instanceIDResult = ""
-        let readFD = peerStderr.fileHandleForReading.fileDescriptor
+        let readFD = peerStdout.fileHandleForReading.fileDescriptor
         DispatchQueue.global(qos: .userInitiated).async {
             var lineData = Data()
             var buf = [UInt8](repeating: 0, count: 1)
@@ -232,15 +245,6 @@ final class RelayE2ETests: XCTestCase {
             return
         }
         let instanceID = instanceIDResult
-
-        // Keep draining crypto-peer's stderr so any subsequent output
-        // (slog lines, errors) reaches the test process's stderr.
-        peerStderr.fileHandleForReading.readabilityHandler = { h in
-            let data = h.availableData
-            if data.isEmpty { return }
-            FileHandle.standardError.write("[crypto-peer] ".data(using: .utf8)!)
-            FileHandle.standardError.write(data)
-        }
 
         // Connect to relay using the instance ID.
         let client = try await connect(instanceID)
@@ -378,34 +382,18 @@ final class RelayE2ETests: XCTestCase {
     }
 
     private func readExact(_ c: NWConnection, _ count: Int) async throws -> Data {
-        // Accumulate in a loop. NWConnection.receive with
-        // `minimumIncompleteLength == maximumLength` proved unreliable on
-        // the macos-14 CI runner (ENOTCONN mid-stream), so we ask for at
-        // least one byte per call and append until we have all `count`.
-        var acc = Data()
-        acc.reserveCapacity(count)
-        while acc.count < count {
-            let remaining = count - acc.count
-            let chunk: Data = try await withCheckedThrowingContinuation { cont in
-                c.receive(minimumIncompleteLength: 1, maximumLength: remaining) { d, _, isComplete, e in
-                    if let e = e { cont.resume(throwing: e); return }
-                    if let d = d, !d.isEmpty { cont.resume(returning: d); return }
-                    if isComplete {
-                        cont.resume(throwing: NSError(
-                            domain: "EOF", code: 0,
-                            userInfo: [NSLocalizedDescriptionKey: "stream closed after \(acc.count) of \(count) bytes"]
-                        ))
-                        return
-                    }
+        try await withCheckedThrowingContinuation { cont in
+            c.receive(minimumIncompleteLength: count, maximumLength: count) { d, _, _, e in
+                if let e = e { cont.resume(throwing: e) }
+                else if let d = d, d.count >= count { cont.resume(returning: d) }
+                else {
                     cont.resume(throwing: NSError(
                         domain: "EOF", code: 0,
-                        userInfo: [NSLocalizedDescriptionKey: "empty receive with no error at \(acc.count) of \(count) bytes"]
+                        userInfo: [NSLocalizedDescriptionKey: "expected \(count) bytes, got \(d?.count ?? 0)"]
                     ))
                 }
             }
-            acc.append(chunk)
         }
-        return acc
     }
 
     // MARK: - Port helper
