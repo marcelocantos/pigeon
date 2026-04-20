@@ -10,7 +10,7 @@ The pre-1.0 period (currently v0.x.x) exists to get the interaction surface righ
 
 ## Interaction Surface Catalogue
 
-*Snapshot as of v0.17.0.*
+*Snapshot as of v0.18.0.*
 
 ### Relay API (the binary's external interface)
 
@@ -573,10 +573,6 @@ func WithPacketHook(fn func(pktNum int, data []byte) Action) Option
   callback contracts and CMake build layout still settling.
 - **TypeScript/web package**: New in v0.17.0; module layout, npm
   publication, and generated state machine API need real-world feedback.
-- **Swift composed-actor unit tests**: `Tests/PigeonTests/PairingCeremonyMachineTests.swift`
-  still references the pre-decomposition `PairingCeremonyServerMachine`
-  type. Tests are broken locally; not exercised by CI. Need to be rewritten
-  against the per-sub-machine + Composite API.
 - **Settling period** (see below): 2-month minimum required after last breaking
   change before 1.0 eligibility.
 
