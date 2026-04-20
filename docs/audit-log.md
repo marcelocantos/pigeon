@@ -97,3 +97,12 @@ maintenance activities. Append-only — newest entries at the bottom.
 - **Deferred**:
   - 🎯T16 — Swift composed-actor sub-machines have unit-test coverage. `Tests/PigeonTests/PairingCeremonyMachineTests.swift` still references the pre-T14 monolithic types and fails to compile. Not caught by CI (no swift test job in ci.yml).
   - 🎯T1.1 — Jevon imports pigeon's packages (verified externally on Jevon side).
+
+## 2026-04-20 — /release v0.18.0
+
+- **Commit**: `pending`
+- **Outcome**: Released v0.18.0 (darwin-arm64, linux-amd64, linux-arm64). Test/CI-only release: 🎯T16 Swift `PairingCeremonyMachineTests` rewritten for the composed-actor API (PR #11); 🎯T17 `testCrossLanguageConfirmationCode` fixed on macos-15 CI runner by printing crypto-peer's instance ID to stdout instead of stderr, so quic-go's UDP-buffer warning can't contaminate the first stderr line (PR #12). `--skip testCrossLanguageConfirmationCode` removed from ci.yml. No public API changes. No breaking changes — settling clock from v0.17.0 continues to tick.
+- **Deferred**:
+  - 🎯T1.1 — Jevon imports pigeon's packages (verified externally on Jevon side).
+- **Known issues**:
+  - `ci.yml` `Deploy to Fly.io` job fails on master with `Error: unauthorized` — the `FLY_API_TOKEN` secret has expired. Orthogonal to release artifacts; does not gate `release.yml`. Rotate when convenient.
