@@ -28,7 +28,7 @@ const CutoverTimeoutMs = 2000
 // event carries an event ID plus optional payload into the executor.
 type event struct {
 	id      EventID
-	payload any          // typed per event
+	payload any           // typed per event
 	done    chan struct{} // closed after processing (optional, for sync)
 }
 
@@ -108,8 +108,8 @@ type executor struct {
 	events chan event
 
 	// I/O resources.
-	relay  *path // permanent
-	lan    *path // nil when no LAN path
+	relay *path // permanent
+	lan   *path // nil when no LAN path
 
 	// Application response waiters and buffered data.
 	recvWaiters   []chan recvResult
@@ -138,14 +138,14 @@ type executor struct {
 	lanReady chan struct{}
 
 	// Timers managed by the executor.
-	monitorCancel  context.CancelFunc
-	backoffCancel  context.CancelFunc
-	pongCancel     context.CancelFunc // cancelled when pong received
+	monitorCancel context.CancelFunc
+	backoffCancel context.CancelFunc
+	pongCancel    context.CancelFunc // cancelled when pong received
 
 	// Configurable timing (defaults set in newExecutor).
-	pingInterval    time.Duration // how often to send health pings
-	pongTimeout     time.Duration // how long to wait for a pong reply
-	cutoverTimeout  time.Duration // how long to drain old path after CUTOVER
+	pingInterval   time.Duration // how often to send health pings
+	pongTimeout    time.Duration // how long to wait for a pong reply
+	cutoverTimeout time.Duration // how long to drain old path after CUTOVER
 
 	// LAN reader cancellation.
 	lanStreamCancel context.CancelFunc
@@ -175,19 +175,19 @@ func newExecutor(
 	}()
 
 	e := &executor{
-		machine:       machine,
-		events:        make(chan event, 64),
-		relay:         relay,
-		lanReady:      make(chan struct{}),
-		chanDgWaiters: make(map[uint16][]chan dgRecvResult),
-		chanDgBuffers: make(map[uint16][][]byte),
+		machine:        machine,
+		events:         make(chan event, 64),
+		relay:          relay,
+		lanReady:       make(chan struct{}),
+		chanDgWaiters:  make(map[uint16][]chan dgRecvResult),
+		chanDgBuffers:  make(map[uint16][][]byte),
 		reasm:          newReassembler(DefaultFragmentTimeout, done),
 		maxDgPayload:   MaxDatagramPayload,
 		pingInterval:   time.Duration(PingIntervalMs) * time.Millisecond,
 		pongTimeout:    time.Duration(PongTimeoutMs) * time.Millisecond,
 		cutoverTimeout: time.Duration(CutoverTimeoutMs) * time.Millisecond,
-		ctx:           ctx,
-		cancel:        cancel,
+		ctx:            ctx,
+		cancel:         cancel,
 	}
 
 	// Start relay readers — they run for the lifetime of the connection.
@@ -820,7 +820,7 @@ func backoffDelay(level int) time.Duration {
 		return 0
 	}
 	base := time.Second * time.Duration(math.Pow(2, float64(level-1)))
-	jitter := time.Duration(rand.Int64N(int64(base) / 2)) - base/4
+	jitter := time.Duration(rand.Int64N(int64(base)/2)) - base/4
 	return base + jitter
 }
 
@@ -1004,4 +1004,3 @@ func (e *executor) drainOldPath(p *path) {
 		}
 	}
 }
-

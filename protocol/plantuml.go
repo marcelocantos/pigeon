@@ -198,10 +198,10 @@ func (p *Protocol) ExportPlantUMLActors(w io.Writer, titleSuffix string, actors 
 // transitionGroupKey returns a key for coalescing transitions that share
 // the same from/to states and qualifiers (guard, action, fairness).
 type transitionGroupKey struct {
-	From, To       string
-	Guard          GuardID
-	Do             ActionID
-	Fairness       FairnessKind
+	From, To string
+	Guard    GuardID
+	Do       ActionID
+	Fairness FairnessKind
 }
 
 func groupKey(t Transition) transitionGroupKey {

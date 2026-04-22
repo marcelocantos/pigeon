@@ -135,16 +135,16 @@ type Stats struct {
 
 // Proxy is a transparent UDP fault-injection proxy.
 type Proxy struct {
-	conn     *net.UDPConn // listens for client packets
-	target   *net.UDPAddr // the real relay
-	profile  Profile
-	stats    Stats
-	pktCount atomic.Int64 // global packet counter (both directions)
-	done     chan struct{}
-	wg       sync.WaitGroup
-	mu       sync.Mutex
-	clients  map[string]*net.UDPConn // client addr -> upstream conn
-	throttle *throttle
+	conn       *net.UDPConn // listens for client packets
+	target     *net.UDPAddr // the real relay
+	profile    Profile
+	stats      Stats
+	pktCount   atomic.Int64 // global packet counter (both directions)
+	done       chan struct{}
+	wg         sync.WaitGroup
+	mu         sync.Mutex
+	clients    map[string]*net.UDPConn // client addr -> upstream conn
+	throttle   *throttle
 	blackholed atomic.Bool
 }
 

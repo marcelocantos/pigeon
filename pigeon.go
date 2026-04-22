@@ -67,9 +67,7 @@ type Config struct {
 	// LANTLS is the TLS config for LAN connections (client side).
 	// If nil and LAN is true, InsecureSkipVerify is used.
 	LANTLS *tls.Config
-
 }
-
 
 // WakeRelay sends an HTTPS request to the relay's /health endpoint,
 // which triggers Fly.io's proxy to start a stopped machine. Call this

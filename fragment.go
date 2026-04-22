@@ -27,6 +27,7 @@ var ErrDatagramTooLarge = errors.New("datagram too large to fragment")
 //	[0:4]  message ID      (uint32, monotonic per sender)
 //	[4:6]  fragment index  (uint16, 0-based)
 //	[6:8]  total fragments (uint16, >= 2)
+//
 // DefaultFragmentTimeout converts the wire constant to a Go duration.
 var DefaultFragmentTimeout = time.Duration(FragmentTimeoutMs) * time.Millisecond
 

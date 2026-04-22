@@ -39,8 +39,12 @@ type wtStreamWrapper struct {
 	writeMu sync.Mutex
 }
 
-func (w *wtStreamWrapper) ReadMessage() ([]byte, error)  { return readMessage(w.stream) }
-func (w *wtStreamWrapper) WriteMessage(data []byte) error { w.writeMu.Lock(); defer w.writeMu.Unlock(); return writeMessage(w.stream, data) }
+func (w *wtStreamWrapper) ReadMessage() ([]byte, error) { return readMessage(w.stream) }
+func (w *wtStreamWrapper) WriteMessage(data []byte) error {
+	w.writeMu.Lock()
+	defer w.writeMu.Unlock()
+	return writeMessage(w.stream, data)
+}
 func (w *wtStreamWrapper) Close() error {
 	// Set a past read deadline to unblock any pending ReadMessage call
 	// (including handleSessionGoneError waits inside the WT library).

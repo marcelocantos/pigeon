@@ -6,8 +6,8 @@
 package pigeon
 
 import (
-	"github.com/marcelocantos/pigeon/protocol"
 	"github.com/arr-ai/frozen"
+	"github.com/marcelocantos/pigeon/protocol"
 )
 
 type (
@@ -31,8 +31,8 @@ type (
 )
 
 var (
-	Recv     = protocol.Recv
-	Internal = protocol.Internal
+	Recv      = protocol.Recv
+	Internal  = protocol.Internal
 	Invariant = protocol.Invariant
 	Liveness  = protocol.Liveness
 )
@@ -41,235 +41,235 @@ var _ frozen.Set[string] // suppress unused import
 
 // SessionProtocol backend states.
 const (
-	SessionProtocolBackendIdle State = "Idle"
-	SessionProtocolBackendGenerateToken State = "GenerateToken"
-	SessionProtocolBackendRegisterRelay State = "RegisterRelay"
+	SessionProtocolBackendIdle             State = "Idle"
+	SessionProtocolBackendGenerateToken    State = "GenerateToken"
+	SessionProtocolBackendRegisterRelay    State = "RegisterRelay"
 	SessionProtocolBackendWaitingForClient State = "WaitingForClient"
-	SessionProtocolBackendDeriveSecret State = "DeriveSecret"
-	SessionProtocolBackendSendAck State = "SendAck"
-	SessionProtocolBackendWaitingForCode State = "WaitingForCode"
-	SessionProtocolBackendValidateCode State = "ValidateCode"
-	SessionProtocolBackendStorePaired State = "StorePaired"
-	SessionProtocolBackendPaired State = "Paired"
-	SessionProtocolBackendAuthCheck State = "AuthCheck"
-	SessionProtocolBackendSessionActive State = "SessionActive"
-	SessionProtocolBackendRelayConnected State = "RelayConnected"
-	SessionProtocolBackendLANOffered State = "LANOffered"
-	SessionProtocolBackendLANActive State = "LANActive"
-	SessionProtocolBackendRelayBackoff State = "RelayBackoff"
-	SessionProtocolBackendLANDegraded State = "LANDegraded"
+	SessionProtocolBackendDeriveSecret     State = "DeriveSecret"
+	SessionProtocolBackendSendAck          State = "SendAck"
+	SessionProtocolBackendWaitingForCode   State = "WaitingForCode"
+	SessionProtocolBackendValidateCode     State = "ValidateCode"
+	SessionProtocolBackendStorePaired      State = "StorePaired"
+	SessionProtocolBackendPaired           State = "Paired"
+	SessionProtocolBackendAuthCheck        State = "AuthCheck"
+	SessionProtocolBackendSessionActive    State = "SessionActive"
+	SessionProtocolBackendRelayConnected   State = "RelayConnected"
+	SessionProtocolBackendLANOffered       State = "LANOffered"
+	SessionProtocolBackendLANActive        State = "LANActive"
+	SessionProtocolBackendRelayBackoff     State = "RelayBackoff"
+	SessionProtocolBackendLANDegraded      State = "LANDegraded"
 )
 
 // SessionProtocol client states.
 const (
-	SessionProtocolClientIdle State = "Idle"
+	SessionProtocolClientIdle                    State = "Idle"
 	SessionProtocolClientObtainBackchannelSecret State = "ObtainBackchannelSecret"
-	SessionProtocolClientConnectRelay State = "ConnectRelay"
-	SessionProtocolClientGenKeyPair State = "GenKeyPair"
-	SessionProtocolClientWaitAck State = "WaitAck"
-	SessionProtocolClientE2EReady State = "E2EReady"
-	SessionProtocolClientShowCode State = "ShowCode"
-	SessionProtocolClientWaitPairComplete State = "WaitPairComplete"
-	SessionProtocolClientPaired State = "Paired"
-	SessionProtocolClientReconnect State = "Reconnect"
-	SessionProtocolClientSendAuth State = "SendAuth"
-	SessionProtocolClientSessionActive State = "SessionActive"
-	SessionProtocolClientRelayConnected State = "RelayConnected"
-	SessionProtocolClientLANConnecting State = "LANConnecting"
-	SessionProtocolClientLANVerifying State = "LANVerifying"
-	SessionProtocolClientLANActive State = "LANActive"
-	SessionProtocolClientRelayFallback State = "RelayFallback"
+	SessionProtocolClientConnectRelay            State = "ConnectRelay"
+	SessionProtocolClientGenKeyPair              State = "GenKeyPair"
+	SessionProtocolClientWaitAck                 State = "WaitAck"
+	SessionProtocolClientE2EReady                State = "E2EReady"
+	SessionProtocolClientShowCode                State = "ShowCode"
+	SessionProtocolClientWaitPairComplete        State = "WaitPairComplete"
+	SessionProtocolClientPaired                  State = "Paired"
+	SessionProtocolClientReconnect               State = "Reconnect"
+	SessionProtocolClientSendAuth                State = "SendAuth"
+	SessionProtocolClientSessionActive           State = "SessionActive"
+	SessionProtocolClientRelayConnected          State = "RelayConnected"
+	SessionProtocolClientLANConnecting           State = "LANConnecting"
+	SessionProtocolClientLANVerifying            State = "LANVerifying"
+	SessionProtocolClientLANActive               State = "LANActive"
+	SessionProtocolClientRelayFallback           State = "RelayFallback"
 )
 
 // SessionProtocol relay states.
 const (
-	SessionProtocolRelayIdle State = "Idle"
+	SessionProtocolRelayIdle              State = "Idle"
 	SessionProtocolRelayBackendRegistered State = "BackendRegistered"
-	SessionProtocolRelayBridged State = "Bridged"
+	SessionProtocolRelayBridged           State = "Bridged"
 )
 
 // SessionProtocol message types.
 const (
-	SessionProtocolMsgPairHello MsgType = "pair_hello"
+	SessionProtocolMsgPairHello    MsgType = "pair_hello"
 	SessionProtocolMsgPairHelloAck MsgType = "pair_hello_ack"
-	SessionProtocolMsgPairConfirm MsgType = "pair_confirm"
+	SessionProtocolMsgPairConfirm  MsgType = "pair_confirm"
 	SessionProtocolMsgPairComplete MsgType = "pair_complete"
-	SessionProtocolMsgAuthRequest MsgType = "auth_request"
-	SessionProtocolMsgAuthOk MsgType = "auth_ok"
-	SessionProtocolMsgLanOffer MsgType = "lan_offer"
-	SessionProtocolMsgLanVerify MsgType = "lan_verify"
-	SessionProtocolMsgLanConfirm MsgType = "lan_confirm"
-	SessionProtocolMsgPathPing MsgType = "path_ping"
-	SessionProtocolMsgPathPong MsgType = "path_pong"
+	SessionProtocolMsgAuthRequest  MsgType = "auth_request"
+	SessionProtocolMsgAuthOk       MsgType = "auth_ok"
+	SessionProtocolMsgLanOffer     MsgType = "lan_offer"
+	SessionProtocolMsgLanVerify    MsgType = "lan_verify"
+	SessionProtocolMsgLanConfirm   MsgType = "lan_confirm"
+	SessionProtocolMsgPathPing     MsgType = "path_ping"
+	SessionProtocolMsgPathPong     MsgType = "path_pong"
 )
 
 // SessionProtocol guards.
 const (
-	SessionProtocolGuardTokenValid GuardID = "token_valid"
-	SessionProtocolGuardTokenInvalid GuardID = "token_invalid"
-	SessionProtocolGuardCodeCorrect GuardID = "code_correct"
-	SessionProtocolGuardCodeWrong GuardID = "code_wrong"
-	SessionProtocolGuardDeviceKnown GuardID = "device_known"
-	SessionProtocolGuardDeviceUnknown GuardID = "device_unknown"
-	SessionProtocolGuardNonceFresh GuardID = "nonce_fresh"
-	SessionProtocolGuardChallengeValid GuardID = "challenge_valid"
-	SessionProtocolGuardChallengeInvalid GuardID = "challenge_invalid"
-	SessionProtocolGuardLanEnabled GuardID = "lan_enabled"
-	SessionProtocolGuardLanDisabled GuardID = "lan_disabled"
+	SessionProtocolGuardTokenValid         GuardID = "token_valid"
+	SessionProtocolGuardTokenInvalid       GuardID = "token_invalid"
+	SessionProtocolGuardCodeCorrect        GuardID = "code_correct"
+	SessionProtocolGuardCodeWrong          GuardID = "code_wrong"
+	SessionProtocolGuardDeviceKnown        GuardID = "device_known"
+	SessionProtocolGuardDeviceUnknown      GuardID = "device_unknown"
+	SessionProtocolGuardNonceFresh         GuardID = "nonce_fresh"
+	SessionProtocolGuardChallengeValid     GuardID = "challenge_valid"
+	SessionProtocolGuardChallengeInvalid   GuardID = "challenge_invalid"
+	SessionProtocolGuardLanEnabled         GuardID = "lan_enabled"
+	SessionProtocolGuardLanDisabled        GuardID = "lan_disabled"
 	SessionProtocolGuardLanServerAvailable GuardID = "lan_server_available"
-	SessionProtocolGuardUnderMaxFailures GuardID = "under_max_failures"
-	SessionProtocolGuardAtMaxFailures GuardID = "at_max_failures"
+	SessionProtocolGuardUnderMaxFailures   GuardID = "under_max_failures"
+	SessionProtocolGuardAtMaxFailures      GuardID = "at_max_failures"
 )
 
 // SessionProtocol actions.
 const (
-	SessionProtocolActionActivateLan ActionID = "activate_lan"
-	SessionProtocolActionBridgeStreams ActionID = "bridge_streams"
-	SessionProtocolActionDeriveSecret ActionID = "derive_secret"
-	SessionProtocolActionDialLan ActionID = "dial_lan"
+	SessionProtocolActionActivateLan     ActionID = "activate_lan"
+	SessionProtocolActionBridgeStreams   ActionID = "bridge_streams"
+	SessionProtocolActionDeriveSecret    ActionID = "derive_secret"
+	SessionProtocolActionDialLan         ActionID = "dial_lan"
 	SessionProtocolActionFallbackToRelay ActionID = "fallback_to_relay"
-	SessionProtocolActionGenerateToken ActionID = "generate_token"
-	SessionProtocolActionRegisterRelay ActionID = "register_relay"
-	SessionProtocolActionResetFailures ActionID = "reset_failures"
-	SessionProtocolActionSendPairHello ActionID = "send_pair_hello"
-	SessionProtocolActionStoreDevice ActionID = "store_device"
-	SessionProtocolActionStoreSecret ActionID = "store_secret"
-	SessionProtocolActionUnbridge ActionID = "unbridge"
-	SessionProtocolActionVerifyDevice ActionID = "verify_device"
+	SessionProtocolActionGenerateToken   ActionID = "generate_token"
+	SessionProtocolActionRegisterRelay   ActionID = "register_relay"
+	SessionProtocolActionResetFailures   ActionID = "reset_failures"
+	SessionProtocolActionSendPairHello   ActionID = "send_pair_hello"
+	SessionProtocolActionStoreDevice     ActionID = "store_device"
+	SessionProtocolActionStoreSecret     ActionID = "store_secret"
+	SessionProtocolActionUnbridge        ActionID = "unbridge"
+	SessionProtocolActionVerifyDevice    ActionID = "verify_device"
 )
 
 // SessionProtocol events.
 const (
-	SessionProtocolEventAppClose EventID = "app_close"
-	SessionProtocolEventAppForceFallback EventID = "app_force_fallback"
-	SessionProtocolEventAppLaunch EventID = "app_launch"
-	SessionProtocolEventAppRecv EventID = "app_recv"
-	SessionProtocolEventAppRecvDatagram EventID = "app_recv_datagram"
-	SessionProtocolEventAppSend EventID = "app_send"
-	SessionProtocolEventAppSendDatagram EventID = "app_send_datagram"
+	SessionProtocolEventAppClose            EventID = "app_close"
+	SessionProtocolEventAppForceFallback    EventID = "app_force_fallback"
+	SessionProtocolEventAppLaunch           EventID = "app_launch"
+	SessionProtocolEventAppRecv             EventID = "app_recv"
+	SessionProtocolEventAppRecvDatagram     EventID = "app_recv_datagram"
+	SessionProtocolEventAppSend             EventID = "app_send"
+	SessionProtocolEventAppSendDatagram     EventID = "app_send_datagram"
 	SessionProtocolEventBackchannelReceived EventID = "backchannel_received"
-	SessionProtocolEventBackendDisconnect EventID = "backend_disconnect"
-	SessionProtocolEventBackendRegister EventID = "backend_register"
-	SessionProtocolEventBackoffExpired EventID = "backoff_expired"
-	SessionProtocolEventCheckCode EventID = "check_code"
-	SessionProtocolEventCliCodeEntered EventID = "cli_code_entered"
-	SessionProtocolEventCliInitPair EventID = "cli_init_pair"
-	SessionProtocolEventClientConnect EventID = "client_connect"
-	SessionProtocolEventClientDisconnect EventID = "client_disconnect"
-	SessionProtocolEventCodeDisplayed EventID = "code_displayed"
-	SessionProtocolEventDisconnect EventID = "disconnect"
-	SessionProtocolEventEcdhComplete EventID = "ecdh_complete"
-	SessionProtocolEventFinalise EventID = "finalise"
-	SessionProtocolEventKeyPairGenerated EventID = "key_pair_generated"
-	SessionProtocolEventLanDatagram EventID = "lan_datagram"
-	SessionProtocolEventLanDialFailed EventID = "lan_dial_failed"
-	SessionProtocolEventLanDialOk EventID = "lan_dial_ok"
-	SessionProtocolEventLanError EventID = "lan_error"
-	SessionProtocolEventLanServerChanged EventID = "lan_server_changed"
-	SessionProtocolEventLanServerReady EventID = "lan_server_ready"
-	SessionProtocolEventLanStreamData EventID = "lan_stream_data"
-	SessionProtocolEventLanStreamError EventID = "lan_stream_error"
-	SessionProtocolEventLanVerifyOk EventID = "lan_verify_ok"
-	SessionProtocolEventOfferTimeout EventID = "offer_timeout"
-	SessionProtocolEventPingTick EventID = "ping_tick"
-	SessionProtocolEventPingTimeout EventID = "ping_timeout"
-	SessionProtocolEventReadvertiseTick EventID = "readvertise_tick"
-	SessionProtocolEventRecvAuthOk EventID = "recv_auth_ok"
-	SessionProtocolEventRecvAuthRequest EventID = "recv_auth_request"
-	SessionProtocolEventRecvLanConfirm EventID = "recv_lan_confirm"
-	SessionProtocolEventRecvLanOffer EventID = "recv_lan_offer"
-	SessionProtocolEventRecvLanVerify EventID = "recv_lan_verify"
-	SessionProtocolEventRecvPairComplete EventID = "recv_pair_complete"
-	SessionProtocolEventRecvPairConfirm EventID = "recv_pair_confirm"
-	SessionProtocolEventRecvPairHello EventID = "recv_pair_hello"
-	SessionProtocolEventRecvPairHelloAck EventID = "recv_pair_hello_ack"
-	SessionProtocolEventRecvPathPing EventID = "recv_path_ping"
-	SessionProtocolEventRecvPathPong EventID = "recv_path_pong"
-	SessionProtocolEventRelayConnected EventID = "relay_connected"
-	SessionProtocolEventRelayDatagram EventID = "relay_datagram"
-	SessionProtocolEventRelayOk EventID = "relay_ok"
-	SessionProtocolEventRelayRegistered EventID = "relay_registered"
-	SessionProtocolEventRelayStreamData EventID = "relay_stream_data"
-	SessionProtocolEventRelayStreamError EventID = "relay_stream_error"
-	SessionProtocolEventSecretParsed EventID = "secret_parsed"
-	SessionProtocolEventSessionEstablished EventID = "session_established"
-	SessionProtocolEventSignalCodeDisplay EventID = "signal_code_display"
-	SessionProtocolEventTokenCreated EventID = "token_created"
-	SessionProtocolEventVerify EventID = "verify"
-	SessionProtocolEventVerifyTimeout EventID = "verify_timeout"
+	SessionProtocolEventBackendDisconnect   EventID = "backend_disconnect"
+	SessionProtocolEventBackendRegister     EventID = "backend_register"
+	SessionProtocolEventBackoffExpired      EventID = "backoff_expired"
+	SessionProtocolEventCheckCode           EventID = "check_code"
+	SessionProtocolEventCliCodeEntered      EventID = "cli_code_entered"
+	SessionProtocolEventCliInitPair         EventID = "cli_init_pair"
+	SessionProtocolEventClientConnect       EventID = "client_connect"
+	SessionProtocolEventClientDisconnect    EventID = "client_disconnect"
+	SessionProtocolEventCodeDisplayed       EventID = "code_displayed"
+	SessionProtocolEventDisconnect          EventID = "disconnect"
+	SessionProtocolEventEcdhComplete        EventID = "ecdh_complete"
+	SessionProtocolEventFinalise            EventID = "finalise"
+	SessionProtocolEventKeyPairGenerated    EventID = "key_pair_generated"
+	SessionProtocolEventLanDatagram         EventID = "lan_datagram"
+	SessionProtocolEventLanDialFailed       EventID = "lan_dial_failed"
+	SessionProtocolEventLanDialOk           EventID = "lan_dial_ok"
+	SessionProtocolEventLanError            EventID = "lan_error"
+	SessionProtocolEventLanServerChanged    EventID = "lan_server_changed"
+	SessionProtocolEventLanServerReady      EventID = "lan_server_ready"
+	SessionProtocolEventLanStreamData       EventID = "lan_stream_data"
+	SessionProtocolEventLanStreamError      EventID = "lan_stream_error"
+	SessionProtocolEventLanVerifyOk         EventID = "lan_verify_ok"
+	SessionProtocolEventOfferTimeout        EventID = "offer_timeout"
+	SessionProtocolEventPingTick            EventID = "ping_tick"
+	SessionProtocolEventPingTimeout         EventID = "ping_timeout"
+	SessionProtocolEventReadvertiseTick     EventID = "readvertise_tick"
+	SessionProtocolEventRecvAuthOk          EventID = "recv_auth_ok"
+	SessionProtocolEventRecvAuthRequest     EventID = "recv_auth_request"
+	SessionProtocolEventRecvLanConfirm      EventID = "recv_lan_confirm"
+	SessionProtocolEventRecvLanOffer        EventID = "recv_lan_offer"
+	SessionProtocolEventRecvLanVerify       EventID = "recv_lan_verify"
+	SessionProtocolEventRecvPairComplete    EventID = "recv_pair_complete"
+	SessionProtocolEventRecvPairConfirm     EventID = "recv_pair_confirm"
+	SessionProtocolEventRecvPairHello       EventID = "recv_pair_hello"
+	SessionProtocolEventRecvPairHelloAck    EventID = "recv_pair_hello_ack"
+	SessionProtocolEventRecvPathPing        EventID = "recv_path_ping"
+	SessionProtocolEventRecvPathPong        EventID = "recv_path_pong"
+	SessionProtocolEventRelayConnected      EventID = "relay_connected"
+	SessionProtocolEventRelayDatagram       EventID = "relay_datagram"
+	SessionProtocolEventRelayOk             EventID = "relay_ok"
+	SessionProtocolEventRelayRegistered     EventID = "relay_registered"
+	SessionProtocolEventRelayStreamData     EventID = "relay_stream_data"
+	SessionProtocolEventRelayStreamError    EventID = "relay_stream_error"
+	SessionProtocolEventSecretParsed        EventID = "secret_parsed"
+	SessionProtocolEventSessionEstablished  EventID = "session_established"
+	SessionProtocolEventSignalCodeDisplay   EventID = "signal_code_display"
+	SessionProtocolEventTokenCreated        EventID = "token_created"
+	SessionProtocolEventVerify              EventID = "verify"
+	SessionProtocolEventVerifyTimeout       EventID = "verify_timeout"
 )
 
 // SessionProtocol commands.
 const (
-	SessionProtocolCmdWriteActiveStream CmdID = "write_active_stream"
-	SessionProtocolCmdSendActiveDatagram CmdID = "send_active_datagram"
-	SessionProtocolCmdSendPathPing CmdID = "send_path_ping"
-	SessionProtocolCmdSendPathPong CmdID = "send_path_pong"
-	SessionProtocolCmdSendLanOffer CmdID = "send_lan_offer"
-	SessionProtocolCmdSendLanVerify CmdID = "send_lan_verify"
-	SessionProtocolCmdSendLanConfirm CmdID = "send_lan_confirm"
-	SessionProtocolCmdDialLan CmdID = "dial_lan"
-	SessionProtocolCmdDeliverRecv CmdID = "deliver_recv"
-	SessionProtocolCmdDeliverRecvError CmdID = "deliver_recv_error"
-	SessionProtocolCmdDeliverRecvDatagram CmdID = "deliver_recv_datagram"
+	SessionProtocolCmdWriteActiveStream    CmdID = "write_active_stream"
+	SessionProtocolCmdSendActiveDatagram   CmdID = "send_active_datagram"
+	SessionProtocolCmdSendPathPing         CmdID = "send_path_ping"
+	SessionProtocolCmdSendPathPong         CmdID = "send_path_pong"
+	SessionProtocolCmdSendLanOffer         CmdID = "send_lan_offer"
+	SessionProtocolCmdSendLanVerify        CmdID = "send_lan_verify"
+	SessionProtocolCmdSendLanConfirm       CmdID = "send_lan_confirm"
+	SessionProtocolCmdDialLan              CmdID = "dial_lan"
+	SessionProtocolCmdDeliverRecv          CmdID = "deliver_recv"
+	SessionProtocolCmdDeliverRecvError     CmdID = "deliver_recv_error"
+	SessionProtocolCmdDeliverRecvDatagram  CmdID = "deliver_recv_datagram"
 	SessionProtocolCmdStartLanStreamReader CmdID = "start_lan_stream_reader"
-	SessionProtocolCmdStopLanStreamReader CmdID = "stop_lan_stream_reader"
-	SessionProtocolCmdStartLanDgReader CmdID = "start_lan_dg_reader"
-	SessionProtocolCmdStopLanDgReader CmdID = "stop_lan_dg_reader"
-	SessionProtocolCmdStartMonitor CmdID = "start_monitor"
-	SessionProtocolCmdStopMonitor CmdID = "stop_monitor"
-	SessionProtocolCmdStartPongTimeout CmdID = "start_pong_timeout"
-	SessionProtocolCmdCancelPongTimeout CmdID = "cancel_pong_timeout"
-	SessionProtocolCmdStartBackoffTimer CmdID = "start_backoff_timer"
-	SessionProtocolCmdCloseLanPath CmdID = "close_lan_path"
-	SessionProtocolCmdSignalLanReady CmdID = "signal_lan_ready"
-	SessionProtocolCmdResetLanReady CmdID = "reset_lan_ready"
-	SessionProtocolCmdSetCryptoDatagram CmdID = "set_crypto_datagram"
+	SessionProtocolCmdStopLanStreamReader  CmdID = "stop_lan_stream_reader"
+	SessionProtocolCmdStartLanDgReader     CmdID = "start_lan_dg_reader"
+	SessionProtocolCmdStopLanDgReader      CmdID = "stop_lan_dg_reader"
+	SessionProtocolCmdStartMonitor         CmdID = "start_monitor"
+	SessionProtocolCmdStopMonitor          CmdID = "stop_monitor"
+	SessionProtocolCmdStartPongTimeout     CmdID = "start_pong_timeout"
+	SessionProtocolCmdCancelPongTimeout    CmdID = "cancel_pong_timeout"
+	SessionProtocolCmdStartBackoffTimer    CmdID = "start_backoff_timer"
+	SessionProtocolCmdCloseLanPath         CmdID = "close_lan_path"
+	SessionProtocolCmdSignalLanReady       CmdID = "signal_lan_ready"
+	SessionProtocolCmdResetLanReady        CmdID = "reset_lan_ready"
+	SessionProtocolCmdSetCryptoDatagram    CmdID = "set_crypto_datagram"
 )
 
 // Wire constants — protocol-level values shared across all platforms.
 // DatagramFraming
 const (
-	DgConnWhole byte = 0x00 // conn-level single-frame datagram
-	DgPing byte = 0x10 // health ping on direct path
-	DgPong byte = 0x11 // health pong on direct path
+	DgConnWhole    byte = 0x00 // conn-level single-frame datagram
+	DgPing         byte = 0x10 // health ping on direct path
+	DgPong         byte = 0x11 // health pong on direct path
 	DgConnFragment byte = 0x40 // conn-level multi-frame datagram
-	DgChanWhole byte = 0x80 // channel single-frame datagram
+	DgChanWhole    byte = 0x80 // channel single-frame datagram
 	DgChanFragment byte = 0xC0 // channel multi-frame datagram
-	FragHeaderSize = 8 // fragment header: msgID(4) + fragIdx(2) + totalFrags(2)
-	ChanIdSize = 2 // channel ID prefix size in bytes
+	FragHeaderSize      = 8    // fragment header: msgID(4) + fragIdx(2) + totalFrags(2)
+	ChanIdSize          = 2    // channel ID prefix size in bytes
 )
 
 // DatagramLimits
 const (
 	MaxDatagramPayload = 1200 // max payload per QUIC datagram (bytes)
-	FragmentTimeoutMs = 5000 // ms // fragment reassembly timeout
+	FragmentTimeoutMs  = 5000 // ms // fragment reassembly timeout
 )
 
 // MessageFraming
 const (
-	FrameApp byte = 0x00 // application data
-	FrameLanOffer byte = 0x01 // LAN address exchange
-	FrameCutover byte = 0x02 // transport cutover marker
-	MaxMessageSize = 1048576 // max stream message size (1 MiB)
-	LengthPrefixSize = 4 // big-endian length prefix size
+	FrameApp         byte = 0x00    // application data
+	FrameLanOffer    byte = 0x01    // LAN address exchange
+	FrameCutover     byte = 0x02    // transport cutover marker
+	MaxMessageSize        = 1048576 // max stream message size (1 MiB)
+	LengthPrefixSize      = 4       // big-endian length prefix size
 )
 
 // Health
 const (
-	PingIntervalMs = 5000 // ms // health ping interval
-	PongTimeoutMs = 4000 // ms // pong reply timeout
-	MaxPingFailures = 3 // consecutive failures before fallback
-	MaxBackoffLevel = 5 // exponential backoff cap
+	PingIntervalMs  = 5000 // ms // health ping interval
+	PongTimeoutMs   = 4000 // ms // pong reply timeout
+	MaxPingFailures = 3    // consecutive failures before fallback
+	MaxBackoffLevel = 5    // exponential backoff cap
 )
 
 // ChannelKeys
 const (
-	StreamChannelOpenerSuffix = ":o2a" // HKDF info suffix for opener→acceptor stream key
-	StreamChannelAcceptSuffix = ":a2o" // HKDF info suffix for acceptor→opener stream key
-	DgChannelSendSuffix = ":dg:send" // HKDF info suffix for datagram send key
-	DgChannelRecvSuffix = ":dg:recv" // HKDF info suffix for datagram recv key
-	ChannelIdHashMultiplier = 31 // hash multiplier for channel name → uint16 ID
+	StreamChannelOpenerSuffix = ":o2a"     // HKDF info suffix for opener→acceptor stream key
+	StreamChannelAcceptSuffix = ":a2o"     // HKDF info suffix for acceptor→opener stream key
+	DgChannelSendSuffix       = ":dg:send" // HKDF info suffix for datagram send key
+	DgChannelRecvSuffix       = ":dg:recv" // HKDF info suffix for datagram recv key
+	ChannelIdHashMultiplier   = 31         // hash multiplier for channel name → uint16 ID
 )
 
 func SessionProtocol() *Protocol {
@@ -277,39 +277,39 @@ func SessionProtocol() *Protocol {
 		Name: "Session",
 		Actors: []Actor{
 			{Name: "backend", Initial: "Idle", Transitions: []Transition{
-				{From: "Idle", To: "GenerateToken", On: Internal("cli_init_pair"), Do: "generate_token", Updates: []VarUpdate{{Var: "current_token", Expr: "\"tok_1\""}, {Var: "active_tokens", Expr: "active_tokens \\union {\"tok_1\"}"}, }},
+				{From: "Idle", To: "GenerateToken", On: Internal("cli_init_pair"), Do: "generate_token", Updates: []VarUpdate{{Var: "current_token", Expr: "\"tok_1\""}, {Var: "active_tokens", Expr: "active_tokens \\union {\"tok_1\"}"}}},
 				{From: "GenerateToken", To: "RegisterRelay", On: Internal("token_created"), Do: "register_relay"},
-				{From: "RegisterRelay", To: "WaitingForClient", On: Internal("relay_registered"), Updates: []VarUpdate{{Var: "secret_published", Expr: "TRUE"}, }},
-				{From: "WaitingForClient", To: "DeriveSecret", On: Recv("pair_hello"), Guard: "token_valid", Do: "derive_secret", Updates: []VarUpdate{{Var: "received_client_pub", Expr: "recv_msg.pubkey"}, {Var: "backend_ecdh_pub", Expr: "\"backend_pub\""}, {Var: "backend_shared_key", Expr: "DeriveKey(\"backend_pub\", recv_msg.pubkey)"}, {Var: "backend_code", Expr: "DeriveCode(\"backend_pub\", recv_msg.pubkey)"}, }},
+				{From: "RegisterRelay", To: "WaitingForClient", On: Internal("relay_registered"), Updates: []VarUpdate{{Var: "secret_published", Expr: "TRUE"}}},
+				{From: "WaitingForClient", To: "DeriveSecret", On: Recv("pair_hello"), Guard: "token_valid", Do: "derive_secret", Updates: []VarUpdate{{Var: "received_client_pub", Expr: "recv_msg.pubkey"}, {Var: "backend_ecdh_pub", Expr: "\"backend_pub\""}, {Var: "backend_shared_key", Expr: "DeriveKey(\"backend_pub\", recv_msg.pubkey)"}, {Var: "backend_code", Expr: "DeriveCode(\"backend_pub\", recv_msg.pubkey)"}}},
 				{From: "WaitingForClient", To: "Idle", On: Recv("pair_hello"), Guard: "token_invalid"},
-				{From: "DeriveSecret", To: "SendAck", On: Internal("ecdh_complete"), Sends: []Send{{To: "client", Msg: "pair_hello_ack", Fields: map[string]string{"pubkey": "backend_ecdh_pub", }}, }},
-				{From: "SendAck", To: "WaitingForCode", On: Internal("signal_code_display"), Sends: []Send{{To: "client", Msg: "pair_confirm"}, }},
-				{From: "WaitingForCode", To: "ValidateCode", On: Internal("cli_code_entered"), Updates: []VarUpdate{{Var: "received_code", Expr: "cli_entered_code"}, }},
+				{From: "DeriveSecret", To: "SendAck", On: Internal("ecdh_complete"), Sends: []Send{{To: "client", Msg: "pair_hello_ack", Fields: map[string]string{"pubkey": "backend_ecdh_pub"}}}},
+				{From: "SendAck", To: "WaitingForCode", On: Internal("signal_code_display"), Sends: []Send{{To: "client", Msg: "pair_confirm"}}},
+				{From: "WaitingForCode", To: "ValidateCode", On: Internal("cli_code_entered"), Updates: []VarUpdate{{Var: "received_code", Expr: "cli_entered_code"}}},
 				{From: "ValidateCode", To: "StorePaired", On: Internal("check_code"), Guard: "code_correct"},
-				{From: "ValidateCode", To: "Idle", On: Internal("check_code"), Guard: "code_wrong", Updates: []VarUpdate{{Var: "code_attempts", Expr: "code_attempts + 1"}, }},
-				{From: "StorePaired", To: "Paired", On: Internal("finalise"), Do: "store_device", Sends: []Send{{To: "client", Msg: "pair_complete", Fields: map[string]string{"key": "backend_shared_key", "secret": "\"dev_secret_1\"", }}, }, Updates: []VarUpdate{{Var: "device_secret", Expr: "\"dev_secret_1\""}, {Var: "paired_devices", Expr: "paired_devices \\union {\"device_1\"}"}, {Var: "active_tokens", Expr: "active_tokens \\ {current_token}"}, {Var: "used_tokens", Expr: "used_tokens \\union {current_token}"}, }},
-				{From: "Paired", To: "AuthCheck", On: Recv("auth_request"), Updates: []VarUpdate{{Var: "received_device_id", Expr: "recv_msg.device_id"}, {Var: "received_auth_nonce", Expr: "recv_msg.nonce"}, }},
-				{From: "AuthCheck", To: "SessionActive", On: Internal("verify"), Guard: "device_known", Do: "verify_device", Sends: []Send{{To: "client", Msg: "auth_ok"}, }, Updates: []VarUpdate{{Var: "auth_nonces_used", Expr: "auth_nonces_used \\union {received_auth_nonce}"}, }},
+				{From: "ValidateCode", To: "Idle", On: Internal("check_code"), Guard: "code_wrong", Updates: []VarUpdate{{Var: "code_attempts", Expr: "code_attempts + 1"}}},
+				{From: "StorePaired", To: "Paired", On: Internal("finalise"), Do: "store_device", Sends: []Send{{To: "client", Msg: "pair_complete", Fields: map[string]string{"key": "backend_shared_key", "secret": "\"dev_secret_1\""}}}, Updates: []VarUpdate{{Var: "device_secret", Expr: "\"dev_secret_1\""}, {Var: "paired_devices", Expr: "paired_devices \\union {\"device_1\"}"}, {Var: "active_tokens", Expr: "active_tokens \\ {current_token}"}, {Var: "used_tokens", Expr: "used_tokens \\union {current_token}"}}},
+				{From: "Paired", To: "AuthCheck", On: Recv("auth_request"), Updates: []VarUpdate{{Var: "received_device_id", Expr: "recv_msg.device_id"}, {Var: "received_auth_nonce", Expr: "recv_msg.nonce"}}},
+				{From: "AuthCheck", To: "SessionActive", On: Internal("verify"), Guard: "device_known", Do: "verify_device", Sends: []Send{{To: "client", Msg: "auth_ok"}}, Updates: []VarUpdate{{Var: "auth_nonces_used", Expr: "auth_nonces_used \\union {received_auth_nonce}"}}},
 				{From: "AuthCheck", To: "Idle", On: Internal("verify"), Guard: "device_unknown"},
 				{From: "SessionActive", To: "RelayConnected", On: Internal("session_established")},
-				{From: "RelayConnected", To: "LANOffered", On: Internal("lan_server_ready"), Sends: []Send{{To: "client", Msg: "lan_offer", Fields: map[string]string{"addr": "lan_addr", "challenge": "challenge_bytes", }}, }},
-				{From: "LANOffered", To: "LANActive", On: Recv("lan_verify"), Guard: "challenge_valid", Do: "activate_lan", Sends: []Send{{To: "client", Msg: "lan_confirm"}, }, Updates: []VarUpdate{{Var: "ping_failures", Expr: "0"}, {Var: "backoff_level", Expr: "0"}, {Var: "b_active_path", Expr: "\"lan\""}, {Var: "b_dispatcher_path", Expr: "\"lan\""}, {Var: "monitor_target", Expr: "\"lan\""}, {Var: "lan_signal", Expr: "\"ready\""}, }},
+				{From: "RelayConnected", To: "LANOffered", On: Internal("lan_server_ready"), Sends: []Send{{To: "client", Msg: "lan_offer", Fields: map[string]string{"addr": "lan_addr", "challenge": "challenge_bytes"}}}},
+				{From: "LANOffered", To: "LANActive", On: Recv("lan_verify"), Guard: "challenge_valid", Do: "activate_lan", Sends: []Send{{To: "client", Msg: "lan_confirm"}}, Updates: []VarUpdate{{Var: "ping_failures", Expr: "0"}, {Var: "backoff_level", Expr: "0"}, {Var: "b_active_path", Expr: "\"lan\""}, {Var: "b_dispatcher_path", Expr: "\"lan\""}, {Var: "monitor_target", Expr: "\"lan\""}, {Var: "lan_signal", Expr: "\"ready\""}}},
 				{From: "LANOffered", To: "RelayConnected", On: Recv("lan_verify"), Guard: "challenge_invalid"},
-				{From: "LANOffered", To: "RelayBackoff", On: Internal("offer_timeout"), Updates: []VarUpdate{{Var: "backoff_level", Expr: "Min(backoff_level + 1, max_backoff_level)"}, {Var: "lan_signal", Expr: "\"pending\""}, }},
-				{From: "LANActive", To: "LANActive", On: Internal("ping_tick"), Sends: []Send{{To: "client", Msg: "path_ping"}, }},
-				{From: "LANActive", To: "LANDegraded", On: Internal("ping_timeout"), Updates: []VarUpdate{{Var: "ping_failures", Expr: "1"}, }},
-				{From: "LANDegraded", To: "LANDegraded", On: Internal("ping_tick"), Sends: []Send{{To: "client", Msg: "path_ping"}, }},
-				{From: "LANActive", To: "RelayBackoff", On: Internal("lan_stream_error"), Do: "fallback_to_relay", Updates: []VarUpdate{{Var: "backoff_level", Expr: "Min(backoff_level + 1, max_backoff_level)"}, {Var: "b_active_path", Expr: "\"relay\""}, {Var: "b_dispatcher_path", Expr: "\"relay\""}, {Var: "monitor_target", Expr: "\"none\""}, {Var: "lan_signal", Expr: "\"pending\""}, {Var: "ping_failures", Expr: "0"}, }},
-				{From: "LANDegraded", To: "RelayBackoff", On: Internal("lan_stream_error"), Do: "fallback_to_relay", Updates: []VarUpdate{{Var: "backoff_level", Expr: "Min(backoff_level + 1, max_backoff_level)"}, {Var: "b_active_path", Expr: "\"relay\""}, {Var: "b_dispatcher_path", Expr: "\"relay\""}, {Var: "monitor_target", Expr: "\"none\""}, {Var: "lan_signal", Expr: "\"pending\""}, {Var: "ping_failures", Expr: "0"}, }},
-				{From: "LANDegraded", To: "LANActive", On: Recv("path_pong"), Do: "reset_failures", Updates: []VarUpdate{{Var: "ping_failures", Expr: "0"}, }},
-				{From: "LANDegraded", To: "LANDegraded", On: Internal("ping_timeout"), Guard: "under_max_failures", Updates: []VarUpdate{{Var: "ping_failures", Expr: "ping_failures + 1"}, }},
-				{From: "LANDegraded", To: "RelayBackoff", On: Internal("ping_timeout"), Guard: "at_max_failures", Do: "fallback_to_relay", Updates: []VarUpdate{{Var: "backoff_level", Expr: "Min(backoff_level + 1, max_backoff_level)"}, {Var: "b_active_path", Expr: "\"relay\""}, {Var: "b_dispatcher_path", Expr: "\"relay\""}, {Var: "monitor_target", Expr: "\"none\""}, {Var: "lan_signal", Expr: "\"pending\""}, {Var: "ping_failures", Expr: "0"}, }},
-				{From: "RelayBackoff", To: "LANOffered", On: Internal("backoff_expired"), Sends: []Send{{To: "client", Msg: "lan_offer", Fields: map[string]string{"addr": "lan_addr", "challenge": "challenge_bytes", }}, }},
-				{From: "RelayBackoff", To: "LANOffered", On: Internal("lan_server_changed"), Sends: []Send{{To: "client", Msg: "lan_offer", Fields: map[string]string{"addr": "lan_addr", "challenge": "challenge_bytes", }}, }, Updates: []VarUpdate{{Var: "backoff_level", Expr: "0"}, }},
-				{From: "RelayConnected", To: "LANOffered", On: Internal("readvertise_tick"), Guard: "lan_server_available", Sends: []Send{{To: "client", Msg: "lan_offer", Fields: map[string]string{"addr": "lan_addr", "challenge": "challenge_bytes", }}, }},
-				{From: "LANOffered", To: "RelayConnected", On: Internal("app_force_fallback"), Updates: []VarUpdate{{Var: "lan_signal", Expr: "\"pending\""}, }},
-				{From: "LANActive", To: "RelayBackoff", On: Internal("app_force_fallback"), Do: "fallback_to_relay", Updates: []VarUpdate{{Var: "backoff_level", Expr: "Min(backoff_level + 1, max_backoff_level)"}, {Var: "b_active_path", Expr: "\"relay\""}, {Var: "b_dispatcher_path", Expr: "\"relay\""}, {Var: "monitor_target", Expr: "\"none\""}, {Var: "lan_signal", Expr: "\"pending\""}, {Var: "ping_failures", Expr: "0"}, }},
-				{From: "LANDegraded", To: "RelayBackoff", On: Internal("app_force_fallback"), Do: "fallback_to_relay", Updates: []VarUpdate{{Var: "backoff_level", Expr: "Min(backoff_level + 1, max_backoff_level)"}, {Var: "b_active_path", Expr: "\"relay\""}, {Var: "b_dispatcher_path", Expr: "\"relay\""}, {Var: "monitor_target", Expr: "\"none\""}, {Var: "lan_signal", Expr: "\"pending\""}, {Var: "ping_failures", Expr: "0"}, }},
+				{From: "LANOffered", To: "RelayBackoff", On: Internal("offer_timeout"), Updates: []VarUpdate{{Var: "backoff_level", Expr: "Min(backoff_level + 1, max_backoff_level)"}, {Var: "lan_signal", Expr: "\"pending\""}}},
+				{From: "LANActive", To: "LANActive", On: Internal("ping_tick"), Sends: []Send{{To: "client", Msg: "path_ping"}}},
+				{From: "LANActive", To: "LANDegraded", On: Internal("ping_timeout"), Updates: []VarUpdate{{Var: "ping_failures", Expr: "1"}}},
+				{From: "LANDegraded", To: "LANDegraded", On: Internal("ping_tick"), Sends: []Send{{To: "client", Msg: "path_ping"}}},
+				{From: "LANActive", To: "RelayBackoff", On: Internal("lan_stream_error"), Do: "fallback_to_relay", Updates: []VarUpdate{{Var: "backoff_level", Expr: "Min(backoff_level + 1, max_backoff_level)"}, {Var: "b_active_path", Expr: "\"relay\""}, {Var: "b_dispatcher_path", Expr: "\"relay\""}, {Var: "monitor_target", Expr: "\"none\""}, {Var: "lan_signal", Expr: "\"pending\""}, {Var: "ping_failures", Expr: "0"}}},
+				{From: "LANDegraded", To: "RelayBackoff", On: Internal("lan_stream_error"), Do: "fallback_to_relay", Updates: []VarUpdate{{Var: "backoff_level", Expr: "Min(backoff_level + 1, max_backoff_level)"}, {Var: "b_active_path", Expr: "\"relay\""}, {Var: "b_dispatcher_path", Expr: "\"relay\""}, {Var: "monitor_target", Expr: "\"none\""}, {Var: "lan_signal", Expr: "\"pending\""}, {Var: "ping_failures", Expr: "0"}}},
+				{From: "LANDegraded", To: "LANActive", On: Recv("path_pong"), Do: "reset_failures", Updates: []VarUpdate{{Var: "ping_failures", Expr: "0"}}},
+				{From: "LANDegraded", To: "LANDegraded", On: Internal("ping_timeout"), Guard: "under_max_failures", Updates: []VarUpdate{{Var: "ping_failures", Expr: "ping_failures + 1"}}},
+				{From: "LANDegraded", To: "RelayBackoff", On: Internal("ping_timeout"), Guard: "at_max_failures", Do: "fallback_to_relay", Updates: []VarUpdate{{Var: "backoff_level", Expr: "Min(backoff_level + 1, max_backoff_level)"}, {Var: "b_active_path", Expr: "\"relay\""}, {Var: "b_dispatcher_path", Expr: "\"relay\""}, {Var: "monitor_target", Expr: "\"none\""}, {Var: "lan_signal", Expr: "\"pending\""}, {Var: "ping_failures", Expr: "0"}}},
+				{From: "RelayBackoff", To: "LANOffered", On: Internal("backoff_expired"), Sends: []Send{{To: "client", Msg: "lan_offer", Fields: map[string]string{"addr": "lan_addr", "challenge": "challenge_bytes"}}}},
+				{From: "RelayBackoff", To: "LANOffered", On: Internal("lan_server_changed"), Sends: []Send{{To: "client", Msg: "lan_offer", Fields: map[string]string{"addr": "lan_addr", "challenge": "challenge_bytes"}}}, Updates: []VarUpdate{{Var: "backoff_level", Expr: "0"}}},
+				{From: "RelayConnected", To: "LANOffered", On: Internal("readvertise_tick"), Guard: "lan_server_available", Sends: []Send{{To: "client", Msg: "lan_offer", Fields: map[string]string{"addr": "lan_addr", "challenge": "challenge_bytes"}}}},
+				{From: "LANOffered", To: "RelayConnected", On: Internal("app_force_fallback"), Updates: []VarUpdate{{Var: "lan_signal", Expr: "\"pending\""}}},
+				{From: "LANActive", To: "RelayBackoff", On: Internal("app_force_fallback"), Do: "fallback_to_relay", Updates: []VarUpdate{{Var: "backoff_level", Expr: "Min(backoff_level + 1, max_backoff_level)"}, {Var: "b_active_path", Expr: "\"relay\""}, {Var: "b_dispatcher_path", Expr: "\"relay\""}, {Var: "monitor_target", Expr: "\"none\""}, {Var: "lan_signal", Expr: "\"pending\""}, {Var: "ping_failures", Expr: "0"}}},
+				{From: "LANDegraded", To: "RelayBackoff", On: Internal("app_force_fallback"), Do: "fallback_to_relay", Updates: []VarUpdate{{Var: "backoff_level", Expr: "Min(backoff_level + 1, max_backoff_level)"}, {Var: "b_active_path", Expr: "\"relay\""}, {Var: "b_dispatcher_path", Expr: "\"relay\""}, {Var: "monitor_target", Expr: "\"none\""}, {Var: "lan_signal", Expr: "\"pending\""}, {Var: "ping_failures", Expr: "0"}}},
 				{From: "RelayConnected", To: "Paired", On: Internal("disconnect")},
 				{From: "RelayConnected", To: "RelayConnected", On: Internal("app_send")},
 				{From: "LANOffered", To: "LANOffered", On: Internal("app_send")},
@@ -345,29 +345,29 @@ func SessionProtocol() *Protocol {
 				{From: "Idle", To: "ObtainBackchannelSecret", On: Internal("backchannel_received")},
 				{From: "ObtainBackchannelSecret", To: "ConnectRelay", On: Internal("secret_parsed")},
 				{From: "ConnectRelay", To: "GenKeyPair", On: Internal("relay_connected")},
-				{From: "GenKeyPair", To: "WaitAck", On: Internal("key_pair_generated"), Do: "send_pair_hello", Sends: []Send{{To: "backend", Msg: "pair_hello", Fields: map[string]string{"pubkey": "\"client_pub\"", "token": "current_token", }}, }},
-				{From: "WaitAck", To: "E2EReady", On: Recv("pair_hello_ack"), Do: "derive_secret", Updates: []VarUpdate{{Var: "received_backend_pub", Expr: "recv_msg.pubkey"}, {Var: "client_shared_key", Expr: "DeriveKey(\"client_pub\", recv_msg.pubkey)"}, }},
-				{From: "E2EReady", To: "ShowCode", On: Recv("pair_confirm"), Updates: []VarUpdate{{Var: "client_code", Expr: "DeriveCode(received_backend_pub, \"client_pub\")"}, }},
+				{From: "GenKeyPair", To: "WaitAck", On: Internal("key_pair_generated"), Do: "send_pair_hello", Sends: []Send{{To: "backend", Msg: "pair_hello", Fields: map[string]string{"pubkey": "\"client_pub\"", "token": "current_token"}}}},
+				{From: "WaitAck", To: "E2EReady", On: Recv("pair_hello_ack"), Do: "derive_secret", Updates: []VarUpdate{{Var: "received_backend_pub", Expr: "recv_msg.pubkey"}, {Var: "client_shared_key", Expr: "DeriveKey(\"client_pub\", recv_msg.pubkey)"}}},
+				{From: "E2EReady", To: "ShowCode", On: Recv("pair_confirm"), Updates: []VarUpdate{{Var: "client_code", Expr: "DeriveCode(received_backend_pub, \"client_pub\")"}}},
 				{From: "ShowCode", To: "WaitPairComplete", On: Internal("code_displayed")},
 				{From: "WaitPairComplete", To: "Paired", On: Recv("pair_complete"), Do: "store_secret"},
 				{From: "Paired", To: "Reconnect", On: Internal("app_launch")},
-				{From: "Reconnect", To: "SendAuth", On: Internal("relay_connected"), Sends: []Send{{To: "backend", Msg: "auth_request", Fields: map[string]string{"device_id": "\"device_1\"", "key": "client_shared_key", "nonce": "\"nonce_1\"", "secret": "device_secret", }}, }},
+				{From: "Reconnect", To: "SendAuth", On: Internal("relay_connected"), Sends: []Send{{To: "backend", Msg: "auth_request", Fields: map[string]string{"device_id": "\"device_1\"", "key": "client_shared_key", "nonce": "\"nonce_1\"", "secret": "device_secret"}}}},
 				{From: "SendAuth", To: "SessionActive", On: Recv("auth_ok")},
 				{From: "SessionActive", To: "RelayConnected", On: Internal("session_established")},
 				{From: "RelayConnected", To: "LANConnecting", On: Recv("lan_offer"), Guard: "lan_enabled", Do: "dial_lan"},
 				{From: "RelayConnected", To: "RelayConnected", On: Recv("lan_offer"), Guard: "lan_disabled"},
-				{From: "LANConnecting", To: "LANVerifying", On: Internal("lan_dial_ok"), Sends: []Send{{To: "backend", Msg: "lan_verify", Fields: map[string]string{"challenge": "offer_challenge", "instance_id": "instance_id", }}, }},
+				{From: "LANConnecting", To: "LANVerifying", On: Internal("lan_dial_ok"), Sends: []Send{{To: "backend", Msg: "lan_verify", Fields: map[string]string{"challenge": "offer_challenge", "instance_id": "instance_id"}}}},
 				{From: "LANConnecting", To: "RelayConnected", On: Internal("lan_dial_failed")},
-				{From: "LANVerifying", To: "LANActive", On: Recv("lan_confirm"), Do: "activate_lan", Updates: []VarUpdate{{Var: "c_active_path", Expr: "\"lan\""}, {Var: "c_dispatcher_path", Expr: "\"lan\""}, {Var: "lan_signal", Expr: "\"ready\""}, }},
-				{From: "LANVerifying", To: "RelayConnected", On: Internal("verify_timeout"), Updates: []VarUpdate{{Var: "c_dispatcher_path", Expr: "\"relay\""}, }},
-				{From: "LANActive", To: "LANActive", On: Recv("path_ping"), Sends: []Send{{To: "backend", Msg: "path_pong"}, }},
-				{From: "LANActive", To: "RelayFallback", On: Internal("lan_error"), Do: "fallback_to_relay", Updates: []VarUpdate{{Var: "c_active_path", Expr: "\"relay\""}, {Var: "c_dispatcher_path", Expr: "\"relay\""}, {Var: "lan_signal", Expr: "\"pending\""}, }},
-				{From: "LANActive", To: "RelayFallback", On: Internal("lan_stream_error"), Do: "fallback_to_relay", Updates: []VarUpdate{{Var: "c_active_path", Expr: "\"relay\""}, {Var: "c_dispatcher_path", Expr: "\"relay\""}, {Var: "lan_signal", Expr: "\"pending\""}, }},
+				{From: "LANVerifying", To: "LANActive", On: Recv("lan_confirm"), Do: "activate_lan", Updates: []VarUpdate{{Var: "c_active_path", Expr: "\"lan\""}, {Var: "c_dispatcher_path", Expr: "\"lan\""}, {Var: "lan_signal", Expr: "\"ready\""}}},
+				{From: "LANVerifying", To: "RelayConnected", On: Internal("verify_timeout"), Updates: []VarUpdate{{Var: "c_dispatcher_path", Expr: "\"relay\""}}},
+				{From: "LANActive", To: "LANActive", On: Recv("path_ping"), Sends: []Send{{To: "backend", Msg: "path_pong"}}},
+				{From: "LANActive", To: "RelayFallback", On: Internal("lan_error"), Do: "fallback_to_relay", Updates: []VarUpdate{{Var: "c_active_path", Expr: "\"relay\""}, {Var: "c_dispatcher_path", Expr: "\"relay\""}, {Var: "lan_signal", Expr: "\"pending\""}}},
+				{From: "LANActive", To: "RelayFallback", On: Internal("lan_stream_error"), Do: "fallback_to_relay", Updates: []VarUpdate{{Var: "c_active_path", Expr: "\"relay\""}, {Var: "c_dispatcher_path", Expr: "\"relay\""}, {Var: "lan_signal", Expr: "\"pending\""}}},
 				{From: "RelayFallback", To: "RelayConnected", On: Internal("relay_ok")},
 				{From: "LANActive", To: "LANConnecting", On: Recv("lan_offer"), Guard: "lan_enabled", Do: "dial_lan"},
 				{From: "LANConnecting", To: "RelayConnected", On: Internal("app_force_fallback")},
-				{From: "LANVerifying", To: "RelayConnected", On: Internal("app_force_fallback"), Updates: []VarUpdate{{Var: "c_dispatcher_path", Expr: "\"relay\""}, }},
-				{From: "LANActive", To: "RelayConnected", On: Internal("app_force_fallback"), Do: "fallback_to_relay", Updates: []VarUpdate{{Var: "c_active_path", Expr: "\"relay\""}, {Var: "c_dispatcher_path", Expr: "\"relay\""}, {Var: "lan_signal", Expr: "\"pending\""}, }},
+				{From: "LANVerifying", To: "RelayConnected", On: Internal("app_force_fallback"), Updates: []VarUpdate{{Var: "c_dispatcher_path", Expr: "\"relay\""}}},
+				{From: "LANActive", To: "RelayConnected", On: Internal("app_force_fallback"), Do: "fallback_to_relay", Updates: []VarUpdate{{Var: "c_active_path", Expr: "\"relay\""}, {Var: "c_dispatcher_path", Expr: "\"relay\""}, {Var: "lan_signal", Expr: "\"pending\""}}},
 				{From: "RelayConnected", To: "Paired", On: Internal("disconnect")},
 				{From: "RelayConnected", To: "RelayConnected", On: Internal("app_send")},
 				{From: "LANConnecting", To: "LANConnecting", On: Internal("app_send")},
@@ -399,8 +399,8 @@ func SessionProtocol() *Protocol {
 			}},
 			{Name: "relay", Initial: "Idle", Transitions: []Transition{
 				{From: "Idle", To: "BackendRegistered", On: Internal("backend_register")},
-				{From: "BackendRegistered", To: "Bridged", On: Internal("client_connect"), Do: "bridge_streams", Updates: []VarUpdate{{Var: "relay_bridge", Expr: "\"active\""}, }},
-				{From: "Bridged", To: "BackendRegistered", On: Internal("client_disconnect"), Do: "unbridge", Updates: []VarUpdate{{Var: "relay_bridge", Expr: "\"idle\""}, }},
+				{From: "BackendRegistered", To: "Bridged", On: Internal("client_connect"), Do: "bridge_streams", Updates: []VarUpdate{{Var: "relay_bridge", Expr: "\"active\""}}},
+				{From: "Bridged", To: "BackendRegistered", On: Internal("client_disconnect"), Do: "unbridge", Updates: []VarUpdate{{Var: "relay_bridge", Expr: "\"idle\""}}},
 				{From: "BackendRegistered", To: "Idle", On: Internal("backend_disconnect")},
 			}},
 		},
@@ -509,87 +509,87 @@ func SessionProtocol() *Protocol {
 			{Name: "DegradedLeadsToResolutionOrFallback", Kind: Invariant, Expr: "", Desc: "Degraded state eventually resolves (recovery or fallback)"},
 		},
 		ChannelBound: 3,
-		OneShot: false,
+		OneShot:      false,
 	}
 }
 
 type ECDHState struct {
 	BackendPub string // backend ECDH public key
-	ClientPub string // pubkey received from client
-	SharedKey string // ECDH-derived shared key
-	Code string // confirmation code derived from pubkeys
+	ClientPub  string // pubkey received from client
+	SharedKey  string // ECDH-derived shared key
+	Code       string // confirmation code derived from pubkeys
 }
 
 type TokenState struct {
-	Current string // pairing token currently in play
-	Active frozen.Set[string] // set of valid (non-revoked) tokens
-	Used frozen.Set[string] // set of revoked tokens
+	Current string             // pairing token currently in play
+	Active  frozen.Set[string] // set of valid (non-revoked) tokens
+	Used    frozen.Set[string] // set of revoked tokens
 }
 
 type BackendPathState struct {
-	ActivePath string // which path carries traffic
+	ActivePath     string // which path carries traffic
 	DispatcherPath string // datagram dispatcher binding
-	MonitorTarget string // health monitor target
-	LanSignal string // LANReady notification state
+	MonitorTarget  string // health monitor target
+	LanSignal      string // LANReady notification state
 }
 
 type ClientPathState struct {
-	ActivePath string // which path carries traffic
+	ActivePath     string // which path carries traffic
 	DispatcherPath string // datagram dispatcher binding
 }
 
 // SessionProtocolBackendMachine is the generated state machine for the backend actor.
 type SessionProtocolBackendMachine struct {
-	State State
-	CurrentToken string // pairing token currently in play
-	ActiveTokens frozen.Set[string] // set of valid (non-revoked) tokens
-	UsedTokens frozen.Set[string] // set of revoked tokens
-	BackendEcdhPub string // backend ECDH public key
-	ReceivedClientPub string // pubkey backend received in pair_hello
-	BackendSharedKey string // ECDH key derived by backend
-	BackendCode string // code computed by backend
-	ReceivedCode string // code entered via CLI
-	CodeAttempts int // failed code submission attempts
-	DeviceSecret string // persistent device secret
-	PairedDevices frozen.Set[string] // device IDs that completed pairing
-	ReceivedDeviceId string // device_id from auth_request
-	AuthNoncesUsed frozen.Set[string] // set of consumed auth nonces
-	ReceivedAuthNonce string // nonce from auth_request
-	SecretPublished bool // whether token has been published via backchannel
-	PingFailures int // consecutive failed pings
-	BackoffLevel int // exponential backoff level
-	BActivePath string // backend active path
-	BDispatcherPath string // backend datagram dispatcher binding
-	MonitorTarget string // health monitor target
-	LanSignal string // LANReady notification state
+	State             State
+	CurrentToken      string             // pairing token currently in play
+	ActiveTokens      frozen.Set[string] // set of valid (non-revoked) tokens
+	UsedTokens        frozen.Set[string] // set of revoked tokens
+	BackendEcdhPub    string             // backend ECDH public key
+	ReceivedClientPub string             // pubkey backend received in pair_hello
+	BackendSharedKey  string             // ECDH key derived by backend
+	BackendCode       string             // code computed by backend
+	ReceivedCode      string             // code entered via CLI
+	CodeAttempts      int                // failed code submission attempts
+	DeviceSecret      string             // persistent device secret
+	PairedDevices     frozen.Set[string] // device IDs that completed pairing
+	ReceivedDeviceId  string             // device_id from auth_request
+	AuthNoncesUsed    frozen.Set[string] // set of consumed auth nonces
+	ReceivedAuthNonce string             // nonce from auth_request
+	SecretPublished   bool               // whether token has been published via backchannel
+	PingFailures      int                // consecutive failed pings
+	BackoffLevel      int                // exponential backoff level
+	BActivePath       string             // backend active path
+	BDispatcherPath   string             // backend datagram dispatcher binding
+	MonitorTarget     string             // health monitor target
+	LanSignal         string             // LANReady notification state
 
-	Guards  map[GuardID]func() bool
-	Actions map[ActionID]func() error
+	Guards   map[GuardID]func() bool
+	Actions  map[ActionID]func() error
 	OnChange func(varName string)
 }
 
 func NewSessionProtocolBackendMachine() *SessionProtocolBackendMachine {
 	return &SessionProtocolBackendMachine{
-		State: SessionProtocolBackendIdle,
-		CurrentToken: "none",
-		BackendEcdhPub: "none",
+		State:             SessionProtocolBackendIdle,
+		CurrentToken:      "none",
+		BackendEcdhPub:    "none",
 		ReceivedClientPub: "none",
-		BackendSharedKey: "",
-		BackendCode: "",
-		ReceivedCode: "",
-		CodeAttempts: 0,
-		DeviceSecret: "none",
-		ReceivedDeviceId: "none",
+		BackendSharedKey:  "",
+		BackendCode:       "",
+		ReceivedCode:      "",
+		CodeAttempts:      0,
+		DeviceSecret:      "none",
+		ReceivedDeviceId:  "none",
 		ReceivedAuthNonce: "none",
-		SecretPublished: false,
-		PingFailures: 0,
-		BackoffLevel: 0,
-		BActivePath: "relay",
-		BDispatcherPath: "relay",
-		MonitorTarget: "none",
-		LanSignal: "pending",
-		Guards:  make(map[GuardID]func() bool),
-		Actions: make(map[ActionID]func() error),
+		SecretPublished:   false,
+		PingFailures:      0,
+		BackoffLevel:      0,
+		BActivePath:       "relay",
+		BDispatcherPath:   "relay",
+		MonitorTarget:     "none",
+		LanSignal:         "pending",
+		Guards:            make(map[GuardID]func() bool),
+		Actions:           make(map[ActionID]func() error),
 	}
 }
 
@@ -597,11 +597,15 @@ func (m *SessionProtocolBackendMachine) HandleMessage(msg MsgType) (bool, error)
 	switch {
 	case m.State == SessionProtocolBackendWaitingForClient && msg == SessionProtocolMsgPairHello && m.Guards[SessionProtocolGuardTokenValid] != nil && m.Guards[SessionProtocolGuardTokenValid]():
 		if fn := m.Actions[SessionProtocolActionDeriveSecret]; fn != nil {
-			if err := fn(); err != nil { return false, err }
+			if err := fn(); err != nil {
+				return false, err
+			}
 		}
 		// received_client_pub: recv_msg.pubkey (set by action)
 		m.BackendEcdhPub = "backend_pub"
-		if m.OnChange != nil { m.OnChange("backend_ecdh_pub") }
+		if m.OnChange != nil {
+			m.OnChange("backend_ecdh_pub")
+		}
 		// backend_shared_key: DeriveKey("backend_pub", recv_msg.pubkey) (set by action)
 		// backend_code: DeriveCode("backend_pub", recv_msg.pubkey) (set by action)
 		m.State = SessionProtocolBackendDeriveSecret
@@ -616,20 +620,34 @@ func (m *SessionProtocolBackendMachine) HandleMessage(msg MsgType) (bool, error)
 		return true, nil
 	case m.State == SessionProtocolBackendLANOffered && msg == SessionProtocolMsgLanVerify && m.Guards[SessionProtocolGuardChallengeValid] != nil && m.Guards[SessionProtocolGuardChallengeValid]():
 		if fn := m.Actions[SessionProtocolActionActivateLan]; fn != nil {
-			if err := fn(); err != nil { return false, err }
+			if err := fn(); err != nil {
+				return false, err
+			}
 		}
 		m.PingFailures = 0
-		if m.OnChange != nil { m.OnChange("ping_failures") }
+		if m.OnChange != nil {
+			m.OnChange("ping_failures")
+		}
 		m.BackoffLevel = 0
-		if m.OnChange != nil { m.OnChange("backoff_level") }
+		if m.OnChange != nil {
+			m.OnChange("backoff_level")
+		}
 		m.BActivePath = "lan"
-		if m.OnChange != nil { m.OnChange("b_active_path") }
+		if m.OnChange != nil {
+			m.OnChange("b_active_path")
+		}
 		m.BDispatcherPath = "lan"
-		if m.OnChange != nil { m.OnChange("b_dispatcher_path") }
+		if m.OnChange != nil {
+			m.OnChange("b_dispatcher_path")
+		}
 		m.MonitorTarget = "lan"
-		if m.OnChange != nil { m.OnChange("monitor_target") }
+		if m.OnChange != nil {
+			m.OnChange("monitor_target")
+		}
 		m.LanSignal = "ready"
-		if m.OnChange != nil { m.OnChange("lan_signal") }
+		if m.OnChange != nil {
+			m.OnChange("lan_signal")
+		}
 		m.State = SessionProtocolBackendLANActive
 		return true, nil
 	case m.State == SessionProtocolBackendLANOffered && msg == SessionProtocolMsgLanVerify && m.Guards[SessionProtocolGuardChallengeInvalid] != nil && m.Guards[SessionProtocolGuardChallengeInvalid]():
@@ -637,10 +655,14 @@ func (m *SessionProtocolBackendMachine) HandleMessage(msg MsgType) (bool, error)
 		return true, nil
 	case m.State == SessionProtocolBackendLANDegraded && msg == SessionProtocolMsgPathPong:
 		if fn := m.Actions[SessionProtocolActionResetFailures]; fn != nil {
-			if err := fn(); err != nil { return false, err }
+			if err := fn(); err != nil {
+				return false, err
+			}
 		}
 		m.PingFailures = 0
-		if m.OnChange != nil { m.OnChange("ping_failures") }
+		if m.OnChange != nil {
+			m.OnChange("ping_failures")
+		}
 		m.State = SessionProtocolBackendLANActive
 		return true, nil
 	}
@@ -651,22 +673,30 @@ func (m *SessionProtocolBackendMachine) Step(event EventID) (bool, error) {
 	switch {
 	case m.State == SessionProtocolBackendIdle && event == SessionProtocolEventCliInitPair:
 		if fn := m.Actions[SessionProtocolActionGenerateToken]; fn != nil {
-			if err := fn(); err != nil { return false, err }
+			if err := fn(); err != nil {
+				return false, err
+			}
 		}
 		m.CurrentToken = "tok_1"
-		if m.OnChange != nil { m.OnChange("current_token") }
+		if m.OnChange != nil {
+			m.OnChange("current_token")
+		}
 		// active_tokens: active_tokens \union {"tok_1"} (set by action)
 		m.State = SessionProtocolBackendGenerateToken
 		return true, nil
 	case m.State == SessionProtocolBackendGenerateToken && event == SessionProtocolEventTokenCreated:
 		if fn := m.Actions[SessionProtocolActionRegisterRelay]; fn != nil {
-			if err := fn(); err != nil { return false, err }
+			if err := fn(); err != nil {
+				return false, err
+			}
 		}
 		m.State = SessionProtocolBackendRegisterRelay
 		return true, nil
 	case m.State == SessionProtocolBackendRegisterRelay && event == SessionProtocolEventRelayRegistered:
 		m.SecretPublished = true
-		if m.OnChange != nil { m.OnChange("secret_published") }
+		if m.OnChange != nil {
+			m.OnChange("secret_published")
+		}
 		m.State = SessionProtocolBackendWaitingForClient
 		return true, nil
 	case m.State == SessionProtocolBackendDeriveSecret && event == SessionProtocolEventEcdhComplete:
@@ -684,15 +714,21 @@ func (m *SessionProtocolBackendMachine) Step(event EventID) (bool, error) {
 		return true, nil
 	case m.State == SessionProtocolBackendValidateCode && event == SessionProtocolEventCheckCode && m.Guards[SessionProtocolGuardCodeWrong] != nil && m.Guards[SessionProtocolGuardCodeWrong]():
 		m.CodeAttempts = m.CodeAttempts + 1
-		if m.OnChange != nil { m.OnChange("code_attempts") }
+		if m.OnChange != nil {
+			m.OnChange("code_attempts")
+		}
 		m.State = SessionProtocolBackendIdle
 		return true, nil
 	case m.State == SessionProtocolBackendStorePaired && event == SessionProtocolEventFinalise:
 		if fn := m.Actions[SessionProtocolActionStoreDevice]; fn != nil {
-			if err := fn(); err != nil { return false, err }
+			if err := fn(); err != nil {
+				return false, err
+			}
 		}
 		m.DeviceSecret = "dev_secret_1"
-		if m.OnChange != nil { m.OnChange("device_secret") }
+		if m.OnChange != nil {
+			m.OnChange("device_secret")
+		}
 		// paired_devices: paired_devices \union {"device_1"} (set by action)
 		// active_tokens: active_tokens \ {current_token} (set by action)
 		// used_tokens: used_tokens \union {current_token} (set by action)
@@ -700,7 +736,9 @@ func (m *SessionProtocolBackendMachine) Step(event EventID) (bool, error) {
 		return true, nil
 	case m.State == SessionProtocolBackendAuthCheck && event == SessionProtocolEventVerify && m.Guards[SessionProtocolGuardDeviceKnown] != nil && m.Guards[SessionProtocolGuardDeviceKnown]():
 		if fn := m.Actions[SessionProtocolActionVerifyDevice]; fn != nil {
-			if err := fn(); err != nil { return false, err }
+			if err := fn(); err != nil {
+				return false, err
+			}
 		}
 		// auth_nonces_used: auth_nonces_used \union {received_auth_nonce} (set by action)
 		m.State = SessionProtocolBackendSessionActive
@@ -717,7 +755,9 @@ func (m *SessionProtocolBackendMachine) Step(event EventID) (bool, error) {
 	case m.State == SessionProtocolBackendLANOffered && event == SessionProtocolEventOfferTimeout:
 		// backoff_level: Min(backoff_level + 1, max_backoff_level) (set by action)
 		m.LanSignal = "pending"
-		if m.OnChange != nil { m.OnChange("lan_signal") }
+		if m.OnChange != nil {
+			m.OnChange("lan_signal")
+		}
 		m.State = SessionProtocolBackendRelayBackoff
 		return true, nil
 	case m.State == SessionProtocolBackendLANActive && event == SessionProtocolEventPingTick:
@@ -725,7 +765,9 @@ func (m *SessionProtocolBackendMachine) Step(event EventID) (bool, error) {
 		return true, nil
 	case m.State == SessionProtocolBackendLANActive && event == SessionProtocolEventPingTimeout:
 		m.PingFailures = 1
-		if m.OnChange != nil { m.OnChange("ping_failures") }
+		if m.OnChange != nil {
+			m.OnChange("ping_failures")
+		}
 		m.State = SessionProtocolBackendLANDegraded
 		return true, nil
 	case m.State == SessionProtocolBackendLANDegraded && event == SessionProtocolEventPingTick:
@@ -733,58 +775,96 @@ func (m *SessionProtocolBackendMachine) Step(event EventID) (bool, error) {
 		return true, nil
 	case m.State == SessionProtocolBackendLANActive && event == SessionProtocolEventLanStreamError:
 		if fn := m.Actions[SessionProtocolActionFallbackToRelay]; fn != nil {
-			if err := fn(); err != nil { return false, err }
+			if err := fn(); err != nil {
+				return false, err
+			}
 		}
 		// backoff_level: Min(backoff_level + 1, max_backoff_level) (set by action)
 		m.BActivePath = "relay"
-		if m.OnChange != nil { m.OnChange("b_active_path") }
+		if m.OnChange != nil {
+			m.OnChange("b_active_path")
+		}
 		m.BDispatcherPath = "relay"
-		if m.OnChange != nil { m.OnChange("b_dispatcher_path") }
+		if m.OnChange != nil {
+			m.OnChange("b_dispatcher_path")
+		}
 		m.MonitorTarget = "none"
-		if m.OnChange != nil { m.OnChange("monitor_target") }
+		if m.OnChange != nil {
+			m.OnChange("monitor_target")
+		}
 		m.LanSignal = "pending"
-		if m.OnChange != nil { m.OnChange("lan_signal") }
+		if m.OnChange != nil {
+			m.OnChange("lan_signal")
+		}
 		m.PingFailures = 0
-		if m.OnChange != nil { m.OnChange("ping_failures") }
+		if m.OnChange != nil {
+			m.OnChange("ping_failures")
+		}
 		m.State = SessionProtocolBackendRelayBackoff
 		return true, nil
 	case m.State == SessionProtocolBackendLANDegraded && event == SessionProtocolEventLanStreamError:
 		if fn := m.Actions[SessionProtocolActionFallbackToRelay]; fn != nil {
-			if err := fn(); err != nil { return false, err }
+			if err := fn(); err != nil {
+				return false, err
+			}
 		}
 		// backoff_level: Min(backoff_level + 1, max_backoff_level) (set by action)
 		m.BActivePath = "relay"
-		if m.OnChange != nil { m.OnChange("b_active_path") }
+		if m.OnChange != nil {
+			m.OnChange("b_active_path")
+		}
 		m.BDispatcherPath = "relay"
-		if m.OnChange != nil { m.OnChange("b_dispatcher_path") }
+		if m.OnChange != nil {
+			m.OnChange("b_dispatcher_path")
+		}
 		m.MonitorTarget = "none"
-		if m.OnChange != nil { m.OnChange("monitor_target") }
+		if m.OnChange != nil {
+			m.OnChange("monitor_target")
+		}
 		m.LanSignal = "pending"
-		if m.OnChange != nil { m.OnChange("lan_signal") }
+		if m.OnChange != nil {
+			m.OnChange("lan_signal")
+		}
 		m.PingFailures = 0
-		if m.OnChange != nil { m.OnChange("ping_failures") }
+		if m.OnChange != nil {
+			m.OnChange("ping_failures")
+		}
 		m.State = SessionProtocolBackendRelayBackoff
 		return true, nil
 	case m.State == SessionProtocolBackendLANDegraded && event == SessionProtocolEventPingTimeout && m.Guards[SessionProtocolGuardUnderMaxFailures] != nil && m.Guards[SessionProtocolGuardUnderMaxFailures]():
 		m.PingFailures = m.PingFailures + 1
-		if m.OnChange != nil { m.OnChange("ping_failures") }
+		if m.OnChange != nil {
+			m.OnChange("ping_failures")
+		}
 		m.State = SessionProtocolBackendLANDegraded
 		return true, nil
 	case m.State == SessionProtocolBackendLANDegraded && event == SessionProtocolEventPingTimeout && m.Guards[SessionProtocolGuardAtMaxFailures] != nil && m.Guards[SessionProtocolGuardAtMaxFailures]():
 		if fn := m.Actions[SessionProtocolActionFallbackToRelay]; fn != nil {
-			if err := fn(); err != nil { return false, err }
+			if err := fn(); err != nil {
+				return false, err
+			}
 		}
 		// backoff_level: Min(backoff_level + 1, max_backoff_level) (set by action)
 		m.BActivePath = "relay"
-		if m.OnChange != nil { m.OnChange("b_active_path") }
+		if m.OnChange != nil {
+			m.OnChange("b_active_path")
+		}
 		m.BDispatcherPath = "relay"
-		if m.OnChange != nil { m.OnChange("b_dispatcher_path") }
+		if m.OnChange != nil {
+			m.OnChange("b_dispatcher_path")
+		}
 		m.MonitorTarget = "none"
-		if m.OnChange != nil { m.OnChange("monitor_target") }
+		if m.OnChange != nil {
+			m.OnChange("monitor_target")
+		}
 		m.LanSignal = "pending"
-		if m.OnChange != nil { m.OnChange("lan_signal") }
+		if m.OnChange != nil {
+			m.OnChange("lan_signal")
+		}
 		m.PingFailures = 0
-		if m.OnChange != nil { m.OnChange("ping_failures") }
+		if m.OnChange != nil {
+			m.OnChange("ping_failures")
+		}
 		m.State = SessionProtocolBackendRelayBackoff
 		return true, nil
 	case m.State == SessionProtocolBackendRelayBackoff && event == SessionProtocolEventBackoffExpired:
@@ -792,7 +872,9 @@ func (m *SessionProtocolBackendMachine) Step(event EventID) (bool, error) {
 		return true, nil
 	case m.State == SessionProtocolBackendRelayBackoff && event == SessionProtocolEventLanServerChanged:
 		m.BackoffLevel = 0
-		if m.OnChange != nil { m.OnChange("backoff_level") }
+		if m.OnChange != nil {
+			m.OnChange("backoff_level")
+		}
 		m.State = SessionProtocolBackendLANOffered
 		return true, nil
 	case m.State == SessionProtocolBackendRelayConnected && event == SessionProtocolEventReadvertiseTick && m.Guards[SessionProtocolGuardLanServerAvailable] != nil && m.Guards[SessionProtocolGuardLanServerAvailable]():
@@ -800,41 +882,67 @@ func (m *SessionProtocolBackendMachine) Step(event EventID) (bool, error) {
 		return true, nil
 	case m.State == SessionProtocolBackendLANOffered && event == SessionProtocolEventAppForceFallback:
 		m.LanSignal = "pending"
-		if m.OnChange != nil { m.OnChange("lan_signal") }
+		if m.OnChange != nil {
+			m.OnChange("lan_signal")
+		}
 		m.State = SessionProtocolBackendRelayConnected
 		return true, nil
 	case m.State == SessionProtocolBackendLANActive && event == SessionProtocolEventAppForceFallback:
 		if fn := m.Actions[SessionProtocolActionFallbackToRelay]; fn != nil {
-			if err := fn(); err != nil { return false, err }
+			if err := fn(); err != nil {
+				return false, err
+			}
 		}
 		// backoff_level: Min(backoff_level + 1, max_backoff_level) (set by action)
 		m.BActivePath = "relay"
-		if m.OnChange != nil { m.OnChange("b_active_path") }
+		if m.OnChange != nil {
+			m.OnChange("b_active_path")
+		}
 		m.BDispatcherPath = "relay"
-		if m.OnChange != nil { m.OnChange("b_dispatcher_path") }
+		if m.OnChange != nil {
+			m.OnChange("b_dispatcher_path")
+		}
 		m.MonitorTarget = "none"
-		if m.OnChange != nil { m.OnChange("monitor_target") }
+		if m.OnChange != nil {
+			m.OnChange("monitor_target")
+		}
 		m.LanSignal = "pending"
-		if m.OnChange != nil { m.OnChange("lan_signal") }
+		if m.OnChange != nil {
+			m.OnChange("lan_signal")
+		}
 		m.PingFailures = 0
-		if m.OnChange != nil { m.OnChange("ping_failures") }
+		if m.OnChange != nil {
+			m.OnChange("ping_failures")
+		}
 		m.State = SessionProtocolBackendRelayBackoff
 		return true, nil
 	case m.State == SessionProtocolBackendLANDegraded && event == SessionProtocolEventAppForceFallback:
 		if fn := m.Actions[SessionProtocolActionFallbackToRelay]; fn != nil {
-			if err := fn(); err != nil { return false, err }
+			if err := fn(); err != nil {
+				return false, err
+			}
 		}
 		// backoff_level: Min(backoff_level + 1, max_backoff_level) (set by action)
 		m.BActivePath = "relay"
-		if m.OnChange != nil { m.OnChange("b_active_path") }
+		if m.OnChange != nil {
+			m.OnChange("b_active_path")
+		}
 		m.BDispatcherPath = "relay"
-		if m.OnChange != nil { m.OnChange("b_dispatcher_path") }
+		if m.OnChange != nil {
+			m.OnChange("b_dispatcher_path")
+		}
 		m.MonitorTarget = "none"
-		if m.OnChange != nil { m.OnChange("monitor_target") }
+		if m.OnChange != nil {
+			m.OnChange("monitor_target")
+		}
 		m.LanSignal = "pending"
-		if m.OnChange != nil { m.OnChange("lan_signal") }
+		if m.OnChange != nil {
+			m.OnChange("lan_signal")
+		}
 		m.PingFailures = 0
-		if m.OnChange != nil { m.OnChange("ping_failures") }
+		if m.OnChange != nil {
+			m.OnChange("ping_failures")
+		}
 		m.State = SessionProtocolBackendRelayBackoff
 		return true, nil
 	case m.State == SessionProtocolBackendRelayConnected && event == SessionProtocolEventDisconnect:
@@ -935,31 +1043,43 @@ func (m *SessionProtocolBackendMachine) HandleEvent(ev EventID) ([]CmdID, error)
 	switch {
 	case m.State == SessionProtocolBackendIdle && ev == SessionProtocolEventCliInitPair:
 		if fn := m.Actions[SessionProtocolActionGenerateToken]; fn != nil {
-			if err := fn(); err != nil { return nil, err }
+			if err := fn(); err != nil {
+				return nil, err
+			}
 		}
 		m.CurrentToken = "tok_1"
-		if m.OnChange != nil { m.OnChange("current_token") }
+		if m.OnChange != nil {
+			m.OnChange("current_token")
+		}
 		// active_tokens: active_tokens \union {"tok_1"} (set by action)
 		m.State = SessionProtocolBackendGenerateToken
 		return nil, nil
 	case m.State == SessionProtocolBackendGenerateToken && ev == SessionProtocolEventTokenCreated:
 		if fn := m.Actions[SessionProtocolActionRegisterRelay]; fn != nil {
-			if err := fn(); err != nil { return nil, err }
+			if err := fn(); err != nil {
+				return nil, err
+			}
 		}
 		m.State = SessionProtocolBackendRegisterRelay
 		return nil, nil
 	case m.State == SessionProtocolBackendRegisterRelay && ev == SessionProtocolEventRelayRegistered:
 		m.SecretPublished = true
-		if m.OnChange != nil { m.OnChange("secret_published") }
+		if m.OnChange != nil {
+			m.OnChange("secret_published")
+		}
 		m.State = SessionProtocolBackendWaitingForClient
 		return nil, nil
 	case m.State == SessionProtocolBackendWaitingForClient && ev == SessionProtocolEventRecvPairHello && m.Guards[SessionProtocolGuardTokenValid] != nil && m.Guards[SessionProtocolGuardTokenValid]():
 		if fn := m.Actions[SessionProtocolActionDeriveSecret]; fn != nil {
-			if err := fn(); err != nil { return nil, err }
+			if err := fn(); err != nil {
+				return nil, err
+			}
 		}
 		// received_client_pub: recv_msg.pubkey (set by action)
 		m.BackendEcdhPub = "backend_pub"
-		if m.OnChange != nil { m.OnChange("backend_ecdh_pub") }
+		if m.OnChange != nil {
+			m.OnChange("backend_ecdh_pub")
+		}
 		// backend_shared_key: DeriveKey("backend_pub", recv_msg.pubkey) (set by action)
 		// backend_code: DeriveCode("backend_pub", recv_msg.pubkey) (set by action)
 		m.State = SessionProtocolBackendDeriveSecret
@@ -982,15 +1102,21 @@ func (m *SessionProtocolBackendMachine) HandleEvent(ev EventID) ([]CmdID, error)
 		return nil, nil
 	case m.State == SessionProtocolBackendValidateCode && ev == SessionProtocolEventCheckCode && m.Guards[SessionProtocolGuardCodeWrong] != nil && m.Guards[SessionProtocolGuardCodeWrong]():
 		m.CodeAttempts = m.CodeAttempts + 1
-		if m.OnChange != nil { m.OnChange("code_attempts") }
+		if m.OnChange != nil {
+			m.OnChange("code_attempts")
+		}
 		m.State = SessionProtocolBackendIdle
 		return nil, nil
 	case m.State == SessionProtocolBackendStorePaired && ev == SessionProtocolEventFinalise:
 		if fn := m.Actions[SessionProtocolActionStoreDevice]; fn != nil {
-			if err := fn(); err != nil { return nil, err }
+			if err := fn(); err != nil {
+				return nil, err
+			}
 		}
 		m.DeviceSecret = "dev_secret_1"
-		if m.OnChange != nil { m.OnChange("device_secret") }
+		if m.OnChange != nil {
+			m.OnChange("device_secret")
+		}
 		// paired_devices: paired_devices \union {"device_1"} (set by action)
 		// active_tokens: active_tokens \ {current_token} (set by action)
 		// used_tokens: used_tokens \union {current_token} (set by action)
@@ -1003,7 +1129,9 @@ func (m *SessionProtocolBackendMachine) HandleEvent(ev EventID) ([]CmdID, error)
 		return nil, nil
 	case m.State == SessionProtocolBackendAuthCheck && ev == SessionProtocolEventVerify && m.Guards[SessionProtocolGuardDeviceKnown] != nil && m.Guards[SessionProtocolGuardDeviceKnown]():
 		if fn := m.Actions[SessionProtocolActionVerifyDevice]; fn != nil {
-			if err := fn(); err != nil { return nil, err }
+			if err := fn(); err != nil {
+				return nil, err
+			}
 		}
 		// auth_nonces_used: auth_nonces_used \union {received_auth_nonce} (set by action)
 		m.State = SessionProtocolBackendSessionActive
@@ -1019,20 +1147,34 @@ func (m *SessionProtocolBackendMachine) HandleEvent(ev EventID) ([]CmdID, error)
 		return []CmdID{SessionProtocolCmdSendLanOffer}, nil
 	case m.State == SessionProtocolBackendLANOffered && ev == SessionProtocolEventRecvLanVerify && m.Guards[SessionProtocolGuardChallengeValid] != nil && m.Guards[SessionProtocolGuardChallengeValid]():
 		if fn := m.Actions[SessionProtocolActionActivateLan]; fn != nil {
-			if err := fn(); err != nil { return nil, err }
+			if err := fn(); err != nil {
+				return nil, err
+			}
 		}
 		m.PingFailures = 0
-		if m.OnChange != nil { m.OnChange("ping_failures") }
+		if m.OnChange != nil {
+			m.OnChange("ping_failures")
+		}
 		m.BackoffLevel = 0
-		if m.OnChange != nil { m.OnChange("backoff_level") }
+		if m.OnChange != nil {
+			m.OnChange("backoff_level")
+		}
 		m.BActivePath = "lan"
-		if m.OnChange != nil { m.OnChange("b_active_path") }
+		if m.OnChange != nil {
+			m.OnChange("b_active_path")
+		}
 		m.BDispatcherPath = "lan"
-		if m.OnChange != nil { m.OnChange("b_dispatcher_path") }
+		if m.OnChange != nil {
+			m.OnChange("b_dispatcher_path")
+		}
 		m.MonitorTarget = "lan"
-		if m.OnChange != nil { m.OnChange("monitor_target") }
+		if m.OnChange != nil {
+			m.OnChange("monitor_target")
+		}
 		m.LanSignal = "ready"
-		if m.OnChange != nil { m.OnChange("lan_signal") }
+		if m.OnChange != nil {
+			m.OnChange("lan_signal")
+		}
 		m.State = SessionProtocolBackendLANActive
 		return []CmdID{SessionProtocolCmdSendLanConfirm, SessionProtocolCmdStartLanStreamReader, SessionProtocolCmdStartLanDgReader, SessionProtocolCmdStartMonitor, SessionProtocolCmdSignalLanReady, SessionProtocolCmdSetCryptoDatagram}, nil
 	case m.State == SessionProtocolBackendLANOffered && ev == SessionProtocolEventRecvLanVerify && m.Guards[SessionProtocolGuardChallengeInvalid] != nil && m.Guards[SessionProtocolGuardChallengeInvalid]():
@@ -1041,7 +1183,9 @@ func (m *SessionProtocolBackendMachine) HandleEvent(ev EventID) ([]CmdID, error)
 	case m.State == SessionProtocolBackendLANOffered && ev == SessionProtocolEventOfferTimeout:
 		// backoff_level: Min(backoff_level + 1, max_backoff_level) (set by action)
 		m.LanSignal = "pending"
-		if m.OnChange != nil { m.OnChange("lan_signal") }
+		if m.OnChange != nil {
+			m.OnChange("lan_signal")
+		}
 		m.State = SessionProtocolBackendRelayBackoff
 		return []CmdID{SessionProtocolCmdResetLanReady, SessionProtocolCmdStartBackoffTimer}, nil
 	case m.State == SessionProtocolBackendLANActive && ev == SessionProtocolEventPingTick:
@@ -1049,7 +1193,9 @@ func (m *SessionProtocolBackendMachine) HandleEvent(ev EventID) ([]CmdID, error)
 		return []CmdID{SessionProtocolCmdSendPathPing, SessionProtocolCmdStartPongTimeout}, nil
 	case m.State == SessionProtocolBackendLANActive && ev == SessionProtocolEventPingTimeout:
 		m.PingFailures = 1
-		if m.OnChange != nil { m.OnChange("ping_failures") }
+		if m.OnChange != nil {
+			m.OnChange("ping_failures")
+		}
 		m.State = SessionProtocolBackendLANDegraded
 		return nil, nil
 	case m.State == SessionProtocolBackendLANDegraded && ev == SessionProtocolEventPingTick:
@@ -1057,66 +1203,108 @@ func (m *SessionProtocolBackendMachine) HandleEvent(ev EventID) ([]CmdID, error)
 		return []CmdID{SessionProtocolCmdSendPathPing, SessionProtocolCmdStartPongTimeout}, nil
 	case m.State == SessionProtocolBackendLANActive && ev == SessionProtocolEventLanStreamError:
 		if fn := m.Actions[SessionProtocolActionFallbackToRelay]; fn != nil {
-			if err := fn(); err != nil { return nil, err }
+			if err := fn(); err != nil {
+				return nil, err
+			}
 		}
 		// backoff_level: Min(backoff_level + 1, max_backoff_level) (set by action)
 		m.BActivePath = "relay"
-		if m.OnChange != nil { m.OnChange("b_active_path") }
+		if m.OnChange != nil {
+			m.OnChange("b_active_path")
+		}
 		m.BDispatcherPath = "relay"
-		if m.OnChange != nil { m.OnChange("b_dispatcher_path") }
+		if m.OnChange != nil {
+			m.OnChange("b_dispatcher_path")
+		}
 		m.MonitorTarget = "none"
-		if m.OnChange != nil { m.OnChange("monitor_target") }
+		if m.OnChange != nil {
+			m.OnChange("monitor_target")
+		}
 		m.LanSignal = "pending"
-		if m.OnChange != nil { m.OnChange("lan_signal") }
+		if m.OnChange != nil {
+			m.OnChange("lan_signal")
+		}
 		m.PingFailures = 0
-		if m.OnChange != nil { m.OnChange("ping_failures") }
+		if m.OnChange != nil {
+			m.OnChange("ping_failures")
+		}
 		m.State = SessionProtocolBackendRelayBackoff
 		return []CmdID{SessionProtocolCmdStopMonitor, SessionProtocolCmdStopLanStreamReader, SessionProtocolCmdStopLanDgReader, SessionProtocolCmdCloseLanPath, SessionProtocolCmdResetLanReady, SessionProtocolCmdStartBackoffTimer}, nil
 	case m.State == SessionProtocolBackendLANDegraded && ev == SessionProtocolEventLanStreamError:
 		if fn := m.Actions[SessionProtocolActionFallbackToRelay]; fn != nil {
-			if err := fn(); err != nil { return nil, err }
+			if err := fn(); err != nil {
+				return nil, err
+			}
 		}
 		// backoff_level: Min(backoff_level + 1, max_backoff_level) (set by action)
 		m.BActivePath = "relay"
-		if m.OnChange != nil { m.OnChange("b_active_path") }
+		if m.OnChange != nil {
+			m.OnChange("b_active_path")
+		}
 		m.BDispatcherPath = "relay"
-		if m.OnChange != nil { m.OnChange("b_dispatcher_path") }
+		if m.OnChange != nil {
+			m.OnChange("b_dispatcher_path")
+		}
 		m.MonitorTarget = "none"
-		if m.OnChange != nil { m.OnChange("monitor_target") }
+		if m.OnChange != nil {
+			m.OnChange("monitor_target")
+		}
 		m.LanSignal = "pending"
-		if m.OnChange != nil { m.OnChange("lan_signal") }
+		if m.OnChange != nil {
+			m.OnChange("lan_signal")
+		}
 		m.PingFailures = 0
-		if m.OnChange != nil { m.OnChange("ping_failures") }
+		if m.OnChange != nil {
+			m.OnChange("ping_failures")
+		}
 		m.State = SessionProtocolBackendRelayBackoff
 		return []CmdID{SessionProtocolCmdStopMonitor, SessionProtocolCmdStopLanStreamReader, SessionProtocolCmdStopLanDgReader, SessionProtocolCmdCloseLanPath, SessionProtocolCmdResetLanReady, SessionProtocolCmdStartBackoffTimer}, nil
 	case m.State == SessionProtocolBackendLANDegraded && ev == SessionProtocolEventRecvPathPong:
 		if fn := m.Actions[SessionProtocolActionResetFailures]; fn != nil {
-			if err := fn(); err != nil { return nil, err }
+			if err := fn(); err != nil {
+				return nil, err
+			}
 		}
 		m.PingFailures = 0
-		if m.OnChange != nil { m.OnChange("ping_failures") }
+		if m.OnChange != nil {
+			m.OnChange("ping_failures")
+		}
 		m.State = SessionProtocolBackendLANActive
 		return []CmdID{SessionProtocolCmdCancelPongTimeout}, nil
 	case m.State == SessionProtocolBackendLANDegraded && ev == SessionProtocolEventPingTimeout && m.Guards[SessionProtocolGuardUnderMaxFailures] != nil && m.Guards[SessionProtocolGuardUnderMaxFailures]():
 		m.PingFailures = m.PingFailures + 1
-		if m.OnChange != nil { m.OnChange("ping_failures") }
+		if m.OnChange != nil {
+			m.OnChange("ping_failures")
+		}
 		m.State = SessionProtocolBackendLANDegraded
 		return nil, nil
 	case m.State == SessionProtocolBackendLANDegraded && ev == SessionProtocolEventPingTimeout && m.Guards[SessionProtocolGuardAtMaxFailures] != nil && m.Guards[SessionProtocolGuardAtMaxFailures]():
 		if fn := m.Actions[SessionProtocolActionFallbackToRelay]; fn != nil {
-			if err := fn(); err != nil { return nil, err }
+			if err := fn(); err != nil {
+				return nil, err
+			}
 		}
 		// backoff_level: Min(backoff_level + 1, max_backoff_level) (set by action)
 		m.BActivePath = "relay"
-		if m.OnChange != nil { m.OnChange("b_active_path") }
+		if m.OnChange != nil {
+			m.OnChange("b_active_path")
+		}
 		m.BDispatcherPath = "relay"
-		if m.OnChange != nil { m.OnChange("b_dispatcher_path") }
+		if m.OnChange != nil {
+			m.OnChange("b_dispatcher_path")
+		}
 		m.MonitorTarget = "none"
-		if m.OnChange != nil { m.OnChange("monitor_target") }
+		if m.OnChange != nil {
+			m.OnChange("monitor_target")
+		}
 		m.LanSignal = "pending"
-		if m.OnChange != nil { m.OnChange("lan_signal") }
+		if m.OnChange != nil {
+			m.OnChange("lan_signal")
+		}
 		m.PingFailures = 0
-		if m.OnChange != nil { m.OnChange("ping_failures") }
+		if m.OnChange != nil {
+			m.OnChange("ping_failures")
+		}
 		m.State = SessionProtocolBackendRelayBackoff
 		return []CmdID{SessionProtocolCmdStopMonitor, SessionProtocolCmdStopLanStreamReader, SessionProtocolCmdStopLanDgReader, SessionProtocolCmdCloseLanPath, SessionProtocolCmdResetLanReady, SessionProtocolCmdStartBackoffTimer}, nil
 	case m.State == SessionProtocolBackendRelayBackoff && ev == SessionProtocolEventBackoffExpired:
@@ -1124,7 +1312,9 @@ func (m *SessionProtocolBackendMachine) HandleEvent(ev EventID) ([]CmdID, error)
 		return []CmdID{SessionProtocolCmdSendLanOffer}, nil
 	case m.State == SessionProtocolBackendRelayBackoff && ev == SessionProtocolEventLanServerChanged:
 		m.BackoffLevel = 0
-		if m.OnChange != nil { m.OnChange("backoff_level") }
+		if m.OnChange != nil {
+			m.OnChange("backoff_level")
+		}
 		m.State = SessionProtocolBackendLANOffered
 		return []CmdID{SessionProtocolCmdSendLanOffer}, nil
 	case m.State == SessionProtocolBackendRelayConnected && ev == SessionProtocolEventReadvertiseTick && m.Guards[SessionProtocolGuardLanServerAvailable] != nil && m.Guards[SessionProtocolGuardLanServerAvailable]():
@@ -1132,41 +1322,67 @@ func (m *SessionProtocolBackendMachine) HandleEvent(ev EventID) ([]CmdID, error)
 		return []CmdID{SessionProtocolCmdSendLanOffer}, nil
 	case m.State == SessionProtocolBackendLANOffered && ev == SessionProtocolEventAppForceFallback:
 		m.LanSignal = "pending"
-		if m.OnChange != nil { m.OnChange("lan_signal") }
+		if m.OnChange != nil {
+			m.OnChange("lan_signal")
+		}
 		m.State = SessionProtocolBackendRelayConnected
 		return []CmdID{SessionProtocolCmdResetLanReady}, nil
 	case m.State == SessionProtocolBackendLANActive && ev == SessionProtocolEventAppForceFallback:
 		if fn := m.Actions[SessionProtocolActionFallbackToRelay]; fn != nil {
-			if err := fn(); err != nil { return nil, err }
+			if err := fn(); err != nil {
+				return nil, err
+			}
 		}
 		// backoff_level: Min(backoff_level + 1, max_backoff_level) (set by action)
 		m.BActivePath = "relay"
-		if m.OnChange != nil { m.OnChange("b_active_path") }
+		if m.OnChange != nil {
+			m.OnChange("b_active_path")
+		}
 		m.BDispatcherPath = "relay"
-		if m.OnChange != nil { m.OnChange("b_dispatcher_path") }
+		if m.OnChange != nil {
+			m.OnChange("b_dispatcher_path")
+		}
 		m.MonitorTarget = "none"
-		if m.OnChange != nil { m.OnChange("monitor_target") }
+		if m.OnChange != nil {
+			m.OnChange("monitor_target")
+		}
 		m.LanSignal = "pending"
-		if m.OnChange != nil { m.OnChange("lan_signal") }
+		if m.OnChange != nil {
+			m.OnChange("lan_signal")
+		}
 		m.PingFailures = 0
-		if m.OnChange != nil { m.OnChange("ping_failures") }
+		if m.OnChange != nil {
+			m.OnChange("ping_failures")
+		}
 		m.State = SessionProtocolBackendRelayBackoff
 		return []CmdID{SessionProtocolCmdStopMonitor, SessionProtocolCmdCancelPongTimeout, SessionProtocolCmdStopLanStreamReader, SessionProtocolCmdStopLanDgReader, SessionProtocolCmdCloseLanPath, SessionProtocolCmdResetLanReady, SessionProtocolCmdStartBackoffTimer}, nil
 	case m.State == SessionProtocolBackendLANDegraded && ev == SessionProtocolEventAppForceFallback:
 		if fn := m.Actions[SessionProtocolActionFallbackToRelay]; fn != nil {
-			if err := fn(); err != nil { return nil, err }
+			if err := fn(); err != nil {
+				return nil, err
+			}
 		}
 		// backoff_level: Min(backoff_level + 1, max_backoff_level) (set by action)
 		m.BActivePath = "relay"
-		if m.OnChange != nil { m.OnChange("b_active_path") }
+		if m.OnChange != nil {
+			m.OnChange("b_active_path")
+		}
 		m.BDispatcherPath = "relay"
-		if m.OnChange != nil { m.OnChange("b_dispatcher_path") }
+		if m.OnChange != nil {
+			m.OnChange("b_dispatcher_path")
+		}
 		m.MonitorTarget = "none"
-		if m.OnChange != nil { m.OnChange("monitor_target") }
+		if m.OnChange != nil {
+			m.OnChange("monitor_target")
+		}
 		m.LanSignal = "pending"
-		if m.OnChange != nil { m.OnChange("lan_signal") }
+		if m.OnChange != nil {
+			m.OnChange("lan_signal")
+		}
 		m.PingFailures = 0
-		if m.OnChange != nil { m.OnChange("ping_failures") }
+		if m.OnChange != nil {
+			m.OnChange("ping_failures")
+		}
 		m.State = SessionProtocolBackendRelayBackoff
 		return []CmdID{SessionProtocolCmdStopMonitor, SessionProtocolCmdCancelPongTimeout, SessionProtocolCmdStopLanStreamReader, SessionProtocolCmdStopLanDgReader, SessionProtocolCmdCloseLanPath, SessionProtocolCmdResetLanReady, SessionProtocolCmdStartBackoffTimer}, nil
 	case m.State == SessionProtocolBackendRelayConnected && ev == SessionProtocolEventDisconnect:
@@ -1265,30 +1481,30 @@ func (m *SessionProtocolBackendMachine) HandleEvent(ev EventID) ([]CmdID, error)
 
 // SessionProtocolClientMachine is the generated state machine for the client actor.
 type SessionProtocolClientMachine struct {
-	State State
+	State              State
 	ReceivedBackendPub string // pubkey client received in pair_hello_ack
-	ClientSharedKey string // ECDH key derived by client
-	ClientCode string // code computed by client
-	CActivePath string // client active path
-	CDispatcherPath string // client datagram dispatcher binding
-	LanSignal string // LANReady notification state
+	ClientSharedKey    string // ECDH key derived by client
+	ClientCode         string // code computed by client
+	CActivePath        string // client active path
+	CDispatcherPath    string // client datagram dispatcher binding
+	LanSignal          string // LANReady notification state
 
-	Guards  map[GuardID]func() bool
-	Actions map[ActionID]func() error
+	Guards   map[GuardID]func() bool
+	Actions  map[ActionID]func() error
 	OnChange func(varName string)
 }
 
 func NewSessionProtocolClientMachine() *SessionProtocolClientMachine {
 	return &SessionProtocolClientMachine{
-		State: SessionProtocolClientIdle,
+		State:              SessionProtocolClientIdle,
 		ReceivedBackendPub: "none",
-		ClientSharedKey: "",
-		ClientCode: "",
-		CActivePath: "relay",
-		CDispatcherPath: "relay",
-		LanSignal: "pending",
-		Guards:  make(map[GuardID]func() bool),
-		Actions: make(map[ActionID]func() error),
+		ClientSharedKey:    "",
+		ClientCode:         "",
+		CActivePath:        "relay",
+		CDispatcherPath:    "relay",
+		LanSignal:          "pending",
+		Guards:             make(map[GuardID]func() bool),
+		Actions:            make(map[ActionID]func() error),
 	}
 }
 
@@ -1296,7 +1512,9 @@ func (m *SessionProtocolClientMachine) HandleMessage(msg MsgType) (bool, error) 
 	switch {
 	case m.State == SessionProtocolClientWaitAck && msg == SessionProtocolMsgPairHelloAck:
 		if fn := m.Actions[SessionProtocolActionDeriveSecret]; fn != nil {
-			if err := fn(); err != nil { return false, err }
+			if err := fn(); err != nil {
+				return false, err
+			}
 		}
 		// received_backend_pub: recv_msg.pubkey (set by action)
 		// client_shared_key: DeriveKey("client_pub", recv_msg.pubkey) (set by action)
@@ -1308,7 +1526,9 @@ func (m *SessionProtocolClientMachine) HandleMessage(msg MsgType) (bool, error) 
 		return true, nil
 	case m.State == SessionProtocolClientWaitPairComplete && msg == SessionProtocolMsgPairComplete:
 		if fn := m.Actions[SessionProtocolActionStoreSecret]; fn != nil {
-			if err := fn(); err != nil { return false, err }
+			if err := fn(); err != nil {
+				return false, err
+			}
 		}
 		m.State = SessionProtocolClientPaired
 		return true, nil
@@ -1317,7 +1537,9 @@ func (m *SessionProtocolClientMachine) HandleMessage(msg MsgType) (bool, error) 
 		return true, nil
 	case m.State == SessionProtocolClientRelayConnected && msg == SessionProtocolMsgLanOffer && m.Guards[SessionProtocolGuardLanEnabled] != nil && m.Guards[SessionProtocolGuardLanEnabled]():
 		if fn := m.Actions[SessionProtocolActionDialLan]; fn != nil {
-			if err := fn(); err != nil { return false, err }
+			if err := fn(); err != nil {
+				return false, err
+			}
 		}
 		m.State = SessionProtocolClientLANConnecting
 		return true, nil
@@ -1326,14 +1548,22 @@ func (m *SessionProtocolClientMachine) HandleMessage(msg MsgType) (bool, error) 
 		return true, nil
 	case m.State == SessionProtocolClientLANVerifying && msg == SessionProtocolMsgLanConfirm:
 		if fn := m.Actions[SessionProtocolActionActivateLan]; fn != nil {
-			if err := fn(); err != nil { return false, err }
+			if err := fn(); err != nil {
+				return false, err
+			}
 		}
 		m.CActivePath = "lan"
-		if m.OnChange != nil { m.OnChange("c_active_path") }
+		if m.OnChange != nil {
+			m.OnChange("c_active_path")
+		}
 		m.CDispatcherPath = "lan"
-		if m.OnChange != nil { m.OnChange("c_dispatcher_path") }
+		if m.OnChange != nil {
+			m.OnChange("c_dispatcher_path")
+		}
 		m.LanSignal = "ready"
-		if m.OnChange != nil { m.OnChange("lan_signal") }
+		if m.OnChange != nil {
+			m.OnChange("lan_signal")
+		}
 		m.State = SessionProtocolClientLANActive
 		return true, nil
 	case m.State == SessionProtocolClientLANActive && msg == SessionProtocolMsgPathPing:
@@ -1341,7 +1571,9 @@ func (m *SessionProtocolClientMachine) HandleMessage(msg MsgType) (bool, error) 
 		return true, nil
 	case m.State == SessionProtocolClientLANActive && msg == SessionProtocolMsgLanOffer && m.Guards[SessionProtocolGuardLanEnabled] != nil && m.Guards[SessionProtocolGuardLanEnabled]():
 		if fn := m.Actions[SessionProtocolActionDialLan]; fn != nil {
-			if err := fn(); err != nil { return false, err }
+			if err := fn(); err != nil {
+				return false, err
+			}
 		}
 		m.State = SessionProtocolClientLANConnecting
 		return true, nil
@@ -1362,7 +1594,9 @@ func (m *SessionProtocolClientMachine) Step(event EventID) (bool, error) {
 		return true, nil
 	case m.State == SessionProtocolClientGenKeyPair && event == SessionProtocolEventKeyPairGenerated:
 		if fn := m.Actions[SessionProtocolActionSendPairHello]; fn != nil {
-			if err := fn(); err != nil { return false, err }
+			if err := fn(); err != nil {
+				return false, err
+			}
 		}
 		m.State = SessionProtocolClientWaitAck
 		return true, nil
@@ -1386,31 +1620,49 @@ func (m *SessionProtocolClientMachine) Step(event EventID) (bool, error) {
 		return true, nil
 	case m.State == SessionProtocolClientLANVerifying && event == SessionProtocolEventVerifyTimeout:
 		m.CDispatcherPath = "relay"
-		if m.OnChange != nil { m.OnChange("c_dispatcher_path") }
+		if m.OnChange != nil {
+			m.OnChange("c_dispatcher_path")
+		}
 		m.State = SessionProtocolClientRelayConnected
 		return true, nil
 	case m.State == SessionProtocolClientLANActive && event == SessionProtocolEventLanError:
 		if fn := m.Actions[SessionProtocolActionFallbackToRelay]; fn != nil {
-			if err := fn(); err != nil { return false, err }
+			if err := fn(); err != nil {
+				return false, err
+			}
 		}
 		m.CActivePath = "relay"
-		if m.OnChange != nil { m.OnChange("c_active_path") }
+		if m.OnChange != nil {
+			m.OnChange("c_active_path")
+		}
 		m.CDispatcherPath = "relay"
-		if m.OnChange != nil { m.OnChange("c_dispatcher_path") }
+		if m.OnChange != nil {
+			m.OnChange("c_dispatcher_path")
+		}
 		m.LanSignal = "pending"
-		if m.OnChange != nil { m.OnChange("lan_signal") }
+		if m.OnChange != nil {
+			m.OnChange("lan_signal")
+		}
 		m.State = SessionProtocolClientRelayFallback
 		return true, nil
 	case m.State == SessionProtocolClientLANActive && event == SessionProtocolEventLanStreamError:
 		if fn := m.Actions[SessionProtocolActionFallbackToRelay]; fn != nil {
-			if err := fn(); err != nil { return false, err }
+			if err := fn(); err != nil {
+				return false, err
+			}
 		}
 		m.CActivePath = "relay"
-		if m.OnChange != nil { m.OnChange("c_active_path") }
+		if m.OnChange != nil {
+			m.OnChange("c_active_path")
+		}
 		m.CDispatcherPath = "relay"
-		if m.OnChange != nil { m.OnChange("c_dispatcher_path") }
+		if m.OnChange != nil {
+			m.OnChange("c_dispatcher_path")
+		}
 		m.LanSignal = "pending"
-		if m.OnChange != nil { m.OnChange("lan_signal") }
+		if m.OnChange != nil {
+			m.OnChange("lan_signal")
+		}
 		m.State = SessionProtocolClientRelayFallback
 		return true, nil
 	case m.State == SessionProtocolClientRelayFallback && event == SessionProtocolEventRelayOk:
@@ -1421,19 +1673,29 @@ func (m *SessionProtocolClientMachine) Step(event EventID) (bool, error) {
 		return true, nil
 	case m.State == SessionProtocolClientLANVerifying && event == SessionProtocolEventAppForceFallback:
 		m.CDispatcherPath = "relay"
-		if m.OnChange != nil { m.OnChange("c_dispatcher_path") }
+		if m.OnChange != nil {
+			m.OnChange("c_dispatcher_path")
+		}
 		m.State = SessionProtocolClientRelayConnected
 		return true, nil
 	case m.State == SessionProtocolClientLANActive && event == SessionProtocolEventAppForceFallback:
 		if fn := m.Actions[SessionProtocolActionFallbackToRelay]; fn != nil {
-			if err := fn(); err != nil { return false, err }
+			if err := fn(); err != nil {
+				return false, err
+			}
 		}
 		m.CActivePath = "relay"
-		if m.OnChange != nil { m.OnChange("c_active_path") }
+		if m.OnChange != nil {
+			m.OnChange("c_active_path")
+		}
 		m.CDispatcherPath = "relay"
-		if m.OnChange != nil { m.OnChange("c_dispatcher_path") }
+		if m.OnChange != nil {
+			m.OnChange("c_dispatcher_path")
+		}
 		m.LanSignal = "pending"
-		if m.OnChange != nil { m.OnChange("lan_signal") }
+		if m.OnChange != nil {
+			m.OnChange("lan_signal")
+		}
 		m.State = SessionProtocolClientRelayConnected
 		return true, nil
 	case m.State == SessionProtocolClientRelayConnected && event == SessionProtocolEventDisconnect:
@@ -1537,13 +1799,17 @@ func (m *SessionProtocolClientMachine) HandleEvent(ev EventID) ([]CmdID, error) 
 		return nil, nil
 	case m.State == SessionProtocolClientGenKeyPair && ev == SessionProtocolEventKeyPairGenerated:
 		if fn := m.Actions[SessionProtocolActionSendPairHello]; fn != nil {
-			if err := fn(); err != nil { return nil, err }
+			if err := fn(); err != nil {
+				return nil, err
+			}
 		}
 		m.State = SessionProtocolClientWaitAck
 		return nil, nil
 	case m.State == SessionProtocolClientWaitAck && ev == SessionProtocolEventRecvPairHelloAck:
 		if fn := m.Actions[SessionProtocolActionDeriveSecret]; fn != nil {
-			if err := fn(); err != nil { return nil, err }
+			if err := fn(); err != nil {
+				return nil, err
+			}
 		}
 		// received_backend_pub: recv_msg.pubkey (set by action)
 		// client_shared_key: DeriveKey("client_pub", recv_msg.pubkey) (set by action)
@@ -1558,7 +1824,9 @@ func (m *SessionProtocolClientMachine) HandleEvent(ev EventID) ([]CmdID, error) 
 		return nil, nil
 	case m.State == SessionProtocolClientWaitPairComplete && ev == SessionProtocolEventRecvPairComplete:
 		if fn := m.Actions[SessionProtocolActionStoreSecret]; fn != nil {
-			if err := fn(); err != nil { return nil, err }
+			if err := fn(); err != nil {
+				return nil, err
+			}
 		}
 		m.State = SessionProtocolClientPaired
 		return nil, nil
@@ -1576,7 +1844,9 @@ func (m *SessionProtocolClientMachine) HandleEvent(ev EventID) ([]CmdID, error) 
 		return nil, nil
 	case m.State == SessionProtocolClientRelayConnected && ev == SessionProtocolEventRecvLanOffer && m.Guards[SessionProtocolGuardLanEnabled] != nil && m.Guards[SessionProtocolGuardLanEnabled]():
 		if fn := m.Actions[SessionProtocolActionDialLan]; fn != nil {
-			if err := fn(); err != nil { return nil, err }
+			if err := fn(); err != nil {
+				return nil, err
+			}
 		}
 		m.State = SessionProtocolClientLANConnecting
 		return []CmdID{SessionProtocolCmdDialLan}, nil
@@ -1591,19 +1861,29 @@ func (m *SessionProtocolClientMachine) HandleEvent(ev EventID) ([]CmdID, error) 
 		return nil, nil
 	case m.State == SessionProtocolClientLANVerifying && ev == SessionProtocolEventRecvLanConfirm:
 		if fn := m.Actions[SessionProtocolActionActivateLan]; fn != nil {
-			if err := fn(); err != nil { return nil, err }
+			if err := fn(); err != nil {
+				return nil, err
+			}
 		}
 		m.CActivePath = "lan"
-		if m.OnChange != nil { m.OnChange("c_active_path") }
+		if m.OnChange != nil {
+			m.OnChange("c_active_path")
+		}
 		m.CDispatcherPath = "lan"
-		if m.OnChange != nil { m.OnChange("c_dispatcher_path") }
+		if m.OnChange != nil {
+			m.OnChange("c_dispatcher_path")
+		}
 		m.LanSignal = "ready"
-		if m.OnChange != nil { m.OnChange("lan_signal") }
+		if m.OnChange != nil {
+			m.OnChange("lan_signal")
+		}
 		m.State = SessionProtocolClientLANActive
 		return []CmdID{SessionProtocolCmdStartLanStreamReader, SessionProtocolCmdStartLanDgReader, SessionProtocolCmdSignalLanReady, SessionProtocolCmdSetCryptoDatagram}, nil
 	case m.State == SessionProtocolClientLANVerifying && ev == SessionProtocolEventVerifyTimeout:
 		m.CDispatcherPath = "relay"
-		if m.OnChange != nil { m.OnChange("c_dispatcher_path") }
+		if m.OnChange != nil {
+			m.OnChange("c_dispatcher_path")
+		}
 		m.State = SessionProtocolClientRelayConnected
 		return nil, nil
 	case m.State == SessionProtocolClientLANActive && ev == SessionProtocolEventRecvPathPing:
@@ -1611,26 +1891,42 @@ func (m *SessionProtocolClientMachine) HandleEvent(ev EventID) ([]CmdID, error) 
 		return []CmdID{SessionProtocolCmdSendPathPong}, nil
 	case m.State == SessionProtocolClientLANActive && ev == SessionProtocolEventLanError:
 		if fn := m.Actions[SessionProtocolActionFallbackToRelay]; fn != nil {
-			if err := fn(); err != nil { return nil, err }
+			if err := fn(); err != nil {
+				return nil, err
+			}
 		}
 		m.CActivePath = "relay"
-		if m.OnChange != nil { m.OnChange("c_active_path") }
+		if m.OnChange != nil {
+			m.OnChange("c_active_path")
+		}
 		m.CDispatcherPath = "relay"
-		if m.OnChange != nil { m.OnChange("c_dispatcher_path") }
+		if m.OnChange != nil {
+			m.OnChange("c_dispatcher_path")
+		}
 		m.LanSignal = "pending"
-		if m.OnChange != nil { m.OnChange("lan_signal") }
+		if m.OnChange != nil {
+			m.OnChange("lan_signal")
+		}
 		m.State = SessionProtocolClientRelayFallback
 		return []CmdID{SessionProtocolCmdStopLanStreamReader, SessionProtocolCmdStopLanDgReader, SessionProtocolCmdCloseLanPath, SessionProtocolCmdResetLanReady}, nil
 	case m.State == SessionProtocolClientLANActive && ev == SessionProtocolEventLanStreamError:
 		if fn := m.Actions[SessionProtocolActionFallbackToRelay]; fn != nil {
-			if err := fn(); err != nil { return nil, err }
+			if err := fn(); err != nil {
+				return nil, err
+			}
 		}
 		m.CActivePath = "relay"
-		if m.OnChange != nil { m.OnChange("c_active_path") }
+		if m.OnChange != nil {
+			m.OnChange("c_active_path")
+		}
 		m.CDispatcherPath = "relay"
-		if m.OnChange != nil { m.OnChange("c_dispatcher_path") }
+		if m.OnChange != nil {
+			m.OnChange("c_dispatcher_path")
+		}
 		m.LanSignal = "pending"
-		if m.OnChange != nil { m.OnChange("lan_signal") }
+		if m.OnChange != nil {
+			m.OnChange("lan_signal")
+		}
 		m.State = SessionProtocolClientRelayFallback
 		return []CmdID{SessionProtocolCmdStopLanStreamReader, SessionProtocolCmdStopLanDgReader, SessionProtocolCmdCloseLanPath, SessionProtocolCmdResetLanReady}, nil
 	case m.State == SessionProtocolClientRelayFallback && ev == SessionProtocolEventRelayOk:
@@ -1638,7 +1934,9 @@ func (m *SessionProtocolClientMachine) HandleEvent(ev EventID) ([]CmdID, error) 
 		return nil, nil
 	case m.State == SessionProtocolClientLANActive && ev == SessionProtocolEventRecvLanOffer && m.Guards[SessionProtocolGuardLanEnabled] != nil && m.Guards[SessionProtocolGuardLanEnabled]():
 		if fn := m.Actions[SessionProtocolActionDialLan]; fn != nil {
-			if err := fn(); err != nil { return nil, err }
+			if err := fn(); err != nil {
+				return nil, err
+			}
 		}
 		m.State = SessionProtocolClientLANConnecting
 		return []CmdID{SessionProtocolCmdStopLanStreamReader, SessionProtocolCmdStopLanDgReader, SessionProtocolCmdCloseLanPath, SessionProtocolCmdDialLan}, nil
@@ -1647,19 +1945,29 @@ func (m *SessionProtocolClientMachine) HandleEvent(ev EventID) ([]CmdID, error) 
 		return nil, nil
 	case m.State == SessionProtocolClientLANVerifying && ev == SessionProtocolEventAppForceFallback:
 		m.CDispatcherPath = "relay"
-		if m.OnChange != nil { m.OnChange("c_dispatcher_path") }
+		if m.OnChange != nil {
+			m.OnChange("c_dispatcher_path")
+		}
 		m.State = SessionProtocolClientRelayConnected
 		return []CmdID{SessionProtocolCmdStopLanStreamReader, SessionProtocolCmdStopLanDgReader, SessionProtocolCmdCloseLanPath}, nil
 	case m.State == SessionProtocolClientLANActive && ev == SessionProtocolEventAppForceFallback:
 		if fn := m.Actions[SessionProtocolActionFallbackToRelay]; fn != nil {
-			if err := fn(); err != nil { return nil, err }
+			if err := fn(); err != nil {
+				return nil, err
+			}
 		}
 		m.CActivePath = "relay"
-		if m.OnChange != nil { m.OnChange("c_active_path") }
+		if m.OnChange != nil {
+			m.OnChange("c_active_path")
+		}
 		m.CDispatcherPath = "relay"
-		if m.OnChange != nil { m.OnChange("c_dispatcher_path") }
+		if m.OnChange != nil {
+			m.OnChange("c_dispatcher_path")
+		}
 		m.LanSignal = "pending"
-		if m.OnChange != nil { m.OnChange("lan_signal") }
+		if m.OnChange != nil {
+			m.OnChange("lan_signal")
+		}
 		m.State = SessionProtocolClientRelayConnected
 		return []CmdID{SessionProtocolCmdStopLanStreamReader, SessionProtocolCmdStopLanDgReader, SessionProtocolCmdCloseLanPath, SessionProtocolCmdResetLanReady}, nil
 	case m.State == SessionProtocolClientRelayConnected && ev == SessionProtocolEventDisconnect:
@@ -1752,20 +2060,20 @@ func (m *SessionProtocolClientMachine) HandleEvent(ev EventID) ([]CmdID, error) 
 
 // SessionProtocolRelayMachine is the generated state machine for the relay actor.
 type SessionProtocolRelayMachine struct {
-	State State
+	State       State
 	RelayBridge string // relay bridge state
 
-	Guards  map[GuardID]func() bool
-	Actions map[ActionID]func() error
+	Guards   map[GuardID]func() bool
+	Actions  map[ActionID]func() error
 	OnChange func(varName string)
 }
 
 func NewSessionProtocolRelayMachine() *SessionProtocolRelayMachine {
 	return &SessionProtocolRelayMachine{
-		State: SessionProtocolRelayIdle,
+		State:       SessionProtocolRelayIdle,
 		RelayBridge: "idle",
-		Guards:  make(map[GuardID]func() bool),
-		Actions: make(map[ActionID]func() error),
+		Guards:      make(map[GuardID]func() bool),
+		Actions:     make(map[ActionID]func() error),
 	}
 }
 
@@ -1782,18 +2090,26 @@ func (m *SessionProtocolRelayMachine) Step(event EventID) (bool, error) {
 		return true, nil
 	case m.State == SessionProtocolRelayBackendRegistered && event == SessionProtocolEventClientConnect:
 		if fn := m.Actions[SessionProtocolActionBridgeStreams]; fn != nil {
-			if err := fn(); err != nil { return false, err }
+			if err := fn(); err != nil {
+				return false, err
+			}
 		}
 		m.RelayBridge = "active"
-		if m.OnChange != nil { m.OnChange("relay_bridge") }
+		if m.OnChange != nil {
+			m.OnChange("relay_bridge")
+		}
 		m.State = SessionProtocolRelayBridged
 		return true, nil
 	case m.State == SessionProtocolRelayBridged && event == SessionProtocolEventClientDisconnect:
 		if fn := m.Actions[SessionProtocolActionUnbridge]; fn != nil {
-			if err := fn(); err != nil { return false, err }
+			if err := fn(); err != nil {
+				return false, err
+			}
 		}
 		m.RelayBridge = "idle"
-		if m.OnChange != nil { m.OnChange("relay_bridge") }
+		if m.OnChange != nil {
+			m.OnChange("relay_bridge")
+		}
 		m.State = SessionProtocolRelayBackendRegistered
 		return true, nil
 	case m.State == SessionProtocolRelayBackendRegistered && event == SessionProtocolEventBackendDisconnect:
@@ -1810,18 +2126,26 @@ func (m *SessionProtocolRelayMachine) HandleEvent(ev EventID) ([]CmdID, error) {
 		return nil, nil
 	case m.State == SessionProtocolRelayBackendRegistered && ev == SessionProtocolEventClientConnect:
 		if fn := m.Actions[SessionProtocolActionBridgeStreams]; fn != nil {
-			if err := fn(); err != nil { return nil, err }
+			if err := fn(); err != nil {
+				return nil, err
+			}
 		}
 		m.RelayBridge = "active"
-		if m.OnChange != nil { m.OnChange("relay_bridge") }
+		if m.OnChange != nil {
+			m.OnChange("relay_bridge")
+		}
 		m.State = SessionProtocolRelayBridged
 		return nil, nil
 	case m.State == SessionProtocolRelayBridged && ev == SessionProtocolEventClientDisconnect:
 		if fn := m.Actions[SessionProtocolActionUnbridge]; fn != nil {
-			if err := fn(); err != nil { return nil, err }
+			if err := fn(); err != nil {
+				return nil, err
+			}
 		}
 		m.RelayBridge = "idle"
-		if m.OnChange != nil { m.OnChange("relay_bridge") }
+		if m.OnChange != nil {
+			m.OnChange("relay_bridge")
+		}
 		m.State = SessionProtocolRelayBackendRegistered
 		return nil, nil
 	case m.State == SessionProtocolRelayBackendRegistered && ev == SessionProtocolEventBackendDisconnect:
@@ -1830,4 +2154,3 @@ func (m *SessionProtocolRelayMachine) HandleEvent(ev EventID) ([]CmdID, error) {
 	}
 	return nil, nil
 }
-

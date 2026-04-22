@@ -347,7 +347,7 @@ func TestDatagramModeSimulatedPacketLoss(t *testing.T) {
 			var lastDelivered int
 			for i, ct := range ciphertexts {
 				// Deterministic "random" drop based on index.
-				drop := float64((i*7+13)%100) / 100.0 < lossRate
+				drop := float64((i*7+13)%100)/100.0 < lossRate
 				if drop {
 					dropped++
 					continue

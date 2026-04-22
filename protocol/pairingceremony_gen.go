@@ -7,128 +7,128 @@ package protocol
 
 // PairingCeremony server/pairing states.
 const (
-	PairingCeremonyServerPairingIdle State = "Idle"
-	PairingCeremonyServerPairingGenerateToken State = "GenerateToken"
-	PairingCeremonyServerPairingRegisterRelay State = "RegisterRelay"
+	PairingCeremonyServerPairingIdle             State = "Idle"
+	PairingCeremonyServerPairingGenerateToken    State = "GenerateToken"
+	PairingCeremonyServerPairingRegisterRelay    State = "RegisterRelay"
 	PairingCeremonyServerPairingWaitingForClient State = "WaitingForClient"
-	PairingCeremonyServerPairingDeriveSecret State = "DeriveSecret"
-	PairingCeremonyServerPairingSendAck State = "SendAck"
-	PairingCeremonyServerPairingWaitingForCode State = "WaitingForCode"
-	PairingCeremonyServerPairingValidateCode State = "ValidateCode"
-	PairingCeremonyServerPairingStorePaired State = "StorePaired"
-	PairingCeremonyServerPairingPairingComplete State = "PairingComplete"
+	PairingCeremonyServerPairingDeriveSecret     State = "DeriveSecret"
+	PairingCeremonyServerPairingSendAck          State = "SendAck"
+	PairingCeremonyServerPairingWaitingForCode   State = "WaitingForCode"
+	PairingCeremonyServerPairingValidateCode     State = "ValidateCode"
+	PairingCeremonyServerPairingStorePaired      State = "StorePaired"
+	PairingCeremonyServerPairingPairingComplete  State = "PairingComplete"
 )
 
 // PairingCeremony server/auth states.
 const (
-	PairingCeremonyServerAuthIdle State = "Idle"
-	PairingCeremonyServerAuthPaired State = "Paired"
-	PairingCeremonyServerAuthAuthCheck State = "AuthCheck"
+	PairingCeremonyServerAuthIdle          State = "Idle"
+	PairingCeremonyServerAuthPaired        State = "Paired"
+	PairingCeremonyServerAuthAuthCheck     State = "AuthCheck"
 	PairingCeremonyServerAuthSessionActive State = "SessionActive"
 )
 
 // PairingCeremony ios/pairing states.
 const (
-	PairingCeremonyAppPairingIdle State = "Idle"
-	PairingCeremonyAppPairingScanQR State = "ScanQR"
-	PairingCeremonyAppPairingConnectRelay State = "ConnectRelay"
-	PairingCeremonyAppPairingGenKeyPair State = "GenKeyPair"
-	PairingCeremonyAppPairingWaitAck State = "WaitAck"
-	PairingCeremonyAppPairingE2EReady State = "E2EReady"
-	PairingCeremonyAppPairingShowCode State = "ShowCode"
+	PairingCeremonyAppPairingIdle             State = "Idle"
+	PairingCeremonyAppPairingScanQR           State = "ScanQR"
+	PairingCeremonyAppPairingConnectRelay     State = "ConnectRelay"
+	PairingCeremonyAppPairingGenKeyPair       State = "GenKeyPair"
+	PairingCeremonyAppPairingWaitAck          State = "WaitAck"
+	PairingCeremonyAppPairingE2EReady         State = "E2EReady"
+	PairingCeremonyAppPairingShowCode         State = "ShowCode"
 	PairingCeremonyAppPairingWaitPairComplete State = "WaitPairComplete"
-	PairingCeremonyAppPairingPairingComplete State = "PairingComplete"
+	PairingCeremonyAppPairingPairingComplete  State = "PairingComplete"
 )
 
 // PairingCeremony ios/auth states.
 const (
-	PairingCeremonyAppAuthIdle State = "Idle"
-	PairingCeremonyAppAuthPaired State = "Paired"
-	PairingCeremonyAppAuthReconnect State = "Reconnect"
-	PairingCeremonyAppAuthSendAuth State = "SendAuth"
+	PairingCeremonyAppAuthIdle          State = "Idle"
+	PairingCeremonyAppAuthPaired        State = "Paired"
+	PairingCeremonyAppAuthReconnect     State = "Reconnect"
+	PairingCeremonyAppAuthSendAuth      State = "SendAuth"
 	PairingCeremonyAppAuthSessionActive State = "SessionActive"
 )
 
 // PairingCeremony cli states.
 const (
-	PairingCeremonyCLIIdle State = "Idle"
-	PairingCeremonyCLIGetKey State = "GetKey"
-	PairingCeremonyCLIBeginPair State = "BeginPair"
-	PairingCeremonyCLIShowQR State = "ShowQR"
+	PairingCeremonyCLIIdle       State = "Idle"
+	PairingCeremonyCLIGetKey     State = "GetKey"
+	PairingCeremonyCLIBeginPair  State = "BeginPair"
+	PairingCeremonyCLIShowQR     State = "ShowQR"
 	PairingCeremonyCLIPromptCode State = "PromptCode"
 	PairingCeremonyCLISubmitCode State = "SubmitCode"
-	PairingCeremonyCLIDone State = "Done"
+	PairingCeremonyCLIDone       State = "Done"
 )
 
 // PairingCeremony message types.
 const (
-	PairingCeremonyMsgPairBegin MsgType = "pair_begin"
-	PairingCeremonyMsgTokenResponse MsgType = "token_response"
-	PairingCeremonyMsgPairHello MsgType = "pair_hello"
-	PairingCeremonyMsgPairHelloAck MsgType = "pair_hello_ack"
-	PairingCeremonyMsgPairConfirm MsgType = "pair_confirm"
+	PairingCeremonyMsgPairBegin      MsgType = "pair_begin"
+	PairingCeremonyMsgTokenResponse  MsgType = "token_response"
+	PairingCeremonyMsgPairHello      MsgType = "pair_hello"
+	PairingCeremonyMsgPairHelloAck   MsgType = "pair_hello_ack"
+	PairingCeremonyMsgPairConfirm    MsgType = "pair_confirm"
 	PairingCeremonyMsgWaitingForCode MsgType = "waiting_for_code"
-	PairingCeremonyMsgCodeSubmit MsgType = "code_submit"
-	PairingCeremonyMsgPairComplete MsgType = "pair_complete"
-	PairingCeremonyMsgPairStatus MsgType = "pair_status"
-	PairingCeremonyMsgAuthRequest MsgType = "auth_request"
-	PairingCeremonyMsgAuthOk MsgType = "auth_ok"
+	PairingCeremonyMsgCodeSubmit     MsgType = "code_submit"
+	PairingCeremonyMsgPairComplete   MsgType = "pair_complete"
+	PairingCeremonyMsgPairStatus     MsgType = "pair_status"
+	PairingCeremonyMsgAuthRequest    MsgType = "auth_request"
+	PairingCeremonyMsgAuthOk         MsgType = "auth_ok"
 )
 
 // PairingCeremony guards.
 const (
-	PairingCeremonyGuardTokenValid GuardID = "token_valid"
-	PairingCeremonyGuardTokenInvalid GuardID = "token_invalid"
-	PairingCeremonyGuardCodeCorrect GuardID = "code_correct"
-	PairingCeremonyGuardCodeWrong GuardID = "code_wrong"
-	PairingCeremonyGuardDeviceKnown GuardID = "device_known"
+	PairingCeremonyGuardTokenValid    GuardID = "token_valid"
+	PairingCeremonyGuardTokenInvalid  GuardID = "token_invalid"
+	PairingCeremonyGuardCodeCorrect   GuardID = "code_correct"
+	PairingCeremonyGuardCodeWrong     GuardID = "code_wrong"
+	PairingCeremonyGuardDeviceKnown   GuardID = "device_known"
 	PairingCeremonyGuardDeviceUnknown GuardID = "device_unknown"
-	PairingCeremonyGuardNonceFresh GuardID = "nonce_fresh"
+	PairingCeremonyGuardNonceFresh    GuardID = "nonce_fresh"
 )
 
 // PairingCeremony actions.
 const (
-	PairingCeremonyActionDeriveSecret ActionID = "derive_secret"
+	PairingCeremonyActionDeriveSecret  ActionID = "derive_secret"
 	PairingCeremonyActionGenerateToken ActionID = "generate_token"
 	PairingCeremonyActionRegisterRelay ActionID = "register_relay"
 	PairingCeremonyActionSendPairHello ActionID = "send_pair_hello"
-	PairingCeremonyActionStoreDevice ActionID = "store_device"
-	PairingCeremonyActionStoreSecret ActionID = "store_secret"
-	PairingCeremonyActionVerifyDevice ActionID = "verify_device"
+	PairingCeremonyActionStoreDevice   ActionID = "store_device"
+	PairingCeremonyActionStoreSecret   ActionID = "store_secret"
+	PairingCeremonyActionVerifyDevice  ActionID = "verify_device"
 )
 
 // PairingCeremony events.
 const (
-	PairingCeremonyEventECDHComplete EventID = "ECDH complete"
-	PairingCeremonyEventQRParsed EventID = "QR parsed"
-	PairingCeremonyEventAppLaunch EventID = "app launch"
-	PairingCeremonyEventCheckCode EventID = "check code"
-	PairingCeremonyEventCliInit EventID = "cli --init"
-	PairingCeremonyEventCodeDisplayed EventID = "code displayed"
-	PairingCeremonyEventCredentialReady EventID = "credential_ready"
-	PairingCeremonyEventDisconnect EventID = "disconnect"
-	PairingCeremonyEventFinalise EventID = "finalise"
-	PairingCeremonyEventKeyPairGenerated EventID = "key pair generated"
-	PairingCeremonyEventKeyStored EventID = "key stored"
-	PairingCeremonyEventPaired EventID = "paired"
-	PairingCeremonyEventRecvAuthOk EventID = "recv_auth_ok"
-	PairingCeremonyEventRecvAuthRequest EventID = "recv_auth_request"
-	PairingCeremonyEventRecvCodeSubmit EventID = "recv_code_submit"
-	PairingCeremonyEventRecvPairBegin EventID = "recv_pair_begin"
-	PairingCeremonyEventRecvPairComplete EventID = "recv_pair_complete"
-	PairingCeremonyEventRecvPairConfirm EventID = "recv_pair_confirm"
-	PairingCeremonyEventRecvPairHello EventID = "recv_pair_hello"
-	PairingCeremonyEventRecvPairHelloAck EventID = "recv_pair_hello_ack"
-	PairingCeremonyEventRecvPairStatus EventID = "recv_pair_status"
-	PairingCeremonyEventRecvTokenResponse EventID = "recv_token_response"
+	PairingCeremonyEventECDHComplete       EventID = "ECDH complete"
+	PairingCeremonyEventQRParsed           EventID = "QR parsed"
+	PairingCeremonyEventAppLaunch          EventID = "app launch"
+	PairingCeremonyEventCheckCode          EventID = "check code"
+	PairingCeremonyEventCliInit            EventID = "cli --init"
+	PairingCeremonyEventCodeDisplayed      EventID = "code displayed"
+	PairingCeremonyEventCredentialReady    EventID = "credential_ready"
+	PairingCeremonyEventDisconnect         EventID = "disconnect"
+	PairingCeremonyEventFinalise           EventID = "finalise"
+	PairingCeremonyEventKeyPairGenerated   EventID = "key pair generated"
+	PairingCeremonyEventKeyStored          EventID = "key stored"
+	PairingCeremonyEventPaired             EventID = "paired"
+	PairingCeremonyEventRecvAuthOk         EventID = "recv_auth_ok"
+	PairingCeremonyEventRecvAuthRequest    EventID = "recv_auth_request"
+	PairingCeremonyEventRecvCodeSubmit     EventID = "recv_code_submit"
+	PairingCeremonyEventRecvPairBegin      EventID = "recv_pair_begin"
+	PairingCeremonyEventRecvPairComplete   EventID = "recv_pair_complete"
+	PairingCeremonyEventRecvPairConfirm    EventID = "recv_pair_confirm"
+	PairingCeremonyEventRecvPairHello      EventID = "recv_pair_hello"
+	PairingCeremonyEventRecvPairHelloAck   EventID = "recv_pair_hello_ack"
+	PairingCeremonyEventRecvPairStatus     EventID = "recv_pair_status"
+	PairingCeremonyEventRecvTokenResponse  EventID = "recv_token_response"
 	PairingCeremonyEventRecvWaitingForCode EventID = "recv_waiting_for_code"
-	PairingCeremonyEventRelayConnected EventID = "relay connected"
-	PairingCeremonyEventRelayRegistered EventID = "relay registered"
-	PairingCeremonyEventSignalCodeDisplay EventID = "signal code display"
-	PairingCeremonyEventTokenCreated EventID = "token created"
-	PairingCeremonyEventUserEntersCode EventID = "user enters code"
-	PairingCeremonyEventUserScansQR EventID = "user scans QR"
-	PairingCeremonyEventVerify EventID = "verify"
+	PairingCeremonyEventRelayConnected     EventID = "relay connected"
+	PairingCeremonyEventRelayRegistered    EventID = "relay registered"
+	PairingCeremonyEventSignalCodeDisplay  EventID = "signal code display"
+	PairingCeremonyEventTokenCreated       EventID = "token created"
+	PairingCeremonyEventUserEntersCode     EventID = "user enters code"
+	PairingCeremonyEventUserScansQR        EventID = "user scans QR"
+	PairingCeremonyEventVerify             EventID = "verify"
 )
 
 func PairingCeremony() *Protocol {
@@ -137,28 +137,28 @@ func PairingCeremony() *Protocol {
 		Actors: []Actor{
 			{Name: "server", Machines: []SubMachine{
 				{Name: "pairing", Initial: "Idle", Transitions: []Transition{
-					{From: "Idle", To: "GenerateToken", On: Recv("pair_begin"), Do: "generate_token", Updates: []VarUpdate{{Var: "current_token", Expr: "\"tok_1\""}, {Var: "active_tokens", Expr: "active_tokens \\union {\"tok_1\"}"}, }},
+					{From: "Idle", To: "GenerateToken", On: Recv("pair_begin"), Do: "generate_token", Updates: []VarUpdate{{Var: "current_token", Expr: "\"tok_1\""}, {Var: "active_tokens", Expr: "active_tokens \\union {\"tok_1\"}"}}},
 					{From: "GenerateToken", To: "RegisterRelay", On: Internal("token created"), Do: "register_relay"},
-					{From: "RegisterRelay", To: "WaitingForClient", On: Internal("relay registered"), Sends: []Send{{To: "cli", Msg: "token_response", Fields: map[string]string{"instance_id": "\"inst_1\"", "token": "current_token", }}, }},
-					{From: "WaitingForClient", To: "DeriveSecret", On: Recv("pair_hello"), Guard: "token_valid", Do: "derive_secret", Updates: []VarUpdate{{Var: "received_client_pub", Expr: "recv_msg.pubkey"}, {Var: "server_ecdh_pub", Expr: "\"server_pub\""}, {Var: "server_shared_key", Expr: "DeriveKey(\"server_pub\", recv_msg.pubkey)"}, {Var: "server_code", Expr: "DeriveCode(\"server_pub\", recv_msg.pubkey)"}, {Var: "active_tokens", Expr: "active_tokens \\ {current_token}"}, {Var: "used_tokens", Expr: "used_tokens \\union {current_token}"}, }},
+					{From: "RegisterRelay", To: "WaitingForClient", On: Internal("relay registered"), Sends: []Send{{To: "cli", Msg: "token_response", Fields: map[string]string{"instance_id": "\"inst_1\"", "token": "current_token"}}}},
+					{From: "WaitingForClient", To: "DeriveSecret", On: Recv("pair_hello"), Guard: "token_valid", Do: "derive_secret", Updates: []VarUpdate{{Var: "received_client_pub", Expr: "recv_msg.pubkey"}, {Var: "server_ecdh_pub", Expr: "\"server_pub\""}, {Var: "server_shared_key", Expr: "DeriveKey(\"server_pub\", recv_msg.pubkey)"}, {Var: "server_code", Expr: "DeriveCode(\"server_pub\", recv_msg.pubkey)"}, {Var: "active_tokens", Expr: "active_tokens \\ {current_token}"}, {Var: "used_tokens", Expr: "used_tokens \\union {current_token}"}}},
 					{From: "WaitingForClient", To: "Idle", On: Recv("pair_hello"), Guard: "token_invalid"},
-					{From: "DeriveSecret", To: "SendAck", On: Internal("ECDH complete"), Sends: []Send{{To: "ios", Msg: "pair_hello_ack", Fields: map[string]string{"pubkey": "server_ecdh_pub", }}, }},
-					{From: "SendAck", To: "WaitingForCode", On: Internal("signal code display"), Sends: []Send{{To: "ios", Msg: "pair_confirm"}, {To: "cli", Msg: "waiting_for_code"}, }},
-					{From: "WaitingForCode", To: "ValidateCode", On: Recv("code_submit"), Updates: []VarUpdate{{Var: "received_code", Expr: "recv_msg.code"}, }},
+					{From: "DeriveSecret", To: "SendAck", On: Internal("ECDH complete"), Sends: []Send{{To: "ios", Msg: "pair_hello_ack", Fields: map[string]string{"pubkey": "server_ecdh_pub"}}}},
+					{From: "SendAck", To: "WaitingForCode", On: Internal("signal code display"), Sends: []Send{{To: "ios", Msg: "pair_confirm"}, {To: "cli", Msg: "waiting_for_code"}}},
+					{From: "WaitingForCode", To: "ValidateCode", On: Recv("code_submit"), Updates: []VarUpdate{{Var: "received_code", Expr: "recv_msg.code"}}},
 					{From: "ValidateCode", To: "StorePaired", On: Internal("check code"), Guard: "code_correct"},
-					{From: "ValidateCode", To: "Idle", On: Internal("check code"), Guard: "code_wrong", Updates: []VarUpdate{{Var: "code_attempts", Expr: "code_attempts + 1"}, }},
-					{From: "StorePaired", To: "PairingComplete", On: Internal("finalise"), Do: "store_device", Sends: []Send{{To: "ios", Msg: "pair_complete", Fields: map[string]string{"key": "server_shared_key", "secret": "\"dev_secret_1\"", }}, {To: "cli", Msg: "pair_status", Fields: map[string]string{"status": "\"paired\"", }}, }, Updates: []VarUpdate{{Var: "device_secret", Expr: "\"dev_secret_1\""}, {Var: "paired_devices", Expr: "paired_devices \\union {\"device_1\"}"}, }},
+					{From: "ValidateCode", To: "Idle", On: Internal("check code"), Guard: "code_wrong", Updates: []VarUpdate{{Var: "code_attempts", Expr: "code_attempts + 1"}}},
+					{From: "StorePaired", To: "PairingComplete", On: Internal("finalise"), Do: "store_device", Sends: []Send{{To: "ios", Msg: "pair_complete", Fields: map[string]string{"key": "server_shared_key", "secret": "\"dev_secret_1\""}}, {To: "cli", Msg: "pair_status", Fields: map[string]string{"status": "\"paired\""}}}, Updates: []VarUpdate{{Var: "device_secret", Expr: "\"dev_secret_1\""}, {Var: "paired_devices", Expr: "paired_devices \\union {\"device_1\"}"}}},
 				}},
 				{Name: "auth", Initial: "Idle", Transitions: []Transition{
 					{From: "Idle", To: "Paired", On: Internal("credential_ready")},
-					{From: "Paired", To: "AuthCheck", On: Recv("auth_request"), Updates: []VarUpdate{{Var: "received_device_id", Expr: "recv_msg.device_id"}, {Var: "received_auth_nonce", Expr: "recv_msg.nonce"}, }},
-					{From: "AuthCheck", To: "SessionActive", On: Internal("verify"), Guard: "device_known", Do: "verify_device", Sends: []Send{{To: "ios", Msg: "auth_ok"}, }, Updates: []VarUpdate{{Var: "auth_nonces_used", Expr: "auth_nonces_used \\union {received_auth_nonce}"}, }},
+					{From: "Paired", To: "AuthCheck", On: Recv("auth_request"), Updates: []VarUpdate{{Var: "received_device_id", Expr: "recv_msg.device_id"}, {Var: "received_auth_nonce", Expr: "recv_msg.nonce"}}},
+					{From: "AuthCheck", To: "SessionActive", On: Internal("verify"), Guard: "device_known", Do: "verify_device", Sends: []Send{{To: "ios", Msg: "auth_ok"}}, Updates: []VarUpdate{{Var: "auth_nonces_used", Expr: "auth_nonces_used \\union {received_auth_nonce}"}}},
 					{From: "AuthCheck", To: "Idle", On: Internal("verify"), Guard: "device_unknown"},
 					{From: "SessionActive", To: "Paired", On: Internal("disconnect")},
 				}},
-				},
+			},
 				Routes: []Route{
-					{On: "paired", From: "pairing", Sends: []RouteSend{{To: "auth", Event: "credential_ready"}, }},
+					{On: "paired", From: "pairing", Sends: []RouteSend{{To: "auth", Event: "credential_ready"}}},
 				},
 			},
 			{Name: "ios", Machines: []SubMachine{
@@ -166,30 +166,30 @@ func PairingCeremony() *Protocol {
 					{From: "Idle", To: "ScanQR", On: Internal("user scans QR")},
 					{From: "ScanQR", To: "ConnectRelay", On: Internal("QR parsed")},
 					{From: "ConnectRelay", To: "GenKeyPair", On: Internal("relay connected")},
-					{From: "GenKeyPair", To: "WaitAck", On: Internal("key pair generated"), Do: "send_pair_hello", Sends: []Send{{To: "server", Msg: "pair_hello", Fields: map[string]string{"pubkey": "\"client_pub\"", "token": "current_token", }}, }},
-					{From: "WaitAck", To: "E2EReady", On: Recv("pair_hello_ack"), Do: "derive_secret", Updates: []VarUpdate{{Var: "received_server_pub", Expr: "recv_msg.pubkey"}, {Var: "client_shared_key", Expr: "DeriveKey(\"client_pub\", recv_msg.pubkey)"}, }},
-					{From: "E2EReady", To: "ShowCode", On: Recv("pair_confirm"), Updates: []VarUpdate{{Var: "ios_code", Expr: "DeriveCode(received_server_pub, \"client_pub\")"}, }},
+					{From: "GenKeyPair", To: "WaitAck", On: Internal("key pair generated"), Do: "send_pair_hello", Sends: []Send{{To: "server", Msg: "pair_hello", Fields: map[string]string{"pubkey": "\"client_pub\"", "token": "current_token"}}}},
+					{From: "WaitAck", To: "E2EReady", On: Recv("pair_hello_ack"), Do: "derive_secret", Updates: []VarUpdate{{Var: "received_server_pub", Expr: "recv_msg.pubkey"}, {Var: "client_shared_key", Expr: "DeriveKey(\"client_pub\", recv_msg.pubkey)"}}},
+					{From: "E2EReady", To: "ShowCode", On: Recv("pair_confirm"), Updates: []VarUpdate{{Var: "ios_code", Expr: "DeriveCode(received_server_pub, \"client_pub\")"}}},
 					{From: "ShowCode", To: "WaitPairComplete", On: Internal("code displayed")},
 					{From: "WaitPairComplete", To: "PairingComplete", On: Recv("pair_complete"), Do: "store_secret"},
 				}},
 				{Name: "auth", Initial: "Idle", Transitions: []Transition{
 					{From: "Idle", To: "Paired", On: Internal("credential_ready")},
 					{From: "Paired", To: "Reconnect", On: Internal("app launch")},
-					{From: "Reconnect", To: "SendAuth", On: Internal("relay connected"), Sends: []Send{{To: "server", Msg: "auth_request", Fields: map[string]string{"device_id": "\"device_1\"", "key": "client_shared_key", "nonce": "\"nonce_1\"", "secret": "device_secret", }}, }},
+					{From: "Reconnect", To: "SendAuth", On: Internal("relay connected"), Sends: []Send{{To: "server", Msg: "auth_request", Fields: map[string]string{"device_id": "\"device_1\"", "key": "client_shared_key", "nonce": "\"nonce_1\"", "secret": "device_secret"}}}},
 					{From: "SendAuth", To: "SessionActive", On: Recv("auth_ok")},
 					{From: "SessionActive", To: "Paired", On: Internal("disconnect")},
 				}},
-				},
+			},
 				Routes: []Route{
-					{On: "paired", From: "pairing", Sends: []RouteSend{{To: "auth", Event: "credential_ready"}, }},
+					{On: "paired", From: "pairing", Sends: []RouteSend{{To: "auth", Event: "credential_ready"}}},
 				},
 			},
 			{Name: "cli", Initial: "Idle", Transitions: []Transition{
 				{From: "Idle", To: "GetKey", On: Internal("cli --init")},
-				{From: "GetKey", To: "BeginPair", On: Internal("key stored"), Sends: []Send{{To: "server", Msg: "pair_begin"}, }},
+				{From: "GetKey", To: "BeginPair", On: Internal("key stored"), Sends: []Send{{To: "server", Msg: "pair_begin"}}},
 				{From: "BeginPair", To: "ShowQR", On: Recv("token_response")},
 				{From: "ShowQR", To: "PromptCode", On: Recv("waiting_for_code")},
-				{From: "PromptCode", To: "SubmitCode", On: Internal("user enters code"), Sends: []Send{{To: "server", Msg: "code_submit", Fields: map[string]string{"code": "ios_code", }}, }},
+				{From: "PromptCode", To: "SubmitCode", On: Internal("user enters code"), Sends: []Send{{To: "server", Msg: "code_submit", Fields: map[string]string{"code": "ios_code"}}}},
 				{From: "SubmitCode", To: "Done", On: Recv("pair_status")},
 			}},
 		},
@@ -265,46 +265,46 @@ func PairingCeremony() *Protocol {
 			{Name: "HonestPairingCompletes", Kind: Liveness, Expr: "cli_state = \"Done\" /\\ ios_pairing_state = \"PairingComplete\"", Desc: "If all actors cooperate honestly (no MitM), pairing eventually completes"},
 		},
 		ChannelBound: 3,
-		OneShot: true,
+		OneShot:      true,
 	}
 }
 
 // PairingCeremonyServerPairingMachine is the generated state machine for server/pairing.
 type PairingCeremonyServerPairingMachine struct {
-	State State
-	CurrentToken string // pairing token currently in play
-	ActiveTokens string // set of valid (non-revoked) tokens
-	UsedTokens string // set of revoked tokens
-	ServerEcdhPub string // server ECDH public key
+	State             State
+	CurrentToken      string // pairing token currently in play
+	ActiveTokens      string // set of valid (non-revoked) tokens
+	UsedTokens        string // set of revoked tokens
+	ServerEcdhPub     string // server ECDH public key
 	ReceivedClientPub string // pubkey server received in pair_hello (may be adversary's)
-	ServerSharedKey string // ECDH key derived by server (tuple to match DeriveKey output type)
-	ServerCode string // code computed by server from its view of the pubkeys (tuple to match DeriveCode output type)
-	ReceivedCode string // code received in code_submit (tuple to match DeriveCode output type)
-	CodeAttempts int // failed code submission attempts
-	DeviceSecret string // persistent device secret
-	PairedDevices string // device IDs that completed pairing
+	ServerSharedKey   string // ECDH key derived by server (tuple to match DeriveKey output type)
+	ServerCode        string // code computed by server from its view of the pubkeys (tuple to match DeriveCode output type)
+	ReceivedCode      string // code received in code_submit (tuple to match DeriveCode output type)
+	CodeAttempts      int    // failed code submission attempts
+	DeviceSecret      string // persistent device secret
+	PairedDevices     string // device IDs that completed pairing
 
-	Guards  map[GuardID]func() bool
-	Actions map[ActionID]func() error
+	Guards   map[GuardID]func() bool
+	Actions  map[ActionID]func() error
 	OnChange func(varName string)
 }
 
 func NewPairingCeremonyServerPairingMachine() *PairingCeremonyServerPairingMachine {
 	return &PairingCeremonyServerPairingMachine{
-		State: PairingCeremonyServerPairingIdle,
-		CurrentToken: "none",
-		ActiveTokens: "",
-		UsedTokens: "",
-		ServerEcdhPub: "none",
+		State:             PairingCeremonyServerPairingIdle,
+		CurrentToken:      "none",
+		ActiveTokens:      "",
+		UsedTokens:        "",
+		ServerEcdhPub:     "none",
 		ReceivedClientPub: "none",
-		ServerSharedKey: "",
-		ServerCode: "",
-		ReceivedCode: "",
-		CodeAttempts: 0,
-		DeviceSecret: "none",
-		PairedDevices: "",
-		Guards:  make(map[GuardID]func() bool),
-		Actions: make(map[ActionID]func() error),
+		ServerSharedKey:   "",
+		ServerCode:        "",
+		ReceivedCode:      "",
+		CodeAttempts:      0,
+		DeviceSecret:      "none",
+		PairedDevices:     "",
+		Guards:            make(map[GuardID]func() bool),
+		Actions:           make(map[ActionID]func() error),
 	}
 }
 
@@ -312,7 +312,9 @@ func (m *PairingCeremonyServerPairingMachine) Step(event EventID) (bool, error) 
 	switch {
 	case m.State == PairingCeremonyServerPairingGenerateToken && event == PairingCeremonyEventTokenCreated:
 		if fn := m.Actions[PairingCeremonyActionRegisterRelay]; fn != nil {
-			if err := fn(); err != nil { return false, err }
+			if err := fn(); err != nil {
+				return false, err
+			}
 		}
 		m.State = PairingCeremonyServerPairingRegisterRelay
 		return true, nil
@@ -330,15 +332,21 @@ func (m *PairingCeremonyServerPairingMachine) Step(event EventID) (bool, error) 
 		return true, nil
 	case m.State == PairingCeremonyServerPairingValidateCode && event == PairingCeremonyEventCheckCode && m.Guards[PairingCeremonyGuardCodeWrong] != nil && m.Guards[PairingCeremonyGuardCodeWrong]():
 		m.CodeAttempts = m.CodeAttempts + 1
-		if m.OnChange != nil { m.OnChange("code_attempts") }
+		if m.OnChange != nil {
+			m.OnChange("code_attempts")
+		}
 		m.State = PairingCeremonyServerPairingIdle
 		return true, nil
 	case m.State == PairingCeremonyServerPairingStorePaired && event == PairingCeremonyEventFinalise:
 		if fn := m.Actions[PairingCeremonyActionStoreDevice]; fn != nil {
-			if err := fn(); err != nil { return false, err }
+			if err := fn(); err != nil {
+				return false, err
+			}
 		}
 		m.DeviceSecret = "dev_secret_1"
-		if m.OnChange != nil { m.OnChange("device_secret") }
+		if m.OnChange != nil {
+			m.OnChange("device_secret")
+		}
 		// paired_devices: paired_devices \union {"device_1"} (set by action)
 		m.State = PairingCeremonyServerPairingPairingComplete
 		return true, nil
@@ -350,20 +358,28 @@ func (m *PairingCeremonyServerPairingMachine) HandleMessage(msg MsgType) (bool, 
 	switch {
 	case m.State == PairingCeremonyServerPairingIdle && msg == PairingCeremonyMsgPairBegin:
 		if fn := m.Actions[PairingCeremonyActionGenerateToken]; fn != nil {
-			if err := fn(); err != nil { return false, err }
+			if err := fn(); err != nil {
+				return false, err
+			}
 		}
 		m.CurrentToken = "tok_1"
-		if m.OnChange != nil { m.OnChange("current_token") }
+		if m.OnChange != nil {
+			m.OnChange("current_token")
+		}
 		// active_tokens: active_tokens \union {"tok_1"} (set by action)
 		m.State = PairingCeremonyServerPairingGenerateToken
 		return true, nil
 	case m.State == PairingCeremonyServerPairingWaitingForClient && msg == PairingCeremonyMsgPairHello && m.Guards[PairingCeremonyGuardTokenValid] != nil && m.Guards[PairingCeremonyGuardTokenValid]():
 		if fn := m.Actions[PairingCeremonyActionDeriveSecret]; fn != nil {
-			if err := fn(); err != nil { return false, err }
+			if err := fn(); err != nil {
+				return false, err
+			}
 		}
 		// received_client_pub: recv_msg.pubkey (set by action)
 		m.ServerEcdhPub = "server_pub"
-		if m.OnChange != nil { m.OnChange("server_ecdh_pub") }
+		if m.OnChange != nil {
+			m.OnChange("server_ecdh_pub")
+		}
 		// server_shared_key: DeriveKey("server_pub", recv_msg.pubkey) (set by action)
 		// server_code: DeriveCode("server_pub", recv_msg.pubkey) (set by action)
 		// active_tokens: active_tokens \ {current_token} (set by action)
@@ -383,24 +399,24 @@ func (m *PairingCeremonyServerPairingMachine) HandleMessage(msg MsgType) (bool, 
 
 // PairingCeremonyServerAuthMachine is the generated state machine for server/auth.
 type PairingCeremonyServerAuthMachine struct {
-	State State
-	ReceivedDeviceId string // device_id from auth_request
-	AuthNoncesUsed string // set of consumed auth nonces
+	State             State
+	ReceivedDeviceId  string // device_id from auth_request
+	AuthNoncesUsed    string // set of consumed auth nonces
 	ReceivedAuthNonce string // nonce from auth_request
 
-	Guards  map[GuardID]func() bool
-	Actions map[ActionID]func() error
+	Guards   map[GuardID]func() bool
+	Actions  map[ActionID]func() error
 	OnChange func(varName string)
 }
 
 func NewPairingCeremonyServerAuthMachine() *PairingCeremonyServerAuthMachine {
 	return &PairingCeremonyServerAuthMachine{
-		State: PairingCeremonyServerAuthIdle,
-		ReceivedDeviceId: "none",
-		AuthNoncesUsed: "",
+		State:             PairingCeremonyServerAuthIdle,
+		ReceivedDeviceId:  "none",
+		AuthNoncesUsed:    "",
 		ReceivedAuthNonce: "none",
-		Guards:  make(map[GuardID]func() bool),
-		Actions: make(map[ActionID]func() error),
+		Guards:            make(map[GuardID]func() bool),
+		Actions:           make(map[ActionID]func() error),
 	}
 }
 
@@ -411,7 +427,9 @@ func (m *PairingCeremonyServerAuthMachine) Step(event EventID) (bool, error) {
 		return true, nil
 	case m.State == PairingCeremonyServerAuthAuthCheck && event == PairingCeremonyEventVerify && m.Guards[PairingCeremonyGuardDeviceKnown] != nil && m.Guards[PairingCeremonyGuardDeviceKnown]():
 		if fn := m.Actions[PairingCeremonyActionVerifyDevice]; fn != nil {
-			if err := fn(); err != nil { return false, err }
+			if err := fn(); err != nil {
+				return false, err
+			}
 		}
 		// auth_nonces_used: auth_nonces_used \union {received_auth_nonce} (set by action)
 		m.State = PairingCeremonyServerAuthSessionActive
@@ -440,7 +458,7 @@ func (m *PairingCeremonyServerAuthMachine) HandleMessage(msg MsgType) (bool, err
 // PairingCeremonyServerComposite holds all sub-machines for the server actor.
 type PairingCeremonyServerComposite struct {
 	Pairing PairingCeremonyServerPairingMachine
-	Auth PairingCeremonyServerAuthMachine
+	Auth    PairingCeremonyServerAuthMachine
 
 	RouteGuards map[GuardID]func() bool
 }
@@ -470,24 +488,24 @@ func (c *PairingCeremonyServerComposite) Route(from string, event EventID) error
 
 // PairingCeremonyAppPairingMachine is the generated state machine for ios/pairing.
 type PairingCeremonyAppPairingMachine struct {
-	State State
+	State             State
 	ReceivedServerPub string // pubkey ios received in pair_hello_ack (may be adversary's)
-	ClientSharedKey string // ECDH key derived by ios (tuple to match DeriveKey output type)
-	IosCode string // code computed by ios from its view of the pubkeys (tuple to match DeriveCode output type)
+	ClientSharedKey   string // ECDH key derived by ios (tuple to match DeriveKey output type)
+	IosCode           string // code computed by ios from its view of the pubkeys (tuple to match DeriveCode output type)
 
-	Guards  map[GuardID]func() bool
-	Actions map[ActionID]func() error
+	Guards   map[GuardID]func() bool
+	Actions  map[ActionID]func() error
 	OnChange func(varName string)
 }
 
 func NewPairingCeremonyAppPairingMachine() *PairingCeremonyAppPairingMachine {
 	return &PairingCeremonyAppPairingMachine{
-		State: PairingCeremonyAppPairingIdle,
+		State:             PairingCeremonyAppPairingIdle,
 		ReceivedServerPub: "none",
-		ClientSharedKey: "",
-		IosCode: "",
-		Guards:  make(map[GuardID]func() bool),
-		Actions: make(map[ActionID]func() error),
+		ClientSharedKey:   "",
+		IosCode:           "",
+		Guards:            make(map[GuardID]func() bool),
+		Actions:           make(map[ActionID]func() error),
 	}
 }
 
@@ -504,7 +522,9 @@ func (m *PairingCeremonyAppPairingMachine) Step(event EventID) (bool, error) {
 		return true, nil
 	case m.State == PairingCeremonyAppPairingGenKeyPair && event == PairingCeremonyEventKeyPairGenerated:
 		if fn := m.Actions[PairingCeremonyActionSendPairHello]; fn != nil {
-			if err := fn(); err != nil { return false, err }
+			if err := fn(); err != nil {
+				return false, err
+			}
 		}
 		m.State = PairingCeremonyAppPairingWaitAck
 		return true, nil
@@ -519,7 +539,9 @@ func (m *PairingCeremonyAppPairingMachine) HandleMessage(msg MsgType) (bool, err
 	switch {
 	case m.State == PairingCeremonyAppPairingWaitAck && msg == PairingCeremonyMsgPairHelloAck:
 		if fn := m.Actions[PairingCeremonyActionDeriveSecret]; fn != nil {
-			if err := fn(); err != nil { return false, err }
+			if err := fn(); err != nil {
+				return false, err
+			}
 		}
 		// received_server_pub: recv_msg.pubkey (set by action)
 		// client_shared_key: DeriveKey("client_pub", recv_msg.pubkey) (set by action)
@@ -531,7 +553,9 @@ func (m *PairingCeremonyAppPairingMachine) HandleMessage(msg MsgType) (bool, err
 		return true, nil
 	case m.State == PairingCeremonyAppPairingWaitPairComplete && msg == PairingCeremonyMsgPairComplete:
 		if fn := m.Actions[PairingCeremonyActionStoreSecret]; fn != nil {
-			if err := fn(); err != nil { return false, err }
+			if err := fn(); err != nil {
+				return false, err
+			}
 		}
 		m.State = PairingCeremonyAppPairingPairingComplete
 		return true, nil
@@ -543,14 +567,14 @@ func (m *PairingCeremonyAppPairingMachine) HandleMessage(msg MsgType) (bool, err
 type PairingCeremonyAppAuthMachine struct {
 	State State
 
-	Guards  map[GuardID]func() bool
-	Actions map[ActionID]func() error
+	Guards   map[GuardID]func() bool
+	Actions  map[ActionID]func() error
 	OnChange func(varName string)
 }
 
 func NewPairingCeremonyAppAuthMachine() *PairingCeremonyAppAuthMachine {
 	return &PairingCeremonyAppAuthMachine{
-		State: PairingCeremonyAppAuthIdle,
+		State:   PairingCeremonyAppAuthIdle,
 		Guards:  make(map[GuardID]func() bool),
 		Actions: make(map[ActionID]func() error),
 	}
@@ -586,7 +610,7 @@ func (m *PairingCeremonyAppAuthMachine) HandleMessage(msg MsgType) (bool, error)
 // PairingCeremonyAppComposite holds all sub-machines for the ios actor.
 type PairingCeremonyAppComposite struct {
 	Pairing PairingCeremonyAppPairingMachine
-	Auth PairingCeremonyAppAuthMachine
+	Auth    PairingCeremonyAppAuthMachine
 
 	RouteGuards map[GuardID]func() bool
 }
@@ -618,14 +642,14 @@ func (c *PairingCeremonyAppComposite) Route(from string, event EventID) error {
 type PairingCeremonyCLIMachine struct {
 	State State
 
-	Guards  map[GuardID]func() bool
-	Actions map[ActionID]func() error
+	Guards   map[GuardID]func() bool
+	Actions  map[ActionID]func() error
 	OnChange func(varName string)
 }
 
 func NewPairingCeremonyCLIMachine() *PairingCeremonyCLIMachine {
 	return &PairingCeremonyCLIMachine{
-		State: PairingCeremonyCLIIdle,
+		State:   PairingCeremonyCLIIdle,
 		Guards:  make(map[GuardID]func() bool),
 		Actions: make(map[ActionID]func() error),
 	}
@@ -684,4 +708,3 @@ func (m *PairingCeremonyCLIMachine) HandleEvent(ev EventID) ([]CmdID, error) {
 	}
 	return nil, nil
 }
-
