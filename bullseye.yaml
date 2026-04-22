@@ -290,6 +290,19 @@ targets:
     origin: forked-from 🎯T16 (swift-test CI integration)
     discovered: 2026-04-19
     achieved: 2026-04-19
+  T18:
+    name: Root Go test suite passes reliably under bulk load
+    status: identified
+    value: 0.0
+    cost: 0.0
+    observable: true
+    acceptance:
+    - '`go test -count=1 -short ./.` (root package only) passes across 10 consecutive runs with no context-deadline or `no recent network activity` failures'
+    - The suite completes in under 300s wall-clock on M4 Max
+    - '`go test ./...` can be restored as the bullseye standing-invariant check without flakiness'
+    context: 'The root package integration tests create and tear down many QUIC sessions. When run in bulk, tests fail non-deterministically with `quic dial: timeout: no recent network activity` or `context deadline exceeded` errors — different tests fail on each run (observed: TestBlackholeRecovery, TestContextCancellation, TestRapidOpenAccept, TestLANUpgradeConcurrentSends, TestBackendOpensChannelViaWT, TestDropWindowMidConversation, TestStressStreamBurst). Each test passes reliably in isolation (sub-second). Strong signal of resource contention — likely QUIC goroutines/sockets from prior tests lingering into later tests, exceeding what the runtime can service concurrently. May also indicate production resource-leak paths worth auditing. Current mitigation: bullseye''s Go test step restricted to reliable subpackages (crypto, protocol, qr, faultproxy, cmd/pigeon).'
+    origin: Discovered while adding bullseye Makefile target 2026-04-22
+    discovered: 2026-04-22
   T2:
     name: Multi-transport with LAN upgrade
     status: achieved
