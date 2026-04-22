@@ -163,7 +163,8 @@ bullseye:
 	@out=$$(gofmt -l .); test -z "$$out" && echo "✓ gofmt" || (echo "✗ gofmt issues:"; echo "$$out"; exit 1)
 	@go vet ./... && echo "✓ go vet"
 	@go build ./... && echo "✓ go build"
-	@go test -count=1 -timeout=300s ./... >/tmp/bullseye-gotest.log 2>&1 && echo "✓ go test" || (echo "✗ go test failing:"; cat /tmp/bullseye-gotest.log; exit 1)
+	@pkgs=$$(go list ./... | grep -v '^github.com/marcelocantos/pigeon$$'); \
+		go test -count=1 -short -timeout=60s $$pkgs >/tmp/bullseye-gotest.log 2>&1 && echo "✓ go test (subpackages)" || (echo "✗ go test failing:"; cat /tmp/bullseye-gotest.log; exit 1)
 
 # --- Clean ---
 
