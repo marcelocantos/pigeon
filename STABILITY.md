@@ -10,7 +10,7 @@ The pre-1.0 period (currently v0.x.x) exists to get the interaction surface righ
 
 ## Interaction Surface Catalogue
 
-*Snapshot as of v0.18.0.*
+*Snapshot as of v0.19.0.*
 
 ### Relay API (the binary's external interface)
 
@@ -46,11 +46,17 @@ CORS: `Access-Control-Allow-Origin: *` on health endpoint (for browser Alt-Svc p
 | `--version` | bool | `false` | Print version and exit |
 | `--help-agent` | bool | `false` | Print usage + agents-guide.md and exit |
 
+Subcommands:
+
+| Subcommand | Description |
+|------------|-------------|
+| `pair` | Mint a `PairingArtifact` for a peer instance ID and emit it (default to stdout); writes companion server-side `PairingRecord` to stderr. Flags: `--relay`, `--instance`, `--ttl`, `--token`, `--format=json|text`, `--out`, `--server-record-out`. |
+
 Environment variables: `PORT` (default `443`).
 
 Build-time version injection: `-ldflags "-X main.version=<version>"`.
 
-*Stability: Stable.*
+*Stability: Stable. The `pair` subcommand is Needs Review — added in v0.19.0; flag set may settle further as deploy-script use cases land.*
 
 ### Wire format (encrypted message frame — streams)
 
@@ -211,7 +217,7 @@ func (s *QUICServer) Close() error
 func (s *QUICServer) Addr() net.Addr
 ```
 
-*Stability: Stable.*
+*Stability: Stable, except the **PairingArtifact / PairingHost / CredentialStore / ConnectWithArtifact** group, which is Needs Review — new in v0.19.0. The wire format (snake_case JSON, ISO-8601 timestamps, base64url text encoding) is the load-bearing contract and is intended to be stable; the API surface around it (struct fields, helper signatures) may settle further with real-world use.*
 
 ### `crypto/` Go package
 
@@ -583,9 +589,14 @@ public func deriveKeyFromSecret(_ secret: Data, info: Data) -> SymmetricKey
 // PathSwitchBackendState, PathSwitchClientState, PathSwitchRelayState
 ```
 
-*Stability: E2EKeyPair and E2EChannel are Stable. Generated state machines are
-Needs Review — names depend on YAML actor names. Session/PathSwitch machines
-are Fluid — new in v0.17.*
+*Stability: E2EKeyPair and E2EChannel are Stable. PairingRecord type is Stable
+but its JSON wire format is Needs Review — switched to snake_case in v0.19.0
+to match the Go and Kotlin SDKs (breaking change for any consumer that had
+serialised PairingRecord in the previous camelCase form). The PairingArtifact
+/ CredentialStore / PairingError / PigeonConn.connect(artifact:) group is
+Needs Review — new in v0.19.0. Generated state machines are Needs Review —
+names depend on YAML actor names. Session/PathSwitch machines are Fluid —
+new in v0.17.*
 
 ### Kotlin/JVM `Pigeon` library (`android/pigeon/`)
 
@@ -650,7 +661,11 @@ fun connectWithArtifact(transport: QuicTransport, artifact: PairingArtifact): Pi
 ```
 
 *Stability: Needs Review — generated names track YAML actor names; Hkdf and
-PigeonConn surfaces are settling.*
+PigeonConn surfaces are settling. PairingRecord, PairingArtifact,
+CredentialStore, FileCredentialStore, PairingExpiredException, and
+connectWithArtifact are new in v0.19.0 (Needs Review). Wire format
+(snake_case JSON, ISO-8601 timestamps, base64url text encoding) matches
+the Go and Swift SDKs.*
 
 ### `web/` TypeScript package (`@marcelocantos/pigeon`)
 
@@ -715,6 +730,20 @@ func WithPacketHook(fn func(pktNum int, data []byte) Action) Option
   callback contracts and CMake build layout still settling.
 - **TypeScript/web package**: New in v0.17.0; module layout, npm
   publication, and generated state machine API need real-world feedback.
+- **PairingArtifact / PairingHost / CredentialStore stabilisation**: New in
+  v0.19.0 across all three SDKs (Go, Swift, Kotlin) plus the `pigeon pair`
+  CLI subcommand. Wire format (snake_case JSON, ISO-8601 timestamps,
+  base64url text) is intended to be stable; the API surface around it
+  needs real-world feedback from at least one consumer (Jevon is the
+  reference) before freezing.
+- **Lifecycle documentation gap**: The end-to-end re-pair lifecycle (mint →
+  deliver → persist → connect → expire → re-pair) is not yet documented
+  as a single guide covering both the QR-scan and developer-deploy
+  (`xcrun`) delivery channels. Tracked as 🎯T1.3.
+- **TypeScript/web package PairingArtifact parity**: The web/TypeScript SDK
+  does not yet have PairingArtifact / CredentialStore equivalents. Out of
+  scope for v0.19.0 (browser deploy story is QR-only); revisit when the
+  web package stabilises.
 - **Settling period** (see below): 2-month minimum required after last breaking
   change before 1.0 eligibility.
 
@@ -729,8 +758,14 @@ func WithPacketHook(fn func(pktNum int, data []byte) Action) Option
 
 ## 1.0 Readiness
 
-**Not yet eligible.** The settling threshold requires 2 months from the last
-breaking change (20–50 surface items). v0.17.0 introduces breaking changes
-to the C state-enum names and the Swift generated machine class names
-(composed-actor decomposition), resetting the clock. Earliest 1.0
-eligibility: 2026-06-19, provided all gaps above are resolved.
+**Not yet eligible.** v0.19.0 introduces a breaking change to the Swift
+`PairingRecord` JSON wire format (camelCase → snake_case for cross-SDK
+interoperability), and adds substantial new public surface across
+Go/Swift/Kotlin (PairingArtifact, PairingHost, CredentialStore,
+ConnectWithArtifact, the `pigeon pair` subcommand). The breaking change
+resets the settling clock to 2026-04-25.
+
+The 20–50 surface-item band is approaching capacity with the new pairing
+surface; revisit the band assignment in v0.20.0 with a fresh count. With
+the current 20–50 banding (2-month minimum), earliest 1.0 eligibility is
+2026-06-25, provided all gaps above are resolved.
