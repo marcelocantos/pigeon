@@ -22,7 +22,7 @@ import (
 // a stale LAN connection where pings go unanswered.
 type blackholeDatagram struct{}
 
-func (blackholeDatagram) SendDatagram([]byte) error                       { return nil }
+func (blackholeDatagram) SendDatagram([]byte) error { return nil }
 func (blackholeDatagram) ReceiveDatagram(ctx context.Context) ([]byte, error) {
 	<-ctx.Done()
 	return nil, ctx.Err()

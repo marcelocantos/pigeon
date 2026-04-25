@@ -14,29 +14,29 @@ import (
 // YAML parse types — mirrors the YAML schema.
 
 type yamlProtocol struct {
-	Name         string                     `yaml:"name"`
-	Messages     yaml.Node                  `yaml:"messages"`
-	Events       yaml.Node                  `yaml:"events"`
-	Commands     yaml.Node                  `yaml:"commands"`
-	Actors       yaml.Node                  `yaml:"actors"`
-	Structs      yaml.Node                  `yaml:"structs"`
-	Vars         yaml.Node                  `yaml:"vars"`
-	Guards       yaml.Node                  `yaml:"guards"`
-	Operators    yaml.Node                  `yaml:"operators"`
-	Phases       yaml.Node                  `yaml:"phases"`
-	WireConsts   []yamlWireConstant          `yaml:"wire_constants"`
-	Constants    []yamlConstant             `yaml:"constants"`
-	AdvGuard     string                     `yaml:"adversary_guard"`
-	Adversary    []yamlAdvAction            `yaml:"adversary"`
-	Properties   []yamlProperty             `yaml:"properties"`
-	ChannelBound int                        `yaml:"channel_bound"`
-	OneShot      bool                       `yaml:"one_shot"`
+	Name         string             `yaml:"name"`
+	Messages     yaml.Node          `yaml:"messages"`
+	Events       yaml.Node          `yaml:"events"`
+	Commands     yaml.Node          `yaml:"commands"`
+	Actors       yaml.Node          `yaml:"actors"`
+	Structs      yaml.Node          `yaml:"structs"`
+	Vars         yaml.Node          `yaml:"vars"`
+	Guards       yaml.Node          `yaml:"guards"`
+	Operators    yaml.Node          `yaml:"operators"`
+	Phases       yaml.Node          `yaml:"phases"`
+	WireConsts   []yamlWireConstant `yaml:"wire_constants"`
+	Constants    []yamlConstant     `yaml:"constants"`
+	AdvGuard     string             `yaml:"adversary_guard"`
+	Adversary    []yamlAdvAction    `yaml:"adversary"`
+	Properties   []yamlProperty     `yaml:"properties"`
+	ChannelBound int                `yaml:"channel_bound"`
+	OneShot      bool               `yaml:"one_shot"`
 }
 
 type yamlWireConstant struct {
 	Name  string `yaml:"name"`
 	Value any    `yaml:"value"`
-	Type  string `yaml:"type"`  // "byte", "int", "duration_ms", "string"
+	Type  string `yaml:"type"` // "byte", "int", "duration_ms", "string"
 	Desc  string `yaml:"desc"`
 	Group string `yaml:"group"` // optional grouping
 }
@@ -48,11 +48,11 @@ type yamlMessage struct {
 }
 
 type yamlActor struct {
-	Initial     string                  `yaml:"initial"`
-	States      yaml.Node               `yaml:"states"`
-	Transitions []yamlTransition        `yaml:"transitions"`
-	Machines    yaml.Node               `yaml:"machines"`
-	Routes      []yamlRoute             `yaml:"routes"`
+	Initial     string           `yaml:"initial"`
+	States      yaml.Node        `yaml:"states"`
+	Transitions []yamlTransition `yaml:"transitions"`
+	Machines    yaml.Node        `yaml:"machines"`
+	Routes      []yamlRoute      `yaml:"routes"`
 }
 
 type yamlSubMachine struct {
@@ -81,15 +81,15 @@ type yamlStateNode struct {
 }
 
 type yamlTransition struct {
-	From     string              `yaml:"from"`
-	To       string              `yaml:"to"`
-	On       string              `yaml:"on"`
-	Guard    string              `yaml:"guard"`
-	Do       string              `yaml:"do"`
-	Fairness string              `yaml:"fairness"` // "weak" (default) or "strong"
-	Sends    []yamlSend          `yaml:"sends"`
-	Updates  yaml.Node           `yaml:"updates"`
-	Emits    []string            `yaml:"emits"`
+	From     string     `yaml:"from"`
+	To       string     `yaml:"to"`
+	On       string     `yaml:"on"`
+	Guard    string     `yaml:"guard"`
+	Do       string     `yaml:"do"`
+	Fairness string     `yaml:"fairness"` // "weak" (default) or "strong"
+	Sends    []yamlSend `yaml:"sends"`
+	Updates  yaml.Node  `yaml:"updates"`
+	Emits    []string   `yaml:"emits"`
 }
 
 type yamlSend struct {

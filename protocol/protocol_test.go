@@ -149,9 +149,9 @@ func TestIOSMachineHappyPath(t *testing.T) {
 	// Use explicit events for the initial pairing steps: both the pairing and
 	// auth sub-machines have an internal transition from "Idle", so mustStep
 	// (which picks any matching transition) would be non-deterministic.
-	mustStepEvent(t, m, PairingCeremonyEventUserScansQR)  // Idle -> ScanQR
-	mustStepEvent(t, m, PairingCeremonyEventQRParsed)     // ScanQR -> ConnectRelay
-	mustStepEvent(t, m, PairingCeremonyEventRelayConnected) // ConnectRelay -> GenKeyPair
+	mustStepEvent(t, m, PairingCeremonyEventUserScansQR)      // Idle -> ScanQR
+	mustStepEvent(t, m, PairingCeremonyEventQRParsed)         // ScanQR -> ConnectRelay
+	mustStepEvent(t, m, PairingCeremonyEventRelayConnected)   // ConnectRelay -> GenKeyPair
 	mustStepEvent(t, m, PairingCeremonyEventKeyPairGenerated) // GenKeyPair -> WaitAck
 	mustHandle(t, m, PairingCeremonyMsgPairHelloAck)
 	mustHandle(t, m, PairingCeremonyMsgPairConfirm)
@@ -172,7 +172,7 @@ func TestIOSMachineHappyPath(t *testing.T) {
 	// advance to auth's initial active state.
 	m.SetState(PairingCeremonyAppAuthPaired)
 
-	mustStepEvent(t, m, PairingCeremonyEventAppLaunch)    // Paired -> Reconnect
+	mustStepEvent(t, m, PairingCeremonyEventAppLaunch)      // Paired -> Reconnect
 	mustStepEvent(t, m, PairingCeremonyEventRelayConnected) // Reconnect -> SendAuth
 	mustHandle(t, m, PairingCeremonyMsgAuthOk)
 

@@ -32,8 +32,8 @@ type PropertyKind int
 
 const (
 	Invariant PropertyKind = iota
-	Liveness              // <>P
-	LeadsTo               // P ~> Q
+	Liveness               // <>P
+	LeadsTo                // P ~> Q
 )
 
 // FairnessKind specifies when TLC must force a transition to fire.
@@ -74,8 +74,8 @@ type VarUpdate struct {
 type TriggerKind int
 
 const (
-	TriggerRecv    TriggerKind = iota // message received from another actor
-	TriggerInternal                   // internal event (timeout, completion)
+	TriggerRecv     TriggerKind = iota // message received from another actor
+	TriggerInternal                    // internal event (timeout, completion)
 )
 
 // Trigger describes what causes a transition.
@@ -252,8 +252,8 @@ type SubMachine struct {
 	Transitions []Transition
 	StateIndex  map[State]*StateNode
 	Roots       []*StateNode
-	Reports     []EventID  // events this machine emits to the routing layer
-	Accepts     []EventID  // events this machine can receive from other machines
+	Reports     []EventID // events this machine emits to the routing layer
+	Accepts     []EventID // events this machine can receive from other machines
 }
 
 // FlattenedTransitions returns all transitions including superstate
@@ -305,11 +305,11 @@ type RouteSend struct {
 type Actor struct {
 	Name        string
 	Initial     State
-	Transitions []Transition          // leaf-level transitions (flat actor)
-	StateIndex  map[State]*StateNode  // hierarchy (nil = flat)
-	Roots       []*StateNode          // top-level state nodes
-	Machines    []SubMachine          // non-empty = composed actor
-	Routes      []Route               // inter-machine event wiring
+	Transitions []Transition         // leaf-level transitions (flat actor)
+	StateIndex  map[State]*StateNode // hierarchy (nil = flat)
+	Roots       []*StateNode         // top-level state nodes
+	Machines    []SubMachine         // non-empty = composed actor
+	Routes      []Route              // inter-machine event wiring
 }
 
 // IsComposed reports whether this actor uses sub-machine composition.
@@ -363,29 +363,29 @@ func (a *Actor) FlattenedTransitions() []Transition {
 // PlantUML) and for optimising TLA+ verification (variables scoped to
 // phases are frozen as UNCHANGED outside their phase).
 type Phase struct {
-	Name     string
-	States   []State  // states belonging to this phase
-	Vars     []string // variables that change in this phase (empty = all)
-	Adversary bool    // whether the adversary is active in this phase
+	Name      string
+	States    []State  // states belonging to this phase
+	Vars      []string // variables that change in this phase (empty = all)
+	Adversary bool     // whether the adversary is active in this phase
 }
 
 type Protocol struct {
 	Name         string
 	Actors       []Actor
 	Messages     []Message
-	Events       []EventDef   // declared event types (triggers for transitions)
-	Commands     []CommandDef // declared command types (emitted by transitions)
-	Structs      []StructDef  // named variable groups
-	Vars         []VarDef     // auxiliary state variables (may reference structs)
-	Guards       []GuardDef   // guard TLA+ expressions
-	Operators    []Operator   // TLA+ helper operators
-	AdvActions   []AdvAction  // adversary capabilities beyond Dolev-Yao
-	AdvGuard     string       // TLA+ expression gating the adversary (empty = always active)
-	Phases       []Phase      // named groupings of states for diagramming and TLA+ splitting
+	Events       []EventDef     // declared event types (triggers for transitions)
+	Commands     []CommandDef   // declared command types (emitted by transitions)
+	Structs      []StructDef    // named variable groups
+	Vars         []VarDef       // auxiliary state variables (may reference structs)
+	Guards       []GuardDef     // guard TLA+ expressions
+	Operators    []Operator     // TLA+ helper operators
+	AdvActions   []AdvAction    // adversary capabilities beyond Dolev-Yao
+	AdvGuard     string         // TLA+ expression gating the adversary (empty = always active)
+	Phases       []Phase        // named groupings of states for diagramming and TLA+ splitting
 	WireConsts   []WireConstant // protocol constants emitted in all languages
 	Constants    []ConstantDef  // parameterised constants for model checking
 	Properties   []Property
-	ChannelBound int // max messages per channel (0 = unbounded)
+	ChannelBound int  // max messages per channel (0 = unbounded)
 	OneShot      bool // if true, actors run once then terminate (no loop)
 }
 

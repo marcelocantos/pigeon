@@ -148,13 +148,13 @@ type scenario struct {
 
 var scenarios = []scenario{
 	{"clean", nil},
-	{"latency-50ms", []faultproxy.Option{faultproxy.WithLatency(50 * time.Millisecond, 20 * time.Millisecond)}},
-	{"latency-200ms", []faultproxy.Option{faultproxy.WithLatency(200 * time.Millisecond, 50 * time.Millisecond)}},
+	{"latency-50ms", []faultproxy.Option{faultproxy.WithLatency(50*time.Millisecond, 20*time.Millisecond)}},
+	{"latency-200ms", []faultproxy.Option{faultproxy.WithLatency(200*time.Millisecond, 50*time.Millisecond)}},
 	{"loss-5%", []faultproxy.Option{faultproxy.WithPacketLoss(0.05)}},
 	{"loss-15%", []faultproxy.Option{faultproxy.WithPacketLoss(0.15)}},
 	{"corrupt-2%", []faultproxy.Option{faultproxy.WithCorrupt(0.02)}},
 	{"latency+loss", []faultproxy.Option{
-		faultproxy.WithLatency(100 * time.Millisecond, 30 * time.Millisecond),
+		faultproxy.WithLatency(100*time.Millisecond, 30*time.Millisecond),
 		faultproxy.WithPacketLoss(0.05),
 	}},
 	{"bandwidth-20KB", []faultproxy.Option{faultproxy.WithBandwidth(20000)}},

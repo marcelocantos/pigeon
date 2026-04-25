@@ -414,7 +414,7 @@ func writeSwiftComposedActor(b *strings.Builder, p *Protocol, a Actor, protoName
 	// --- Per-sub-machine machine classes ---
 	for _, m := range a.Machines {
 		machTypeName := protoName + actorTypeName + swiftTypeName(m.Name) // e.g. "TransportTestBackendRelay"
-		stateTypeName := machTypeName + "State"                            // e.g. "TransportTestBackendRelayState"
+		stateTypeName := machTypeName + "State"                           // e.g. "TransportTestBackendRelayState"
 
 		// Collect vars updated by this sub-machine.
 		varSet := map[string]bool{}

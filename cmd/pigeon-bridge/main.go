@@ -6,8 +6,9 @@
 // driving E2E tests from languages without native QUIC support.
 //
 // Usage:
-//   pigeon-bridge register <relay-url> [token]
-//   pigeon-bridge connect <relay-url> <instance-id>
+//
+//	pigeon-bridge register <relay-url> [token]
+//	pigeon-bridge connect <relay-url> <instance-id>
 //
 // Once connected, reads length-prefixed messages from stdin and sends
 // them to the relay. Messages from the relay are written to stdout

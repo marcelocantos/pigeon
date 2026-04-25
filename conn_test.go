@@ -1002,19 +1002,19 @@ func TestEncryptedRecvControlMessages(t *testing.T) {
 	cipherLAN := bCh.Encrypt(lanOfferPayload)
 	// writeMu removed — executor serializes writes.
 	writeMessage(b.active().stream, cipherLAN)
-	
+
 	// Encrypt a control message (msgCutover = 0x02).
 	cutoverPayload := append([]byte{0x02}, []byte("cutover-data")...)
 	cipherCutover := bCh.Encrypt(cutoverPayload)
 	// writeMu removed — executor serializes writes.
 	writeMessage(b.active().stream, cipherCutover)
-	
+
 	// Encrypt an unknown message type (0xFF).
 	unknownPayload := append([]byte{0xFF}, []byte("unknown-data")...)
 	cipherUnknown := bCh.Encrypt(unknownPayload)
 	// writeMu removed — executor serializes writes.
 	writeMessage(b.active().stream, cipherUnknown)
-	
+
 	// Now send a normal application message.
 	if err := b.Send(ctx, []byte("after-control")); err != nil {
 		t.Fatal("send app msg:", err)
@@ -1047,7 +1047,7 @@ func TestEncryptedRecvEmptyPlaintext(t *testing.T) {
 	cipherEmpty := bCh.Encrypt([]byte{})
 	// writeMu removed — executor serializes writes.
 	writeMessage(b.active().stream, cipherEmpty)
-	
+
 	// Recv should return nil data and nil error for empty plaintext.
 	data, err := c.Recv(ctx)
 	if err != nil {
@@ -2122,7 +2122,7 @@ func TestEncryptedRecvDecryptError(t *testing.T) {
 	// but are not valid ciphertext. Access the raw stream directly.
 	// writeMu removed — executor serializes writes.
 	writeMessage(b.active().stream, []byte("this is not valid ciphertext at all!"))
-	
+
 	// Client should get a decrypt error.
 	_, err := c.Recv(ctx)
 	if err == nil {

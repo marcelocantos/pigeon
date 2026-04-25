@@ -33,9 +33,13 @@ type quicStreamWrapper struct {
 	writeMu sync.Mutex
 }
 
-func (w *quicStreamWrapper) ReadMessage() ([]byte, error)  { return readMessage(w.stream) }
-func (w *quicStreamWrapper) WriteMessage(data []byte) error { w.writeMu.Lock(); defer w.writeMu.Unlock(); return writeMessage(w.stream, data) }
-func (w *quicStreamWrapper) Close() error                   { return w.stream.Close() }
+func (w *quicStreamWrapper) ReadMessage() ([]byte, error) { return readMessage(w.stream) }
+func (w *quicStreamWrapper) WriteMessage(data []byte) error {
+	w.writeMu.Lock()
+	defer w.writeMu.Unlock()
+	return writeMessage(w.stream, data)
+}
+func (w *quicStreamWrapper) Close() error { return w.stream.Close() }
 
 func (s *quicSession) ReadMessage() ([]byte, error) {
 	return readMessage(s.stream)
@@ -83,11 +87,11 @@ func (s *quicSession) Close() error {
 // hub with the WebTransport server so that a raw QUIC backend can talk
 // to a WebTransport browser client and vice versa.
 type QUICServer struct {
-	hub      *hub
-	token    string
-	addr     string
-	listener *quic.Listener
-	conn     net.PacketConn
+	hub       *hub
+	token     string
+	addr      string
+	listener  *quic.Listener
+	conn      net.PacketConn
 	tlsConfig *tls.Config
 }
 

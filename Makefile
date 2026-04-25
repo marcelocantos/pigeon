@@ -6,7 +6,8 @@ JDK21 ?= /opt/homebrew/Cellar/openjdk@21/21.0.10/libexec/openjdk.jdk/Contents/Ho
 .PHONY: all build test test-go test-swift test-kotlin test-web \
         e2e e2e-go e2e-swift e2e-kotlin \
         test-live bench clean \
-        build-vendor-deps test-c test-c-ngtcp2
+        build-vendor-deps test-c test-c-ngtcp2 \
+        bullseye
 
 # --- Build ---
 
@@ -155,6 +156,15 @@ test-c-ngtcp2: build-vendor-deps amalgamate
 		$(NGTCP2_LDFLAGS) \
 		-o c/test/test_ngtcp2
 	./c/test/test_ngtcp2
+
+# --- Standing invariants (for bullseye_convergence) ---
+
+bullseye:
+	@out=$$(gofmt -l .); test -z "$$out" && echo "✓ gofmt" || (echo "✗ gofmt issues:"; echo "$$out"; exit 1)
+	@go vet ./... && echo "✓ go vet"
+	@go build ./... && echo "✓ go build"
+	@pkgs=$$(go list ./... | grep -v '^github.com/marcelocantos/pigeon$$'); \
+		go test -count=1 -short -timeout=60s $$pkgs >/tmp/bullseye-gotest.log 2>&1 && echo "✓ go test (subpackages)" || (echo "✗ go test failing:"; cat /tmp/bullseye-gotest.log; exit 1)
 
 # --- Clean ---
 

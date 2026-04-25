@@ -335,11 +335,11 @@ func TestChannelNameSpecialCharacters(t *testing.T) {
 	b, c := connectPair(t, env)
 
 	names := []string{
-		"hello world",         // space
-		"日本語チャンネル",           // unicode
-		"",                    // empty string
-		"a/b/c",               // path separators
-		"name\twith\ttabs",    // tabs
+		"hello world",             // space
+		"日本語チャンネル",                // unicode
+		"",                        // empty string
+		"a/b/c",                   // path separators
+		"name\twith\ttabs",        // tabs
 		strings.Repeat("x", 1000), // long name
 	}
 

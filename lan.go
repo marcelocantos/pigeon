@@ -52,7 +52,7 @@ type LANServer struct {
 // pendingLAN tracks a client that should connect via LAN.
 type pendingLAN struct {
 	challenge []byte
-	conn      *Conn // the relay Conn to upgrade (nil when executor-driven)
+	conn      *Conn                                            // the relay Conn to upgrade (nil when executor-driven)
 	onVerify  func(stream io.ReadWriteCloser, conn *quic.Conn) // executor callback
 }
 

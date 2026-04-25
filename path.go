@@ -20,10 +20,10 @@ type path struct {
 	acceptor streamAcceptor     // accepts incoming streams from peer
 
 	// Health monitoring.
-	healthy   bool
-	lastSend  time.Time
-	lastRecv  time.Time
-	failures  int
+	healthy  bool
+	lastSend time.Time
+	lastRecv time.Time
+	failures int
 }
 
 func newPath(name string, stream io.ReadWriteCloser, dg datagrammer, closer io.Closer, opener streamOpener, acceptor streamAcceptor) *path {
