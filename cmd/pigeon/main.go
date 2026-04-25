@@ -93,6 +93,15 @@ func certSHA256Hex(cert tls.Certificate) string {
 }
 
 func main() {
+	// Subcommand dispatch. Subcommands have their own flag sets; the
+	// rest of main() handles the default `pigeon` server invocation.
+	if len(os.Args) > 1 {
+		switch os.Args[1] {
+		case "pair":
+			os.Exit(runPair(os.Args[2:]))
+		}
+	}
+
 	showVersion := flag.Bool("version", false, "print version and exit")
 	helpAgent := flag.Bool("help-agent", false, "print help and agent guide")
 	port := flag.String("port", "", "WebTransport listening port (overrides PORT env var)")
