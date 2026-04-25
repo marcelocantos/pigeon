@@ -109,7 +109,7 @@ maintenance activities. Append-only — newest entries at the bottom.
 
 ## 2026-04-25 — /release v0.19.0
 
-- **Commit**: pending
+- **Commit**: `694e7c0`
 - **Outcome**: Released v0.19.0 (darwin-arm64, linux-amd64, linux-arm64). Adds `PairingArtifact` (persistable+expirable envelope around `crypto.PairingRecord`) + `CredentialStore` interface with platform-specific reference implementations (Keychain on iOS/macOS, file on JVM/desktop) + `PairingHost` server-side artifact minter with configurable TTL (default 30 days). All three SDKs (Go, Swift, Kotlin) now have wire-compatible canonical JSON encoding (snake_case) and a single-line base64url text encoding for the artifact, suitable for QR-payload transport, xcrun-injected deploys, launch arguments, environment variables, and pasteboard transport. Adds one-call reconnect helpers — `ConnectWithArtifact` (Go), `PigeonConn.connect(artifact:)` (Swift), `connectWithArtifact` (Kotlin) — that check expiry up front and route through typed expiry errors (`ErrPairingExpired` / `PairingError.expired` / `PairingExpiredException`). Adds `pigeon pair` CLI subcommand for deploy-script use, replacing the standalone `cmd/pigeon-pair` binary. Adds `bullseye` Makefile target for standing-invariant checks.
 - **Breaking changes**: Swift `PairingRecord` JSON wire format switched from camelCase to snake_case for cross-SDK interoperability — affects any consumer that had previously serialised PairingRecord JSON in Swift. The Swift type's API surface (property names) is unchanged. Settling clock reset to 2026-04-25; earliest 1.0 eligibility 2026-06-25.
 - **Deferred**:
