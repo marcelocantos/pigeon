@@ -122,6 +122,55 @@ public struct PairingArtifact: Codable, Sendable {
     }
 }
 
+#if canImport(Network)
+import Network
+
+extension PigeonConn {
+    /// Connect to the relay using a persisted [PairingArtifact] and
+    /// return the conn alongside the derived [E2EChannel] ready for
+    /// encrypted send/recv.
+    ///
+    /// The relay URL and peer instance ID come from the artifact; the
+    /// artifact's expiry is checked up front and throws
+    /// `PairingError.expired(at:)` (matchable for re-pair routing).
+    ///
+    /// Mirrors `pigeon.ConnectWithArtifact` in the Go SDK.
+    public static func connect(
+        artifact: PairingArtifact,
+        quicOptions: NWProtocolQUIC.Options? = nil
+    ) async throws -> (PigeonConn, E2EChannel) {
+        if artifact.isExpired() {
+            throw PairingError.expired(at: artifact.expiresAt ?? Date())
+        }
+        let (host, port) = try parseRelayURL(artifact.record.relayURL)
+        let conn = try await PigeonConn.connect(
+            host: host, port: port,
+            instanceID: artifact.record.peerInstanceID,
+            quicOptions: quicOptions)
+        let channel = try artifact.record.deriveChannel(
+            sendInfo: Data("client-to-server".utf8),
+            recvInfo: Data("server-to-client".utf8))
+        return (conn, channel)
+    }
+}
+
+private func parseRelayURL(_ urlString: String) throws -> (String, UInt16) {
+    guard let url = URL(string: urlString),
+          let host = url.host, !host.isEmpty else {
+        throw PairingError.missingField("relay_url")
+    }
+    let port: UInt16
+    if let p = url.port {
+        port = UInt16(p)
+    } else {
+        // Default to the raw-QUIC ALPN port; matches Go pigeon.quicAddr.
+        port = 4433
+    }
+    return (host, port)
+}
+
+#endif
+
 private extension JSONEncoder {
     static var pigeonArtifact: JSONEncoder {
         let enc = JSONEncoder()

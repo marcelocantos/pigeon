@@ -102,6 +102,30 @@ final class PairingArtifactTests: XCTestCase {
         XCTAssertThrowsError(try store.load())
     }
 
+    func testConnectWithArtifactRejectsExpired() async throws {
+        let kp = E2EKeyPair()
+        let peerKP = E2EKeyPair()
+        let record = PairingRecord(
+            peerInstanceID: "inst",
+            relayURL: "https://relay.example.com",
+            localKeyPair: kp,
+            peerPublicKey: peerKP.publicKeyData)
+        let stale = PairingArtifact(
+            record: record,
+            token: "",
+            issuedAt: Date(timeIntervalSinceNow: -31 * 24 * 60 * 60),
+            ttl: defaultPairingTTL)
+        XCTAssertTrue(stale.isExpired())
+        do {
+            _ = try await PigeonConn.connect(artifact: stale)
+            XCTFail("expected PairingError.expired")
+        } catch PairingError.expired {
+            // expected
+        } catch {
+            XCTFail("unexpected error: \(error)")
+        }
+    }
+
     func testFileCredentialStoreIsExpired() throws {
         let dir = FileManager.default.temporaryDirectory
             .appendingPathComponent(UUID().uuidString)

@@ -3,6 +3,9 @@
 
 package com.marcelocantos.pigeon.crypto
 
+import com.marcelocantos.pigeon.relay.PigeonConn
+import com.marcelocantos.pigeon.relay.QuicTransport
+import com.marcelocantos.pigeon.relay.connect
 import java.time.Instant
 import java.util.Base64
 
@@ -67,6 +70,34 @@ data class PairingArtifact(
         fun fromText(text: String): PairingArtifact =
             fromJson(String(base64UrlDecode(text), Charsets.UTF_8))
     }
+}
+
+/**
+ * Connect to the relay using a persisted [PairingArtifact] and wire
+ * encrypted I/O on the resulting [PigeonConn].
+ *
+ * The peer instance ID comes from the artifact; the artifact's expiry
+ * is checked up front and throws [PairingExpiredException] (so callers
+ * can route to a re-pair flow uniformly).
+ *
+ * The caller still supplies the [QuicTransport] because the JVM-side
+ * library is transport-agnostic — pick a Kwik or Bridge transport
+ * connected to the relay's host/port from the artifact.
+ *
+ * Mirrors `pigeon.ConnectWithArtifact` (Go) and
+ * `PigeonConn.connect(artifact:)` (Swift).
+ */
+fun connectWithArtifact(transport: QuicTransport, artifact: PairingArtifact): PigeonConn {
+    if (artifact.isExpired()) {
+        throw PairingExpiredException(artifact.expiresAt ?: Instant.now())
+    }
+    val conn = connect(transport, artifact.record.peerInstanceID)
+    val channel = artifact.record.deriveChannel(
+        "client-to-server".toByteArray(),
+        "server-to-client".toByteArray(),
+    )
+    conn.setChannel(channel)
+    return conn
 }
 
 // ---- Hand-rolled JSON ----

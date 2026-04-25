@@ -114,6 +114,38 @@ class PairingArtifactTest {
     }
 
     @Test
+    fun connectWithArtifactRejectsExpired() {
+        val kp = E2EKeyPair()
+        val peerKP = E2EKeyPair()
+        val record = PairingRecord(
+            peerInstanceID = "inst",
+            relayURL = "https://relay.example.com",
+            localKeyPair = kp,
+            peerPublicKey = peerKP.publicKeyData,
+        )
+        val stale = PairingArtifact.mint(
+            record,
+            "",
+            issuedAt = Instant.now().minus(Duration.ofDays(31)),
+            ttl = DEFAULT_PAIRING_TTL,
+        )
+        assertTrue(stale.isExpired())
+
+        // Sentinel transport — should never be touched because expiry
+        // check fires first.
+        val transport = object : com.marcelocantos.pigeon.relay.QuicTransport {
+            override val inputStream get() = error("unreachable")
+            override val outputStream get() = error("unreachable")
+            override fun sendDatagram(data: ByteArray) = error("unreachable")
+            override fun receiveDatagram() = error("unreachable")
+            override fun close() = Unit
+        }
+        assertThrows<PairingExpiredException> {
+            connectWithArtifact(transport, stale)
+        }
+    }
+
+    @Test
     fun decodesGoMintedJson() {
         // Realistic JSON shape produced by the Go SDK / pigeon-pair CLI.
         // Verifies cross-language wire compatibility.

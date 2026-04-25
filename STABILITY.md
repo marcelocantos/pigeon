@@ -552,6 +552,15 @@ public protocol CredentialStore {
 public final class KeychainCredentialStore: CredentialStore { /* iOS/macOS */ }
 public final class FileCredentialStore: CredentialStore   { /* JVM/desktop fallback */ }
 
+// PigeonConn helper for artifact-driven reconnect (parses host/port
+// from the artifact's relayURL; throws PairingError.expired up front).
+extension PigeonConn {
+    public static func connect(
+        artifact: PairingArtifact,
+        quicOptions: NWProtocolQUIC.Options? = nil
+    ) async throws -> (PigeonConn, E2EChannel)
+}
+
 // Standalone functions
 public func deriveKeyFromSecret(_ secret: Data, info: Data) -> SymmetricKey
 
@@ -631,6 +640,11 @@ interface CredentialStore {
     fun isExpired(): Boolean
 }
 class FileCredentialStore(val path: File) : CredentialStore  // JVM/desktop reference impl
+
+// Artifact-driven reconnect helper. Throws PairingExpiredException up
+// front if the artifact is past its expiry; otherwise calls the
+// transport-based connect() and wires the derived E2EChannel.
+fun connectWithArtifact(transport: QuicTransport, artifact: PairingArtifact): PigeonConn
 
 // Generated machines mirror Swift names with Pascal-case PairingCeremony*
 ```
