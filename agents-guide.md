@@ -201,6 +201,39 @@ on all platforms: Go (`crypto.PairingRecord`), Swift (`PairingRecord`),
 Kotlin (`PairingRecord`), TypeScript (`PairingRecord` /
 `createPairingRecord` / `deriveChannelFromRecord`).
 
+## Pairing Artifact Lifecycle (v0.19.0+)
+
+For the consumer-app integration path — pairing once, persisting the
+credential across launches, reconnecting via a one-call helper, and
+re-pairing on expiry — pigeon ships a higher-level set of primitives:
+
+- **`PairingArtifact`** wraps a `PairingRecord` with a token, an
+  issued-at timestamp, and an expires-at timestamp. Canonical JSON
+  encoding (snake_case keys, ISO-8601 timestamps) and a single-line
+  base64url text encoding interoperate across Go, Swift, and Kotlin.
+- **`CredentialStore`** is a uniform persistence interface with
+  reference implementations: `FileCredentialStore` (Go/Swift/Kotlin)
+  and `KeychainCredentialStore` (Swift, iOS/macOS).
+- **`PairingHost`** is the server-side artifact minter. Configurable
+  TTL (default 30 days) and optional bearer-token issuer.
+- **`pigeon pair`** is a CLI subcommand for deploy scripts. Mints an
+  artifact and emits it on stdout (`--out=-`, default); writes the
+  companion server-side `PairingRecord` to stderr.
+- **`ConnectWithArtifact`** (Go), **`PigeonConn.connect(artifact:)`**
+  (Swift), **`connectWithArtifact`** (Kotlin) check expiry up front
+  and route through typed errors (`ErrPairingExpired`,
+  `PairingError.expired`, `PairingExpiredException`).
+
+Two delivery flows are first-class: QR scan from a paired-screen UX
+(the artifact's text encoding fits in a scannable QR payload) and
+developer-deploy via `xcrun` (mint on the laptop, inject into the
+iOS app's launch environment as `PIGEON_PAIRING_ARTIFACT`).
+
+The full step-by-step guide — server-side acceptance pattern,
+side-by-side Go/Swift/Kotlin samples, security notes — lives in
+**[docs/pairing-lifecycle.md](docs/pairing-lifecycle.md)**. Read it
+before integrating pigeon into a new application.
+
 ## Common Commands
 
 ```bash
@@ -217,6 +250,7 @@ PORT=443 ./pigeon                           # run relay server (self-signed cert
 
 | Flag/Env | Default | Description |
 |----------|---------|-------------|
+| `pair` (subcommand) | — | Mint a `PairingArtifact` for a peer instance ID and emit it. See [docs/pairing-lifecycle.md](docs/pairing-lifecycle.md). |
 | `--port` / `PORT` | `443` | Relay listening port (UDP) |
 | `--domain` | — | Domain for automatic Let's Encrypt TLS |
 | `--acme-email` | — | Email for Let's Encrypt account |

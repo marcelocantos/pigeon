@@ -224,6 +224,13 @@ available on all platforms: Go (`crypto.PairingRecord`), Swift
 (`PairingRecord`), Kotlin (`PairingRecord`), and TypeScript
 (`PairingRecord` / `createPairingRecord` / `deriveChannelFromRecord`).
 
+For the consumer-app integration path — pairing once, persisting via a
+`CredentialStore`, reconnecting through `ConnectWithArtifact`-equivalents,
+and re-pairing on expiry — see the **[Pairing Artifact Lifecycle
+guide](docs/pairing-lifecycle.md)**. It walks through both delivery flows
+(QR scan and developer-deploy via `xcrun`) with side-by-side Go, Swift,
+and Kotlin samples.
+
 ## Channels
 
 Named streaming channels and datagram channels provide independent,
