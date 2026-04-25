@@ -17,10 +17,9 @@ import (
 
 // lanPair creates a backend+client pair where the backend has a LAN
 // server and the client is LAN-enabled, with encryption set up.
+// Setup is retried up to 3 times on transient handshake failures.
 func lanPair(t *testing.T, env relayEnv) (*Conn, *Conn, *LANServer) {
 	t.Helper()
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-	defer cancel()
 
 	lanSrv, err := NewLANServer("", nil)
 	if err != nil {
@@ -30,19 +29,40 @@ func lanPair(t *testing.T, env relayEnv) (*Conn, *Conn, *LANServer) {
 
 	bCfg := env.cfg
 	bCfg.LANServer = lanSrv
-	b, err := Register(ctx, env.url, bCfg)
-	if err != nil {
-		t.Fatal("register:", err)
-	}
-	t.Cleanup(func() { b.CloseNow() })
-
 	cCfg := env.cfg
 	cCfg.LAN = true
-	c, err := Connect(ctx, env.url, b.InstanceID(), cCfg)
-	if err != nil {
-		t.Fatal("connect:", err)
+
+	var b, c *Conn
+	var lastErr error
+	for attempt := 1; attempt <= 3; attempt++ {
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+
+		b, err = Register(ctx, env.url, bCfg)
+		if err != nil {
+			lastErr = err
+			if isTransientSetupErr(err) {
+				continue
+			}
+			t.Fatal("register:", err)
+		}
+
+		c, err = Connect(ctx, env.url, b.InstanceID(), cCfg)
+		if err != nil {
+			b.CloseNow()
+			lastErr = err
+			if isTransientSetupErr(err) {
+				continue
+			}
+			t.Fatal("connect:", err)
+		}
+		t.Cleanup(func() { b.CloseNow() })
+		t.Cleanup(func() { c.CloseNow() })
+		break
 	}
-	t.Cleanup(func() { c.CloseNow() })
+	if b == nil || c == nil {
+		t.Fatalf("lanPair: failed after 3 attempts: %v", lastErr)
+	}
 
 	// Set up encryption — required for LAN offer (control messages).
 	bKP, _ := crypto.GenerateKeyPair()

@@ -177,9 +177,10 @@ func NewWebTransportServerWithHub(addr string, tlsConfig *tls.Config, token stri
 			TLSConfig:       serverTLS,
 			EnableDatagrams: true,
 			QUICConfig: &quic.Config{
-				EnableDatagrams: true,
-				MaxIdleTimeout:  60 * time.Second,
-				KeepAlivePeriod: 10 * time.Second,
+				EnableDatagrams:      true,
+				MaxIdleTimeout:       60 * time.Second,
+				KeepAlivePeriod:      10 * time.Second,
+				HandshakeIdleTimeout: 30 * time.Second,
 			},
 		},
 		CheckOrigin: func(r *http.Request) bool { return true },
@@ -354,9 +355,17 @@ func (s *WebTransportServer) ListenAndServe() error {
 	return s.Serve(conn)
 }
 
-// Close shuts down the server.
+// Close shuts down the server. It closes the WebTransport server and the
+// underlying PacketConn (if Serve was called), releasing read goroutines
+// and OS sockets held by the QUIC stack.
 func (s *WebTransportServer) Close() error {
-	return s.wtServer.Close()
+	err := s.wtServer.Close()
+	if s.conn != nil {
+		if cerr := s.conn.Close(); cerr != nil && err == nil {
+			err = cerr
+		}
+	}
+	return err
 }
 
 // Addr returns the local address the server is listening on, or nil if

@@ -897,13 +897,14 @@ func (e *executor) dialLAN() {
 		tlsConfig.NextProtos = []string{"pigeon-lan"}
 	}
 
-	ctx, cancel := context.WithTimeout(e.ctx, 5*time.Second)
+	ctx, cancel := context.WithTimeout(e.ctx, 10*time.Second)
 	defer cancel()
 
 	conn, err := quic.DialAddr(ctx, offer.addr, tlsConfig, &quic.Config{
-		EnableDatagrams: true,
-		MaxIdleTimeout:  60 * time.Second,
-		KeepAlivePeriod: 10 * time.Second,
+		EnableDatagrams:      true,
+		MaxIdleTimeout:       60 * time.Second,
+		KeepAlivePeriod:      10 * time.Second,
+		HandshakeIdleTimeout: 10 * time.Second,
 	})
 	if err != nil {
 		slog.Debug("LAN dial failed", "addr", offer.addr, "err", err)

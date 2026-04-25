@@ -207,25 +207,55 @@ func liveRelay(t *testing.T) relayEnv {
 	return env
 }
 
+// isTransientSetupErr reports whether err is a transient setup-time
+// failure that warrants a retry. We treat QUIC dial timeouts and
+// "no recent network activity" as transient since they're typically
+// caused by random kernel scheduling hiccups during the QUIC
+// handshake under bulk-test load, not real connectivity failures.
+func isTransientSetupErr(err error) bool {
+	if err == nil {
+		return false
+	}
+	s := err.Error()
+	return strings.Contains(s, "context deadline exceeded") ||
+		strings.Contains(s, "no recent network activity")
+}
+
 // connectPair registers a backend and connects a client, returning both.
+// Setup is retried up to 3 times on transient handshake failures.
 func connectPair(t *testing.T, env relayEnv) (*Conn, *Conn) {
 	t.Helper()
-	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
-	t.Cleanup(cancel)
 
-	b, err := Register(ctx, env.url, env.cfg)
-	if err != nil {
-		t.Fatal("register:", err)
+	var lastErr error
+	for attempt := 1; attempt <= 3; attempt++ {
+		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+		t.Cleanup(cancel)
+
+		b, err := Register(ctx, env.url, env.cfg)
+		if err != nil {
+			lastErr = err
+			if isTransientSetupErr(err) {
+				continue
+			}
+			t.Fatal("register:", err)
+		}
+
+		c, err := Connect(ctx, env.url, b.InstanceID(), env.cfg)
+		if err != nil {
+			b.CloseNow()
+			lastErr = err
+			if isTransientSetupErr(err) {
+				continue
+			}
+			t.Fatal("connect:", err)
+		}
+
+		t.Cleanup(func() { b.CloseNow() })
+		t.Cleanup(func() { c.CloseNow() })
+		return b, c
 	}
-	t.Cleanup(func() { b.CloseNow() })
-
-	c, err := Connect(ctx, env.url, b.InstanceID(), env.cfg)
-	if err != nil {
-		t.Fatal("connect:", err)
-	}
-	t.Cleanup(func() { c.CloseNow() })
-
-	return b, c
+	t.Fatalf("connectPair: failed after 3 attempts: %v", lastErr)
+	return nil, nil
 }
 
 // setupEncryption creates matching E2E channels on both sides.

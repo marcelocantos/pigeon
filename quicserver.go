@@ -115,9 +115,10 @@ func (s *QUICServer) ServeWithTLS(conn net.PacketConn, tlsConfig *tls.Config) er
 
 	tr := &quic.Transport{Conn: conn}
 	ln, err := tr.Listen(serverTLS, &quic.Config{
-		EnableDatagrams: true,
-		MaxIdleTimeout:  60 * time.Second,
-		KeepAlivePeriod: 10 * time.Second,
+		EnableDatagrams:      true,
+		MaxIdleTimeout:       60 * time.Second,
+		KeepAlivePeriod:      10 * time.Second,
+		HandshakeIdleTimeout: 30 * time.Second,
 	})
 	if err != nil {
 		return fmt.Errorf("quic listen: %w", err)
@@ -259,12 +260,20 @@ func (s *QUICServer) handleConnect(conn *quic.Conn, stream *quic.Stream, msg str
 	bridgeClient(inst, clientSess)
 }
 
-// Close shuts down the QUIC server.
+// Close shuts down the QUIC server. It closes the listener and the
+// underlying PacketConn (if ServeWithTLS was called), releasing the
+// quic-go transport's read goroutines and OS sockets.
 func (s *QUICServer) Close() error {
+	var err error
 	if s.listener != nil {
-		return s.listener.Close()
+		err = s.listener.Close()
 	}
-	return nil
+	if s.conn != nil {
+		if cerr := s.conn.Close(); cerr != nil && err == nil {
+			err = cerr
+		}
+	}
+	return err
 }
 
 // Addr returns the local address the server is listening on, or nil if
