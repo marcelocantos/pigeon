@@ -146,6 +146,52 @@ type Credential = crypto.PairingRecord
 func IssueCredential(peerInstanceID, relayURL string) (deviceCredential *Credential, serverRecord *crypto.PairingRecord, err error)
 func UnmarshalCredential(data []byte) (*Credential, error)
 
+// PairingArtifact — persistable+expirable envelope around a Credential.
+// Wire format (canonical JSON, snake_case) and base64url text encoding
+// match the Swift and Kotlin SDKs; an artifact minted in any SDK
+// decodes in the other two.
+const DefaultPairingTTL = 30 * 24 * time.Hour
+var ErrPairingExpired = errors.New("pigeon: pairing artifact expired")
+
+type PairingArtifact struct {
+    Record    *crypto.PairingRecord `json:"record"`
+    Token     string                `json:"token,omitempty"`
+    IssuedAt  time.Time             `json:"issued_at"`
+    ExpiresAt time.Time             `json:"expires_at"` // zero = never
+}
+func NewPairingArtifact(record *crypto.PairingRecord, token string, issuedAt time.Time, ttl time.Duration) *PairingArtifact
+func (*PairingArtifact) IsExpired(now time.Time) bool
+func (*PairingArtifact) Marshal() ([]byte, error)
+func (*PairingArtifact) MarshalText() ([]byte, error)         // base64url(json), no padding
+func (*PairingArtifact) UnmarshalText(text []byte) error
+func UnmarshalPairingArtifact(data []byte) (*PairingArtifact, error)
+func ParsePairingArtifactText(text []byte) (*PairingArtifact, error)
+func ConnectWithArtifact(ctx context.Context, a *PairingArtifact, c Config) (*Conn, error)
+
+// PairingHost — server-side artifact minter
+type PairingHost struct {
+    RelayURL   string
+    TTL        time.Duration            // 0 = DefaultPairingTTL, <0 = never expires
+    Now        func() time.Time         // injectable clock (testing)
+    IssueToken func(string) (string, error) // optional bearer-token issuer
+}
+func NewPairingHost(relayURL string) *PairingHost
+func (*PairingHost) Mint(peerInstanceID string) (*PairingArtifact, *crypto.PairingRecord, error)
+
+// CredentialStore — uniform persistence interface
+var ErrNoCredential = errors.New("pigeon: no credential stored")
+type CredentialStore interface {
+    Save(artifact *PairingArtifact) error
+    Load() (*PairingArtifact, error)
+    Delete() error
+    IsExpired() (bool, error)
+}
+type FileCredentialStore struct {
+    Path string
+    Now  func() time.Time
+}
+func NewFileCredentialStore(path string) *FileCredentialStore
+
 // Server library — WebTransport (browsers)
 type WebTransportServer struct { /* unexported fields */ }
 func NewWebTransportServer(addr string, tlsConfig *tls.Config, token string) (*WebTransportServer, error)
@@ -459,11 +505,52 @@ public final class E2EChannel: @unchecked Sendable {
     public enum E2EError: LocalizedError { ... }
 }
 
-// PairingRecord
+// PairingRecord (JSON keys are snake_case to match Go/Kotlin wire format)
 public struct PairingRecord: Codable, Sendable {
     public init(peerInstanceID: String, relayURL: String, localKeyPair: E2EKeyPair, peerPublicKey: Data)
     public func deriveChannel(sendInfo: Data, recvInfo: Data) throws -> E2EChannel
 }
+
+// PairingArtifact — persistable+expirable envelope; wire-compatible
+// with the Go and Kotlin SDKs (snake_case JSON, ISO-8601 timestamps,
+// base64url text encoding).
+public let defaultPairingTTL: TimeInterval // 30 days
+
+public enum PairingError: LocalizedError, Equatable {
+    case expired(at: Date)
+    case missingField(String)
+    case malformedText
+}
+
+public struct PairingArtifact: Codable, Sendable {
+    public var record: PairingRecord
+    public var token: String
+    public var issuedAt: Date
+    public var expiresAt: Date?
+    public init(record: PairingRecord, token: String, issuedAt: Date, ttl: TimeInterval)
+    public func isExpired(now: Date) -> Bool
+    public func toJSON() throws -> Data
+    public static func fromJSON(_ data: Data) throws -> PairingArtifact
+    public func toText() throws -> String                       // base64url(json), no padding
+    public static func fromText(_ text: String) throws -> PairingArtifact
+}
+
+// CredentialStore — uniform persistence interface
+public enum CredentialStoreError: LocalizedError {
+    case noCredential
+    case backingStore(String)
+}
+
+public protocol CredentialStore {
+    func save(_ artifact: PairingArtifact) throws
+    func load() throws -> PairingArtifact
+    func delete() throws
+    func isExpired() throws -> Bool
+}
+
+// Reference implementations:
+public final class KeychainCredentialStore: CredentialStore { /* iOS/macOS */ }
+public final class FileCredentialStore: CredentialStore   { /* JVM/desktop fallback */ }
 
 // Standalone functions
 public func deriveKeyFromSecret(_ secret: Data, info: Data) -> SymmetricKey
@@ -504,6 +591,47 @@ class E2EKeyPair { ... }
 class E2EChannel { ... }
 object Hkdf { ... }
 class PigeonConn { ... }
+
+// PairingRecord (JSON keys are snake_case to match Go/Swift wire format)
+data class PairingRecord(
+    val peerInstanceID: String,
+    val relayURL: String,
+    val localPrivateKey: ByteArray,
+    val localPublicKey: ByteArray,
+    val peerPublicKey: ByteArray,
+)
+
+// PairingArtifact — persistable+expirable envelope; wire-compatible
+// with the Go and Swift SDKs.
+val DEFAULT_PAIRING_TTL: java.time.Duration  // 30 days
+class PairingExpiredException(val expiresAt: Instant) : Exception
+data class PairingArtifact(
+    val record: PairingRecord,
+    val token: String = "",
+    val issuedAt: Instant = Instant.now(),
+    val expiresAt: Instant? = null,  // null = never expires
+) {
+    fun isExpired(now: Instant = Instant.now()): Boolean
+    fun toJson(): String
+    fun toText(): String                                    // base64url(json), no padding
+    companion object {
+        fun mint(record: PairingRecord, token: String = "", issuedAt: Instant = Instant.now(),
+                 ttl: java.time.Duration = DEFAULT_PAIRING_TTL): PairingArtifact
+        fun fromJson(json: String): PairingArtifact
+        fun fromText(text: String): PairingArtifact
+    }
+}
+
+// CredentialStore — uniform persistence interface
+class NoCredentialException : Exception
+interface CredentialStore {
+    fun save(artifact: PairingArtifact)
+    fun load(): PairingArtifact
+    fun delete()
+    fun isExpired(): Boolean
+}
+class FileCredentialStore(val path: File) : CredentialStore  // JVM/desktop reference impl
+
 // Generated machines mirror Swift names with Pascal-case PairingCeremony*
 ```
 

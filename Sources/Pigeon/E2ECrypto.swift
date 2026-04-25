@@ -95,6 +95,17 @@ public struct PairingRecord: Codable, Sendable {
     public let localPublicKey: Data   // raw X25519, 32 bytes
     public let peerPublicKey: Data    // raw X25519, 32 bytes
 
+    // JSON keys use snake_case so the wire format matches the Go and
+    // Kotlin SDKs. A PairingRecord (or PairingArtifact) minted in any
+    // SDK can be decoded by the other two.
+    enum CodingKeys: String, CodingKey {
+        case peerInstanceID = "peer_instance_id"
+        case relayURL = "relay_url"
+        case localPrivateKey = "local_private_key"
+        case localPublicKey = "local_public_key"
+        case peerPublicKey = "peer_public_key"
+    }
+
     public init(peerInstanceID: String, relayURL: String, localKeyPair: E2EKeyPair, peerPublicKey: Data) {
         self.peerInstanceID = peerInstanceID
         self.relayURL = relayURL
