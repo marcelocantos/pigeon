@@ -1,8 +1,8 @@
-schema_version: 1
+schema_version: 3
 targets:
   T1:
     name: Pigeon is a complete library for opaque authenticated relay
-    status: converging
+    status: achieved
     value: 5.0
     cost: 3.0
     acceptance:
@@ -16,6 +16,7 @@ targets:
     - T1.3
     origin: bootstrap from targets.md (T1)
     discovered: 2026-04-08
+    achieved: 2026-04-26
   T1.1:
     name: Jevon imports pigeon's packages
     status: achieved
@@ -33,7 +34,7 @@ targets:
     status: achieved
     value: 0.0
     cost: 0.0
-    observable: true
+    showcase: true
     acceptance:
     - A typed PairingArtifact (instance ID, relay URL, bearer token, key material, issued-at, expires-at) has canonical encode/decode in Go, Swift, and Kotlin, with round-trip tests
     - PairingArtifact has both a canonical JSON encoding and a canonical text (base64url) encoding, and the two are interconvertible across all three SDKs — so an artifact can be transported as a QR payload, a launch argument, an environment variable, or a file with no transcoding glue
@@ -48,10 +49,10 @@ targets:
     achieved: 2026-04-25
   T1.3:
     name: Pigeon documents the 30-day re-pair lifecycle end-to-end
-    status: identified
+    status: achieved
     value: 0.0
     cost: 0.0
-    observable: true
+    showcase: true
     acceptance:
     - 'docs/ contains a top-level guide walking through the full lifecycle: server mints artifact via PairingHost -> deliver -> client decodes -> CredentialStore persists -> Connect() succeeds -> 30 days later expiry triggers ErrPairingExpired -> re-pair flow'
     - 'The guide covers two pairing-delivery flows side by side using the same PairingArtifact primitive: (1) QR scan from a paired-screen UX, and (2) developer-deploy via xcrun (mint on laptop, inject into iOS app container or via launch argument during install)'
@@ -63,6 +64,7 @@ targets:
     - T1.2
     origin: forked from T1.1 (retired 2026-04-25)
     discovered: 2026-04-25
+    achieved: 2026-04-26
   T10:
     name: Cross-language E2E test parity
     status: achieved
@@ -143,7 +145,7 @@ targets:
     status: achieved
     value: 5.0
     cost: 8.0
-    observable: true
+    showcase: true
     acceptance:
     - pigeon_ctx struct contains all state — keypair, session keys, nonce counters, state machine, pairing record, conn, message buffers
     - Library makes zero heap allocations — user owns the pigeon_ctx however they want (stack, static, embedded)
@@ -246,7 +248,7 @@ targets:
     status: achieved
     value: 8.0
     cost: 8.0
-    observable: true
+    showcase: true
     acceptance:
     - 'YAML schema supports machines: section under each actor with per-machine initial state, transitions, reports (events emitted upward), and accepts (events received from other machines)'
     - 'YAML schema supports a routes: section declaring inter-machine event wiring with from qualifier and guard conditions'
@@ -265,7 +267,7 @@ targets:
     status: achieved
     value: 5.0
     cost: 3.0
-    observable: true
+    showcase: true
     acceptance:
     - 'pairing.yaml uses machines: with two sub-machines: pairing (QR→ECDH→confirmation→store) and auth (present credential→session established)'
     - Routes wire pairing completion into auth (pairing reports paired, auth accepts credential_ready)
@@ -303,7 +305,7 @@ targets:
     status: achieved
     value: 0.0
     cost: 0.0
-    observable: true
+    showcase: true
     actual_cost: 2.0
     acceptance:
     - Tests/PigeonTests/PairingCeremonyMachineTests.swift compiles under swift test
@@ -318,7 +320,7 @@ targets:
     status: achieved
     value: 0.0
     cost: 0.0
-    observable: true
+    showcase: true
     actual_cost: 3.0
     acceptance:
     - swift test --filter testCrossLanguageConfirmationCode passes on macos-latest in GitHub Actions
@@ -333,7 +335,7 @@ targets:
     status: achieved
     value: 0.0
     cost: 0.0
-    observable: true
+    showcase: true
     acceptance:
     - '`go test -count=1 -short ./.` (root package only) passes across 10 consecutive runs with no context-deadline or `no recent network activity` failures'
     - The suite completes in under 300s wall-clock on M4 Max
@@ -344,10 +346,11 @@ targets:
     achieved: 2026-04-25
   T19:
     name: Kotlin PairingCeremonyMachineTest is regenerated and compiles
-    status: identified
+    status: achieved
     value: 0.0
     cost: 0.0
-    observable: true
+    showcase: true
+    demonstration: 'PR #21 merged on master with CI green; ran `:pigeon:test --tests ''*PairingCeremony*''` locally on master post-merge — all PairingCeremony test classes (server pairing, server auth, ios pairing, ios auth, cli) compile and pass. Source-set exclude removed from android/pigeon/build.gradle.kts.'
     acceptance:
     - android/pigeon/src/test/kotlin/com/marcelocantos/pigeon/crypto/PairingCeremonyMachineTest.kt compiles against the current generated PairingCeremonyMachine.kt without unresolved references
     - compileTestKotlin succeeds without source-set exclusions in build.gradle.kts
@@ -355,6 +358,7 @@ targets:
     context: 'Discovered while landing 🎯T1.2 (PairingArtifact + CredentialStore in Kotlin). The orphan test references symbols like PairingCeremonyServerState, PairingCeremonyIosMachine, PairingCeremonyServerMachine that no longer exist — the generator now produces split sub-machines named PairingCeremonyServerPairingMachine, PairingCeremonyServerAuthMachine, PairingCeremonyIosPairingMachine, etc. The test predates the split (last touched in commit 3021298 \"Cross-language E2E test parity (T10) (#6)\") and has 71 unresolved references. compileTestKotlin therefore fails on master; the failure has not blocked `make bullseye` because that target only runs Go invariants. As a workaround the file was excluded from the Kotlin test source set in build.gradle.kts (with a TODO pointing at this target). Fix path: rewrite the test against the current generated state-machine surface (server pairing + auth, ios pairing + auth, cli) — likely splits the original into multiple test classes mirroring the new sub-machine layout. Either rewrite or delete (and let other coverage backstop). Either way, remove the build.gradle.kts exclude when done.'
     origin: discovered while working on T1.2 (2026-04-25)
     discovered: 2026-04-25
+    achieved: 2026-04-26
   T2:
     name: Multi-transport with LAN upgrade
     status: achieved
@@ -405,16 +409,18 @@ targets:
     achieved: 2026-04-18
   T20:
     name: PigeonConnE2ETest cross-language confirmation code is reliable
-    status: identified
+    status: achieved
     value: 0.0
     cost: 0.0
-    observable: true
+    showcase: true
+    demonstration: 'PR #20 merged on master with CI green; agent verified 10/10 consecutive passes of `cross-language confirmation code via relay` before merge; ran the test once locally on master post-merge — green, no `recv pubkey: context deadline exceeded` in logs. Root cause was reading instance ID from stderr instead of stdout.'
     acceptance:
     - The Kotlin test `cross-language confirmation code via relay` in PigeonConnE2ETest passes reliably (10 consecutive runs)
     - 'Failure mode `recv pubkey: context deadline exceeded` no longer appears in the relay logs during this test'
     context: 'Discovered while landing 🎯T1.2 (after enabling compileTestKotlin via the 🎯T19 exclude). The test spins up a live Go relay + Go crypto-peer subprocess and runs a Kotlin ECDH handshake through it; it intermittently times out waiting for the peer''s 32-byte X25519 public key on the Kotlin side. The handshake plumbing routes through the live relay''s raw-QUIC path and is plausibly racing on relay-side connect ordering (the relay logs `quic connect: instance not found` followed by `recv pubkey: context deadline exceeded`). Not blocking — `make bullseye` only runs Go invariants, and `make e2e-kotlin` is a separate target. Investigate: (1) whether the crypto-peer needs a synchronisation wait before the Kotlin client connects, (2) whether the relay is reusing the instance ID from a prior test run within the JVM, (3) whether KwikQuicTransport is racing the registration handshake. Pre-existing — was not previously visible because compileTestKotlin failed before the test could run.'
     origin: discovered while working on T1.2 (2026-04-25)
     discovered: 2026-04-25
+    achieved: 2026-04-26
   T3:
     name: TLA+ model for cutover protocol
     status: achieved

@@ -10,7 +10,7 @@ The pre-1.0 period (currently v0.x.x) exists to get the interaction surface righ
 
 ## Interaction Surface Catalogue
 
-*Snapshot as of v0.19.0.*
+*Snapshot as of v0.20.0.*
 
 ### Relay API (the binary's external interface)
 
@@ -736,10 +736,6 @@ func WithPacketHook(fn func(pktNum int, data []byte) Action) Option
   base64url text) is intended to be stable; the API surface around it
   needs real-world feedback from at least one consumer (Jevon is the
   reference) before freezing.
-- **Lifecycle documentation gap**: The end-to-end re-pair lifecycle (mint →
-  deliver → persist → connect → expire → re-pair) is not yet documented
-  as a single guide covering both the QR-scan and developer-deploy
-  (`xcrun`) delivery channels. Tracked as 🎯T1.3.
 - **TypeScript/web package PairingArtifact parity**: The web/TypeScript SDK
   does not yet have PairingArtifact / CredentialStore equivalents. Out of
   scope for v0.19.0 (browser deploy story is QR-only); revisit when the

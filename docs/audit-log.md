@@ -118,3 +118,11 @@ maintenance activities. Append-only — newest entries at the bottom.
   - 🎯T20 — `PigeonConnE2ETest` `cross-language confirmation code via relay` is reliable. Live-relay handshake test intermittently times out; pre-existing but only newly visible because compileTestKotlin couldn't run before the 🎯T19 exclude.
 - **Known issues**:
   - `ci.yml` `Deploy to Fly.io` job continues to fail on master with `FLY_API_TOKEN` expired. Carried over from v0.18.0; orthogonal to release artifacts.
+
+## 2026-04-26 — /release v0.20.0
+
+- **Commit**: `pending`
+- **Outcome**: Released v0.20.0 (darwin-arm64, linux-amd64, linux-arm64). Documentation + test-quality release. 🎯T1.3 `docs/pairing-lifecycle.md` end-to-end re-pair lifecycle guide shipped on the same day as v0.19.0 (#18). 🎯T20 `PigeonConnE2ETest` cross-language confirmation code stabilised — instance ID now read from crypto-peer's stdout (was stderr) and stderr drained on a background thread, eliminating intermittent `recv pubkey: context deadline exceeded` failures (#20). 🎯T19 Kotlin `PairingCeremonyMachineTest` rewritten as five test classes mirroring the v0.17 sub-machine split (server pairing/auth, ios pairing/auth, cli) and the `compileTestKotlin` source-set exclude removed (#21). No public API changes. No breaking changes — settling clock from v0.19.0 continues to tick.
+- **Deferred**: (none)
+- **Known issues**:
+  - `ci.yml` `Deploy to Fly.io` job continues to fail on master with `FLY_API_TOKEN` expired. Carried over from v0.18.0; orthogonal to release artifacts.
