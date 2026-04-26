@@ -22,14 +22,6 @@ dependencies {
     testImplementation("tech.kwik:kwik:0.10.8")
 }
 
-// 🎯T19: PairingCeremonyMachineTest references state-machine symbols
-// that were renamed when the generator split the ceremony into
-// per-sub-machine classes. The test needs rewriting; until then,
-// skip it so compileTestKotlin succeeds.
-sourceSets["test"].kotlin.exclude(
-    "com/marcelocantos/pigeon/crypto/PairingCeremonyMachineTest.kt"
-)
-
 tasks.test {
     useJUnitPlatform()
     // Forward env vars to test JVM for live E2E tests.
