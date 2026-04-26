@@ -479,10 +479,18 @@ class PigeonConnE2ETest {
                 .also { pb -> pb.environment()["PIGEON_INSECURE"] = "1" }
                 .start()
 
+            // Drain stderr in a background thread to prevent pipe-buffer deadlock.
+            // crypto-peer writes QUIC diagnostics and error messages to stderr.
+            val stderrDrain = Thread {
+                try { peerProcess.errorStream.copyTo(System.err) } catch (_: Exception) {}
+            }.also { it.isDaemon = true; it.start() }
+
             try {
-                // Read instance ID from crypto-peer's stderr (first line).
-                val stderrReader = BufferedReader(InputStreamReader(peerProcess.errorStream))
-                val instanceID = stderrReader.readLine()?.trim()
+                // Read instance ID from crypto-peer's stdout (first line).
+                // crypto-peer prints the instance ID to stdout via fmt.Println;
+                // stderr is reserved for diagnostics and error messages.
+                val stdoutReader = BufferedReader(InputStreamReader(peerProcess.inputStream))
+                val instanceID = stdoutReader.readLine()?.trim()
                     ?: throw IllegalStateException("crypto-peer did not print instance ID")
 
                 // Connect to the relay as the Kotlin client.
