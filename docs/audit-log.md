@@ -121,7 +121,7 @@ maintenance activities. Append-only — newest entries at the bottom.
 
 ## 2026-04-26 — /release v0.20.0
 
-- **Commit**: `pending`
+- **Commit**: `53dc3e2`
 - **Outcome**: Released v0.20.0 (darwin-arm64, linux-amd64, linux-arm64). Documentation + test-quality release. 🎯T1.3 `docs/pairing-lifecycle.md` end-to-end re-pair lifecycle guide shipped on the same day as v0.19.0 (#18). 🎯T20 `PigeonConnE2ETest` cross-language confirmation code stabilised — instance ID now read from crypto-peer's stdout (was stderr) and stderr drained on a background thread, eliminating intermittent `recv pubkey: context deadline exceeded` failures (#20). 🎯T19 Kotlin `PairingCeremonyMachineTest` rewritten as five test classes mirroring the v0.17 sub-machine split (server pairing/auth, ios pairing/auth, cli) and the `compileTestKotlin` source-set exclude removed (#21). No public API changes. No breaking changes — settling clock from v0.19.0 continues to tick.
 - **Deferred**: (none)
 - **Known issues**:
