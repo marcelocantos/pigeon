@@ -7,142 +7,110 @@ import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertTrue
 
-class PairingCeremonyMachineTest {
-
-    // MARK: - Server Machine
+class PairingCeremonyServerPairingMachineTest {
 
     @Test
-    fun `server starts in Idle`() {
-        val m = PairingCeremonyServerMachine()
-        assertEquals(PairingCeremonyServerState.Idle, m.state)
+    fun `server pairing starts in Idle`() {
+        val m = PairingCeremonyServerPairingMachine()
+        assertEquals(PairingCeremonyServerPairingState.Idle, m.state)
     }
 
     @Test
     fun `server Idle to GenerateToken on recv pair_begin`() {
-        val m = PairingCeremonyServerMachine()
+        val m = PairingCeremonyServerPairingMachine()
         var actionCalled = false
         m.actions[PairingCeremonyProtocol.ActionID.GenerateToken] = { actionCalled = true }
 
         m.handleEvent(PairingCeremonyProtocol.EventID.RecvPairBegin)
-        assertEquals(PairingCeremonyServerState.GenerateToken, m.state)
+        assertEquals(PairingCeremonyServerPairingState.GenerateToken, m.state)
         assertTrue(actionCalled)
         assertEquals("tok_1", m.currentToken)
     }
 
     @Test
     fun `server GenerateToken to RegisterRelay on token created`() {
-        val m = serverAtState(PairingCeremonyServerState.GenerateToken)
+        val m = serverPairingAtState(PairingCeremonyServerPairingState.GenerateToken)
         var actionCalled = false
         m.actions[PairingCeremonyProtocol.ActionID.RegisterRelay] = { actionCalled = true }
 
         m.handleEvent(PairingCeremonyProtocol.EventID.TokenCreated)
-        assertEquals(PairingCeremonyServerState.RegisterRelay, m.state)
+        assertEquals(PairingCeremonyServerPairingState.RegisterRelay, m.state)
         assertTrue(actionCalled)
     }
 
     @Test
     fun `server RegisterRelay to WaitingForClient on relay registered`() {
-        val m = serverAtState(PairingCeremonyServerState.RegisterRelay)
+        val m = serverPairingAtState(PairingCeremonyServerPairingState.RegisterRelay)
         m.handleEvent(PairingCeremonyProtocol.EventID.RelayRegistered)
-        assertEquals(PairingCeremonyServerState.WaitingForClient, m.state)
+        assertEquals(PairingCeremonyServerPairingState.WaitingForClient, m.state)
     }
 
     @Test
     fun `server token_valid guard allows transition to DeriveSecret`() {
-        val m = serverAtState(PairingCeremonyServerState.WaitingForClient)
+        val m = serverPairingAtState(PairingCeremonyServerPairingState.WaitingForClient)
         m.guards[PairingCeremonyProtocol.GuardID.TokenValid] = { true }
         m.guards[PairingCeremonyProtocol.GuardID.TokenInvalid] = { false }
         var actionCalled = false
         m.actions[PairingCeremonyProtocol.ActionID.DeriveSecret] = { actionCalled = true }
 
         m.handleEvent(PairingCeremonyProtocol.EventID.RecvPairHello)
-        assertEquals(PairingCeremonyServerState.DeriveSecret, m.state)
+        assertEquals(PairingCeremonyServerPairingState.DeriveSecret, m.state)
         assertTrue(actionCalled)
         assertEquals("server_pub", m.serverEcdhPub)
     }
 
     @Test
     fun `server token_invalid guard resets to Idle`() {
-        val m = serverAtState(PairingCeremonyServerState.WaitingForClient)
+        val m = serverPairingAtState(PairingCeremonyServerPairingState.WaitingForClient)
         m.guards[PairingCeremonyProtocol.GuardID.TokenValid] = { false }
         m.guards[PairingCeremonyProtocol.GuardID.TokenInvalid] = { true }
 
         m.handleEvent(PairingCeremonyProtocol.EventID.RecvPairHello)
-        assertEquals(PairingCeremonyServerState.Idle, m.state)
+        assertEquals(PairingCeremonyServerPairingState.Idle, m.state)
     }
 
     @Test
     fun `server code_correct guard transitions to StorePaired`() {
-        val m = serverAtState(PairingCeremonyServerState.ValidateCode)
+        val m = serverPairingAtState(PairingCeremonyServerPairingState.ValidateCode)
         m.guards[PairingCeremonyProtocol.GuardID.CodeCorrect] = { true }
         m.guards[PairingCeremonyProtocol.GuardID.CodeWrong] = { false }
 
         m.handleEvent(PairingCeremonyProtocol.EventID.CheckCode)
-        assertEquals(PairingCeremonyServerState.StorePaired, m.state)
+        assertEquals(PairingCeremonyServerPairingState.StorePaired, m.state)
     }
 
     @Test
     fun `server code_wrong guard resets to Idle`() {
-        val m = serverAtState(PairingCeremonyServerState.ValidateCode)
+        val m = serverPairingAtState(PairingCeremonyServerPairingState.ValidateCode)
         m.guards[PairingCeremonyProtocol.GuardID.CodeCorrect] = { false }
         m.guards[PairingCeremonyProtocol.GuardID.CodeWrong] = { true }
 
         m.handleEvent(PairingCeremonyProtocol.EventID.CheckCode)
-        assertEquals(PairingCeremonyServerState.Idle, m.state)
+        assertEquals(PairingCeremonyServerPairingState.Idle, m.state)
     }
 
     @Test
-    fun `server finalise stores device and transitions to Paired`() {
-        val m = serverAtState(PairingCeremonyServerState.StorePaired)
+    fun `server finalise stores device and transitions to PairingComplete`() {
+        val m = serverPairingAtState(PairingCeremonyServerPairingState.StorePaired)
         var actionCalled = false
         m.actions[PairingCeremonyProtocol.ActionID.StoreDevice] = { actionCalled = true }
 
         m.handleEvent(PairingCeremonyProtocol.EventID.Finalise)
-        assertEquals(PairingCeremonyServerState.Paired, m.state)
+        assertEquals(PairingCeremonyServerPairingState.PairingComplete, m.state)
         assertTrue(actionCalled)
         assertEquals("dev_secret_1", m.deviceSecret)
     }
 
     @Test
-    fun `server device_known guard transitions to SessionActive`() {
-        val m = serverAtState(PairingCeremonyServerState.AuthCheck)
-        m.guards[PairingCeremonyProtocol.GuardID.DeviceKnown] = { true }
-        m.guards[PairingCeremonyProtocol.GuardID.DeviceUnknown] = { false }
-        var actionCalled = false
-        m.actions[PairingCeremonyProtocol.ActionID.VerifyDevice] = { actionCalled = true }
-
-        m.handleEvent(PairingCeremonyProtocol.EventID.Verify)
-        assertEquals(PairingCeremonyServerState.SessionActive, m.state)
-        assertTrue(actionCalled)
-    }
-
-    @Test
-    fun `server device_unknown guard resets to Idle`() {
-        val m = serverAtState(PairingCeremonyServerState.AuthCheck)
-        m.guards[PairingCeremonyProtocol.GuardID.DeviceKnown] = { false }
-        m.guards[PairingCeremonyProtocol.GuardID.DeviceUnknown] = { true }
-
-        m.handleEvent(PairingCeremonyProtocol.EventID.Verify)
-        assertEquals(PairingCeremonyServerState.Idle, m.state)
-    }
-
-    @Test
-    fun `server disconnect returns to Paired`() {
-        val m = serverAtState(PairingCeremonyServerState.SessionActive)
-        m.handleEvent(PairingCeremonyProtocol.EventID.Disconnect)
-        assertEquals(PairingCeremonyServerState.Paired, m.state)
-    }
-
-    @Test
-    fun `server invalid event does not change state`() {
-        val m = PairingCeremonyServerMachine()
+    fun `server pairing invalid event does not change state`() {
+        val m = PairingCeremonyServerPairingMachine()
         m.handleEvent(PairingCeremonyProtocol.EventID.Disconnect) // invalid from Idle
-        assertEquals(PairingCeremonyServerState.Idle, m.state)
+        assertEquals(PairingCeremonyServerPairingState.Idle, m.state)
     }
 
     @Test
     fun `server full pairing flow`() {
-        val m = PairingCeremonyServerMachine()
+        val m = PairingCeremonyServerPairingMachine()
         m.actions[PairingCeremonyProtocol.ActionID.GenerateToken] = {}
         m.actions[PairingCeremonyProtocol.ActionID.RegisterRelay] = {}
         m.actions[PairingCeremonyProtocol.ActionID.DeriveSecret] = {}
@@ -153,61 +121,186 @@ class PairingCeremonyMachineTest {
         m.guards[PairingCeremonyProtocol.GuardID.CodeWrong] = { false }
 
         m.handleEvent(PairingCeremonyProtocol.EventID.RecvPairBegin)
-        assertEquals(PairingCeremonyServerState.GenerateToken, m.state)
+        assertEquals(PairingCeremonyServerPairingState.GenerateToken, m.state)
         m.handleEvent(PairingCeremonyProtocol.EventID.TokenCreated)
-        assertEquals(PairingCeremonyServerState.RegisterRelay, m.state)
+        assertEquals(PairingCeremonyServerPairingState.RegisterRelay, m.state)
         m.handleEvent(PairingCeremonyProtocol.EventID.RelayRegistered)
-        assertEquals(PairingCeremonyServerState.WaitingForClient, m.state)
+        assertEquals(PairingCeremonyServerPairingState.WaitingForClient, m.state)
         m.handleEvent(PairingCeremonyProtocol.EventID.RecvPairHello)
-        assertEquals(PairingCeremonyServerState.DeriveSecret, m.state)
+        assertEquals(PairingCeremonyServerPairingState.DeriveSecret, m.state)
         m.handleEvent(PairingCeremonyProtocol.EventID.ECDHComplete)
-        assertEquals(PairingCeremonyServerState.SendAck, m.state)
+        assertEquals(PairingCeremonyServerPairingState.SendAck, m.state)
         m.handleEvent(PairingCeremonyProtocol.EventID.SignalCodeDisplay)
-        assertEquals(PairingCeremonyServerState.WaitingForCode, m.state)
+        assertEquals(PairingCeremonyServerPairingState.WaitingForCode, m.state)
         m.handleEvent(PairingCeremonyProtocol.EventID.RecvCodeSubmit)
-        assertEquals(PairingCeremonyServerState.ValidateCode, m.state)
+        assertEquals(PairingCeremonyServerPairingState.ValidateCode, m.state)
         m.handleEvent(PairingCeremonyProtocol.EventID.CheckCode)
-        assertEquals(PairingCeremonyServerState.StorePaired, m.state)
+        assertEquals(PairingCeremonyServerPairingState.StorePaired, m.state)
         m.handleEvent(PairingCeremonyProtocol.EventID.Finalise)
-        assertEquals(PairingCeremonyServerState.Paired, m.state)
+        assertEquals(PairingCeremonyServerPairingState.PairingComplete, m.state)
     }
 
-    // MARK: - iOS Machine
+    private fun serverPairingAtState(target: PairingCeremonyServerPairingState): PairingCeremonyServerPairingMachine {
+        val m = PairingCeremonyServerPairingMachine()
+        m.actions[PairingCeremonyProtocol.ActionID.GenerateToken] = {}
+        m.actions[PairingCeremonyProtocol.ActionID.RegisterRelay] = {}
+        m.actions[PairingCeremonyProtocol.ActionID.DeriveSecret] = {}
+        m.actions[PairingCeremonyProtocol.ActionID.StoreDevice] = {}
+        m.guards[PairingCeremonyProtocol.GuardID.TokenValid] = { true }
+        m.guards[PairingCeremonyProtocol.GuardID.TokenInvalid] = { false }
+        m.guards[PairingCeremonyProtocol.GuardID.CodeCorrect] = { true }
+        m.guards[PairingCeremonyProtocol.GuardID.CodeWrong] = { false }
+
+        val path = when (target) {
+            PairingCeremonyServerPairingState.Idle -> emptyList()
+            PairingCeremonyServerPairingState.GenerateToken -> listOf(PairingCeremonyProtocol.EventID.RecvPairBegin)
+            PairingCeremonyServerPairingState.RegisterRelay -> listOf(PairingCeremonyProtocol.EventID.RecvPairBegin, PairingCeremonyProtocol.EventID.TokenCreated)
+            PairingCeremonyServerPairingState.WaitingForClient -> listOf(PairingCeremonyProtocol.EventID.RecvPairBegin, PairingCeremonyProtocol.EventID.TokenCreated, PairingCeremonyProtocol.EventID.RelayRegistered)
+            PairingCeremonyServerPairingState.DeriveSecret -> listOf(PairingCeremonyProtocol.EventID.RecvPairBegin, PairingCeremonyProtocol.EventID.TokenCreated, PairingCeremonyProtocol.EventID.RelayRegistered, PairingCeremonyProtocol.EventID.RecvPairHello)
+            PairingCeremonyServerPairingState.SendAck -> listOf(PairingCeremonyProtocol.EventID.RecvPairBegin, PairingCeremonyProtocol.EventID.TokenCreated, PairingCeremonyProtocol.EventID.RelayRegistered, PairingCeremonyProtocol.EventID.RecvPairHello, PairingCeremonyProtocol.EventID.ECDHComplete)
+            PairingCeremonyServerPairingState.WaitingForCode -> listOf(PairingCeremonyProtocol.EventID.RecvPairBegin, PairingCeremonyProtocol.EventID.TokenCreated, PairingCeremonyProtocol.EventID.RelayRegistered, PairingCeremonyProtocol.EventID.RecvPairHello, PairingCeremonyProtocol.EventID.ECDHComplete, PairingCeremonyProtocol.EventID.SignalCodeDisplay)
+            PairingCeremonyServerPairingState.ValidateCode -> listOf(PairingCeremonyProtocol.EventID.RecvPairBegin, PairingCeremonyProtocol.EventID.TokenCreated, PairingCeremonyProtocol.EventID.RelayRegistered, PairingCeremonyProtocol.EventID.RecvPairHello, PairingCeremonyProtocol.EventID.ECDHComplete, PairingCeremonyProtocol.EventID.SignalCodeDisplay, PairingCeremonyProtocol.EventID.RecvCodeSubmit)
+            PairingCeremonyServerPairingState.StorePaired -> listOf(PairingCeremonyProtocol.EventID.RecvPairBegin, PairingCeremonyProtocol.EventID.TokenCreated, PairingCeremonyProtocol.EventID.RelayRegistered, PairingCeremonyProtocol.EventID.RecvPairHello, PairingCeremonyProtocol.EventID.ECDHComplete, PairingCeremonyProtocol.EventID.SignalCodeDisplay, PairingCeremonyProtocol.EventID.RecvCodeSubmit, PairingCeremonyProtocol.EventID.CheckCode)
+            PairingCeremonyServerPairingState.PairingComplete -> listOf(PairingCeremonyProtocol.EventID.RecvPairBegin, PairingCeremonyProtocol.EventID.TokenCreated, PairingCeremonyProtocol.EventID.RelayRegistered, PairingCeremonyProtocol.EventID.RecvPairHello, PairingCeremonyProtocol.EventID.ECDHComplete, PairingCeremonyProtocol.EventID.SignalCodeDisplay, PairingCeremonyProtocol.EventID.RecvCodeSubmit, PairingCeremonyProtocol.EventID.CheckCode, PairingCeremonyProtocol.EventID.Finalise)
+        }
+        for (ev in path) {
+            m.handleEvent(ev)
+        }
+        return m
+    }
+}
+
+class PairingCeremonyServerAuthMachineTest {
 
     @Test
-    fun `ios starts in Idle`() {
-        val m = PairingCeremonyIosMachine()
-        assertEquals(PairingCeremonyIosState.Idle, m.state)
+    fun `server auth starts in Idle`() {
+        val m = PairingCeremonyServerAuthMachine()
+        assertEquals(PairingCeremonyServerAuthState.Idle, m.state)
+    }
+
+    @Test
+    fun `server auth Idle to Paired on credential_ready`() {
+        val m = PairingCeremonyServerAuthMachine()
+        m.handleEvent(PairingCeremonyProtocol.EventID.CredentialReady)
+        assertEquals(PairingCeremonyServerAuthState.Paired, m.state)
+    }
+
+    @Test
+    fun `server auth Paired to AuthCheck on recv_auth_request`() {
+        val m = serverAuthAtState(PairingCeremonyServerAuthState.Paired)
+        m.handleEvent(PairingCeremonyProtocol.EventID.RecvAuthRequest)
+        assertEquals(PairingCeremonyServerAuthState.AuthCheck, m.state)
+    }
+
+    @Test
+    fun `server device_known guard transitions to SessionActive`() {
+        val m = serverAuthAtState(PairingCeremonyServerAuthState.AuthCheck)
+        m.guards[PairingCeremonyProtocol.GuardID.DeviceKnown] = { true }
+        m.guards[PairingCeremonyProtocol.GuardID.DeviceUnknown] = { false }
+        var actionCalled = false
+        m.actions[PairingCeremonyProtocol.ActionID.VerifyDevice] = { actionCalled = true }
+
+        m.handleEvent(PairingCeremonyProtocol.EventID.Verify)
+        assertEquals(PairingCeremonyServerAuthState.SessionActive, m.state)
+        assertTrue(actionCalled)
+    }
+
+    @Test
+    fun `server device_unknown guard resets to Idle`() {
+        val m = serverAuthAtState(PairingCeremonyServerAuthState.AuthCheck)
+        m.guards[PairingCeremonyProtocol.GuardID.DeviceKnown] = { false }
+        m.guards[PairingCeremonyProtocol.GuardID.DeviceUnknown] = { true }
+
+        m.handleEvent(PairingCeremonyProtocol.EventID.Verify)
+        assertEquals(PairingCeremonyServerAuthState.Idle, m.state)
+    }
+
+    @Test
+    fun `server disconnect returns to Paired`() {
+        val m = serverAuthAtState(PairingCeremonyServerAuthState.SessionActive)
+        m.handleEvent(PairingCeremonyProtocol.EventID.Disconnect)
+        assertEquals(PairingCeremonyServerAuthState.Paired, m.state)
+    }
+
+    @Test
+    fun `server auth invalid event does not change state`() {
+        val m = PairingCeremonyServerAuthMachine()
+        m.handleEvent(PairingCeremonyProtocol.EventID.Disconnect) // invalid from Idle
+        assertEquals(PairingCeremonyServerAuthState.Idle, m.state)
+    }
+
+    @Test
+    fun `server full auth flow`() {
+        val m = PairingCeremonyServerAuthMachine()
+        m.actions[PairingCeremonyProtocol.ActionID.VerifyDevice] = {}
+        m.guards[PairingCeremonyProtocol.GuardID.DeviceKnown] = { true }
+        m.guards[PairingCeremonyProtocol.GuardID.DeviceUnknown] = { false }
+
+        m.handleEvent(PairingCeremonyProtocol.EventID.CredentialReady)
+        assertEquals(PairingCeremonyServerAuthState.Paired, m.state)
+        m.handleEvent(PairingCeremonyProtocol.EventID.RecvAuthRequest)
+        assertEquals(PairingCeremonyServerAuthState.AuthCheck, m.state)
+        m.handleEvent(PairingCeremonyProtocol.EventID.Verify)
+        assertEquals(PairingCeremonyServerAuthState.SessionActive, m.state)
+        m.handleEvent(PairingCeremonyProtocol.EventID.Disconnect)
+        assertEquals(PairingCeremonyServerAuthState.Paired, m.state)
+    }
+
+    private fun serverAuthAtState(target: PairingCeremonyServerAuthState): PairingCeremonyServerAuthMachine {
+        val m = PairingCeremonyServerAuthMachine()
+        m.actions[PairingCeremonyProtocol.ActionID.VerifyDevice] = {}
+        m.guards[PairingCeremonyProtocol.GuardID.DeviceKnown] = { true }
+        m.guards[PairingCeremonyProtocol.GuardID.DeviceUnknown] = { false }
+
+        val path = when (target) {
+            PairingCeremonyServerAuthState.Idle -> emptyList()
+            PairingCeremonyServerAuthState.Paired -> listOf(PairingCeremonyProtocol.EventID.CredentialReady)
+            PairingCeremonyServerAuthState.AuthCheck -> listOf(PairingCeremonyProtocol.EventID.CredentialReady, PairingCeremonyProtocol.EventID.RecvAuthRequest)
+            PairingCeremonyServerAuthState.SessionActive -> listOf(PairingCeremonyProtocol.EventID.CredentialReady, PairingCeremonyProtocol.EventID.RecvAuthRequest, PairingCeremonyProtocol.EventID.Verify)
+        }
+        for (ev in path) {
+            m.handleEvent(ev)
+        }
+        return m
+    }
+}
+
+class PairingCeremonyIosPairingMachineTest {
+
+    @Test
+    fun `ios pairing starts in Idle`() {
+        val m = PairingCeremonyIosPairingMachine()
+        assertEquals(PairingCeremonyIosPairingState.Idle, m.state)
     }
 
     @Test
     fun `ios full pairing flow`() {
-        val m = PairingCeremonyIosMachine()
+        val m = PairingCeremonyIosPairingMachine()
         m.actions[PairingCeremonyProtocol.ActionID.SendPairHello] = {}
         m.actions[PairingCeremonyProtocol.ActionID.DeriveSecret] = {}
         m.actions[PairingCeremonyProtocol.ActionID.StoreSecret] = {}
 
         m.handleEvent(PairingCeremonyProtocol.EventID.UserScansQR)
-        assertEquals(PairingCeremonyIosState.ScanQR, m.state)
+        assertEquals(PairingCeremonyIosPairingState.ScanQR, m.state)
         m.handleEvent(PairingCeremonyProtocol.EventID.QRParsed)
-        assertEquals(PairingCeremonyIosState.ConnectRelay, m.state)
+        assertEquals(PairingCeremonyIosPairingState.ConnectRelay, m.state)
         m.handleEvent(PairingCeremonyProtocol.EventID.RelayConnected)
-        assertEquals(PairingCeremonyIosState.GenKeyPair, m.state)
+        assertEquals(PairingCeremonyIosPairingState.GenKeyPair, m.state)
         m.handleEvent(PairingCeremonyProtocol.EventID.KeyPairGenerated)
-        assertEquals(PairingCeremonyIosState.WaitAck, m.state)
+        assertEquals(PairingCeremonyIosPairingState.WaitAck, m.state)
         m.handleEvent(PairingCeremonyProtocol.EventID.RecvPairHelloAck)
-        assertEquals(PairingCeremonyIosState.E2EReady, m.state)
+        assertEquals(PairingCeremonyIosPairingState.E2EReady, m.state)
         m.handleEvent(PairingCeremonyProtocol.EventID.RecvPairConfirm)
-        assertEquals(PairingCeremonyIosState.ShowCode, m.state)
+        assertEquals(PairingCeremonyIosPairingState.ShowCode, m.state)
         m.handleEvent(PairingCeremonyProtocol.EventID.CodeDisplayed)
-        assertEquals(PairingCeremonyIosState.WaitPairComplete, m.state)
+        assertEquals(PairingCeremonyIosPairingState.WaitPairComplete, m.state)
         m.handleEvent(PairingCeremonyProtocol.EventID.RecvPairComplete)
-        assertEquals(PairingCeremonyIosState.Paired, m.state)
+        assertEquals(PairingCeremonyIosPairingState.PairingComplete, m.state)
     }
 
     @Test
     fun `ios key pair generated calls sendPairHello action`() {
-        val m = PairingCeremonyIosMachine()
+        val m = PairingCeremonyIosPairingMachine()
         m.handleEvent(PairingCeremonyProtocol.EventID.UserScansQR)
         m.handleEvent(PairingCeremonyProtocol.EventID.QRParsed)
         m.handleEvent(PairingCeremonyProtocol.EventID.RelayConnected)
@@ -217,49 +310,57 @@ class PairingCeremonyMachineTest {
 
         m.handleEvent(PairingCeremonyProtocol.EventID.KeyPairGenerated)
         assertTrue(actionCalled)
-        assertEquals(PairingCeremonyIosState.WaitAck, m.state)
+        assertEquals(PairingCeremonyIosPairingState.WaitAck, m.state)
+    }
+
+    @Test
+    fun `ios pairing invalid event does not change state`() {
+        val m = PairingCeremonyIosPairingMachine()
+        m.handleEvent(PairingCeremonyProtocol.EventID.Disconnect) // invalid from Idle
+        assertEquals(PairingCeremonyIosPairingState.Idle, m.state)
+    }
+}
+
+class PairingCeremonyIosAuthMachineTest {
+
+    @Test
+    fun `ios auth starts in Idle`() {
+        val m = PairingCeremonyIosAuthMachine()
+        assertEquals(PairingCeremonyIosAuthState.Idle, m.state)
+    }
+
+    @Test
+    fun `ios auth Idle to Paired on credential_ready`() {
+        val m = PairingCeremonyIosAuthMachine()
+        m.handleEvent(PairingCeremonyProtocol.EventID.CredentialReady)
+        assertEquals(PairingCeremonyIosAuthState.Paired, m.state)
     }
 
     @Test
     fun `ios reconnect and auth flow`() {
-        val m = PairingCeremonyIosMachine()
-        m.actions[PairingCeremonyProtocol.ActionID.SendPairHello] = {}
-        m.actions[PairingCeremonyProtocol.ActionID.DeriveSecret] = {}
-        m.actions[PairingCeremonyProtocol.ActionID.StoreSecret] = {}
+        val m = PairingCeremonyIosAuthMachine()
 
-        // Walk to Paired
-        for (ev in listOf(
-            PairingCeremonyProtocol.EventID.UserScansQR,
-            PairingCeremonyProtocol.EventID.QRParsed,
-            PairingCeremonyProtocol.EventID.RelayConnected,
-            PairingCeremonyProtocol.EventID.KeyPairGenerated,
-            PairingCeremonyProtocol.EventID.RecvPairHelloAck,
-            PairingCeremonyProtocol.EventID.RecvPairConfirm,
-            PairingCeremonyProtocol.EventID.CodeDisplayed,
-            PairingCeremonyProtocol.EventID.RecvPairComplete,
-        )) {
-            m.handleEvent(ev)
-        }
-        assertEquals(PairingCeremonyIosState.Paired, m.state)
-
+        m.handleEvent(PairingCeremonyProtocol.EventID.CredentialReady)
+        assertEquals(PairingCeremonyIosAuthState.Paired, m.state)
         m.handleEvent(PairingCeremonyProtocol.EventID.AppLaunch)
-        assertEquals(PairingCeremonyIosState.Reconnect, m.state)
+        assertEquals(PairingCeremonyIosAuthState.Reconnect, m.state)
         m.handleEvent(PairingCeremonyProtocol.EventID.RelayConnected)
-        assertEquals(PairingCeremonyIosState.SendAuth, m.state)
+        assertEquals(PairingCeremonyIosAuthState.SendAuth, m.state)
         m.handleEvent(PairingCeremonyProtocol.EventID.RecvAuthOk)
-        assertEquals(PairingCeremonyIosState.SessionActive, m.state)
+        assertEquals(PairingCeremonyIosAuthState.SessionActive, m.state)
         m.handleEvent(PairingCeremonyProtocol.EventID.Disconnect)
-        assertEquals(PairingCeremonyIosState.Paired, m.state)
+        assertEquals(PairingCeremonyIosAuthState.Paired, m.state)
     }
 
     @Test
-    fun `ios invalid event does not change state`() {
-        val m = PairingCeremonyIosMachine()
+    fun `ios auth invalid event does not change state`() {
+        val m = PairingCeremonyIosAuthMachine()
         m.handleEvent(PairingCeremonyProtocol.EventID.Disconnect) // invalid from Idle
-        assertEquals(PairingCeremonyIosState.Idle, m.state)
+        assertEquals(PairingCeremonyIosAuthState.Idle, m.state)
     }
+}
 
-    // MARK: - CLI Machine
+class PairingCeremonyCliMachineTest {
 
     @Test
     fun `cli starts in Idle`() {
@@ -290,41 +391,5 @@ class PairingCeremonyMachineTest {
         val m = PairingCeremonyCliMachine()
         m.handleEvent(PairingCeremonyProtocol.EventID.KeyStored) // invalid from Idle
         assertEquals(PairingCeremonyCliState.Idle, m.state)
-    }
-
-    // MARK: - Helpers
-
-    private fun serverAtState(target: PairingCeremonyServerState): PairingCeremonyServerMachine {
-        val m = PairingCeremonyServerMachine()
-        m.actions[PairingCeremonyProtocol.ActionID.GenerateToken] = {}
-        m.actions[PairingCeremonyProtocol.ActionID.RegisterRelay] = {}
-        m.actions[PairingCeremonyProtocol.ActionID.DeriveSecret] = {}
-        m.actions[PairingCeremonyProtocol.ActionID.StoreDevice] = {}
-        m.actions[PairingCeremonyProtocol.ActionID.VerifyDevice] = {}
-        m.guards[PairingCeremonyProtocol.GuardID.TokenValid] = { true }
-        m.guards[PairingCeremonyProtocol.GuardID.TokenInvalid] = { false }
-        m.guards[PairingCeremonyProtocol.GuardID.CodeCorrect] = { true }
-        m.guards[PairingCeremonyProtocol.GuardID.CodeWrong] = { false }
-        m.guards[PairingCeremonyProtocol.GuardID.DeviceKnown] = { true }
-        m.guards[PairingCeremonyProtocol.GuardID.DeviceUnknown] = { false }
-
-        val path = when (target) {
-            PairingCeremonyServerState.Idle -> emptyList()
-            PairingCeremonyServerState.GenerateToken -> listOf(PairingCeremonyProtocol.EventID.RecvPairBegin)
-            PairingCeremonyServerState.RegisterRelay -> listOf(PairingCeremonyProtocol.EventID.RecvPairBegin, PairingCeremonyProtocol.EventID.TokenCreated)
-            PairingCeremonyServerState.WaitingForClient -> listOf(PairingCeremonyProtocol.EventID.RecvPairBegin, PairingCeremonyProtocol.EventID.TokenCreated, PairingCeremonyProtocol.EventID.RelayRegistered)
-            PairingCeremonyServerState.DeriveSecret -> listOf(PairingCeremonyProtocol.EventID.RecvPairBegin, PairingCeremonyProtocol.EventID.TokenCreated, PairingCeremonyProtocol.EventID.RelayRegistered, PairingCeremonyProtocol.EventID.RecvPairHello)
-            PairingCeremonyServerState.SendAck -> listOf(PairingCeremonyProtocol.EventID.RecvPairBegin, PairingCeremonyProtocol.EventID.TokenCreated, PairingCeremonyProtocol.EventID.RelayRegistered, PairingCeremonyProtocol.EventID.RecvPairHello, PairingCeremonyProtocol.EventID.ECDHComplete)
-            PairingCeremonyServerState.WaitingForCode -> listOf(PairingCeremonyProtocol.EventID.RecvPairBegin, PairingCeremonyProtocol.EventID.TokenCreated, PairingCeremonyProtocol.EventID.RelayRegistered, PairingCeremonyProtocol.EventID.RecvPairHello, PairingCeremonyProtocol.EventID.ECDHComplete, PairingCeremonyProtocol.EventID.SignalCodeDisplay)
-            PairingCeremonyServerState.ValidateCode -> listOf(PairingCeremonyProtocol.EventID.RecvPairBegin, PairingCeremonyProtocol.EventID.TokenCreated, PairingCeremonyProtocol.EventID.RelayRegistered, PairingCeremonyProtocol.EventID.RecvPairHello, PairingCeremonyProtocol.EventID.ECDHComplete, PairingCeremonyProtocol.EventID.SignalCodeDisplay, PairingCeremonyProtocol.EventID.RecvCodeSubmit)
-            PairingCeremonyServerState.StorePaired -> listOf(PairingCeremonyProtocol.EventID.RecvPairBegin, PairingCeremonyProtocol.EventID.TokenCreated, PairingCeremonyProtocol.EventID.RelayRegistered, PairingCeremonyProtocol.EventID.RecvPairHello, PairingCeremonyProtocol.EventID.ECDHComplete, PairingCeremonyProtocol.EventID.SignalCodeDisplay, PairingCeremonyProtocol.EventID.RecvCodeSubmit, PairingCeremonyProtocol.EventID.CheckCode)
-            PairingCeremonyServerState.Paired -> listOf(PairingCeremonyProtocol.EventID.RecvPairBegin, PairingCeremonyProtocol.EventID.TokenCreated, PairingCeremonyProtocol.EventID.RelayRegistered, PairingCeremonyProtocol.EventID.RecvPairHello, PairingCeremonyProtocol.EventID.ECDHComplete, PairingCeremonyProtocol.EventID.SignalCodeDisplay, PairingCeremonyProtocol.EventID.RecvCodeSubmit, PairingCeremonyProtocol.EventID.CheckCode, PairingCeremonyProtocol.EventID.Finalise)
-            PairingCeremonyServerState.AuthCheck -> listOf(PairingCeremonyProtocol.EventID.RecvPairBegin, PairingCeremonyProtocol.EventID.TokenCreated, PairingCeremonyProtocol.EventID.RelayRegistered, PairingCeremonyProtocol.EventID.RecvPairHello, PairingCeremonyProtocol.EventID.ECDHComplete, PairingCeremonyProtocol.EventID.SignalCodeDisplay, PairingCeremonyProtocol.EventID.RecvCodeSubmit, PairingCeremonyProtocol.EventID.CheckCode, PairingCeremonyProtocol.EventID.Finalise, PairingCeremonyProtocol.EventID.RecvAuthRequest)
-            PairingCeremonyServerState.SessionActive -> listOf(PairingCeremonyProtocol.EventID.RecvPairBegin, PairingCeremonyProtocol.EventID.TokenCreated, PairingCeremonyProtocol.EventID.RelayRegistered, PairingCeremonyProtocol.EventID.RecvPairHello, PairingCeremonyProtocol.EventID.ECDHComplete, PairingCeremonyProtocol.EventID.SignalCodeDisplay, PairingCeremonyProtocol.EventID.RecvCodeSubmit, PairingCeremonyProtocol.EventID.CheckCode, PairingCeremonyProtocol.EventID.Finalise, PairingCeremonyProtocol.EventID.RecvAuthRequest, PairingCeremonyProtocol.EventID.Verify)
-        }
-        for (ev in path) {
-            m.handleEvent(ev)
-        }
-        return m
     }
 }
