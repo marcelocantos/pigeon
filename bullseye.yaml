@@ -421,6 +421,245 @@ targets:
     origin: discovered while working on T1.2 (2026-04-25)
     discovered: 2026-04-25
     achieved: 2026-04-26
+  T21:
+    name: protogen supports flat message-struct codegen for protocols that don't have state machines
+    status: set_aside
+    value: 0.0
+    cost: 0.0
+    set_aside_reason: |-
+      Withdrawn 2026-04-26. Filed against a non-public surface — pigeon's
+      cmd/protogen is internal infrastructure for generating pigeon's own
+      protocol code (PairingCeremony, Session, PathSwitch state machines and
+      their constants), not a public codegen tool for pigeon consumers. The
+      abstraction pigeon offers third-party users is at the runtime layer
+      (Conn, StreamChannel, DatagramChannel for streams and datagrams);
+      applications speak their own wire protocols over those channels as
+      opaque bytes. The originating motivation (ge's wire-protocol codegen
+      need) is real but should be solved by ge's own codegen choice
+      (protobuf / FlatBuffers / Cap'n Proto / bespoke), not by extending
+      pigeon's internal generator. ge's 🎯T11.1 has been rewritten without
+      the pigeon-protogen framing accordingly.
+    acceptance:
+    - A YAML protocol can declare typed message structs (with named fields, primitive types, nested types, arrays) without requiring an `actors:` block or any state-machine transitions. protogen emits typed Go structs, Swift structs, Kotlin data classes, C structs, and TypeScript interfaces for each — same field naming, same wire-format compatibility across SDKs.
+    - The current state-machine-centric path is unaffected — protocols with `actors:` continue to generate the same machine code as today. The new flat-message path is additive; either or both can appear in a single YAML.
+    - 'ge''s protocol/ge_wire.yaml (committed in ge PR #45) can be simplified: the three trivial `Idle → Idle` placeholder actors that exist solely to satisfy the validator can be removed; the `messages:` section gains real typed field declarations for DeviceInfo, SafeAreaUpdate, AspectLock, MessageHeader, etc.; ge''s Protocol.h struct declarations move into ge_wire.yaml and the generated bindings replace them entirely (closing ge''s 🎯T11.1.1 acceptance).'
+    - STABILITY.md documents the new `messages:` schema (or whatever name fits) with field types, optionality, and naming conventions. Wire format for serialised structs is documented — either a fixed packed-binary layout (for parity with ge's hand-rolled MessageHeader convention) or a JSON-encoded form (for parity with PairingArtifact).
+    context: |-
+      Surfaced 2026-04-26 by ge's 🎯T11.1 implementation work (the wire-protocol-via-protogen PR at squz/ge#45). The migration succeeded for constants — ge's 11 message magic numbers and framing/sensor/orientation/device-class constants flowed from a single YAML through protogen's Go/Swift/Kotlin/C/TypeScript codegen — but stopped short of replacing ge's struct declarations (DeviceInfo, SafeAreaUpdate, AspectLock, MessageHeader) because pigeon's protocol parser doesn't model message-body field schemas. Those structs remained hand-declared in ge/include/ge/Protocol.h.
+
+      The user clarified later the same day that pigeon's protogen is internal infrastructure, not a public codegen surface for consumers — the public abstraction is at the runtime layer (Conn / StreamChannel / DatagramChannel). The premise of this target was therefore wrong; ge's codegen problem is real but belongs to ge, not to pigeon. PR #45 has been closed and ge's 🎯T11.1 rewritten to leave the codegen-tool choice open (protobuf / FlatBuffers / Cap'n Proto / bespoke).
+    tags:
+    - protogen
+    - schema
+    - ge-feedback
+    - codegen-coverage
+    origin: manual
+    discovered: 2026-04-26
+  T22:
+    name: examples/echo backend and client demos build and run end-to-end against the redesigned multi-channel pigeon API
+    status: achieved
+    value: 0.0
+    cost: 0.0
+    showcase: true
+    demonstration: 'Wrote three e2e_test.go integration tests proving the new API end-to-end: TestE2ESingleClientChat (chat round-trip), TestE2EMultiStreamMultiDatagram (chat + control streams + ping + metric datagram channels in one Session), and TestE2EMultiClient (two concurrent clients to the same backend, each with their own chat, no cross-talk). All three pass against the in-process raw-QUIC relay. Tagged-stream demux + bridgeClientMux at the relay layer, executor-bypassing transport.go on the client/backend, AEAD-encrypted Datagram channels with varint channel IDs. examples/echo backend & client also rewritten to use the new API with all four channels live.'
+    acceptance:
+    - The four files examples/echo/{backend,client}/{main,pair}.go build with no `//go:build ignore` tag and no diagnostic errors.
+    - Running `./backend pair` followed by `./client pair --token <…>` on a fresh keystore produces matching PairingRecords (one entry per side) and matching 6-digit confirmation codes.
+    - With at least one pairing in place, `./backend` accepts a `./client --peer <name>` connection over the relay, and a stdin → stdout echo loop works on the named `chat` stream.
+    - On the same `*pigeon.Conn`, a second channel (e.g. `OpenDatagram(ctx, "voice-audio")` opened on both sides) round-trips messages independently of `chat`, demonstrating multi-channel multiplexing.
+    - While `./backend` is running, invoking `./backend pair` in a separate process adds a new entry to pairings.json that the daemon picks up via fsnotify within a few seconds and accepts as a valid client without restart.
+    - The relay (cmd/pigeon) forwards every QUIC stream and datagram opaquely between the two peers; the per-channel encryption is end-to-end with keys derived from each side's PairingRecord and Identity.
+    - The pairing ceremony is implemented end-to-end (rendezvous token, ECDH, 6-digit code derivation, Confirm/Close lifecycle) in package pigeon/pairing; pigeon/crypto.NewFileIdentity is implemented (real X25519 + Ed25519 keypair persisted to a 0600 file).
+    context: |-
+      Pigeon's existing API holds for a single primary stream but leaks transport-mode and channel-cardinality details to callers as soon as a second consumer wants more. The jevons voice case (separate encrypted datagram lane for PCM audio alongside the chat stream) made this concrete and forced a redesign.
+
+      Why we missed it (retrospective):
+      - `Conn` was specced channel-first, not channel-as-instance — Send/Recv lived on the conn, so "second encrypted lane" doesn't fit the type.
+      - `SetChannel` was bolted on; per-channel keys never happened because there was only one channel.
+      - Relay bridging was scoped to the primary stream (see comment at conn.go:158); there was no second consumer to make the gap visible, so it lived as a TODO instead of a bug.
+      - STABILITY.md sketched the eventual `OpenStream`/`OpenDatagram` shape but no caller forced it.
+      - The "transport invisible" property was tested against the chat case, never against "callers don't see how many channels they get."
+
+      The new shape (sketched in detail across this session and embedded in the example files at examples/echo/{backend,client}/{main,pair}.go, currently `//go:build ignore`):
+      - pigeon.Register(ctx, *RegisterArgs) → (*Listener, instanceID, error); Listener.Accept yields per-client *Conn.
+      - pigeon.Connect(ctx, *ConnectArgs) → *Conn for the client side.
+      - Conn.OpenStream(ctx, name) and Conn.OpenDatagram(ctx, name) with rendezvous-on-name semantics; AcceptStream/AcceptDatagram for dynamic acceptors.
+      - Stream/Datagram types with Send([]byte) / Recv(ctx) — no more io.ReadWriteCloser shape.
+      - pigeon/pairing decoupled from connect: Register → Pairer → Accept → Ceremony with Token/Code(ctx)/Confirm(ctx)/Close().
+      - Initiate is the one-shot initiator counterpart; both sides get a Ceremony.
+      - crypto.Identity is an interface; NewFileIdentity ships as the dev/CLI default. PairingRecord remains the persisted artifact (existing struct, no raw private bytes long-term).
+      - Args are concrete struct pointers (no `opts ...Option`); function-valued fields are singular; pairing storage is a map + callback (no Pairings interface, no SinglePairing helper).
+
+      Scope guidance from the user: "Don't worry about breaking anything else. For now, all I want is the new API, and use the new API to implement the example app." Existing callers (cmd/pigeon, conn_test.go, chaos_test.go, lan_test.go, the Swift/Kotlin generated machines, the iOS bridge in cmd/pigeon-bridge, etc.) may stop building during this work; bringing them along is a follow-up, not a precondition for retiring this target.
+
+      Stubs already landed: pairing/pairing.go (every function panics), crypto/identity.go (Identity interface + NewFileIdentity stub). The example files compile against those stubs once the pigeon-side reshape (RegisterArgs/ConnectArgs/Listener/Stream/Datagram) is in place.
+    depends_on:
+    - T22.2
+    - T22.3
+    - T22.4
+    - T22.5
+    - T22.6
+    - T22.7
+    origin: manual
+    discovered: 2026-04-29
+    achieved: 2026-04-30
+  T22.1:
+    name: crypto.NewFileIdentity is implemented (real X25519 + Ed25519 keypair persisted to a 0600 JSON file)
+    status: achieved
+    value: 0.0
+    cost: 0.0
+    acceptance:
+    - crypto/identity.go contains a non-stub fileIdentity type and a working NewFileIdentity(path) constructor.
+    - Generates an X25519 + Ed25519 keypair on first call; reads back the persisted blob on subsequent calls.
+    - InstanceID is base64url(SHA-256(x25519_pubkey)[:16]) and stable across restarts.
+    - DeriveSharedSecret performs X25519 ECDH + HKDF-SHA256.
+    - Sign produces an Ed25519 signature.
+    - Existing crypto/ tests still pass.
+    origin: manual
+    discovered: 2026-04-29
+    achieved: 2026-04-29
+  T22.2:
+    name: pigeon/pairing package runs a real ECDH ceremony end-to-end producing matching PairingRecords on both sides
+    status: achieved
+    value: 0.0
+    cost: 0.0
+    acceptance:
+    - pairing.Register opens a relay session and returns a Pairer; pairer.Accept blocks for the next initiator and returns a *Ceremony with a non-empty Token.
+    - pairing.Initiate decodes a token and rendezvous-connects to the same relay session; both sides exchange ephemeral X25519 pubkeys.
+    - Ceremony.Code(ctx) returns the same 6-digit code on both sides (derived from both ephemeral pubkeys via the existing crypto.DeriveConfirmationCode).
+    - Ceremony.Confirm(ctx) on both sides produces matching crypto.PairingRecord values, persistable as JSON.
+    - Ceremony.Close idempotently cancels (pre-Confirm) or cleans up (post-Confirm).
+    depends_on:
+    - T22.1
+    origin: manual
+    discovered: 2026-04-29
+    achieved: 2026-04-29
+  T22.3:
+    name: pigeon.RegisterArgs/ConnectArgs/Listener and Conn.OpenStream(ctx, name) work for a single named channel
+    status: achieved
+    value: 0.0
+    cost: 0.0
+    acceptance:
+    - pigeon.RegisterArgs and pigeon.ConnectArgs structs exist with the documented fields (Identity, Pairing callback / Record, Relay, TLS, Token).
+    - pigeon.Register(ctx, *RegisterArgs) returns (*Listener, instanceID, error); the InstanceID matches identity.InstanceID().
+    - Listener.Accept(ctx) yields a *Conn for each accepted client; the Pairing callback resolves the client to a PairingRecord; mismatches reject the connection.
+    - pigeon.Connect(ctx, *ConnectArgs) returns a *Conn for the client side.
+    - Conn.OpenStream(ctx, "chat") on both sides rendezvous and returns a *Stream; Stream.Send/Recv round-trip messages.
+    - Multi-channel beyond "chat" is not required here — single-channel demo is the scope of this leaf.
+    depends_on:
+    - T22.2
+    origin: manual
+    discovered: 2026-04-29
+    achieved: 2026-04-29
+  T22.4:
+    name: examples/echo backend and client build with no //go:build ignore and demonstrate pair + chat end-to-end against a local relay
+    status: achieved
+    value: 0.0
+    cost: 0.0
+    acceptance:
+    - The four files examples/echo/{backend,client}/{main,pair}.go build cleanly without //go:build ignore tags.
+    - 'Manual run-through: cmd/pigeon relay starts, ./backend pair + ./client pair with the printed token complete a pairing ceremony and write matching records.'
+    - ./backend (daemon) and ./client --peer <name> exchange messages on the "chat" stream (echo round-trip works visibly in the terminal).
+    depends_on:
+    - T22.3
+    origin: manual
+    discovered: 2026-04-29
+    achieved: 2026-04-29
+  T22.5:
+    name: 'Multi-stream channels: each pigeon stream is a separate QUIC stream, name bound via first-message handshake; relay forwards all streams'
+    status: achieved
+    value: 0.0
+    cost: 0.0
+    acceptance:
+    - Session.OpenStream(ctx, name) opens a fresh QUIC stream and sends the application name as a length-prefixed first message; the peer's matching OpenStream(ctx, name) call unblocks on name match.
+    - Mismatched names on a stream cause the peer to close the stream with an error; the OpenStream caller sees an error.
+    - Two named streams on the same Session round-trip independently — a slow write on one does not stall the other (HOL avoidance verified).
+    - Relay forwards every QUIC stream between bridged peers (not just the primary). New incoming stream on one side opens a corresponding stream on the other; bytes pump both ways until either half-closes.
+    - Demo example opens chat plus a second named stream and round-trips both.
+    depends_on:
+    - T22.4
+    - T22.8
+    origin: manual
+    discovered: 2026-04-29
+    achieved: 2026-04-30
+  T22.6:
+    name: 'Datagram channels: pre-agreed varint channel-ids configured via Args.Datagrams; Session.Datagram(name) returns the channel'
+    status: achieved
+    value: 0.0
+    cost: 0.0
+    acceptance:
+    - RegisterArgs and ConnectArgs gain a Datagrams map[string]uint64 field declared identically on both peers.
+    - Session.Datagram(name) returns a *Datagram bound to the configured varint channel-id; unknown name is a programmer error.
+    - Datagram.Send/Recv frame as [varint channel-id][session-AEAD-encrypted payload] over QUIC datagrams; the channel-id is *inside* the AEAD envelope (not in the clear to the relay).
+    - Two named datagram channels round-trip independently; loss on one does not affect the other.
+    - Demo example opens at least two datagram channels and round-trips each.
+    depends_on:
+    - T22.4
+    - T22.8
+    origin: manual
+    discovered: 2026-04-29
+    achieved: 2026-04-30
+  T22.7:
+    name: 'Multi-client backend: Listener.Accept supports concurrent paired clients on a single registration via QUIC AcceptStream'
+    status: achieved
+    value: 0.0
+    cost: 0.0
+    acceptance:
+    - pigeon.Register opens a single relay session for the Listener's lifetime, holding it across many Accept calls.
+    - Listener.Accept(ctx) uses the underlying QUIC connection's AcceptStream to receive each new client's primary stream — no per-client re-registration.
+    - Concurrent Accept calls work; the QUIC stack hands streams out one per Accept.
+    - Two clients connect simultaneously to the same paired backend and chat with it independently without interfering.
+    - Relay verified to support multiple concurrently registered backends, each with multiple connecting clients (trace through hub bridging logic and confirm).
+    depends_on:
+    - T22.4
+    origin: manual
+    discovered: 2026-04-29
+    achieved: 2026-04-30
+  T22.8:
+    name: crypto.Channel is concurrency-safe across goroutines (multiple stream pumpers + datagram pumper share one AEAD without nonce races)
+    status: achieved
+    value: 0.0
+    cost: 0.0
+    acceptance:
+    - crypto.Channel.Encrypt and Channel.Decrypt are safe to call from multiple goroutines concurrently.
+    - Nonce allocation on the send side is atomically monotonic; no two concurrent calls receive the same nonce.
+    - A targeted concurrency test exercises N goroutines calling Encrypt simultaneously and verifies all ciphertexts decrypt to distinct plaintexts in order.
+    depends_on:
+    - T22.4
+    origin: manual
+    discovered: 2026-04-29
+    achieved: 2026-04-29
+  T23:
+    name: macOS backends can store the long-term Identity in the system Keychain (Tier 1, in-process X25519/Ed25519)
+    status: identified
+    value: 0.0
+    cost: 0.0
+    showcase: true
+    acceptance:
+    - A `crypto.Identity` implementation backed by the macOS Keychain exists (likely as `examples/echo/backend/keychain_identity_darwin.go` with `//go:build darwin && cgo`, or a small platform subpackage if shared between demos).
+    - The implementation stores the X25519 + Ed25519 private bytes as a single Keychain generic-password item (kSecClassGenericPassword), with kSecAttrAccessible=kSecAttrAccessibleWhenUnlocked and kSecAttrSynchronizable=false.
+    - First run generates the keypair and writes it to the Keychain; subsequent runs load and reuse it. Identity persists across daemon restarts and process re-launches.
+    - The backend demo can be compiled and run on macOS using the Keychain identity instead of `crypto.NewFileIdentity`, with a one-line swap in main.go/pair.go.
+    - InstanceID derived from the Keychain-loaded Identity matches the InstanceID a previously-paired client expects (i.e. the public-key-derived ID is stable).
+    context: |-
+      When a backend runs on macOS in production, `NewFileIdentity` (raw X25519 + Ed25519 in a 0600 file on disk) is too weak — the bytes sit decrypted at rest, and any process running as the user can read them. The macOS Keychain encrypts items at rest, gates access to the user's login session, and supports access-control lists.
+
+      Tier 1 only — explicitly out of scope:
+      - Secure Enclave (Tier 2): SEP supports only NIST P-256, not X25519 / Ed25519. True enclave protection requires a wire-protocol curve change and is deferred until pigeon's pairing protocol moves to P-256.
+      - iOS Keychain: similar mechanics, separate target.
+      - Linux Secret Service / Windows DPAPI: separate targets per platform.
+
+      Implementation notes (from the design conversation):
+      - Use `github.com/keybase/go-keychain` for the SecItem* wrapper. CGo is required.
+      - Cache decoded keys in process memory after first Keychain read; don't re-fetch on every Sign/DeriveSharedSecret.
+      - Code-signing matters: re-signing the binary changes Keychain partition; expect a one-time re-pair on dev → distribution transition.
+      - Migration: detect a legacy file-backed identity and import it into Keychain on first Keychain-build run, then delete the file. Application-level concern, not pigeon's.
+
+      Deferred until 🎯T22 lands the `crypto.Identity` interface and the example app actually uses it.
+    depends_on:
+    - T22
+    origin: manual
+    discovered: 2026-04-29
   T3:
     name: TLA+ model for cutover protocol
     status: achieved
