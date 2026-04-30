@@ -93,6 +93,15 @@ endif
 server:
 	go run ./cmd/pigeon
 
+# --- Demo ---
+#
+# Runs the full pigeon stack — relay, backend, client — in one process
+# behind an HTTP control server, and opens a web UI at
+# http://127.0.0.1:7000 showing live traffic across every channel.
+
+demo:
+	go run ./examples/demo
+
 # --- Code generation ---
 
 generate:

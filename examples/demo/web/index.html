@@ -1,0 +1,87 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>pigeon demo</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+<header class="topbar">
+  <div class="title">
+    <span class="logo">🕊</span>
+    <span>pigeon</span>
+    <span class="subtitle">multi-channel relay demo</span>
+  </div>
+  <div class="state" id="state">connecting…</div>
+</header>
+
+<div class="lanes">
+
+  <!-- CLIENT pane -->
+  <section class="pane client" id="pane-client">
+    <h2>client</h2>
+    <div class="meta">
+      <div><span class="label">instance</span><code id="client-instance">—</code></div>
+    </div>
+
+    <div class="channels">
+      <div class="channel" data-channel="chat"   data-pane="client"><span class="dot"></span>chat</div>
+      <div class="channel" data-channel="control" data-pane="client"><span class="dot"></span>control</div>
+      <div class="channel" data-channel="ping"   data-pane="client"><span class="dot"></span>ping</div>
+      <div class="channel" data-channel="metric" data-pane="client"><span class="dot"></span>metric</div>
+    </div>
+
+    <div class="log" id="log-client"></div>
+
+    <div class="composer">
+      <div class="row">
+        <input id="chat-input" placeholder="type a chat message and press Enter…" autocomplete="off">
+        <button data-act="chat">chat ►</button>
+      </div>
+      <div class="row tight">
+        <button data-act="stats">/stats (control stream)</button>
+        <button data-act="ping">ping (datagram)</button>
+        <button data-act="metric">metric (datagram)</button>
+        <button data-act="burst">▶ 10 chat burst</button>
+        <button data-act="auto" id="auto-btn">▶ auto (1/s)</button>
+      </div>
+    </div>
+  </section>
+
+  <!-- RELAY rail (just a visual) -->
+  <div class="relay-rail">
+    <div class="relay-pulse" id="relay-pulse"></div>
+    <div class="relay-label">relay</div>
+  </div>
+
+  <!-- BACKEND pane -->
+  <section class="pane backend" id="pane-backend">
+    <h2>backend</h2>
+    <div class="meta">
+      <div><span class="label">instance</span><code id="backend-instance">—</code></div>
+    </div>
+
+    <div class="channels">
+      <div class="channel" data-channel="chat"   data-pane="backend"><span class="dot"></span>chat</div>
+      <div class="channel" data-channel="control" data-pane="backend"><span class="dot"></span>control</div>
+      <div class="channel" data-channel="ping"   data-pane="backend"><span class="dot"></span>ping</div>
+      <div class="channel" data-channel="metric" data-pane="backend"><span class="dot"></span>metric</div>
+    </div>
+
+    <div class="log" id="log-backend"></div>
+
+    <div class="composer hint">
+      <p>The backend is read-only here — it just echoes whatever the client sends.</p>
+    </div>
+  </section>
+
+</div>
+
+<footer class="footer">
+  <span id="counts">—</span>
+</footer>
+
+<script src="app.js"></script>
+</body>
+</html>
