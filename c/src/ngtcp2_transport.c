@@ -137,6 +137,32 @@ static ngtcp2_conn *get_conn_cb(ngtcp2_crypto_conn_ref *ref)
     return (ngtcp2_conn *)t->conn;
 }
 
+// Find an extra-stream slot by ngtcp2 stream ID. Returns -1 if not present.
+static int find_extra_slot(pigeon_ngtcp2_transport *t, int64_t stream_id)
+{
+    for (int i = 0; i < PIGEON_NGTCP2_MAX_EXTRA_STREAMS; i++) {
+        if (t->extra_streams[i].in_use && t->extra_streams[i].stream_id == stream_id) {
+            return i;
+        }
+    }
+    return -1;
+}
+
+// Allocate an unused extra-stream slot. Returns -1 if all slots are in use.
+static int alloc_extra_slot(pigeon_ngtcp2_transport *t, int64_t stream_id, bool peer_opened)
+{
+    for (int i = 0; i < PIGEON_NGTCP2_MAX_EXTRA_STREAMS; i++) {
+        if (!t->extra_streams[i].in_use) {
+            memset(&t->extra_streams[i], 0, sizeof(t->extra_streams[i]));
+            t->extra_streams[i].stream_id   = stream_id;
+            t->extra_streams[i].in_use      = true;
+            t->extra_streams[i].peer_opened = peer_opened;
+            return i;
+        }
+    }
+    return -1;
+}
+
 // ---- ngtcp2 callback: stream receive ----
 
 static int recv_stream_data_cb(ngtcp2_conn *conn, uint32_t flags,
@@ -145,17 +171,70 @@ static int recv_stream_data_cb(ngtcp2_conn *conn, uint32_t flags,
                                 void *user_data, void *stream_user_data)
 {
     (void)conn;
-    (void)flags;
     (void)stream_user_data;
     (void)offset;
 
     pigeon_ngtcp2_transport *t = user_data;
-    if (stream_id != t->stream_id) return 0;
-    ringbuf_push(&t->recv_buf, data, datalen);
+    bool fin = (flags & NGTCP2_STREAM_DATA_FLAG_FIN) != 0;
+
+    if (stream_id == t->stream_id) {
+        // Primary stream — legacy single-channel buffer.
+        ringbuf_push(&t->recv_buf, data, datalen);
+    } else {
+        int slot = find_extra_slot(t, stream_id);
+        if (slot < 0) {
+            // First time we see this peer-opened stream; allocate a slot
+            // and queue it for accept_stream.
+            slot = alloc_extra_slot(t, stream_id, true);
+            if (slot >= 0 && t->accept_count < PIGEON_NGTCP2_MAX_EXTRA_STREAMS) {
+                t->accept_queue[t->accept_tail] = slot;
+                t->accept_tail = (t->accept_tail + 1) % PIGEON_NGTCP2_MAX_EXTRA_STREAMS;
+                t->accept_count++;
+            }
+        }
+        if (slot >= 0) {
+            ringbuf_push(&t->extra_streams[slot].recv_buf, data, datalen);
+            if (fin) t->extra_streams[slot].fin_received = true;
+        }
+    }
+
     // Notify ngtcp2 we consumed the data.
     ngtcp2_conn_extend_max_stream_offset((ngtcp2_conn *)t->conn,
                                           stream_id, datalen);
     ngtcp2_conn_extend_max_offset((ngtcp2_conn *)t->conn, datalen);
+    return 0;
+}
+
+// ---- ngtcp2 callback: stream open (peer initiated) ----
+
+static int stream_open_cb(ngtcp2_conn *conn, int64_t stream_id, void *user_data)
+{
+    (void)conn;
+    pigeon_ngtcp2_transport *t = user_data;
+    if (stream_id == t->stream_id) return 0; // primary, already tracked
+    if (find_extra_slot(t, stream_id) >= 0) return 0; // already known
+    int slot = alloc_extra_slot(t, stream_id, true);
+    if (slot < 0) return 0; // no room — silently ignore
+    if (t->accept_count < PIGEON_NGTCP2_MAX_EXTRA_STREAMS) {
+        t->accept_queue[t->accept_tail] = slot;
+        t->accept_tail = (t->accept_tail + 1) % PIGEON_NGTCP2_MAX_EXTRA_STREAMS;
+        t->accept_count++;
+    }
+    return 0;
+}
+
+// ---- ngtcp2 callback: stream close ----
+
+static int stream_close_cb(ngtcp2_conn *conn, uint32_t flags, int64_t stream_id,
+                           uint64_t app_error_code, void *user_data,
+                           void *stream_user_data)
+{
+    (void)conn; (void)flags; (void)app_error_code; (void)stream_user_data;
+    pigeon_ngtcp2_transport *t = user_data;
+    int slot = find_extra_slot(t, stream_id);
+    if (slot >= 0) {
+        t->extra_streams[slot].in_use = false;
+    }
     return 0;
 }
 
@@ -586,6 +665,137 @@ static int transport_recv_datagram(void *userdata,
     return 0;  // no datagram available yet — caller should retry
 }
 
+// ---- Multi-stream vtable callbacks (post-T22) ----
+//
+// These implement the optional open_stream / accept_stream /
+// send_on_stream / recv_on_stream / close_stream callbacks that the
+// pigeon_session API uses for the multi-channel wire. Slot indices
+// are stable for a given pigeon_ngtcp2_stream_slot pointer; the
+// pigeon_stream_handle the API hands out is &t->extra_streams[i].
+
+static int run_io_until(pigeon_ngtcp2_transport *t,
+                        bool (*ready)(pigeon_ngtcp2_transport *),
+                        int timeout_ms)
+{
+    uint64_t deadline = now_ns() + (uint64_t)(timeout_ms > 0 ? timeout_ms : 5000) * 1000000ULL;
+    while (!ready(t)) {
+        if (write_quic(t) != 0) return -1;
+        uint64_t ts = now_ns();
+        if (ts >= deadline) { set_error(t, "timeout"); return -1; }
+        uint64_t expiry = ngtcp2_conn_get_expiry2((ngtcp2_conn *)t->conn);
+        int wait_ms;
+        if (expiry <= ts) wait_ms = 1;
+        else {
+            uint64_t diff = (expiry - ts) / 1000000ULL;
+            uint64_t left = (deadline - ts) / 1000000ULL;
+            wait_ms = (int)(diff < left ? diff : left);
+            if (wait_ms <= 0) wait_ms = 1;
+        }
+        int r = wait_readable(t->fd, wait_ms);
+        if (r < 0) { set_error(t, "select"); return -1; }
+        if (r > 0 && read_quic(t) != 0) return -1;
+        if (ngtcp2_conn_get_expiry2((ngtcp2_conn *)t->conn) <= now_ns()) {
+            ngtcp2_conn_handle_expiry((ngtcp2_conn *)t->conn, now_ns());
+        }
+    }
+    return 0;
+}
+
+static bool any_accept_pending(pigeon_ngtcp2_transport *t) { return t->accept_count > 0; }
+
+static int transport_open_stream(void *userdata, pigeon_stream_handle **out_handle)
+{
+    pigeon_ngtcp2_transport *t = userdata;
+    if (t->closed) return -1;
+    int64_t sid = -1;
+    int rv = ngtcp2_conn_open_bidi_stream((ngtcp2_conn *)t->conn, &sid, NULL);
+    if (rv != 0) {
+        // Wait for stream credit if blocked.
+        if (rv == NGTCP2_ERR_STREAM_ID_BLOCKED) {
+            uint64_t deadline = now_ns() + 5000ULL * 1000000ULL;
+            while (rv == NGTCP2_ERR_STREAM_ID_BLOCKED && now_ns() < deadline) {
+                if (write_quic(t) != 0) return -1;
+                wait_readable(t->fd, 50);
+                read_quic(t);
+                rv = ngtcp2_conn_open_bidi_stream((ngtcp2_conn *)t->conn, &sid, NULL);
+            }
+        }
+        if (rv != 0) { set_error(t, "open_bidi_stream failed"); return -1; }
+    }
+    int slot = alloc_extra_slot(t, sid, false);
+    if (slot < 0) { set_error(t, "no free stream slot"); return -1; }
+    *out_handle = (pigeon_stream_handle *)&t->extra_streams[slot];
+    return 0;
+}
+
+static int transport_accept_stream(void *userdata, pigeon_stream_handle **out_handle)
+{
+    pigeon_ngtcp2_transport *t = userdata;
+    if (t->closed) return -1;
+    if (run_io_until(t, any_accept_pending, 0) != 0) return -1;
+    int slot = t->accept_queue[t->accept_head];
+    t->accept_head = (t->accept_head + 1) % PIGEON_NGTCP2_MAX_EXTRA_STREAMS;
+    t->accept_count--;
+    if (slot < 0 || slot >= PIGEON_NGTCP2_MAX_EXTRA_STREAMS) return -1;
+    *out_handle = (pigeon_stream_handle *)&t->extra_streams[slot];
+    return 0;
+}
+
+static int transport_send_on_stream(void *userdata, pigeon_stream_handle *h,
+                                     const uint8_t *data, size_t len)
+{
+    pigeon_ngtcp2_transport *t = userdata;
+    pigeon_ngtcp2_stream_slot *s = (pigeon_ngtcp2_stream_slot *)h;
+    if (!s || !s->in_use || t->closed) return -1;
+    return write_stream(t, s->stream_id, data, len, 0);
+}
+
+static int transport_recv_on_stream(void *userdata, pigeon_stream_handle *h,
+                                     uint8_t *buf, size_t buf_len, size_t *out_len)
+{
+    pigeon_ngtcp2_transport *t = userdata;
+    pigeon_ngtcp2_stream_slot *s = (pigeon_ngtcp2_stream_slot *)h;
+    if (!s || !s->in_use || t->closed) return -1;
+
+    size_t total = 0;
+    while (total < buf_len) {
+        size_t got = ringbuf_pop(&s->recv_buf, buf + total, buf_len - total);
+        total += got;
+        if (total >= buf_len) break;
+        if (write_quic(t) != 0) return -1;
+        uint64_t expiry = ngtcp2_conn_get_expiry2((ngtcp2_conn *)t->conn);
+        uint64_t ts = now_ns();
+        int wait_ms = 5000;
+        if (expiry > ts) {
+            uint64_t diff = (expiry - ts) / 1000000ULL;
+            wait_ms = (int)(diff < 5000 ? diff : 5000);
+        }
+        int r = wait_readable(t->fd, wait_ms);
+        if (r < 0) { set_error(t, "select on extra stream"); return -1; }
+        if (r > 0 && read_quic(t) != 0) return -1;
+        if (ngtcp2_conn_get_expiry2((ngtcp2_conn *)t->conn) <= now_ns()) {
+            ngtcp2_conn_handle_expiry((ngtcp2_conn *)t->conn, now_ns());
+        }
+        if (s->fin_received && s->recv_buf.used == 0 && total < buf_len) {
+            // Stream closed before our read could fill the buffer.
+            return -1;
+        }
+    }
+    *out_len = total;
+    return 0;
+}
+
+static int transport_close_stream(void *userdata, pigeon_stream_handle *h)
+{
+    pigeon_ngtcp2_transport *t = userdata;
+    pigeon_ngtcp2_stream_slot *s = (pigeon_ngtcp2_stream_slot *)h;
+    if (!s || !s->in_use) return -1;
+    ngtcp2_conn_shutdown_stream((ngtcp2_conn *)t->conn, 0, s->stream_id, 0);
+    write_quic(t);
+    s->in_use = false;
+    return 0;
+}
+
 // ---- Init ----
 
 static int make_udp_socket(pigeon_ngtcp2_transport *t,
@@ -719,6 +929,8 @@ static int init_quic(pigeon_ngtcp2_transport *t)
         .recv_stream_data            = recv_stream_data_cb,
         .recv_datagram               = recv_datagram_cb,
         .extend_max_local_streams_bidi = extend_max_local_streams_bidi_cb,
+        .stream_open                 = stream_open_cb,
+        .stream_close                = stream_close_cb,
     };
 
     ngtcp2_cid dcid, scid;
@@ -865,6 +1077,17 @@ int pigeon_ngtcp2_transport_init(pigeon_ngtcp2_transport *t,
     t->transport.recv_stream    = transport_recv_stream;
     t->transport.send_datagram  = transport_send_datagram;
     t->transport.recv_datagram  = transport_recv_datagram;
+    t->transport.open_stream    = transport_open_stream;
+    t->transport.accept_stream  = transport_accept_stream;
+    t->transport.send_on_stream = transport_send_on_stream;
+    t->transport.recv_on_stream = transport_recv_on_stream;
+    t->transport.close_stream   = transport_close_stream;
+
+    // Mark all extra-stream slots as free.
+    for (int i = 0; i < PIGEON_NGTCP2_MAX_EXTRA_STREAMS; i++) {
+        t->extra_streams[i].stream_id = -1;
+        t->extra_streams[i].in_use    = false;
+    }
 
     return 0;
 }

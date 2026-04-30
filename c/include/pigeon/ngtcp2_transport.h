@@ -81,6 +81,22 @@ typedef struct {
     size_t   used;   // bytes available
 } pigeon_stream_ringbuf;
 
+// Maximum concurrent extra (non-primary) streams per ngtcp2 transport.
+// The post-T22 wire opens each named channel as its own QUIC stream;
+// this is the cap for those multi-stream slots.
+#define PIGEON_NGTCP2_MAX_EXTRA_STREAMS 16
+
+// Per-stream state for an extra (post-T22) multi-stream slot. The
+// primary stream is still tracked by the original t->stream_id /
+// t->recv_buf fields below for legacy single-stream compatibility.
+typedef struct {
+    int64_t               stream_id;    // ngtcp2 stream ID (-1 if free)
+    bool                  in_use;
+    bool                  peer_opened;  // remote opened it (we accepted)
+    bool                  fin_received;
+    pigeon_stream_ringbuf recv_buf;
+} pigeon_ngtcp2_stream_slot;
+
 // All transport state.  Zero-initialize before calling pigeon_ngtcp2_transport_init.
 typedef struct pigeon_ngtcp2_transport {
     // ---- vtable-compatible header (must be first) ----
@@ -103,13 +119,16 @@ typedef struct pigeon_ngtcp2_transport {
     // Declared as char[] to avoid pulling in ngtcp2 headers here.
     char                      conn_ref[64];   // ngtcp2_crypto_conn_ref
 
-    // ---- stream state ----
-    int64_t                   stream_id;      // bidi stream ID (-1 = not yet open)
+    // ---- primary stream state (legacy single-stream API) ----
+    int64_t                   stream_id;      // primary bidi stream ID (-1 = not yet open)
     int                       stream_opened;  // 1 after handshake stream created
     int                       handshake_done; // 1 after pigeon protocol handshake sent
+    pigeon_stream_ringbuf     recv_buf;       // primary stream receive buffer
 
-    // Buffered received stream data (fills from QUIC callbacks).
-    pigeon_stream_ringbuf     recv_buf;
+    // ---- extra streams (post-T22 multi-channel) ----
+    pigeon_ngtcp2_stream_slot extra_streams[PIGEON_NGTCP2_MAX_EXTRA_STREAMS];
+    int  accept_queue[PIGEON_NGTCP2_MAX_EXTRA_STREAMS];
+    int  accept_head, accept_tail, accept_count;
 
     // ---- packet I/O buffers (stack-allocated in functions, not here) ----
     // ngtcp2 write functions are called with temporary stack buffers.
