@@ -932,6 +932,7 @@ targets:
     status: identified
     value: 0.0
     cost: 0.0
+    showcase: true
     acceptance:
     - A C-side pigeon_pair_acceptor / pigeon_pair_initiator function in c/src/ runs the hello/welcome/confirm exchange against a pigeon_transport and produces a pigeon_pairing_record (peer pubkey + confirmation code).
     - cwire/ exposes that driver from Go; pairing/pairing_test.go's runAcceptor/runInitiator paths can be redirected through the cgo wrapper without changing test semantics.
@@ -939,6 +940,19 @@ targets:
     context: T34b.1 (commit f499b17) wraps the FSM and ECDH primitives but leaves the wire-driver layer (the loop that exchanges JSON-ish hello/welcome/confirm frames over a transport) in Go. T34b.2 folds that loop into C so the Go side becomes a pure cgo call.
     origin: subdivision of T34b
     discovered: 2026-04-30
+  T34c.1:
+    name: Go-callback bridge for pigeon_transport vtable
+    status: achieved
+    value: 0.0
+    cost: 0.0
+    acceptance:
+    - GoTransport interface mirroring the seven pigeon_transport callbacks (open/accept/send/recv/close stream, send/recv datagram).
+    - //export'd trampolines dispatch from C vtable into Go via a heap-allocated cwire_go_udata box (no unsafe.Pointer↔uintptr round-trips, go vet clean).
+    - Round-trip tests prove a Go-implemented in-memory paired transport drives pigeon_session stream + datagram I/O end-to-end via cgo (TestGoTransportStreamRoundTrip, TestGoTransportDatagramRoundTrip).
+    context: 'First slice of T34c. Commit 1448505. The full T34c (cgo Listener/Register/Connect with pairing/identity callbacks) builds on this foundation: a real Go-implemented Quic transport is now expressible without leaving cgo''s safe-pointer rules.'
+    origin: subdivision of T34c
+    discovered: 2026-04-30
+    achieved: 2026-04-30
   T35:
     name: 'Kotlin JNI: Android NDK build matrix (arm64-v8a + x86_64) with vendored libsodium AAR'
     status: identified
@@ -985,7 +999,7 @@ targets:
     discovered: 2026-04-30
   T38:
     name: 'C library: move 1 MiB stack buffers in pigeon_stream_*/pigeon_datagram_* to heap-allocated scratch on the pigeon_session'
-    status: identified
+    status: achieved
     value: 0.0
     cost: 0.0
     showcase: true
@@ -1005,6 +1019,7 @@ targets:
         Should be done before T35 (Android NDK) and the Java-callback transport (T36) compound the workaround burden.
     origin: discovered when both T29 (Swift) and T30 (Kotlin) first slices needed identical stack-size workarounds
     discovered: 2026-04-30
+    achieved: 2026-04-30
   T4:
     name: Investigate STUN/NAT hole-punching as a transport
     status: achieved
