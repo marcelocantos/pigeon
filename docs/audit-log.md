@@ -138,6 +138,32 @@ maintenance activities. Append-only — newest entries at the bottom.
 - **Known issues**:
   - `ci.yml` `Deploy to Fly.io` job continues to fail on master with `FLY_API_TOKEN` expired. Carried over from v0.18.0; orthogonal to release artifacts.
 
+## 2026-04-30 — architectural pivot: one C peer library; vendor build live (T32 + T33 step + T31 + T34 starter)
+
+- **Commit**: `882a58b` (in-progress; multiple commits since `0e14b44`)
+- **Outcome**: Pivot of the cross-language SDK strategy after the user locked five architectural decisions in dialogue:
+  - **D1A**: Swift binds the vendored ngtcp2 via a SwiftPM C-target.
+  - **D2a**: Kotlin binds vendored ngtcp2 via JNI.
+  - **D3**: TS becomes browser-only via the native `WebTransport` API; Node.js reserved for a future, possibly-different SDK.
+  - **D4 (the big one)**: ONE peer-library implementation, in C (`libpigeon.a`). Every other language is a thin idiomatic wrapper. The relay (`cmd/pigeon`, Go + quic-go) stays untouched because it's server-side.
+  - **D5 (extension of D4)**: even the Go peer library will be folded — `pigeon.Register/Connect/Session/Stream/Datagram` reimplemented as a cgo wrapper over libpigeon. Only the relay binary stays pure Go.
+
+  The session's deliverables, in commit order:
+  - **🎯T31 retired**: Browser TS rebuilt on `WebTransport`. Dropped Node-side `relay.e2e.ts` / `relay.local.e2e.ts`. New `web/src/relay.test.ts` adds 26 wire-format unit tests pinning the same byte vectors as the C side.
+  - **🎯T32 step 1** (commit `3ab14f4`): post-T22 wire-format helpers in C (`pigeon_uvarint_*`, `pigeon_encode_stream_header`, `pigeon_decode_{backend,client}_stream_header`, `pigeon_encode_datagram`, `pigeon_decode_datagram`), plus `wire_vectors_test.go` locking Go-emitted bytes against the C-side hardcoded vectors.
+  - **🎯T32 step 2** (commit `acd3225`): multi-channel C session API (`pigeon_session`, `pigeon_stream`, `pigeon_datagram`), `pigeon_transport` vtable extended with optional multi-stream callbacks (`open_stream`, `accept_stream`, `send_on_stream`, `recv_on_stream`, `close_stream`), in-process loopback transport for tests. 25/25 C tests pass.
+  - **🎯T32 step 3** (commit `e057765`): ngtcp2 transport gains multi-stream support — slot 0 stays the legacy primary, slots 1..16 are dynamic. Wired `stream_open_cb` / `stream_close_cb` ngtcp2 callbacks; new vtable callbacks invoke `ngtcp2_conn_open_bidi_stream`, drain an accept queue with a QUIC event-loop pump, and route per-stream recv data to per-slot ringbufs. Vendor submodules initialised (`git submodule update --init --recursive`) and quictls/openssl + ngtcp2 + ngtcp2_crypto_quictls built (the build.sh's example target failed for a dynamic-link reason but the static libs we need are in place; fix or split the script later). 6/6 ngtcp2 unit tests pass against the rebuilt vendor libs.
+  - **🎯T34 starter** (commit `7633280`): `cwire/` cgo bridge from Go to libpigeon's wire helpers. Tests prove byte-by-byte equivalence between Go's native encoder, the C encoder via cgo, and the hardcoded reference vectors. Foundation for the full Go-as-cgo-wrapper.
+  - **🎯T33 step** (commit `882a58b`): cwire bridge gains datagram-framing helpers (`EncodeDatagram` / `DecodeDatagram`) so the cross-language byte-parity check now covers the full post-T22 wire across Go-native, C-via-cgo, hardcoded vectors, and (via wire_vectors_test.go ↔ test_pigeon.c ↔ relay.test.ts) the TS browser side.
+  - **`make bullseye` parallelised** (commit `7231dce`): SDK suites + TLC fan out concurrently with per-step status files. Wall-clock dropped from ~28s sequential to ~10s parallel on M4 Max. Added the C suite (`make test-c`) to the standing invariants. Added `bullseye-prereq` to fix a gofmt-vs-codegen race introduced by the parallel fan-out.
+  - **In flight**: 🎯T29 Swift wrapper, 🎯T30 Kotlin JNI wrapper, 🎯T34 full Go cgo wrapper — running in parallel sub-agents at session end.
+- **Deferred**:
+  - Live multi-stream interop tests (Go relay ↔ C peer over ngtcp2) — the wire layer compiles and unit tests pass; live integration tests need a relay running and weren't run in this session.
+  - Vendored libsodium for Android NDK builds (T30).
+  - The `c/vendor/build.sh` failure on the qtlsclient example target — the libs we need built fine, but the script ought to either skip examples or fix the link flags.
+- **Known issues**:
+  - `ci.yml` `Deploy to Fly.io` job continues to fail on master with `FLY_API_TOKEN` expired. Carried over from v0.18.0; orthogonal to release artifacts.
+
 ## 2026-04-30 — clean bill of health on testing (🎯T26 + T27 + T28 + T18)
 
 - **Commit**: `0e14b44`
