@@ -686,20 +686,25 @@ int pigeon_encode_datagram(pigeon_channel *ch,
                            uint8_t *out, size_t out_len)
 {
     if (!ch || !ch->established) return -1;
-
-    // First compose the AEAD-plaintext: [varint channel-id][payload].
-    uint8_t plain[PIGEON_MAX_VARINT_LEN + PIGEON_MAX_MSG];
     if (payload_len > PIGEON_MAX_MSG) return -1;
-    int idn = pigeon_uvarint_encode(channel_id, plain, sizeof(plain));
-    if (idn < 0) return -1;
-    if ((size_t)idn + payload_len > sizeof(plain)) return -1;
+
+    // Compose the AEAD-plaintext on the heap: [varint channel-id]
+    // [payload]. Heap-allocate so the caller's thread doesn't need
+    // a 1 MiB stack to invoke this — see T38 in the audit log.
+    size_t plain_cap = PIGEON_MAX_VARINT_LEN + PIGEON_MAX_MSG;
+    uint8_t *plain = (uint8_t *)malloc(plain_cap);
+    if (!plain) return -1;
+
+    int idn = pigeon_uvarint_encode(channel_id, plain, plain_cap);
+    if (idn < 0) { free(plain); return -1; }
+    if ((size_t)idn + payload_len > plain_cap) { free(plain); return -1; }
     if (payload_len > 0) memcpy(plain + idn, payload, payload_len);
     size_t plain_len = (size_t)idn + payload_len;
 
     // Wire = (optional 4-byte tag) ++ AEAD(plain).
     size_t off = 0;
     if (is_backend) {
-        if (off + 4 > out_len) return -1;
+        if (off + 4 > out_len) { free(plain); return -1; }
         out[off++] = (uint8_t)(client_tag >> 24);
         out[off++] = (uint8_t)(client_tag >> 16);
         out[off++] = (uint8_t)(client_tag >> 8);
@@ -707,6 +712,7 @@ int pigeon_encode_datagram(pigeon_channel *ch,
     }
     int ct = pigeon_channel_encrypt(ch, plain, plain_len,
                                     out + off, out_len - off);
+    free(plain);
     if (ct < 0) return -1;
     return (int)off + ct;
 }
@@ -732,20 +738,24 @@ int pigeon_decode_datagram(pigeon_channel *ch,
         off = 4;
     }
 
-    // AEAD-decrypt into a scratch buffer, then peel the channel-id varint.
-    uint8_t plain[PIGEON_MAX_MSG];
+    // AEAD-decrypt into a heap scratch buffer, then peel the
+    // channel-id varint. Heap-allocated for the same reason as
+    // pigeon_encode_datagram above (T38).
+    uint8_t *plain = (uint8_t *)malloc(PIGEON_MAX_MSG);
+    if (!plain) return -1;
     int pn = pigeon_channel_decrypt(ch, wire + off, wire_len - off,
-                                    plain, sizeof(plain));
-    if (pn < 0) return -1;
+                                    plain, PIGEON_MAX_MSG);
+    if (pn < 0) { free(plain); return -1; }
 
     uint64_t cid = 0;
     int idn = pigeon_uvarint_decode(plain, (size_t)pn, &cid);
-    if (idn <= 0) return -1;
+    if (idn <= 0) { free(plain); return -1; }
     if (channel_id) *channel_id = cid;
 
     size_t payload_len = (size_t)pn - (size_t)idn;
-    if (payload_len > payload_buf_len) return -1;
+    if (payload_len > payload_buf_len) { free(plain); return -1; }
     if (payload_len > 0) memcpy(payload_buf, plain + idn, payload_len);
+    free(plain);
     return (int)payload_len;
 }
 
@@ -793,6 +803,33 @@ int pigeon_pairing_record_deserialize(pigeon_pairing_record *rec,
 }
 
 // --- Multi-channel session API ---
+
+// Lazily allocate the per-session scratch buffers. Idempotent.
+static int pigeon_session_ensure_scratch(pigeon_session *s)
+{
+    if (s->scratch_a && s->scratch_b) return 0;
+    // Sized for the largest single send/recv: AEAD ciphertext expansion
+    // is ~32 bytes (8-byte seq + 16-byte tag + slack); datagrams add a
+    // 4-byte clientTag prefix. 64 bytes of slack is comfortable.
+    size_t sz = PIGEON_MAX_MSG + 64;
+    if (!s->scratch_a) s->scratch_a = (uint8_t *)malloc(sz);
+    if (!s->scratch_b) s->scratch_b = (uint8_t *)malloc(sz);
+    if (!s->scratch_a || !s->scratch_b) {
+        free(s->scratch_a); free(s->scratch_b);
+        s->scratch_a = s->scratch_b = NULL;
+        return -1;
+    }
+    s->scratch_size = sz;
+    return 0;
+}
+
+void pigeon_session_close(pigeon_session *s)
+{
+    if (!s) return;
+    free(s->scratch_a); s->scratch_a = NULL;
+    free(s->scratch_b); s->scratch_b = NULL;
+    s->scratch_size = 0;
+}
 
 int pigeon_session_init(pigeon_session *s,
                         const pigeon_transport *transport,
@@ -883,14 +920,15 @@ int pigeon_stream_send(pigeon_stream *s,
     if (!s || !s->session || !s->handle) return -1;
     pigeon_session *sess = s->session;
     if (!sess->transport.send_on_stream) return -1;
+    if (pigeon_session_ensure_scratch(sess) != 0) return -1;
 
     // AEAD-encrypt the application payload and write the ciphertext as
     // one length-prefixed message on the stream.
-    uint8_t ct[PIGEON_MAX_MSG + 32];
-    int ctn = pigeon_channel_encrypt(&sess->channel, msg, msg_len, ct, sizeof(ct));
+    int ctn = pigeon_channel_encrypt(&sess->channel, msg, msg_len,
+                                     sess->scratch_a, sess->scratch_size);
     if (ctn < 0) return -1;
     return sess->transport.send_on_stream(sess->transport.userdata, s->handle,
-                                          ct, (size_t)ctn);
+                                          sess->scratch_a, (size_t)ctn);
 }
 
 int pigeon_stream_recv(pigeon_stream *s,
@@ -899,14 +937,14 @@ int pigeon_stream_recv(pigeon_stream *s,
     if (!s || !s->session || !s->handle) return -1;
     pigeon_session *sess = s->session;
     if (!sess->transport.recv_on_stream) return -1;
+    if (pigeon_session_ensure_scratch(sess) != 0) return -1;
 
-    uint8_t ct[PIGEON_MAX_MSG + 32];
     size_t got = 0;
     if (sess->transport.recv_on_stream(sess->transport.userdata, s->handle,
-                                       ct, sizeof(ct), &got) != 0) {
+                                       sess->scratch_a, sess->scratch_size, &got) != 0) {
         return -1;
     }
-    return pigeon_channel_decrypt(&sess->channel, ct, got, buf, buf_len);
+    return pigeon_channel_decrypt(&sess->channel, sess->scratch_a, got, buf, buf_len);
 }
 
 int pigeon_stream_close(pigeon_stream *s)
@@ -922,15 +960,16 @@ int pigeon_datagram_send(pigeon_datagram *d,
     if (!d || !d->session) return -1;
     pigeon_session *sess = d->session;
     if (!sess->transport.send_datagram) return -1;
+    if (pigeon_session_ensure_scratch(sess) != 0) return -1;
 
-    uint8_t wire[PIGEON_MAX_MSG + 64];
     int wn = pigeon_encode_datagram(&sess->channel,
                                     sess->is_backend, sess->client_tag,
                                     d->channel_id,
                                     payload, payload_len,
-                                    wire, sizeof(wire));
+                                    sess->scratch_a, sess->scratch_size);
     if (wn < 0) return -1;
-    return sess->transport.send_datagram(sess->transport.userdata, wire, (size_t)wn);
+    return sess->transport.send_datagram(sess->transport.userdata,
+                                         sess->scratch_a, (size_t)wn);
 }
 
 int pigeon_datagram_recv(pigeon_datagram *d,
@@ -939,16 +978,16 @@ int pigeon_datagram_recv(pigeon_datagram *d,
     if (!d || !d->session) return -1;
     pigeon_session *sess = d->session;
     if (!sess->transport.recv_datagram) return -1;
+    if (pigeon_session_ensure_scratch(sess) != 0) return -1;
 
-    uint8_t wire[PIGEON_MAX_MSG + 64];
     size_t got = 0;
     if (sess->transport.recv_datagram(sess->transport.userdata,
-                                      wire, sizeof(wire), &got) != 0) {
+                                      sess->scratch_a, sess->scratch_size, &got) != 0) {
         return -1;
     }
     uint64_t cid = 0;
     int pn = pigeon_decode_datagram(&sess->channel, sess->is_backend,
-                                    wire, got, NULL, &cid,
+                                    sess->scratch_a, got, NULL, &cid,
                                     buf, buf_len);
     if (pn < 0) return -1;
     if (cid != d->channel_id) {
@@ -959,4 +998,224 @@ int pigeon_datagram_recv(pigeon_datagram *d,
         return -2;
     }
     return pn;
+}
+
+// --- In-process loopback transport ---
+
+
+#include "loopback.h"
+
+
+#define LOOP_MAX_STREAMS 32
+#define LOOP_MAX_PENDING 64
+
+typedef struct loop_stream {
+    int id;
+    uint8_t *msgs[LOOP_MAX_PENDING]; // heap-allocated, sized PIGEON_MAX_MSG
+    size_t   msg_lens[LOOP_MAX_PENDING];
+    int      msg_head, msg_tail, msg_count;
+    bool     in_use;
+    bool     accepted;
+} loop_stream;
+
+struct pigeon_loopback_endpoint {
+    loop_stream  streams[LOOP_MAX_STREAMS];
+
+    // Inbound datagram ringbuffer.
+    uint8_t *dgrams[LOOP_MAX_PENDING];   // heap-allocated, sized PIGEON_MAX_MSG + 64
+    size_t   dgram_lens[LOOP_MAX_PENDING];
+    int      dgram_head, dgram_tail, dgram_count;
+
+    // Stream IDs awaiting accept.
+    int accept_queue[LOOP_MAX_STREAMS];
+    int accept_head, accept_tail, accept_count;
+
+    struct pigeon_loopback_endpoint *peer;
+};
+
+static void free_stream(loop_stream *s)
+{
+    for (int i = 0; i < LOOP_MAX_PENDING; i++) {
+        free(s->msgs[i]);
+        s->msgs[i] = NULL;
+    }
+}
+
+static loop_stream *lb_alloc_stream(pigeon_loopback_endpoint *e)
+{
+    for (int i = 0; i < LOOP_MAX_STREAMS; i++) {
+        if (!e->streams[i].in_use) {
+            free_stream(&e->streams[i]);
+            memset(&e->streams[i], 0, sizeof(e->streams[i]));
+            e->streams[i].in_use = true;
+            e->streams[i].id = i;
+            return &e->streams[i];
+        }
+    }
+    return NULL;
+}
+
+static int lb_open_stream(void *ud, pigeon_stream_handle **out)
+{
+    pigeon_loopback_endpoint *e = (pigeon_loopback_endpoint *)ud;
+    loop_stream *me = lb_alloc_stream(e);
+    if (!me) return -1;
+    pigeon_loopback_endpoint *p = e->peer;
+    if (!p) return -1;
+    if (p->streams[me->id].in_use) return -1;
+    free_stream(&p->streams[me->id]);
+    memset(&p->streams[me->id], 0, sizeof(p->streams[me->id]));
+    p->streams[me->id].in_use = true;
+    p->streams[me->id].id = me->id;
+    p->accept_queue[p->accept_tail] = me->id;
+    p->accept_tail = (p->accept_tail + 1) % LOOP_MAX_STREAMS;
+    p->accept_count++;
+    *out = (pigeon_stream_handle *)me;
+    return 0;
+}
+
+static int lb_accept_stream(void *ud, pigeon_stream_handle **out)
+{
+    pigeon_loopback_endpoint *e = (pigeon_loopback_endpoint *)ud;
+    if (e->accept_count == 0) return -1;
+    int id = e->accept_queue[e->accept_head];
+    e->accept_head = (e->accept_head + 1) % LOOP_MAX_STREAMS;
+    e->accept_count--;
+    if (id < 0 || id >= LOOP_MAX_STREAMS) return -1;
+    if (!e->streams[id].in_use) return -1;
+    e->streams[id].accepted = true;
+    *out = (pigeon_stream_handle *)&e->streams[id];
+    return 0;
+}
+
+static int lb_send_on_stream(void *ud, pigeon_stream_handle *h,
+                             const uint8_t *data, size_t len)
+{
+    pigeon_loopback_endpoint *e = (pigeon_loopback_endpoint *)ud;
+    loop_stream *me = (loop_stream *)h;
+    if (!me || !me->in_use) return -1;
+    if (!e->peer) return -1;
+    loop_stream *peer = &e->peer->streams[me->id];
+    if (!peer->in_use) return -1;
+    if (peer->msg_count >= LOOP_MAX_PENDING) return -1;
+    if (len > PIGEON_MAX_MSG) return -1;
+    if (!peer->msgs[peer->msg_tail]) {
+        peer->msgs[peer->msg_tail] = (uint8_t *)malloc(PIGEON_MAX_MSG);
+        if (!peer->msgs[peer->msg_tail]) return -1;
+    }
+    memcpy(peer->msgs[peer->msg_tail], data, len);
+    peer->msg_lens[peer->msg_tail] = len;
+    peer->msg_tail = (peer->msg_tail + 1) % LOOP_MAX_PENDING;
+    peer->msg_count++;
+    return 0;
+}
+
+static int lb_recv_on_stream(void *ud, pigeon_stream_handle *h,
+                             uint8_t *buf, size_t buf_len, size_t *out_len)
+{
+    (void)ud;
+    loop_stream *me = (loop_stream *)h;
+    if (!me || !me->in_use) return -1;
+    if (me->msg_count == 0) return -1;
+    size_t n = me->msg_lens[me->msg_head];
+    if (n > buf_len) return -1;
+    memcpy(buf, me->msgs[me->msg_head], n);
+    me->msg_head = (me->msg_head + 1) % LOOP_MAX_PENDING;
+    me->msg_count--;
+    *out_len = n;
+    return 0;
+}
+
+static int lb_close_stream(void *ud, pigeon_stream_handle *h)
+{
+    (void)ud;
+    loop_stream *me = (loop_stream *)h;
+    if (me) {
+        free_stream(me);
+        me->in_use = false;
+    }
+    return 0;
+}
+
+static int lb_send_datagram(void *ud, const uint8_t *data, size_t len)
+{
+    pigeon_loopback_endpoint *e = (pigeon_loopback_endpoint *)ud;
+    if (!e->peer) return -1;
+    pigeon_loopback_endpoint *p = e->peer;
+    if (p->dgram_count >= LOOP_MAX_PENDING) return -1;
+    if (len > PIGEON_MAX_MSG + 64) return -1;
+    if (!p->dgrams[p->dgram_tail]) {
+        p->dgrams[p->dgram_tail] = (uint8_t *)malloc(PIGEON_MAX_MSG + 64);
+        if (!p->dgrams[p->dgram_tail]) return -1;
+    }
+    memcpy(p->dgrams[p->dgram_tail], data, len);
+    p->dgram_lens[p->dgram_tail] = len;
+    p->dgram_tail = (p->dgram_tail + 1) % LOOP_MAX_PENDING;
+    p->dgram_count++;
+    return 0;
+}
+
+static int lb_recv_datagram(void *ud, uint8_t *buf, size_t buf_len, size_t *out_len)
+{
+    pigeon_loopback_endpoint *e = (pigeon_loopback_endpoint *)ud;
+    if (e->dgram_count == 0) return -1;
+    size_t n = e->dgram_lens[e->dgram_head];
+    if (n > buf_len) return -1;
+    memcpy(buf, e->dgrams[e->dgram_head], n);
+    e->dgram_head = (e->dgram_head + 1) % LOOP_MAX_PENDING;
+    e->dgram_count--;
+    *out_len = n;
+    return 0;
+}
+
+pigeon_loopback_endpoint *pigeon_loopback_new(void)
+{
+    return (pigeon_loopback_endpoint *)calloc(1, sizeof(pigeon_loopback_endpoint));
+}
+
+void pigeon_loopback_pair(pigeon_loopback_endpoint *a,
+                          pigeon_loopback_endpoint *b)
+{
+    if (a) a->peer = b;
+    if (b) b->peer = a;
+}
+
+void pigeon_loopback_fill_transport(pigeon_transport *t,
+                                    pigeon_loopback_endpoint *e)
+{
+    memset(t, 0, sizeof(*t));
+    t->userdata        = e;
+    t->open_stream     = lb_open_stream;
+    t->accept_stream   = lb_accept_stream;
+    t->send_on_stream  = lb_send_on_stream;
+    t->recv_on_stream  = lb_recv_on_stream;
+    t->close_stream    = lb_close_stream;
+    t->send_datagram   = lb_send_datagram;
+    t->recv_datagram   = lb_recv_datagram;
+}
+
+int pigeon_loopback_accept_with_header(pigeon_loopback_endpoint *e,
+                                       pigeon_stream_handle **out_handle,
+                                       uint8_t *hdr, size_t hdr_len,
+                                       size_t *hdr_out_len)
+{
+    pigeon_stream_handle *h = NULL;
+    if (lb_accept_stream(e, &h) != 0) return -1;
+    size_t n = 0;
+    if (lb_recv_on_stream(e, h, hdr, hdr_len, &n) != 0) return -1;
+    *out_handle = h;
+    if (hdr_out_len) *hdr_out_len = n;
+    return 0;
+}
+
+void pigeon_loopback_free(pigeon_loopback_endpoint *e)
+{
+    if (!e) return;
+    for (int i = 0; i < LOOP_MAX_STREAMS; i++) {
+        free_stream(&e->streams[i]);
+    }
+    for (int i = 0; i < LOOP_MAX_PENDING; i++) {
+        free(e->dgrams[i]);
+    }
+    free(e);
 }

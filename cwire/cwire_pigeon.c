@@ -11,3 +11,4 @@
 //   make amalgamate
 
 #include "pigeon.c"
+#include "loopback.h"

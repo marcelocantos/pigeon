@@ -2,220 +2,23 @@
 // SPDX-License-Identifier: Apache-2.0
 
 // CPigeon SwiftPM C-target — compiles the amalgamated libpigeon source
-// (dist/pigeon.c) and a small in-process loopback transport. Together
-// these give the Swift `Pigeon` target a complete C peer-library plus
-// a no-I/O harness to exercise pigeon_session / pigeon_stream /
-// pigeon_datagram from XCTest.
+// (dist/pigeon.c). Together with the Pigeon Swift target this gives
+// XCTest a complete C peer library plus the in-process loopback
+// transport that the multi-channel session API uses for no-I/O round
+// trips.
 //
-// We pull in dist/pigeon.c via #include rather than listing it as a
-// SwiftPM source, so the C amalgamation can stay in /dist (its
-// canonical location, also consumed by cwire and the standalone
-// `make test-c` build) without SwiftPM complaining that sources live
-// outside the target's path.
+// dist/pigeon.c includes the loopback transport since the amalgamation
+// bundles c/src/loopback.c. The public declarations come in via
+// dist/loopback.h (forwarded through include/pigeon_loopback.h).
+//
+// Pulling dist/pigeon.c via #include rather than listing it as a
+// SwiftPM source keeps the C amalgamation in /dist (its canonical
+// location, also consumed by cwire and the standalone `make test-c`
+// build) without SwiftPM complaining that sources live outside the
+// target's path.
 
 #include "include/pigeon_loopback.h"
 
-#include <stdint.h>
-#include <stdlib.h>
-#include <string.h>
-
-// Compile the amalgamated peer library inline.
+// Compile the amalgamated peer library inline. This already contains
+// the loopback transport (see c/amalgamate.sh).
 #include "../../dist/pigeon.c"
-
-// --- Loopback transport ---
-//
-// Mirrors c/test/test_pigeon.c::loopback_make_transport with two
-// changes:
-//   * heap allocation (so Swift can manage lifetime via Unmanaged or
-//     a ref-counted wrapper),
-//   * pigeon_loopback_accept_with_header convenience for the Swift
-//     side to swallow the unencrypted name-binding header in one call.
-
-#define LOOP_MAX_STREAMS 32
-#define LOOP_MAX_PENDING 64
-
-typedef struct loop_stream {
-    int id;
-    uint8_t  msgs[LOOP_MAX_PENDING][PIGEON_MAX_MSG];
-    size_t   msg_lens[LOOP_MAX_PENDING];
-    int      msg_head, msg_tail, msg_count;
-    bool     in_use;
-    bool     accepted;
-} loop_stream;
-
-struct pigeon_loopback_endpoint {
-    loop_stream  streams[LOOP_MAX_STREAMS];
-
-    // Inbound datagram ringbuffer.
-    uint8_t dgrams[LOOP_MAX_PENDING][PIGEON_MAX_MSG + 64];
-    size_t  dgram_lens[LOOP_MAX_PENDING];
-    int     dgram_head, dgram_tail, dgram_count;
-
-    // Stream IDs awaiting accept.
-    int accept_queue[LOOP_MAX_STREAMS];
-    int accept_head, accept_tail, accept_count;
-
-    struct pigeon_loopback_endpoint *peer;
-};
-
-static loop_stream *lb_alloc_stream(pigeon_loopback_endpoint *e)
-{
-    for (int i = 0; i < LOOP_MAX_STREAMS; i++) {
-        if (!e->streams[i].in_use) {
-            memset(&e->streams[i], 0, sizeof(e->streams[i]));
-            e->streams[i].in_use = true;
-            e->streams[i].id = i;
-            return &e->streams[i];
-        }
-    }
-    return NULL;
-}
-
-static int lb_open_stream(void *ud, pigeon_stream_handle **out)
-{
-    pigeon_loopback_endpoint *e = (pigeon_loopback_endpoint *)ud;
-    loop_stream *me = lb_alloc_stream(e);
-    if (!me) return -1;
-    pigeon_loopback_endpoint *p = e->peer;
-    if (!p) return -1;
-    if (p->streams[me->id].in_use) return -1;
-    memset(&p->streams[me->id], 0, sizeof(p->streams[me->id]));
-    p->streams[me->id].in_use = true;
-    p->streams[me->id].id = me->id;
-    p->accept_queue[p->accept_tail] = me->id;
-    p->accept_tail = (p->accept_tail + 1) % LOOP_MAX_STREAMS;
-    p->accept_count++;
-    *out = (pigeon_stream_handle *)me;
-    return 0;
-}
-
-static int lb_accept_stream(void *ud, pigeon_stream_handle **out)
-{
-    pigeon_loopback_endpoint *e = (pigeon_loopback_endpoint *)ud;
-    if (e->accept_count == 0) return -1;
-    int id = e->accept_queue[e->accept_head];
-    e->accept_head = (e->accept_head + 1) % LOOP_MAX_STREAMS;
-    e->accept_count--;
-    if (id < 0 || id >= LOOP_MAX_STREAMS) return -1;
-    if (!e->streams[id].in_use) return -1;
-    e->streams[id].accepted = true;
-    *out = (pigeon_stream_handle *)&e->streams[id];
-    return 0;
-}
-
-static int lb_send_on_stream(void *ud, pigeon_stream_handle *h,
-                             const uint8_t *data, size_t len)
-{
-    pigeon_loopback_endpoint *e = (pigeon_loopback_endpoint *)ud;
-    loop_stream *me = (loop_stream *)h;
-    if (!me || !me->in_use) return -1;
-    if (!e->peer) return -1;
-    loop_stream *peer = &e->peer->streams[me->id];
-    if (!peer->in_use) return -1;
-    if (peer->msg_count >= LOOP_MAX_PENDING) return -1;
-    if (len > PIGEON_MAX_MSG) return -1;
-    memcpy(peer->msgs[peer->msg_tail], data, len);
-    peer->msg_lens[peer->msg_tail] = len;
-    peer->msg_tail = (peer->msg_tail + 1) % LOOP_MAX_PENDING;
-    peer->msg_count++;
-    return 0;
-}
-
-static int lb_recv_on_stream(void *ud, pigeon_stream_handle *h,
-                             uint8_t *buf, size_t buf_len, size_t *out_len)
-{
-    (void)ud;
-    loop_stream *me = (loop_stream *)h;
-    if (!me || !me->in_use) return -1;
-    if (me->msg_count == 0) return -1;
-    size_t n = me->msg_lens[me->msg_head];
-    if (n > buf_len) return -1;
-    memcpy(buf, me->msgs[me->msg_head], n);
-    me->msg_head = (me->msg_head + 1) % LOOP_MAX_PENDING;
-    me->msg_count--;
-    *out_len = n;
-    return 0;
-}
-
-static int lb_close_stream(void *ud, pigeon_stream_handle *h)
-{
-    (void)ud;
-    loop_stream *me = (loop_stream *)h;
-    if (me) me->in_use = false;
-    return 0;
-}
-
-static int lb_send_datagram(void *ud, const uint8_t *data, size_t len)
-{
-    pigeon_loopback_endpoint *e = (pigeon_loopback_endpoint *)ud;
-    if (!e->peer) return -1;
-    pigeon_loopback_endpoint *p = e->peer;
-    if (p->dgram_count >= LOOP_MAX_PENDING) return -1;
-    if (len > sizeof(p->dgrams[0])) return -1;
-    memcpy(p->dgrams[p->dgram_tail], data, len);
-    p->dgram_lens[p->dgram_tail] = len;
-    p->dgram_tail = (p->dgram_tail + 1) % LOOP_MAX_PENDING;
-    p->dgram_count++;
-    return 0;
-}
-
-static int lb_recv_datagram(void *ud, uint8_t *buf, size_t buf_len, size_t *out_len)
-{
-    pigeon_loopback_endpoint *e = (pigeon_loopback_endpoint *)ud;
-    if (e->dgram_count == 0) return -1;
-    size_t n = e->dgram_lens[e->dgram_head];
-    if (n > buf_len) return -1;
-    memcpy(buf, e->dgrams[e->dgram_head], n);
-    e->dgram_head = (e->dgram_head + 1) % LOOP_MAX_PENDING;
-    e->dgram_count--;
-    *out_len = n;
-    return 0;
-}
-
-pigeon_loopback_endpoint *pigeon_loopback_new(void)
-{
-    pigeon_loopback_endpoint *e = (pigeon_loopback_endpoint *)
-        calloc(1, sizeof(*e));
-    return e;
-}
-
-void pigeon_loopback_pair(pigeon_loopback_endpoint *a,
-                          pigeon_loopback_endpoint *b)
-{
-    if (a) a->peer = b;
-    if (b) b->peer = a;
-}
-
-void pigeon_loopback_fill_transport(pigeon_transport *t,
-                                    pigeon_loopback_endpoint *e)
-{
-    memset(t, 0, sizeof(*t));
-    t->userdata        = e;
-    t->open_stream     = lb_open_stream;
-    t->accept_stream   = lb_accept_stream;
-    t->send_on_stream  = lb_send_on_stream;
-    t->recv_on_stream  = lb_recv_on_stream;
-    t->close_stream    = lb_close_stream;
-    t->send_datagram   = lb_send_datagram;
-    t->recv_datagram   = lb_recv_datagram;
-}
-
-int pigeon_loopback_accept_with_header(pigeon_loopback_endpoint *e,
-                                       pigeon_stream_handle **out_handle,
-                                       uint8_t *hdr, size_t hdr_len,
-                                       size_t *hdr_out_len)
-{
-    pigeon_stream_handle *h = NULL;
-    if (lb_accept_stream(e, &h) != 0) return -1;
-    size_t n = 0;
-    if (lb_recv_on_stream(e, h, hdr, hdr_len, &n) != 0) return -1;
-    *out_handle = h;
-    if (hdr_out_len) *hdr_out_len = n;
-    return 0;
-}
-
-void pigeon_loopback_free(pigeon_loopback_endpoint *e)
-{
-    if (!e) return;
-    free(e);
-}

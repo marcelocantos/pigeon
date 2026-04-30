@@ -426,6 +426,22 @@ typedef struct {
     // Pre-declared datagram channels.
     pigeon_dgchannel_def datagrams[PIGEON_MAX_DATAGRAM_CHANNELS];
     size_t               datagram_count;
+
+    // Heap-allocated scratch buffers used by the per-call I/O wrappers
+    // (pigeon_stream_send/recv, pigeon_datagram_send/recv). Sized at
+    // PIGEON_MAX_MSG + AEAD overhead (max 64 bytes for tag + nonce
+    // prefix + 4-byte clientTag prefix on datagrams). Allocated lazily
+    // on first send/recv; freed by pigeon_session_close.
+    //
+    // Why heap: the previous stack-allocated [PIGEON_MAX_MSG + 64]
+    // arrays (≈ 1 MiB) overflow the default thread-stack size on every
+    // host runtime that wraps libpigeon — Swift's cooperative pool
+    // (~256 KiB), Apple's GCD workers (~64 KiB), JVM threads (~512 KiB
+    // on macOS aarch64). Per-session scratch on the heap keeps the C
+    // ABI usable from any host thread without 4 MiB stack workarounds.
+    uint8_t      *scratch_a;
+    uint8_t      *scratch_b;
+    size_t        scratch_size;
 } pigeon_session;
 
 typedef struct {
@@ -482,6 +498,11 @@ int pigeon_stream_recv(pigeon_stream *s,
 
 // Close the stream's underlying transport handle.
 int pigeon_stream_close(pigeon_stream *s);
+
+// Free the heap scratch buffers allocated lazily on first send/recv.
+// Idempotent. Call when the session is no longer needed; the rest of
+// the pigeon_session struct can still be re-initialised afterwards.
+void pigeon_session_close(pigeon_session *s);
 
 // Send one datagram on the named channel. Wraps with the post-T22
 // framing (AEAD([varint id][payload]) + optional 4-byte tag prefix on

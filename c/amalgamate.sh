@@ -36,6 +36,15 @@ sed '/#include "pairingceremony_gen.h"/r '"$OUTDIR/.gen_fragment.h" \
     | sed '/^\/\/ Include the generated protocol header\.$/d' \
     > "$OUTDIR/pigeon.h"
 
+# Also emit dist/loopback.h alongside dist/pigeon.h so language wrappers
+# (cwire, SwiftPM CPigeon, JNI shim) can pull in the in-process test
+# harness via a single extra include.
+sed -e '/^\/\/ Copyright/d' \
+    -e '/^\/\/ SPDX/d' \
+    -e 's:#include "pigeon.h":#include "pigeon.h":' \
+    "$SRCDIR/include/pigeon/loopback.h" \
+    > "$OUTDIR/loopback.h"
+
 rm -f "$OUTDIR/.gen_fragment.h"
 
 # --- pigeon.c ---
@@ -79,6 +88,19 @@ HEADER
         -e '/^\/\/ Copyright/d' \
         -e '/^\/\/ SPDX/d' \
         "$SRCDIR/src/pigeon.c"
+
+    # Loopback transport (rewrite the header include from
+    # "pigeon/loopback.h" to "loopback.h" so dist/loopback.h resolves
+    # via the consumer's -I flag, strip system + copyright lines).
+    echo ""
+    echo "// --- In-process loopback transport ---"
+    echo ""
+    sed -e 's:#include "pigeon/loopback.h":#include "loopback.h":' \
+        -e '/^#include <stdlib.h>/d' \
+        -e '/^#include <string.h>/d' \
+        -e '/^\/\/ Copyright/d' \
+        -e '/^\/\/ SPDX/d' \
+        "$SRCDIR/src/loopback.c"
 
 } > "$OUTDIR/pigeon.c"
 
