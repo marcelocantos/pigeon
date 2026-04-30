@@ -7,10 +7,10 @@ package cwire
 // #include "pigeon.h"
 // #include "loopback.h"
 //
-// // Inline allocators / sizeof to dodge cgo's parser sometimes failing
-// // to surface stdlib calloc / sizeof in struct types.
-// static void *cwire_calloc_session(void)  { return calloc(1, sizeof(pigeon_session)); }
-// static void *cwire_calloc_channel(void)  { return calloc(1, sizeof(pigeon_channel)); }
+// // Defined in cwire_pigeon.c — heap allocators that dodge cgo's
+// // sometimes-flaky parsing of `calloc(1, sizeof(struct))`.
+// extern void *cwire_calloc_session(void);
+// extern void *cwire_calloc_channel(void);
 import "C"
 
 import (
