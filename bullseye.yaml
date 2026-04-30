@@ -852,15 +852,17 @@ targets:
     - 'An in-process raw-QUIC test against the Go relay drives the C peer through: single-client chat round-trip, multi-stream + multi-datagram in one Session, two concurrent C clients sharing one C backend.'
     - All of the above linked into c/test/test_pigeon and runnable via `make test-c-ngtcp2`.
     context: |-
-      Architectural commitment: pigeon will have one peer-library implementation, in C. All other languages (Go, Swift, Kotlin) become thin language bindings over libpigeon.a. The relay (cmd/pigeon) is unaffected — it stays Go + quic-go because it's server-side and doesn't link any peer library.
+      Status: foundation landed. The pure wire-format helpers (varint, stream-header, AEAD-channel-id datagram framing) are implemented in C and locked to Go byte vectors via wire_vectors_test.go ↔ c/test/test_pigeon.c. 23/23 C tests pass; cross-language byte-vector parity verified by construction.
 
-      This target is the bottleneck for everything downstream. Without C at parity:
-      - Swift can't bind it (T29).
-      - Kotlin can't bind it (T30).
-      - Go can't be folded (T36).
-      - Cross-language interop tests (T35) have nothing to test against.
+      Remaining work for T32 — substantive, multi-day:
+      1. Extend c/src/ngtcp2_transport.c to support multiple QUIC streams: open new bidirectional streams on demand, accept incoming streams, per-stream send/recv buffers. Currently single-stream-only.
+      2. Add register-mux handshake variant (today only `connect:` is wired in the ngtcp2 transport; `register` and `register-mux` need the matching code paths).
+      3. Implement the higher-level Listener / Session / Stream / Datagram C ABI on top of the multi-stream transport. Multi-client backend with clientTag demux; per-Session pairing-FSM driver hooked to the regenerated pairingceremony_gen.c.
+      4. Tests: live round-trip against an in-process Go relay (mirroring what e2e_test.go does for Go).
 
-      Today's c/src/ is at the v0.16-era single-channel API. Bringing it to T22-parity is genuinely substantial: ~3000-5000 LOC of new C across the wire layer, the Session/Stream/Datagram surface, the multi-client Listener, and the FSM-driven pairing ceremony. The vendored ngtcp2 transport is already in place (c/src/ngtcp2_transport.c, c/test/test_ngtcp2.c) so the QUIC layer doesn't need new work — it's the pigeon-protocol layer above QUIC that needs to land.
+      The vendored ngtcp2 build (`make build-vendor-deps`) is currently broken because the `c/vendor/` source tree isn't initialised — quictls / ngtcp2 sources aren't present. Whoever picks up step 1 above will need to fix the vendor build first (likely git-clone the upstream ngtcp2 + quictls into the expected paths, or rewrite `c/vendor/build.sh` to fetch them).
+
+      Until the multi-stream transport lands, the existing single-channel C SDK keeps working as it does today. Swift / Kotlin downstream ports (T29/T30) and the cgo-wrap of Go (T34) are all blocked on this.
     origin: discovered while making the architectural decision to consolidate peer libraries into one C implementation
     discovered: 2026-04-30
   T33:
