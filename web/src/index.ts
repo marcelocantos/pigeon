@@ -12,4 +12,18 @@ export {
   deriveChannelFromRecord,
   type PairingRecord,
 } from "./crypto.js";
-export { register, connect, wakeRelay, Conn, type ConnectOptions } from "./relay.js";
+export {
+  connect,
+  wakeRelay,
+  Session,
+  Stream,
+  Datagram,
+  encodeUvarint,
+  decodeUvarint,
+  encodeStreamHeader,
+  decodeStreamHeader,
+  encodeDatagram,
+  decodeDatagram,
+  type ConnectArgs,
+  type Identity,
+} from "./relay.js";

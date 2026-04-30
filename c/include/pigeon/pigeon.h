@@ -47,8 +47,22 @@ typedef struct {
 // --- Transport abstraction ---
 // User provides these callbacks to connect pigeon to their QUIC stack.
 
+// Opaque per-stream handle. The transport defines its own concrete type
+// behind this pointer and pigeon never inspects it; pigeon just stores
+// it on a pigeon_stream and hands it back on subsequent stream I/O.
+typedef struct pigeon_stream_handle pigeon_stream_handle;
+
 typedef struct {
     void *userdata;
+
+    // --- Single-stream + datagram (legacy / pair-mode) ---
+    //
+    // These callbacks operate on the transport's primary bidirectional
+    // stream and the connection-level datagram channel. They are the
+    // foundation of the v0.16-era single-channel API and remain
+    // available for backwards compatibility (e.g. the cmd/crypto-peer
+    // cross-language test).
+
     // Send length-prefixed message on the bidirectional stream.
     int (*send_stream)(void *userdata, const uint8_t *data, size_t len);
     // Receive a length-prefixed message. Returns message length in *out_len.
@@ -57,6 +71,35 @@ typedef struct {
     int (*send_datagram)(void *userdata, const uint8_t *data, size_t len);
     // Receive a raw datagram. Returns datagram length in *out_len.
     int (*recv_datagram)(void *userdata, uint8_t *buf, size_t buf_len, size_t *out_len);
+
+    // --- Multi-stream (post-T22) ---
+    //
+    // These callbacks support the post-T22 multi-channel wire. A
+    // transport that doesn't support multiple QUIC streams can leave
+    // them NULL; the higher-level pigeon_session API will refuse to
+    // open additional streams and return -1.
+    //
+    // Stream framing on the wire is length-prefixed messages (the
+    // transport handles framing). The first message on every stream
+    // is the unencrypted name-binding header produced by
+    // pigeon_encode_stream_header(); subsequent messages are AEAD-
+    // encrypted by pigeon_session_*_send and decrypted by the matching
+    // _recv on the peer.
+
+    // Open a new bidirectional stream. Returns 0 on success and writes
+    // the stream handle to *out_handle.
+    int (*open_stream)(void *userdata, pigeon_stream_handle **out_handle);
+    // Accept the next incoming bidirectional stream from the peer.
+    // Blocks until a stream arrives or the transport is closed.
+    int (*accept_stream)(void *userdata, pigeon_stream_handle **out_handle);
+    // Send a length-prefixed message on a specific stream.
+    int (*send_on_stream)(void *userdata, pigeon_stream_handle *handle,
+                          const uint8_t *data, size_t len);
+    // Receive the next length-prefixed message on a specific stream.
+    int (*recv_on_stream)(void *userdata, pigeon_stream_handle *handle,
+                          uint8_t *buf, size_t buf_len, size_t *out_len);
+    // Close a specific stream.
+    int (*close_stream)(void *userdata, pigeon_stream_handle *handle);
 } pigeon_transport;
 
 // --- Client context ---
@@ -227,6 +270,126 @@ int pigeon_decode_datagram(pigeon_channel *ch,
                            uint32_t *client_tag,
                            uint64_t *channel_id,
                            uint8_t *payload_buf, size_t payload_buf_len);
+
+// --- Multi-channel session API (post-T22) ---
+//
+// A pigeon_session is a single peer-to-peer association: backend ↔
+// one paired client (or vice-versa from the client side). It owns the
+// AEAD channel derived from the PairingRecord, the role-discriminator
+// (backend/client) and the relay-assigned clientTag (backend side
+// only), plus a small fixed-size table of pre-declared datagram
+// channels (name → varint id, agreed by both peers up-front). Streams
+// are opened on demand and live as long as the underlying transport
+// stream.
+//
+// This API does NOT include a pigeon_listener (multi-client demux on
+// the backend side); that's a separate concern that needs the
+// transport's accept_stream loop to dispatch by clientTag. For now,
+// pigeon_session is constructed by application code that knows whether
+// it's the backend or client side.
+
+#define PIGEON_MAX_DATAGRAM_CHANNELS 16
+#define PIGEON_MAX_NAME_LEN 64
+
+typedef struct {
+    char     name[PIGEON_MAX_NAME_LEN];
+    uint64_t channel_id;
+} pigeon_dgchannel_def;
+
+typedef struct {
+    // PairingRecord-derived AEAD channel. Encrypts every stream message
+    // (after the unencrypted name-binding header) and every datagram
+    // payload (before the optional clientTag prefix).
+    pigeon_channel channel;
+
+    // Role discriminator. is_backend == true means this Session is the
+    // server-side half of the pair; outbound stream/datagram framing
+    // includes the 4-byte clientTag prefix the relay routes by.
+    bool          is_backend;
+    uint32_t      client_tag;
+
+    // Transport vtable + opaque userdata.
+    pigeon_transport transport;
+
+    // Pre-declared datagram channels.
+    pigeon_dgchannel_def datagrams[PIGEON_MAX_DATAGRAM_CHANNELS];
+    size_t               datagram_count;
+} pigeon_session;
+
+typedef struct {
+    pigeon_session       *session;
+    pigeon_stream_handle *handle;
+    char                  name[PIGEON_MAX_NAME_LEN];
+} pigeon_stream;
+
+typedef struct {
+    pigeon_session *session;
+    uint64_t        channel_id;
+    char            name[PIGEON_MAX_NAME_LEN];
+} pigeon_datagram;
+
+// Initialise a session. Copies the transport vtable. Channel must
+// already be initialised (e.g. via pigeon_channel_init from
+// PairingRecord-derived send/recv keys).
+//
+// Returns 0 on success, -1 if validation fails (duplicate datagram ids,
+// names too long, etc.). The datagram-channel list is the pre-agreed
+// (name, id) mapping; both peers must declare an identical list.
+int pigeon_session_init(pigeon_session *s,
+                        const pigeon_transport *transport,
+                        const pigeon_channel *channel,
+                        bool is_backend,
+                        uint32_t client_tag,
+                        const pigeon_dgchannel_def *datagrams,
+                        size_t datagram_count);
+
+// Open a fresh named stream toward the peer. Writes the
+// [optional 4-byte tag][varint name-len][name] header as the first
+// message on the new stream. Returns 0 on success.
+int pigeon_session_open_stream(pigeon_session *s,
+                               const char *name,
+                               pigeon_stream *out_stream);
+
+// Look up a pre-declared datagram channel by name. Returns 0 on
+// success and populates *out, -1 if the name isn't in the session's
+// datagram-channel list.
+int pigeon_session_get_datagram(pigeon_session *s,
+                                const char *name,
+                                pigeon_datagram *out);
+
+// AEAD-encrypt and send one application-level message on the stream.
+// Returns 0 on success, -1 on transport or encryption error.
+int pigeon_stream_send(pigeon_stream *s,
+                       const uint8_t *msg, size_t msg_len);
+
+// Receive the next application-level message on the stream. AEAD-
+// decrypts and copies the plaintext to `buf`. Returns the plaintext
+// length, or -1 on transport / decryption error.
+int pigeon_stream_recv(pigeon_stream *s,
+                       uint8_t *buf, size_t buf_len);
+
+// Close the stream's underlying transport handle.
+int pigeon_stream_close(pigeon_stream *s);
+
+// Send one datagram on the named channel. Wraps with the post-T22
+// framing (AEAD([varint id][payload]) + optional 4-byte tag prefix on
+// backend side). Returns 0 on success.
+int pigeon_datagram_send(pigeon_datagram *d,
+                         const uint8_t *payload, size_t payload_len);
+
+// Receive the next datagram on the connection's datagram channel.
+// AEAD-decrypts, parses the channel-id, and — if the channel-id
+// matches the requested datagram — copies the application payload to
+// `buf` and returns its length. If the channel-id doesn't match,
+// returns 0 (the caller should re-dispatch this datagram). Returns -1
+// on framing or AEAD error.
+//
+// Application code that wants per-channel queues should run a single
+// pump on the connection's datagram channel and demultiplex into
+// per-channel buffers; pigeon_datagram_recv is a single-channel
+// convenience for tests and simple client-side patterns.
+int pigeon_datagram_recv(pigeon_datagram *d,
+                         uint8_t *buf, size_t buf_len);
 
 // --- PairingRecord serialisation ---
 // Fixed-schema, zero-alloc format:
