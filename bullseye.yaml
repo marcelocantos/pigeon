@@ -827,10 +827,11 @@ targets:
     discovered: 2026-04-30
   T31:
     name: TypeScript relay client ported to post-T22 wire protocol
-    status: identified
+    status: achieved
     value: 0.0
     cost: 0.0
     showcase: true
+    demonstration: 'TypeScript browser SDK rebuilt on the native WebTransport API, dropping Node-side e2e tests (relay.e2e.ts and relay.local.e2e.ts deleted; Node SDK reserved for a future, possibly-different implementation per D3). web/src/relay.ts now exposes Session/Stream/Datagram matching the Go shape: register-mux client wire (empty-name primary, named sub-streams), AEAD-encrypted application messages, AEAD([varint channel-id][payload]) datagrams. New web/src/relay.test.ts adds 26 wire-format unit tests pinning the same byte vectors as c/test/test_pigeon.c::test_stream_header and ::test_datagram_framing — three independent implementations (Go native, C, TS) all agree on the same bytes by construction. tsconfig.json gains "DOM" lib so WebTransport types resolve. Makefile (test-web target and bullseye web step) updated to include relay.test.ts. make test-web: 56/56 pass; make bullseye: 9/9 green ~10s.'
     acceptance:
     - web/src/relay.ts speaks register-mux + named streams + tagged datagrams over WebTransport.
     - web/src/relay.e2e.ts (or relay.local.e2e.ts) is in the default `make test-web` run and passes against an in-process Go relay.
@@ -839,6 +840,7 @@ targets:
     - T29
     origin: part of the T26..T31 roadmap
     discovered: 2026-04-30
+    achieved: 2026-04-30
   T32:
     name: 'C SDK at full post-T22 wire parity: register-mux, multi-client Listener, named streams, AEAD-channel-id datagrams, pairing ceremony driven from generated FSM'
     status: identified
