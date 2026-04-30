@@ -12,313 +12,190 @@
 
 
 
-void pigeon_server_pairing_machine_init(pigeon_server_pairing_machine *m)
+void pigeon_acceptor_machine_init(pigeon_acceptor_machine *m)
 {
 	memset(m, 0, sizeof(*m));
-	m->state = PIGEON_SERVER_PAIRING_IDLE;
-	m->current_token = "none";
-	m->server_ecdh_pub = "none";
-	m->received_client_pub = "none";
-	m->code_attempts = 0;
-	m->device_secret = "none";
+	m->state = PIGEON_ACCEPTOR_IDLE;
+	m->acceptor_eph_pub = "none";
+	m->acceptor_received_eph_pub = "none";
+	m->acceptor_received_identity = "none";
+	m->acceptor_received_instance = "none";
+	m->acceptor_user_confirmed = "false";
+	m->acceptor_received_confirm = "false";
 }
 
-int pigeon_server_pairing_handle_message(pigeon_server_pairing_machine *m, pairing_ceremony_msg_type msg)
+int pigeon_acceptor_handle_message(pigeon_acceptor_machine *m, pairing_ceremony_msg_type msg)
 {
-	if (m->state == PIGEON_SERVER_PAIRING_IDLE && msg == PIGEON_MSG_PAIR_BEGIN) {
-		if (m->actions[PIGEON_ACTION_GENERATE_TOKEN]) {
-			int err = m->actions[PIGEON_ACTION_GENERATE_TOKEN](m->userdata);
+	if (m->state == PIGEON_ACCEPTOR_WAITING_FOR_HELLO && msg == PIGEON_MSG_HELLO) {
+		if (m->actions[PIGEON_ACTION_DERIVE_CODE]) {
+			int err = m->actions[PIGEON_ACTION_DERIVE_CODE](m->userdata);
 			if (err) return -err;
 		}
-		m->current_token = "tok_1";
-		if (m->on_change) m->on_change("current_token", m->userdata);
-		// active_tokens: active_tokens \union {"tok_1"} (set by action)
-		m->state = PIGEON_SERVER_PAIRING_GENERATE_TOKEN;
+		// acceptor_received_eph_pub: recv_msg.eph_pub (set by action)
+		// acceptor_received_identity: recv_msg.identity_pub (set by action)
+		// acceptor_received_instance: recv_msg.instance_id (set by action)
+		// acceptor_code: DeriveCode(acceptor_eph_pub, recv_msg.eph_pub) (set by action)
+		m->state = PIGEON_ACCEPTOR_DERIVING_CODE;
 		return 1;
 	}
-	if (m->state == PIGEON_SERVER_PAIRING_WAITING_FOR_CLIENT && msg == PIGEON_MSG_PAIR_HELLO && m->guards[PIGEON_GUARD_TOKEN_VALID] && m->guards[PIGEON_GUARD_TOKEN_VALID](m->userdata)) {
-		if (m->actions[PIGEON_ACTION_DERIVE_SECRET]) {
-			int err = m->actions[PIGEON_ACTION_DERIVE_SECRET](m->userdata);
+	if (m->state == PIGEON_ACCEPTOR_AWAITING_PEER_CONFIRM && msg == PIGEON_MSG_CONFIRM_TO_ACCEPTOR) {
+		if (m->actions[PIGEON_ACTION_STORE_RECORD]) {
+			int err = m->actions[PIGEON_ACTION_STORE_RECORD](m->userdata);
 			if (err) return -err;
 		}
-		// received_client_pub: recv_msg.pubkey (set by action)
-		m->server_ecdh_pub = "server_pub";
-		if (m->on_change) m->on_change("server_ecdh_pub", m->userdata);
-		// server_shared_key: DeriveKey("server_pub", recv_msg.pubkey) (set by action)
-		// server_code: DeriveCode("server_pub", recv_msg.pubkey) (set by action)
-		// active_tokens: active_tokens \ {current_token} (set by action)
-		// used_tokens: used_tokens \union {current_token} (set by action)
-		m->state = PIGEON_SERVER_PAIRING_DERIVE_SECRET;
-		return 1;
-	}
-	if (m->state == PIGEON_SERVER_PAIRING_WAITING_FOR_CLIENT && msg == PIGEON_MSG_PAIR_HELLO && m->guards[PIGEON_GUARD_TOKEN_INVALID] && m->guards[PIGEON_GUARD_TOKEN_INVALID](m->userdata)) {
-		m->state = PIGEON_SERVER_PAIRING_IDLE;
-		return 1;
-	}
-	if (m->state == PIGEON_SERVER_PAIRING_WAITING_FOR_CODE && msg == PIGEON_MSG_CODE_SUBMIT) {
-		// received_code: recv_msg.code (set by action)
-		m->state = PIGEON_SERVER_PAIRING_VALIDATE_CODE;
+		m->acceptor_received_confirm = "true";
+		if (m->on_change) m->on_change("acceptor_received_confirm", m->userdata);
+		m->state = PIGEON_ACCEPTOR_PAIRED;
 		return 1;
 	}
 	return 0;
 }
 
-int pigeon_server_pairing_step(pigeon_server_pairing_machine *m, pairing_ceremony_event_id event)
+int pigeon_acceptor_step(pigeon_acceptor_machine *m, pairing_ceremony_event_id event)
 {
-	if (m->state == PIGEON_SERVER_PAIRING_GENERATE_TOKEN && event == PIGEON_EVENT_TOKEN_CREATED) {
+	if (m->state == PIGEON_ACCEPTOR_IDLE && event == PIGEON_EVENT_PAIR_BEGIN) {
+		if (m->actions[PIGEON_ACTION_GEN_EPHEMERAL]) {
+			int err = m->actions[PIGEON_ACTION_GEN_EPHEMERAL](m->userdata);
+			if (err) return -err;
+		}
+		m->acceptor_eph_pub = "acceptor_eph";
+		if (m->on_change) m->on_change("acceptor_eph_pub", m->userdata);
+		m->state = PIGEON_ACCEPTOR_GENERATING_EPHEMERAL;
+		return 1;
+	}
+	if (m->state == PIGEON_ACCEPTOR_GENERATING_EPHEMERAL && event == PIGEON_EVENT_EPHEMERAL_READY) {
 		if (m->actions[PIGEON_ACTION_REGISTER_RELAY]) {
 			int err = m->actions[PIGEON_ACTION_REGISTER_RELAY](m->userdata);
 			if (err) return -err;
 		}
-		m->state = PIGEON_SERVER_PAIRING_REGISTER_RELAY;
+		m->state = PIGEON_ACCEPTOR_REGISTERING_RELAY;
 		return 1;
 	}
-	if (m->state == PIGEON_SERVER_PAIRING_REGISTER_RELAY && event == PIGEON_EVENT_RELAY_REGISTERED) {
-		m->state = PIGEON_SERVER_PAIRING_WAITING_FOR_CLIENT;
-		return 1;
-	}
-	if (m->state == PIGEON_SERVER_PAIRING_DERIVE_SECRET && event == PIGEON_EVENT_ECDH_COMPLETE) {
-		m->state = PIGEON_SERVER_PAIRING_SEND_ACK;
-		return 1;
-	}
-	if (m->state == PIGEON_SERVER_PAIRING_SEND_ACK && event == PIGEON_EVENT_SIGNAL_CODE_DISPLAY) {
-		m->state = PIGEON_SERVER_PAIRING_WAITING_FOR_CODE;
-		return 1;
-	}
-	if (m->state == PIGEON_SERVER_PAIRING_VALIDATE_CODE && event == PIGEON_EVENT_CHECK_CODE && m->guards[PIGEON_GUARD_CODE_CORRECT] && m->guards[PIGEON_GUARD_CODE_CORRECT](m->userdata)) {
-		m->state = PIGEON_SERVER_PAIRING_STORE_PAIRED;
-		return 1;
-	}
-	if (m->state == PIGEON_SERVER_PAIRING_VALIDATE_CODE && event == PIGEON_EVENT_CHECK_CODE && m->guards[PIGEON_GUARD_CODE_WRONG] && m->guards[PIGEON_GUARD_CODE_WRONG](m->userdata)) {
-		m->code_attempts = m->code_attempts + 1;
-		if (m->on_change) m->on_change("code_attempts", m->userdata);
-		m->state = PIGEON_SERVER_PAIRING_IDLE;
-		return 1;
-	}
-	if (m->state == PIGEON_SERVER_PAIRING_STORE_PAIRED && event == PIGEON_EVENT_FINALISE) {
-		if (m->actions[PIGEON_ACTION_STORE_DEVICE]) {
-			int err = m->actions[PIGEON_ACTION_STORE_DEVICE](m->userdata);
+	if (m->state == PIGEON_ACCEPTOR_REGISTERING_RELAY && event == PIGEON_EVENT_RELAY_REGISTERED) {
+		if (m->actions[PIGEON_ACTION_EMIT_TOKEN]) {
+			int err = m->actions[PIGEON_ACTION_EMIT_TOKEN](m->userdata);
 			if (err) return -err;
 		}
-		m->device_secret = "dev_secret_1";
-		if (m->on_change) m->on_change("device_secret", m->userdata);
-		// paired_devices: paired_devices \union {"device_1"} (set by action)
-		m->state = PIGEON_SERVER_PAIRING_PAIRING_COMPLETE;
+		m->state = PIGEON_ACCEPTOR_WAITING_FOR_HELLO;
+		return 1;
+	}
+	if (m->state == PIGEON_ACCEPTOR_DERIVING_CODE && event == PIGEON_EVENT_CODE_READY) {
+		m->state = PIGEON_ACCEPTOR_AWAITING_USER_CONFIRM;
+		return 1;
+	}
+	if (m->state == PIGEON_ACCEPTOR_AWAITING_USER_CONFIRM && event == PIGEON_EVENT_USER_CONFIRM) {
+		m->acceptor_user_confirmed = "true";
+		if (m->on_change) m->on_change("acceptor_user_confirmed", m->userdata);
+		m->state = PIGEON_ACCEPTOR_AWAITING_PEER_CONFIRM;
+		return 1;
+	}
+	if (m->state == PIGEON_ACCEPTOR_AWAITING_USER_CONFIRM && event == PIGEON_EVENT_USER_CANCEL) {
+		m->state = PIGEON_ACCEPTOR_ABORTED;
+		return 1;
+	}
+	if (m->state == PIGEON_ACCEPTOR_AWAITING_PEER_CONFIRM && event == PIGEON_EVENT_USER_CANCEL) {
+		m->state = PIGEON_ACCEPTOR_ABORTED;
 		return 1;
 	}
 	return 0;
 }
 
-void pigeon_server_auth_machine_init(pigeon_server_auth_machine *m)
+void pigeon_initiator_machine_init(pigeon_initiator_machine *m)
 {
 	memset(m, 0, sizeof(*m));
-	m->state = PIGEON_SERVER_AUTH_IDLE;
-	m->received_device_id = "none";
-	m->received_auth_nonce = "none";
+	m->state = PIGEON_INITIATOR_IDLE;
+	m->initiator_eph_pub = "none";
+	m->received_acceptor_eph_pub = "none";
+	m->received_acceptor_identity = "none";
+	m->received_acceptor_instance = "none";
+	m->initiator_received_eph_pub = "none";
+	m->initiator_received_identity = "none";
+	m->initiator_received_instance = "none";
+	m->initiator_user_confirmed = "false";
+	m->initiator_received_confirm = "false";
 }
 
-int pigeon_server_auth_handle_message(pigeon_server_auth_machine *m, pairing_ceremony_msg_type msg)
+int pigeon_initiator_handle_message(pigeon_initiator_machine *m, pairing_ceremony_msg_type msg)
 {
-	if (m->state == PIGEON_SERVER_AUTH_PAIRED && msg == PIGEON_MSG_AUTH_REQUEST) {
-		// received_device_id: recv_msg.device_id (set by action)
-		// received_auth_nonce: recv_msg.nonce (set by action)
-		m->state = PIGEON_SERVER_AUTH_AUTH_CHECK;
-		return 1;
-	}
-	return 0;
-}
-
-int pigeon_server_auth_step(pigeon_server_auth_machine *m, pairing_ceremony_event_id event)
-{
-	if (m->state == PIGEON_SERVER_AUTH_IDLE && event == PIGEON_EVENT_CREDENTIAL_READY) {
-		m->state = PIGEON_SERVER_AUTH_PAIRED;
-		return 1;
-	}
-	if (m->state == PIGEON_SERVER_AUTH_AUTH_CHECK && event == PIGEON_EVENT_VERIFY && m->guards[PIGEON_GUARD_DEVICE_KNOWN] && m->guards[PIGEON_GUARD_DEVICE_KNOWN](m->userdata)) {
-		if (m->actions[PIGEON_ACTION_VERIFY_DEVICE]) {
-			int err = m->actions[PIGEON_ACTION_VERIFY_DEVICE](m->userdata);
+	if (m->state == PIGEON_INITIATOR_AWAITING_WELCOME && msg == PIGEON_MSG_WELCOME) {
+		if (m->actions[PIGEON_ACTION_DERIVE_CODE]) {
+			int err = m->actions[PIGEON_ACTION_DERIVE_CODE](m->userdata);
 			if (err) return -err;
 		}
-		// auth_nonces_used: auth_nonces_used \union {received_auth_nonce} (set by action)
-		m->state = PIGEON_SERVER_AUTH_SESSION_ACTIVE;
+		// initiator_received_eph_pub: recv_msg.eph_pub (set by action)
+		// initiator_received_identity: recv_msg.identity_pub (set by action)
+		// initiator_received_instance: recv_msg.instance_id (set by action)
+		// initiator_code: DeriveCode(initiator_eph_pub, recv_msg.eph_pub) (set by action)
+		m->state = PIGEON_INITIATOR_DERIVING_CODE;
 		return 1;
 	}
-	if (m->state == PIGEON_SERVER_AUTH_AUTH_CHECK && event == PIGEON_EVENT_VERIFY && m->guards[PIGEON_GUARD_DEVICE_UNKNOWN] && m->guards[PIGEON_GUARD_DEVICE_UNKNOWN](m->userdata)) {
-		m->state = PIGEON_SERVER_AUTH_IDLE;
-		return 1;
-	}
-	if (m->state == PIGEON_SERVER_AUTH_SESSION_ACTIVE && event == PIGEON_EVENT_DISCONNECT) {
-		m->state = PIGEON_SERVER_AUTH_PAIRED;
-		return 1;
-	}
-	return 0;
-}
-
-void pigeon_server_composite_init(pigeon_server_composite *c)
-{
-	memset(c, 0, sizeof(*c));
-	pigeon_server_pairing_machine_init(&c->pairing);
-	pigeon_server_auth_machine_init(&c->auth);
-}
-
-int pigeon_server_route(pigeon_server_composite *c, const char *from, pairing_ceremony_event_id event)
-{
-	if (strcmp(from, "pairing") == 0 && event == PIGEON_EVENT_PAIRED) {
-		pigeon_server_auth_step(&c->auth, PIGEON_EVENT_CREDENTIAL_READY);
-	}
-	return 0;
-}
-
-void pigeon_ios_pairing_machine_init(pigeon_ios_pairing_machine *m)
-{
-	memset(m, 0, sizeof(*m));
-	m->state = PIGEON_APP_PAIRING_IDLE;
-	m->received_server_pub = "none";
-}
-
-int pigeon_ios_pairing_handle_message(pigeon_ios_pairing_machine *m, pairing_ceremony_msg_type msg)
-{
-	if (m->state == PIGEON_APP_PAIRING_WAIT_ACK && msg == PIGEON_MSG_PAIR_HELLO_ACK) {
-		if (m->actions[PIGEON_ACTION_DERIVE_SECRET]) {
-			int err = m->actions[PIGEON_ACTION_DERIVE_SECRET](m->userdata);
+	if (m->state == PIGEON_INITIATOR_AWAITING_PEER_CONFIRM && msg == PIGEON_MSG_CONFIRM_TO_INITIATOR) {
+		if (m->actions[PIGEON_ACTION_STORE_RECORD]) {
+			int err = m->actions[PIGEON_ACTION_STORE_RECORD](m->userdata);
 			if (err) return -err;
 		}
-		// received_server_pub: recv_msg.pubkey (set by action)
-		// client_shared_key: DeriveKey("client_pub", recv_msg.pubkey) (set by action)
-		m->state = PIGEON_APP_PAIRING_E2E_READY;
+		m->initiator_received_confirm = "true";
+		if (m->on_change) m->on_change("initiator_received_confirm", m->userdata);
+		m->state = PIGEON_INITIATOR_PAIRED;
 		return 1;
 	}
-	if (m->state == PIGEON_APP_PAIRING_E2E_READY && msg == PIGEON_MSG_PAIR_CONFIRM) {
-		// ios_code: DeriveCode(received_server_pub, "client_pub") (set by action)
-		m->state = PIGEON_APP_PAIRING_SHOW_CODE;
-		return 1;
-	}
-	if (m->state == PIGEON_APP_PAIRING_WAIT_PAIR_COMPLETE && msg == PIGEON_MSG_PAIR_COMPLETE) {
-		if (m->actions[PIGEON_ACTION_STORE_SECRET]) {
-			int err = m->actions[PIGEON_ACTION_STORE_SECRET](m->userdata);
+	return 0;
+}
+
+int pigeon_initiator_step(pigeon_initiator_machine *m, pairing_ceremony_event_id event)
+{
+	if (m->state == PIGEON_INITIATOR_IDLE && event == PIGEON_EVENT_TOKEN_RECEIVED) {
+		if (m->actions[PIGEON_ACTION_DECODE_TOKEN]) {
+			int err = m->actions[PIGEON_ACTION_DECODE_TOKEN](m->userdata);
 			if (err) return -err;
 		}
-		m->state = PIGEON_APP_PAIRING_PAIRING_COMPLETE;
+		m->received_acceptor_eph_pub = "acceptor_eph";
+		if (m->on_change) m->on_change("received_acceptor_eph_pub", m->userdata);
+		m->received_acceptor_identity = "acceptor_id";
+		if (m->on_change) m->on_change("received_acceptor_identity", m->userdata);
+		m->received_acceptor_instance = "acceptor_instance";
+		if (m->on_change) m->on_change("received_acceptor_instance", m->userdata);
+		m->state = PIGEON_INITIATOR_DECODING_TOKEN;
 		return 1;
 	}
-	return 0;
-}
-
-int pigeon_ios_pairing_step(pigeon_ios_pairing_machine *m, pairing_ceremony_event_id event)
-{
-	if (m->state == PIGEON_APP_PAIRING_IDLE && event == PIGEON_EVENT_USER_SCANS_QR) {
-		m->state = PIGEON_APP_PAIRING_SCAN_QR;
-		return 1;
-	}
-	if (m->state == PIGEON_APP_PAIRING_SCAN_QR && event == PIGEON_EVENT_QR_PARSED) {
-		m->state = PIGEON_APP_PAIRING_CONNECT_RELAY;
-		return 1;
-	}
-	if (m->state == PIGEON_APP_PAIRING_CONNECT_RELAY && event == PIGEON_EVENT_RELAY_CONNECTED) {
-		m->state = PIGEON_APP_PAIRING_GEN_KEY_PAIR;
-		return 1;
-	}
-	if (m->state == PIGEON_APP_PAIRING_GEN_KEY_PAIR && event == PIGEON_EVENT_KEY_PAIR_GENERATED) {
-		if (m->actions[PIGEON_ACTION_SEND_PAIR_HELLO]) {
-			int err = m->actions[PIGEON_ACTION_SEND_PAIR_HELLO](m->userdata);
+	if (m->state == PIGEON_INITIATOR_DECODING_TOKEN && event == PIGEON_EVENT_TOKEN_DECODED) {
+		if (m->actions[PIGEON_ACTION_GEN_EPHEMERAL]) {
+			int err = m->actions[PIGEON_ACTION_GEN_EPHEMERAL](m->userdata);
 			if (err) return -err;
 		}
-		m->state = PIGEON_APP_PAIRING_WAIT_ACK;
+		m->initiator_eph_pub = "initiator_eph";
+		if (m->on_change) m->on_change("initiator_eph_pub", m->userdata);
+		m->state = PIGEON_INITIATOR_GENERATING_EPHEMERAL;
 		return 1;
 	}
-	if (m->state == PIGEON_APP_PAIRING_SHOW_CODE && event == PIGEON_EVENT_CODE_DISPLAYED) {
-		m->state = PIGEON_APP_PAIRING_WAIT_PAIR_COMPLETE;
+	if (m->state == PIGEON_INITIATOR_GENERATING_EPHEMERAL && event == PIGEON_EVENT_EPHEMERAL_READY) {
+		if (m->actions[PIGEON_ACTION_DIAL_RELAY]) {
+			int err = m->actions[PIGEON_ACTION_DIAL_RELAY](m->userdata);
+			if (err) return -err;
+		}
+		m->state = PIGEON_INITIATOR_CONNECTING_RELAY;
 		return 1;
 	}
-	return 0;
-}
-
-void pigeon_ios_auth_machine_init(pigeon_ios_auth_machine *m)
-{
-	memset(m, 0, sizeof(*m));
-	m->state = PIGEON_APP_AUTH_IDLE;
-}
-
-int pigeon_ios_auth_handle_message(pigeon_ios_auth_machine *m, pairing_ceremony_msg_type msg)
-{
-	if (m->state == PIGEON_APP_AUTH_SEND_AUTH && msg == PIGEON_MSG_AUTH_OK) {
-		m->state = PIGEON_APP_AUTH_SESSION_ACTIVE;
+	if (m->state == PIGEON_INITIATOR_CONNECTING_RELAY && event == PIGEON_EVENT_RELAY_CONNECTED) {
+		m->state = PIGEON_INITIATOR_AWAITING_WELCOME;
 		return 1;
 	}
-	return 0;
-}
-
-int pigeon_ios_auth_step(pigeon_ios_auth_machine *m, pairing_ceremony_event_id event)
-{
-	if (m->state == PIGEON_APP_AUTH_IDLE && event == PIGEON_EVENT_CREDENTIAL_READY) {
-		m->state = PIGEON_APP_AUTH_PAIRED;
+	if (m->state == PIGEON_INITIATOR_DERIVING_CODE && event == PIGEON_EVENT_CODE_READY) {
+		m->state = PIGEON_INITIATOR_AWAITING_USER_CONFIRM;
 		return 1;
 	}
-	if (m->state == PIGEON_APP_AUTH_PAIRED && event == PIGEON_EVENT_APP_LAUNCH) {
-		m->state = PIGEON_APP_AUTH_RECONNECT;
+	if (m->state == PIGEON_INITIATOR_AWAITING_USER_CONFIRM && event == PIGEON_EVENT_USER_CONFIRM) {
+		m->initiator_user_confirmed = "true";
+		if (m->on_change) m->on_change("initiator_user_confirmed", m->userdata);
+		m->state = PIGEON_INITIATOR_AWAITING_PEER_CONFIRM;
 		return 1;
 	}
-	if (m->state == PIGEON_APP_AUTH_RECONNECT && event == PIGEON_EVENT_RELAY_CONNECTED) {
-		m->state = PIGEON_APP_AUTH_SEND_AUTH;
+	if (m->state == PIGEON_INITIATOR_AWAITING_USER_CONFIRM && event == PIGEON_EVENT_USER_CANCEL) {
+		m->state = PIGEON_INITIATOR_ABORTED;
 		return 1;
 	}
-	if (m->state == PIGEON_APP_AUTH_SESSION_ACTIVE && event == PIGEON_EVENT_DISCONNECT) {
-		m->state = PIGEON_APP_AUTH_PAIRED;
-		return 1;
-	}
-	return 0;
-}
-
-void pigeon_ios_composite_init(pigeon_ios_composite *c)
-{
-	memset(c, 0, sizeof(*c));
-	pigeon_ios_pairing_machine_init(&c->pairing);
-	pigeon_ios_auth_machine_init(&c->auth);
-}
-
-int pigeon_ios_route(pigeon_ios_composite *c, const char *from, pairing_ceremony_event_id event)
-{
-	if (strcmp(from, "pairing") == 0 && event == PIGEON_EVENT_PAIRED) {
-		pigeon_ios_auth_step(&c->auth, PIGEON_EVENT_CREDENTIAL_READY);
-	}
-	return 0;
-}
-
-void pigeon_cli_machine_init(pigeon_cli_machine *m)
-{
-	memset(m, 0, sizeof(*m));
-	m->state = PIGEON_CLI_IDLE;
-}
-
-int pigeon_cli_handle_message(pigeon_cli_machine *m, pairing_ceremony_msg_type msg)
-{
-	if (m->state == PIGEON_CLI_BEGIN_PAIR && msg == PIGEON_MSG_TOKEN_RESPONSE) {
-		m->state = PIGEON_CLI_SHOW_QR;
-		return 1;
-	}
-	if (m->state == PIGEON_CLI_SHOW_QR && msg == PIGEON_MSG_WAITING_FOR_CODE) {
-		m->state = PIGEON_CLI_PROMPT_CODE;
-		return 1;
-	}
-	if (m->state == PIGEON_CLI_SUBMIT_CODE && msg == PIGEON_MSG_PAIR_STATUS) {
-		m->state = PIGEON_CLI_DONE;
-		return 1;
-	}
-	return 0;
-}
-
-int pigeon_cli_step(pigeon_cli_machine *m, pairing_ceremony_event_id event)
-{
-	if (m->state == PIGEON_CLI_IDLE && event == PIGEON_EVENT_CLI_INIT) {
-		m->state = PIGEON_CLI_GET_KEY;
-		return 1;
-	}
-	if (m->state == PIGEON_CLI_GET_KEY && event == PIGEON_EVENT_KEY_STORED) {
-		m->state = PIGEON_CLI_BEGIN_PAIR;
-		return 1;
-	}
-	if (m->state == PIGEON_CLI_PROMPT_CODE && event == PIGEON_EVENT_USER_ENTERS_CODE) {
-		m->state = PIGEON_CLI_SUBMIT_CODE;
+	if (m->state == PIGEON_INITIATOR_AWAITING_PEER_CONFIRM && event == PIGEON_EVENT_USER_CANCEL) {
+		m->state = PIGEON_INITIATOR_ABORTED;
 		return 1;
 	}
 	return 0;

@@ -29,12 +29,15 @@ import (
 )
 
 func main() {
-	var rootPkg string
+	var rootPkg, rootOut string
 	args := os.Args[1:]
 	for len(args) > 0 && strings.HasPrefix(args[0], "--") {
-		if rest, ok := strings.CutPrefix(args[0], "--root-pkg="); ok {
-			rootPkg = rest
-		} else {
+		switch {
+		case strings.HasPrefix(args[0], "--root-pkg="):
+			rootPkg = strings.TrimPrefix(args[0], "--root-pkg=")
+		case strings.HasPrefix(args[0], "--root-out="):
+			rootOut = strings.TrimPrefix(args[0], "--root-out=")
+		default:
 			fmt.Fprintf(os.Stderr, "unknown flag: %s\n", args[0])
 			os.Exit(1)
 		}
@@ -165,16 +168,23 @@ func main() {
 	}
 
 	// Optional root-level Go file for a different package.
+	// --root-pkg=NAME emits a typed runtime machine in package NAME.
+	// --root-out=DIR (optional) puts the file under DIR (default: ".").
 	if rootPkg != "" {
+		dir := rootOut
+		if dir == "" {
+			dir = "."
+		}
+		outPath := filepath.Join(dir, lowerName+"_gen.go")
 		funcName := p.Name + "Protocol"
 		generators = append(generators, struct {
 			path string
 			gen  func() error
 		}{
-			path: lowerName + "_gen.go",
+			path: outPath,
 			gen: func() error {
 				return writeFile(
-					lowerName+"_gen.go",
+					outPath,
 					func(f *os.File) error {
 						return p.ExportGo(f, rootPkg, funcName)
 					},

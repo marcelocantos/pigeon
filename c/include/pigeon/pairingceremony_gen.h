@@ -9,138 +9,71 @@
 #include <stdbool.h>
 #include <stdint.h>
 
-// PairingCeremony server/pairing states.
+// PairingCeremony acceptor states.
 typedef enum {
-	PIGEON_SERVER_PAIRING_IDLE = 0,
-	PIGEON_SERVER_PAIRING_GENERATE_TOKEN,
-	PIGEON_SERVER_PAIRING_REGISTER_RELAY,
-	PIGEON_SERVER_PAIRING_WAITING_FOR_CLIENT,
-	PIGEON_SERVER_PAIRING_DERIVE_SECRET,
-	PIGEON_SERVER_PAIRING_SEND_ACK,
-	PIGEON_SERVER_PAIRING_WAITING_FOR_CODE,
-	PIGEON_SERVER_PAIRING_VALIDATE_CODE,
-	PIGEON_SERVER_PAIRING_STORE_PAIRED,
-	PIGEON_SERVER_PAIRING_PAIRING_COMPLETE,
-	PIGEON_SERVER_PAIRING_STATE_COUNT
-} pigeon_server_pairing_state;
+	PIGEON_ACCEPTOR_IDLE = 0,
+	PIGEON_ACCEPTOR_GENERATING_EPHEMERAL,
+	PIGEON_ACCEPTOR_REGISTERING_RELAY,
+	PIGEON_ACCEPTOR_WAITING_FOR_HELLO,
+	PIGEON_ACCEPTOR_DERIVING_CODE,
+	PIGEON_ACCEPTOR_AWAITING_USER_CONFIRM,
+	PIGEON_ACCEPTOR_AWAITING_PEER_CONFIRM,
+	PIGEON_ACCEPTOR_PAIRED,
+	PIGEON_ACCEPTOR_ABORTED,
+	PIGEON_ACCEPTOR_STATE_COUNT
+} pigeon_acceptor_state;
 
-// PairingCeremony server/auth states.
+// PairingCeremony initiator states.
 typedef enum {
-	PIGEON_SERVER_AUTH_IDLE = 0,
-	PIGEON_SERVER_AUTH_PAIRED,
-	PIGEON_SERVER_AUTH_AUTH_CHECK,
-	PIGEON_SERVER_AUTH_SESSION_ACTIVE,
-	PIGEON_SERVER_AUTH_STATE_COUNT
-} pigeon_server_auth_state;
-
-// PairingCeremony ios/pairing states.
-typedef enum {
-	PIGEON_APP_PAIRING_IDLE = 0,
-	PIGEON_APP_PAIRING_SCAN_QR,
-	PIGEON_APP_PAIRING_CONNECT_RELAY,
-	PIGEON_APP_PAIRING_GEN_KEY_PAIR,
-	PIGEON_APP_PAIRING_WAIT_ACK,
-	PIGEON_APP_PAIRING_E2E_READY,
-	PIGEON_APP_PAIRING_SHOW_CODE,
-	PIGEON_APP_PAIRING_WAIT_PAIR_COMPLETE,
-	PIGEON_APP_PAIRING_PAIRING_COMPLETE,
-	PIGEON_APP_PAIRING_STATE_COUNT
-} pigeon_ios_pairing_state;
-
-// PairingCeremony ios/auth states.
-typedef enum {
-	PIGEON_APP_AUTH_IDLE = 0,
-	PIGEON_APP_AUTH_PAIRED,
-	PIGEON_APP_AUTH_RECONNECT,
-	PIGEON_APP_AUTH_SEND_AUTH,
-	PIGEON_APP_AUTH_SESSION_ACTIVE,
-	PIGEON_APP_AUTH_STATE_COUNT
-} pigeon_ios_auth_state;
-
-// PairingCeremony cli states.
-typedef enum {
-	PIGEON_CLI_IDLE = 0,
-	PIGEON_CLI_GET_KEY,
-	PIGEON_CLI_BEGIN_PAIR,
-	PIGEON_CLI_SHOW_QR,
-	PIGEON_CLI_PROMPT_CODE,
-	PIGEON_CLI_SUBMIT_CODE,
-	PIGEON_CLI_DONE,
-	PIGEON_CLI_STATE_COUNT
-} pigeon_cli_state;
+	PIGEON_INITIATOR_IDLE = 0,
+	PIGEON_INITIATOR_DECODING_TOKEN,
+	PIGEON_INITIATOR_GENERATING_EPHEMERAL,
+	PIGEON_INITIATOR_CONNECTING_RELAY,
+	PIGEON_INITIATOR_AWAITING_WELCOME,
+	PIGEON_INITIATOR_DERIVING_CODE,
+	PIGEON_INITIATOR_AWAITING_USER_CONFIRM,
+	PIGEON_INITIATOR_AWAITING_PEER_CONFIRM,
+	PIGEON_INITIATOR_PAIRED,
+	PIGEON_INITIATOR_ABORTED,
+	PIGEON_INITIATOR_STATE_COUNT
+} pigeon_initiator_state;
 
 // PairingCeremony message types.
 typedef enum {
-	PIGEON_MSG_PAIR_BEGIN = 0,
-	PIGEON_MSG_TOKEN_RESPONSE,
-	PIGEON_MSG_PAIR_HELLO,
-	PIGEON_MSG_PAIR_HELLO_ACK,
-	PIGEON_MSG_PAIR_CONFIRM,
-	PIGEON_MSG_WAITING_FOR_CODE,
-	PIGEON_MSG_CODE_SUBMIT,
-	PIGEON_MSG_PAIR_COMPLETE,
-	PIGEON_MSG_PAIR_STATUS,
-	PIGEON_MSG_AUTH_REQUEST,
-	PIGEON_MSG_AUTH_OK,
+	PIGEON_MSG_HELLO = 0,
+	PIGEON_MSG_WELCOME,
+	PIGEON_MSG_CONFIRM_TO_INITIATOR,
+	PIGEON_MSG_CONFIRM_TO_ACCEPTOR,
 	PIGEON_MSG_COUNT
 } pairing_ceremony_msg_type;
 
-// PairingCeremony guards.
-typedef enum {
-	PIGEON_GUARD_TOKEN_VALID = 0,
-	PIGEON_GUARD_TOKEN_INVALID,
-	PIGEON_GUARD_CODE_CORRECT,
-	PIGEON_GUARD_CODE_WRONG,
-	PIGEON_GUARD_DEVICE_KNOWN,
-	PIGEON_GUARD_DEVICE_UNKNOWN,
-	PIGEON_GUARD_NONCE_FRESH,
-	PIGEON_GUARD_COUNT
-} pairing_ceremony_guard_id;
-
 // PairingCeremony actions.
 typedef enum {
-	PIGEON_ACTION_GENERATE_TOKEN = 0,
+	PIGEON_ACTION_GEN_EPHEMERAL = 0,
 	PIGEON_ACTION_REGISTER_RELAY,
-	PIGEON_ACTION_DERIVE_SECRET,
-	PIGEON_ACTION_STORE_DEVICE,
-	PIGEON_ACTION_VERIFY_DEVICE,
-	PIGEON_ACTION_SEND_PAIR_HELLO,
-	PIGEON_ACTION_STORE_SECRET,
+	PIGEON_ACTION_EMIT_TOKEN,
+	PIGEON_ACTION_DERIVE_CODE,
+	PIGEON_ACTION_STORE_RECORD,
+	PIGEON_ACTION_DECODE_TOKEN,
+	PIGEON_ACTION_DIAL_RELAY,
 	PIGEON_ACTION_COUNT
 } pairing_ceremony_action_id;
 
 // PairingCeremony events.
 typedef enum {
-	PIGEON_EVENT_TOKEN_CREATED = 0,
+	PIGEON_EVENT_PAIR_BEGIN = 0,
+	PIGEON_EVENT_EPHEMERAL_READY,
 	PIGEON_EVENT_RELAY_REGISTERED,
-	PIGEON_EVENT_ECDH_COMPLETE,
-	PIGEON_EVENT_SIGNAL_CODE_DISPLAY,
-	PIGEON_EVENT_CHECK_CODE,
-	PIGEON_EVENT_FINALISE,
-	PIGEON_EVENT_CREDENTIAL_READY,
-	PIGEON_EVENT_VERIFY,
-	PIGEON_EVENT_DISCONNECT,
-	PIGEON_EVENT_USER_SCANS_QR,
-	PIGEON_EVENT_QR_PARSED,
+	PIGEON_EVENT_CODE_READY,
+	PIGEON_EVENT_USER_CONFIRM,
+	PIGEON_EVENT_USER_CANCEL,
+	PIGEON_EVENT_TOKEN_RECEIVED,
+	PIGEON_EVENT_TOKEN_DECODED,
 	PIGEON_EVENT_RELAY_CONNECTED,
-	PIGEON_EVENT_KEY_PAIR_GENERATED,
-	PIGEON_EVENT_CODE_DISPLAYED,
-	PIGEON_EVENT_APP_LAUNCH,
-	PIGEON_EVENT_CLI_INIT,
-	PIGEON_EVENT_KEY_STORED,
-	PIGEON_EVENT_USER_ENTERS_CODE,
-	PIGEON_EVENT_RECV_PAIR_BEGIN,
-	PIGEON_EVENT_RECV_PAIR_HELLO,
-	PIGEON_EVENT_RECV_CODE_SUBMIT,
-	PIGEON_EVENT_RECV_AUTH_REQUEST,
-	PIGEON_EVENT_RECV_PAIR_HELLO_ACK,
-	PIGEON_EVENT_RECV_PAIR_CONFIRM,
-	PIGEON_EVENT_RECV_PAIR_COMPLETE,
-	PIGEON_EVENT_RECV_AUTH_OK,
-	PIGEON_EVENT_RECV_TOKEN_RESPONSE,
-	PIGEON_EVENT_RECV_WAITING_FOR_CODE,
-	PIGEON_EVENT_RECV_PAIR_STATUS,
-	PIGEON_EVENT_PAIRED,
+	PIGEON_EVENT_RECV_HELLO,
+	PIGEON_EVENT_RECV_CONFIRM_TO_ACCEPTOR,
+	PIGEON_EVENT_RECV_WELCOME,
+	PIGEON_EVENT_RECV_CONFIRM_TO_INITIATOR,
 	PIGEON_EVENT_COUNT
 } pairing_ceremony_event_id;
 
@@ -149,108 +82,45 @@ typedef bool (*pigeon_guard_fn)(void *ctx);
 typedef int  (*pigeon_action_fn)(void *ctx);
 typedef void (*pigeon_change_fn)(const char *var_name, void *ctx);
 
-// PairingCeremony server/pairing state machine.
+// PairingCeremony acceptor state machine.
 typedef struct {
-	pigeon_server_pairing_state state;
-	const char * current_token; // pairing token currently in play
-	const char * active_tokens; // set of valid (non-revoked) tokens
-	const char * used_tokens; // set of revoked tokens
-	const char * server_ecdh_pub; // server ECDH public key
-	const char * received_client_pub; // pubkey server received in pair_hello (may be adversary's)
-	const char * server_shared_key; // ECDH key derived by server (tuple to match DeriveKey output type)
-	const char * server_code; // code computed by server from its view of the pubkeys (tuple to match DeriveCode output type)
-	const char * received_code; // code received in code_submit (tuple to match DeriveCode output type)
-	int code_attempts; // failed code submission attempts
-	const char * device_secret; // persistent device secret
-	const char * paired_devices; // device IDs that completed pairing
-	pigeon_guard_fn guards[PIGEON_GUARD_COUNT];
+	pigeon_acceptor_state state;
+	const char * acceptor_eph_pub; // acceptor's ephemeral X25519 public key
+	const char * acceptor_received_eph_pub; // ephemeral pubkey acceptor saw in hello (may be adversary's)
+	const char * acceptor_received_identity; // identity pubkey acceptor saw in hello
+	const char * acceptor_received_instance; // instance ID acceptor saw in hello
+	const char * acceptor_code; // confirmation code acceptor derived from its (ephA, ephB) view
+	const char * acceptor_user_confirmed; // has the acceptor's local human pressed y?
+	const char * acceptor_received_confirm; // has the acceptor received initiator's confirm message?
 	pigeon_action_fn actions[PIGEON_ACTION_COUNT];
 	pigeon_change_fn on_change;
 	void *userdata;
-} pigeon_server_pairing_machine;
+} pigeon_acceptor_machine;
 
-void pigeon_server_pairing_machine_init(pigeon_server_pairing_machine *m);
-int  pigeon_server_pairing_handle_message(pigeon_server_pairing_machine *m, pairing_ceremony_msg_type msg);
-int  pigeon_server_pairing_step(pigeon_server_pairing_machine *m, pairing_ceremony_event_id event);
+void pigeon_acceptor_machine_init(pigeon_acceptor_machine *m);
+int  pigeon_acceptor_handle_message(pigeon_acceptor_machine *m, pairing_ceremony_msg_type msg);
+int  pigeon_acceptor_step(pigeon_acceptor_machine *m, pairing_ceremony_event_id event);
 
-// PairingCeremony server/auth state machine.
+// PairingCeremony initiator state machine.
 typedef struct {
-	pigeon_server_auth_state state;
-	const char * received_device_id; // device_id from auth_request
-	const char * auth_nonces_used; // set of consumed auth nonces
-	const char * received_auth_nonce; // nonce from auth_request
-	pigeon_guard_fn guards[PIGEON_GUARD_COUNT];
+	pigeon_initiator_state state;
+	const char * initiator_eph_pub; // initiator's ephemeral X25519 public key
+	const char * received_acceptor_eph_pub; // acceptor ephemeral pubkey from token (trusted, out-of-band)
+	const char * received_acceptor_identity; // acceptor identity pubkey from token
+	const char * received_acceptor_instance; // acceptor instance ID from token
+	const char * initiator_received_eph_pub; // ephemeral pubkey initiator saw in welcome (may be adversary's)
+	const char * initiator_received_identity; // identity pubkey initiator saw in welcome
+	const char * initiator_received_instance; // instance ID initiator saw in welcome
+	const char * initiator_code; // confirmation code initiator derived from its (ephA, ephB) view
+	const char * initiator_user_confirmed; // has the initiator's local human pressed y?
+	const char * initiator_received_confirm; // has the initiator received acceptor's confirm message?
 	pigeon_action_fn actions[PIGEON_ACTION_COUNT];
 	pigeon_change_fn on_change;
 	void *userdata;
-} pigeon_server_auth_machine;
+} pigeon_initiator_machine;
 
-void pigeon_server_auth_machine_init(pigeon_server_auth_machine *m);
-int  pigeon_server_auth_handle_message(pigeon_server_auth_machine *m, pairing_ceremony_msg_type msg);
-int  pigeon_server_auth_step(pigeon_server_auth_machine *m, pairing_ceremony_event_id event);
-
-// PairingCeremony server composite actor.
-typedef struct {
-	pigeon_server_pairing_machine pairing;
-	pigeon_server_auth_machine auth;
-	pigeon_guard_fn route_guards[PIGEON_GUARD_COUNT];
-	void *userdata;
-} pigeon_server_composite;
-
-void pigeon_server_composite_init(pigeon_server_composite *c);
-int  pigeon_server_route(pigeon_server_composite *c, const char *from, pairing_ceremony_event_id event);
-
-// PairingCeremony ios/pairing state machine.
-typedef struct {
-	pigeon_ios_pairing_state state;
-	const char * received_server_pub; // pubkey ios received in pair_hello_ack (may be adversary's)
-	const char * client_shared_key; // ECDH key derived by ios (tuple to match DeriveKey output type)
-	const char * ios_code; // code computed by ios from its view of the pubkeys (tuple to match DeriveCode output type)
-	pigeon_guard_fn guards[PIGEON_GUARD_COUNT];
-	pigeon_action_fn actions[PIGEON_ACTION_COUNT];
-	pigeon_change_fn on_change;
-	void *userdata;
-} pigeon_ios_pairing_machine;
-
-void pigeon_ios_pairing_machine_init(pigeon_ios_pairing_machine *m);
-int  pigeon_ios_pairing_handle_message(pigeon_ios_pairing_machine *m, pairing_ceremony_msg_type msg);
-int  pigeon_ios_pairing_step(pigeon_ios_pairing_machine *m, pairing_ceremony_event_id event);
-
-// PairingCeremony ios/auth state machine.
-typedef struct {
-	pigeon_ios_auth_state state;
-	pigeon_guard_fn guards[PIGEON_GUARD_COUNT];
-	pigeon_action_fn actions[PIGEON_ACTION_COUNT];
-	pigeon_change_fn on_change;
-	void *userdata;
-} pigeon_ios_auth_machine;
-
-void pigeon_ios_auth_machine_init(pigeon_ios_auth_machine *m);
-int  pigeon_ios_auth_handle_message(pigeon_ios_auth_machine *m, pairing_ceremony_msg_type msg);
-int  pigeon_ios_auth_step(pigeon_ios_auth_machine *m, pairing_ceremony_event_id event);
-
-// PairingCeremony ios composite actor.
-typedef struct {
-	pigeon_ios_pairing_machine pairing;
-	pigeon_ios_auth_machine auth;
-	pigeon_guard_fn route_guards[PIGEON_GUARD_COUNT];
-	void *userdata;
-} pigeon_ios_composite;
-
-void pigeon_ios_composite_init(pigeon_ios_composite *c);
-int  pigeon_ios_route(pigeon_ios_composite *c, const char *from, pairing_ceremony_event_id event);
-
-// PairingCeremony cli state machine.
-typedef struct {
-	pigeon_cli_state state;
-	pigeon_guard_fn guards[PIGEON_GUARD_COUNT];
-	pigeon_action_fn actions[PIGEON_ACTION_COUNT];
-	pigeon_change_fn on_change;
-	void *userdata;
-} pigeon_cli_machine;
-
-void pigeon_cli_machine_init(pigeon_cli_machine *m);
-int  pigeon_cli_handle_message(pigeon_cli_machine *m, pairing_ceremony_msg_type msg);
-int  pigeon_cli_step(pigeon_cli_machine *m, pairing_ceremony_event_id event);
+void pigeon_initiator_machine_init(pigeon_initiator_machine *m);
+int  pigeon_initiator_handle_message(pigeon_initiator_machine *m, pairing_ceremony_msg_type msg);
+int  pigeon_initiator_step(pigeon_initiator_machine *m, pairing_ceremony_event_id event);
 
 #endif // PIGEON_PAIRINGCEREMONY_GEN_H

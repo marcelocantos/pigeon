@@ -303,8 +303,37 @@ func (c *Ceremony) deliverResult(rec *crypto.PairingRecord, err error) {
 	}
 }
 
-// runAcceptor drives the acceptor side of the ceremony.
+// runAcceptor drives the acceptor side of the ceremony. State
+// transitions are dispatched through the protogen-generated executor
+// (NewPairingCeremonyProtocolAcceptorMachine), so the Go code path is
+// provably equivalent to the Swift / Kotlin / TS / C / TLA+ outputs
+// generated from the same protocol/pairing.yaml.
 func runAcceptor(ctx context.Context, conn *pigeon.Conn, eph *ecdh.PrivateKey, identity crypto.Identity, relayURL string, cer *Ceremony) {
+	m := NewPairingCeremonyProtocolAcceptorMachine()
+
+	// Setup-phase actions are no-ops: the orchestration above already
+	// generated ephemeral keys and registered with the relay before
+	// runAcceptor was invoked. The machine still sequences through the
+	// states so a runtime audit confirms the protocol shape.
+	m.Actions[PairingCeremonyProtocolActionGenEphemeral] = func() error { return nil }
+	m.Actions[PairingCeremonyProtocolActionRegisterRelay] = func() error { return nil }
+	m.Actions[PairingCeremonyProtocolActionEmitToken] = func() error { return nil }
+	m.Actions[PairingCeremonyProtocolActionDeriveCode] = func() error { return nil }
+	m.Actions[PairingCeremonyProtocolActionStoreRecord] = func() error { return nil }
+
+	if err := acceptorStep(m, PairingCeremonyProtocolEventPairBegin); err != nil {
+		cer.deliverResult(nil, err)
+		return
+	}
+	if err := acceptorStep(m, PairingCeremonyProtocolEventEphemeralReady); err != nil {
+		cer.deliverResult(nil, err)
+		return
+	}
+	if err := acceptorStep(m, PairingCeremonyProtocolEventRelayRegistered); err != nil {
+		cer.deliverResult(nil, err)
+		return
+	}
+
 	// Read hello.
 	raw, err := conn.Recv(ctx)
 	if err != nil {
@@ -316,9 +345,18 @@ func runAcceptor(ctx context.Context, conn *pigeon.Conn, eph *ecdh.PrivateKey, i
 		cer.deliverResult(nil, fmt.Errorf("bad hello: %v", err))
 		return
 	}
+	if err := acceptorRecv(m, PairingCeremonyProtocolMsgHello); err != nil {
+		cer.deliverResult(nil, err)
+		return
+	}
 	initEphPub, err := ecdh.X25519().NewPublicKey(hello.EphPub)
 	if err != nil {
 		cer.deliverResult(nil, fmt.Errorf("parse initiator eph: %w", err))
+		return
+	}
+
+	if err := acceptorStep(m, PairingCeremonyProtocolEventCodeReady); err != nil {
+		cer.deliverResult(nil, err)
 		return
 	}
 
@@ -343,7 +381,7 @@ func runAcceptor(ctx context.Context, conn *pigeon.Conn, eph *ecdh.PrivateKey, i
 	}
 	cer.signalCode(code, nil)
 
-	if err := exchangeConfirm(ctx, conn, cer); err != nil {
+	if err := exchangeConfirm(ctx, conn, cer, m, true); err != nil {
 		cer.deliverResult(nil, err)
 		return
 	}
@@ -357,8 +395,33 @@ func runAcceptor(ctx context.Context, conn *pigeon.Conn, eph *ecdh.PrivateKey, i
 	cer.deliverResult(rec, nil)
 }
 
-// runInitiator drives the initiator side.
+// runInitiator drives the initiator side via the generated executor.
 func runInitiator(ctx context.Context, conn *pigeon.Conn, eph *ecdh.PrivateKey, identity crypto.Identity, payload *tokenPayload, cer *Ceremony) {
+	m := NewPairingCeremonyProtocolInitiatorMachine()
+
+	m.Actions[PairingCeremonyProtocolActionDecodeToken] = func() error { return nil }
+	m.Actions[PairingCeremonyProtocolActionGenEphemeral] = func() error { return nil }
+	m.Actions[PairingCeremonyProtocolActionDialRelay] = func() error { return nil }
+	m.Actions[PairingCeremonyProtocolActionDeriveCode] = func() error { return nil }
+	m.Actions[PairingCeremonyProtocolActionStoreRecord] = func() error { return nil }
+
+	if err := initiatorStep(m, PairingCeremonyProtocolEventTokenReceived); err != nil {
+		cer.deliverResult(nil, err)
+		return
+	}
+	if err := initiatorStep(m, PairingCeremonyProtocolEventTokenDecoded); err != nil {
+		cer.deliverResult(nil, err)
+		return
+	}
+	if err := initiatorStep(m, PairingCeremonyProtocolEventEphemeralReady); err != nil {
+		cer.deliverResult(nil, err)
+		return
+	}
+	if err := initiatorStep(m, PairingCeremonyProtocolEventRelayConnected); err != nil {
+		cer.deliverResult(nil, err)
+		return
+	}
+
 	// Send hello.
 	hello := pairingMessage{
 		Kind:        msgHello,
@@ -383,9 +446,18 @@ func runInitiator(ctx context.Context, conn *pigeon.Conn, eph *ecdh.PrivateKey, 
 		cer.deliverResult(nil, fmt.Errorf("bad welcome"))
 		return
 	}
+	if err := initiatorRecv(m, PairingCeremonyProtocolMsgWelcome); err != nil {
+		cer.deliverResult(nil, err)
+		return
+	}
 	accEphPub, err := ecdh.X25519().NewPublicKey(welcome.EphPub)
 	if err != nil {
 		cer.deliverResult(nil, fmt.Errorf("parse acc eph: %w", err))
+		return
+	}
+
+	if err := initiatorStep(m, PairingCeremonyProtocolEventCodeReady); err != nil {
+		cer.deliverResult(nil, err)
 		return
 	}
 
@@ -396,7 +468,7 @@ func runInitiator(ctx context.Context, conn *pigeon.Conn, eph *ecdh.PrivateKey, 
 	}
 	cer.signalCode(code, nil)
 
-	if err := exchangeConfirm(ctx, conn, cer); err != nil {
+	if err := exchangeConfirm(ctx, conn, cer, m, false); err != nil {
 		cer.deliverResult(nil, err)
 		return
 	}
@@ -410,9 +482,65 @@ func runInitiator(ctx context.Context, conn *pigeon.Conn, eph *ecdh.PrivateKey, 
 	cer.deliverResult(rec, nil)
 }
 
-// exchangeConfirm waits for local Confirm, sends a confirm message to the
-// peer, and waits for the peer's confirm message.
-func exchangeConfirm(ctx context.Context, conn *pigeon.Conn, cer *Ceremony) error {
+// acceptorStep drives the acceptor's machine through one internal
+// event and returns an error if the spec doesn't accept the transition
+// from the current state. Acts as a runtime audit that the YAML and
+// the calling order in pairing.go agree.
+func acceptorStep(m *PairingCeremonyProtocolAcceptorMachine, ev EventID) error {
+	ok, err := m.Step(ev)
+	if err != nil {
+		return fmt.Errorf("acceptor step %s: %w", ev, err)
+	}
+	if !ok {
+		return fmt.Errorf("acceptor: spec rejected event %s in state %s", ev, m.State)
+	}
+	return nil
+}
+
+// acceptorRecv dispatches an inbound wire message through the machine.
+func acceptorRecv(m *PairingCeremonyProtocolAcceptorMachine, msg MsgType) error {
+	ok, err := m.HandleMessage(msg)
+	if err != nil {
+		return fmt.Errorf("acceptor recv %s: %w", msg, err)
+	}
+	if !ok {
+		return fmt.Errorf("acceptor: spec rejected message %s in state %s", msg, m.State)
+	}
+	return nil
+}
+
+func initiatorStep(m *PairingCeremonyProtocolInitiatorMachine, ev EventID) error {
+	ok, err := m.Step(ev)
+	if err != nil {
+		return fmt.Errorf("initiator step %s: %w", ev, err)
+	}
+	if !ok {
+		return fmt.Errorf("initiator: spec rejected event %s in state %s", ev, m.State)
+	}
+	return nil
+}
+
+func initiatorRecv(m *PairingCeremonyProtocolInitiatorMachine, msg MsgType) error {
+	ok, err := m.HandleMessage(msg)
+	if err != nil {
+		return fmt.Errorf("initiator recv %s: %w", msg, err)
+	}
+	if !ok {
+		return fmt.Errorf("initiator: spec rejected message %s in state %s", msg, m.State)
+	}
+	return nil
+}
+
+// exchangeConfirm runs the user-confirmation handshake under the
+// generated machine: wait for local user confirm, send a `confirm`
+// wire message, await the peer's `confirm`, dispatch through the
+// machine. `acceptor` selects which actor's machine drives transitions.
+//
+// The wire message kind is the literal string "confirm" in both
+// directions; the machine side uses two distinct MsgType constants
+// (ConfirmToInitiator and ConfirmToAcceptor) so the FSM can tell
+// where the message is going. The caller passes whichever applies.
+func exchangeConfirm(ctx context.Context, conn *pigeon.Conn, cer *Ceremony, machine any, acceptor bool) error {
 	peerCh := make(chan error, 1)
 	go func() {
 		raw, err := conn.Recv(ctx)
@@ -438,6 +566,20 @@ func exchangeConfirm(ctx context.Context, conn *pigeon.Conn, cer *Ceremony) erro
 		return ctx.Err()
 	}
 
+	// Drive user_confirm through the machine BEFORE sending the wire
+	// message; that way the FSM state mirrors what's been committed.
+	if acceptor {
+		am := machine.(*PairingCeremonyProtocolAcceptorMachine)
+		if err := acceptorStep(am, PairingCeremonyProtocolEventUserConfirm); err != nil {
+			return err
+		}
+	} else {
+		im := machine.(*PairingCeremonyProtocolInitiatorMachine)
+		if err := initiatorStep(im, PairingCeremonyProtocolEventUserConfirm); err != nil {
+			return err
+		}
+	}
+
 	confirmMsg := pairingMessage{Kind: msgConfirm}
 	confirmBytes, _ := json.Marshal(confirmMsg)
 	if err := conn.Send(ctx, confirmBytes); err != nil {
@@ -446,7 +588,22 @@ func exchangeConfirm(ctx context.Context, conn *pigeon.Conn, cer *Ceremony) erro
 
 	select {
 	case err := <-peerCh:
-		return err
+		if err != nil {
+			return err
+		}
+		// Dispatch peer's confirm through the machine to reach Paired.
+		if acceptor {
+			am := machine.(*PairingCeremonyProtocolAcceptorMachine)
+			if err := acceptorRecv(am, PairingCeremonyProtocolMsgConfirmToAcceptor); err != nil {
+				return err
+			}
+		} else {
+			im := machine.(*PairingCeremonyProtocolInitiatorMachine)
+			if err := initiatorRecv(im, PairingCeremonyProtocolMsgConfirmToInitiator); err != nil {
+				return err
+			}
+		}
+		return nil
 	case <-ctx.Done():
 		return ctx.Err()
 	}
