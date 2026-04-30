@@ -1,19 +1,24 @@
-//go:build ignore
-
 // Copyright 2026 Marcelo Cantos
 // SPDX-License-Identifier: Apache-2.0
 
-// crypto-peer registers with a pigeon relay, generates an X25519
-// keypair, and performs a key exchange with the connecting client.
-// After exchanging public keys, both sides independently derive a
-// 6-digit confirmation code. The peer sends its code so the client
-// can verify cross-language agreement.
+// crypto-peer registers with a pigeon relay (legacy 1:1 bridge mode),
+// generates an X25519 keypair, and performs a key exchange with the
+// connecting client. After exchanging public keys, both sides
+// independently derive a 6-digit confirmation code; the peer sends its
+// code so the client can verify cross-language agreement.
+//
+// This binary intentionally uses pigeon.DialRelayAcceptor — the
+// lower-level relay helper — rather than the higher-level
+// pigeon.Register / pigeon/pairing API, because it predates the
+// multi-channel ceremony and exists only to validate cross-language
+// crypto.DeriveConfirmationCode interoperability between Go and
+// (Swift / Kotlin / TS).
 //
 // Usage:
 //
 //	crypto-peer <relay-url>
 //
-// Protocol (length-prefixed messages over QUIC stream):
+// Protocol (length-prefixed messages over the relay primary stream):
 //  1. peer → client: 32-byte X25519 public key
 //  2. client → peer: 32-byte X25519 public key
 //  3. peer → client: 6-byte ASCII confirmation code
@@ -57,7 +62,7 @@ func main() {
 		}
 	}
 
-	conn, err := pigeon.Register(ctx, relayURL, pigeon.Config{
+	conn, err := pigeon.DialRelayAcceptor(ctx, relayURL, pigeon.Config{
 		TLS:      tlsConfig,
 		QUICPort: quicPort,
 	})

@@ -30,77 +30,76 @@ type (
 )
 
 var (
-	Recv     = protocol.Recv
-	Internal = protocol.Internal
+	Recv      = protocol.Recv
+	Internal  = protocol.Internal
 	Invariant = protocol.Invariant
 	Liveness  = protocol.Liveness
 )
 
 // PairingCeremonyProtocol acceptor states.
 const (
-	PairingCeremonyProtocolAcceptorIdle State = "Idle"
+	PairingCeremonyProtocolAcceptorIdle                State = "Idle"
 	PairingCeremonyProtocolAcceptorGeneratingEphemeral State = "GeneratingEphemeral"
-	PairingCeremonyProtocolAcceptorRegisteringRelay State = "RegisteringRelay"
-	PairingCeremonyProtocolAcceptorWaitingForHello State = "WaitingForHello"
-	PairingCeremonyProtocolAcceptorDerivingCode State = "DerivingCode"
+	PairingCeremonyProtocolAcceptorRegisteringRelay    State = "RegisteringRelay"
+	PairingCeremonyProtocolAcceptorWaitingForHello     State = "WaitingForHello"
+	PairingCeremonyProtocolAcceptorDerivingCode        State = "DerivingCode"
 	PairingCeremonyProtocolAcceptorAwaitingUserConfirm State = "AwaitingUserConfirm"
 	PairingCeremonyProtocolAcceptorAwaitingPeerConfirm State = "AwaitingPeerConfirm"
-	PairingCeremonyProtocolAcceptorPaired State = "Paired"
-	PairingCeremonyProtocolAcceptorAborted State = "Aborted"
+	PairingCeremonyProtocolAcceptorPaired              State = "Paired"
+	PairingCeremonyProtocolAcceptorAborted             State = "Aborted"
 )
 
 // PairingCeremonyProtocol initiator states.
 const (
-	PairingCeremonyProtocolInitiatorIdle State = "Idle"
-	PairingCeremonyProtocolInitiatorDecodingToken State = "DecodingToken"
+	PairingCeremonyProtocolInitiatorIdle                State = "Idle"
+	PairingCeremonyProtocolInitiatorDecodingToken       State = "DecodingToken"
 	PairingCeremonyProtocolInitiatorGeneratingEphemeral State = "GeneratingEphemeral"
-	PairingCeremonyProtocolInitiatorConnectingRelay State = "ConnectingRelay"
-	PairingCeremonyProtocolInitiatorAwaitingWelcome State = "AwaitingWelcome"
-	PairingCeremonyProtocolInitiatorDerivingCode State = "DerivingCode"
+	PairingCeremonyProtocolInitiatorConnectingRelay     State = "ConnectingRelay"
+	PairingCeremonyProtocolInitiatorAwaitingWelcome     State = "AwaitingWelcome"
+	PairingCeremonyProtocolInitiatorDerivingCode        State = "DerivingCode"
 	PairingCeremonyProtocolInitiatorAwaitingUserConfirm State = "AwaitingUserConfirm"
 	PairingCeremonyProtocolInitiatorAwaitingPeerConfirm State = "AwaitingPeerConfirm"
-	PairingCeremonyProtocolInitiatorPaired State = "Paired"
-	PairingCeremonyProtocolInitiatorAborted State = "Aborted"
+	PairingCeremonyProtocolInitiatorPaired              State = "Paired"
+	PairingCeremonyProtocolInitiatorAborted             State = "Aborted"
 )
 
 // PairingCeremonyProtocol message types.
 const (
-	PairingCeremonyProtocolMsgHello MsgType = "hello"
-	PairingCeremonyProtocolMsgWelcome MsgType = "welcome"
+	PairingCeremonyProtocolMsgHello              MsgType = "hello"
+	PairingCeremonyProtocolMsgWelcome            MsgType = "welcome"
 	PairingCeremonyProtocolMsgConfirmToInitiator MsgType = "confirm_to_initiator"
-	PairingCeremonyProtocolMsgConfirmToAcceptor MsgType = "confirm_to_acceptor"
+	PairingCeremonyProtocolMsgConfirmToAcceptor  MsgType = "confirm_to_acceptor"
 )
 
 // PairingCeremonyProtocol guards.
-const (
-)
+const ()
 
 // PairingCeremonyProtocol actions.
 const (
-	PairingCeremonyProtocolActionDecodeToken ActionID = "decode_token"
-	PairingCeremonyProtocolActionDeriveCode ActionID = "derive_code"
-	PairingCeremonyProtocolActionDialRelay ActionID = "dial_relay"
-	PairingCeremonyProtocolActionEmitToken ActionID = "emit_token"
-	PairingCeremonyProtocolActionGenEphemeral ActionID = "gen_ephemeral"
+	PairingCeremonyProtocolActionDecodeToken   ActionID = "decode_token"
+	PairingCeremonyProtocolActionDeriveCode    ActionID = "derive_code"
+	PairingCeremonyProtocolActionDialRelay     ActionID = "dial_relay"
+	PairingCeremonyProtocolActionEmitToken     ActionID = "emit_token"
+	PairingCeremonyProtocolActionGenEphemeral  ActionID = "gen_ephemeral"
 	PairingCeremonyProtocolActionRegisterRelay ActionID = "register_relay"
-	PairingCeremonyProtocolActionStoreRecord ActionID = "store_record"
+	PairingCeremonyProtocolActionStoreRecord   ActionID = "store_record"
 )
 
 // PairingCeremonyProtocol events.
 const (
-	PairingCeremonyProtocolEventCodeReady EventID = "code_ready"
-	PairingCeremonyProtocolEventEphemeralReady EventID = "ephemeral_ready"
-	PairingCeremonyProtocolEventPairBegin EventID = "pair_begin"
-	PairingCeremonyProtocolEventRecvConfirmToAcceptor EventID = "recv_confirm_to_acceptor"
+	PairingCeremonyProtocolEventCodeReady              EventID = "code_ready"
+	PairingCeremonyProtocolEventEphemeralReady         EventID = "ephemeral_ready"
+	PairingCeremonyProtocolEventPairBegin              EventID = "pair_begin"
+	PairingCeremonyProtocolEventRecvConfirmToAcceptor  EventID = "recv_confirm_to_acceptor"
 	PairingCeremonyProtocolEventRecvConfirmToInitiator EventID = "recv_confirm_to_initiator"
-	PairingCeremonyProtocolEventRecvHello EventID = "recv_hello"
-	PairingCeremonyProtocolEventRecvWelcome EventID = "recv_welcome"
-	PairingCeremonyProtocolEventRelayConnected EventID = "relay_connected"
-	PairingCeremonyProtocolEventRelayRegistered EventID = "relay_registered"
-	PairingCeremonyProtocolEventTokenDecoded EventID = "token_decoded"
-	PairingCeremonyProtocolEventTokenReceived EventID = "token_received"
-	PairingCeremonyProtocolEventUserCancel EventID = "user_cancel"
-	PairingCeremonyProtocolEventUserConfirm EventID = "user_confirm"
+	PairingCeremonyProtocolEventRecvHello              EventID = "recv_hello"
+	PairingCeremonyProtocolEventRecvWelcome            EventID = "recv_welcome"
+	PairingCeremonyProtocolEventRelayConnected         EventID = "relay_connected"
+	PairingCeremonyProtocolEventRelayRegistered        EventID = "relay_registered"
+	PairingCeremonyProtocolEventTokenDecoded           EventID = "token_decoded"
+	PairingCeremonyProtocolEventTokenReceived          EventID = "token_received"
+	PairingCeremonyProtocolEventUserCancel             EventID = "user_cancel"
+	PairingCeremonyProtocolEventUserConfirm            EventID = "user_confirm"
 )
 
 func PairingCeremonyProtocol() *Protocol {
@@ -108,25 +107,25 @@ func PairingCeremonyProtocol() *Protocol {
 		Name: "PairingCeremony",
 		Actors: []Actor{
 			{Name: "acceptor", Initial: "Idle", Transitions: []Transition{
-				{From: "Idle", To: "GeneratingEphemeral", On: Internal("pair_begin"), Do: "gen_ephemeral", Updates: []VarUpdate{{Var: "acceptor_eph_pub", Expr: "\"acceptor_eph\""}, }},
+				{From: "Idle", To: "GeneratingEphemeral", On: Internal("pair_begin"), Do: "gen_ephemeral", Updates: []VarUpdate{{Var: "acceptor_eph_pub", Expr: "\"acceptor_eph\""}}},
 				{From: "GeneratingEphemeral", To: "RegisteringRelay", On: Internal("ephemeral_ready"), Do: "register_relay"},
 				{From: "RegisteringRelay", To: "WaitingForHello", On: Internal("relay_registered"), Do: "emit_token"},
-				{From: "WaitingForHello", To: "DerivingCode", On: Recv("hello"), Do: "derive_code", Updates: []VarUpdate{{Var: "acceptor_received_eph_pub", Expr: "recv_msg.eph_pub"}, {Var: "acceptor_received_identity", Expr: "recv_msg.identity_pub"}, {Var: "acceptor_received_instance", Expr: "recv_msg.instance_id"}, {Var: "acceptor_code", Expr: "DeriveCode(acceptor_eph_pub, recv_msg.eph_pub)"}, }},
-				{From: "DerivingCode", To: "AwaitingUserConfirm", On: Internal("code_ready"), Sends: []Send{{To: "initiator", Msg: "welcome", Fields: map[string]string{"eph_pub": "acceptor_eph_pub", "identity_pub": "acceptor_identity_pub", "instance_id": "acceptor_instance_id", }}, }},
-				{From: "AwaitingUserConfirm", To: "AwaitingPeerConfirm", On: Internal("user_confirm"), Sends: []Send{{To: "initiator", Msg: "confirm_to_initiator"}, }, Updates: []VarUpdate{{Var: "acceptor_user_confirmed", Expr: "\"true\""}, }},
-				{From: "AwaitingPeerConfirm", To: "Paired", On: Recv("confirm_to_acceptor"), Do: "store_record", Updates: []VarUpdate{{Var: "acceptor_received_confirm", Expr: "\"true\""}, }},
+				{From: "WaitingForHello", To: "DerivingCode", On: Recv("hello"), Do: "derive_code", Updates: []VarUpdate{{Var: "acceptor_received_eph_pub", Expr: "recv_msg.eph_pub"}, {Var: "acceptor_received_identity", Expr: "recv_msg.identity_pub"}, {Var: "acceptor_received_instance", Expr: "recv_msg.instance_id"}, {Var: "acceptor_code", Expr: "DeriveCode(acceptor_eph_pub, recv_msg.eph_pub)"}}},
+				{From: "DerivingCode", To: "AwaitingUserConfirm", On: Internal("code_ready"), Sends: []Send{{To: "initiator", Msg: "welcome", Fields: map[string]string{"eph_pub": "acceptor_eph_pub", "identity_pub": "acceptor_identity_pub", "instance_id": "acceptor_instance_id"}}}},
+				{From: "AwaitingUserConfirm", To: "AwaitingPeerConfirm", On: Internal("user_confirm"), Sends: []Send{{To: "initiator", Msg: "confirm_to_initiator"}}, Updates: []VarUpdate{{Var: "acceptor_user_confirmed", Expr: "\"true\""}}},
+				{From: "AwaitingPeerConfirm", To: "Paired", On: Recv("confirm_to_acceptor"), Do: "store_record", Updates: []VarUpdate{{Var: "acceptor_received_confirm", Expr: "\"true\""}}},
 				{From: "AwaitingUserConfirm", To: "Aborted", On: Internal("user_cancel")},
 				{From: "AwaitingPeerConfirm", To: "Aborted", On: Internal("user_cancel")},
 			}},
 			{Name: "initiator", Initial: "Idle", Transitions: []Transition{
-				{From: "Idle", To: "DecodingToken", On: Internal("token_received"), Do: "decode_token", Updates: []VarUpdate{{Var: "received_acceptor_eph_pub", Expr: "\"acceptor_eph\""}, {Var: "received_acceptor_identity", Expr: "\"acceptor_id\""}, {Var: "received_acceptor_instance", Expr: "\"acceptor_instance\""}, }},
-				{From: "DecodingToken", To: "GeneratingEphemeral", On: Internal("token_decoded"), Do: "gen_ephemeral", Updates: []VarUpdate{{Var: "initiator_eph_pub", Expr: "\"initiator_eph\""}, }},
+				{From: "Idle", To: "DecodingToken", On: Internal("token_received"), Do: "decode_token", Updates: []VarUpdate{{Var: "received_acceptor_eph_pub", Expr: "\"acceptor_eph\""}, {Var: "received_acceptor_identity", Expr: "\"acceptor_id\""}, {Var: "received_acceptor_instance", Expr: "\"acceptor_instance\""}}},
+				{From: "DecodingToken", To: "GeneratingEphemeral", On: Internal("token_decoded"), Do: "gen_ephemeral", Updates: []VarUpdate{{Var: "initiator_eph_pub", Expr: "\"initiator_eph\""}}},
 				{From: "GeneratingEphemeral", To: "ConnectingRelay", On: Internal("ephemeral_ready"), Do: "dial_relay"},
-				{From: "ConnectingRelay", To: "AwaitingWelcome", On: Internal("relay_connected"), Sends: []Send{{To: "acceptor", Msg: "hello", Fields: map[string]string{"eph_pub": "initiator_eph_pub", "identity_pub": "initiator_identity_pub", "instance_id": "initiator_instance_id", }}, }},
-				{From: "AwaitingWelcome", To: "DerivingCode", On: Recv("welcome"), Do: "derive_code", Updates: []VarUpdate{{Var: "initiator_received_eph_pub", Expr: "recv_msg.eph_pub"}, {Var: "initiator_received_identity", Expr: "recv_msg.identity_pub"}, {Var: "initiator_received_instance", Expr: "recv_msg.instance_id"}, {Var: "initiator_code", Expr: "DeriveCode(initiator_eph_pub, recv_msg.eph_pub)"}, }},
+				{From: "ConnectingRelay", To: "AwaitingWelcome", On: Internal("relay_connected"), Sends: []Send{{To: "acceptor", Msg: "hello", Fields: map[string]string{"eph_pub": "initiator_eph_pub", "identity_pub": "initiator_identity_pub", "instance_id": "initiator_instance_id"}}}},
+				{From: "AwaitingWelcome", To: "DerivingCode", On: Recv("welcome"), Do: "derive_code", Updates: []VarUpdate{{Var: "initiator_received_eph_pub", Expr: "recv_msg.eph_pub"}, {Var: "initiator_received_identity", Expr: "recv_msg.identity_pub"}, {Var: "initiator_received_instance", Expr: "recv_msg.instance_id"}, {Var: "initiator_code", Expr: "DeriveCode(initiator_eph_pub, recv_msg.eph_pub)"}}},
 				{From: "DerivingCode", To: "AwaitingUserConfirm", On: Internal("code_ready")},
-				{From: "AwaitingUserConfirm", To: "AwaitingPeerConfirm", On: Internal("user_confirm"), Sends: []Send{{To: "acceptor", Msg: "confirm_to_acceptor"}, }, Updates: []VarUpdate{{Var: "initiator_user_confirmed", Expr: "\"true\""}, }},
-				{From: "AwaitingPeerConfirm", To: "Paired", On: Recv("confirm_to_initiator"), Do: "store_record", Updates: []VarUpdate{{Var: "initiator_received_confirm", Expr: "\"true\""}, }},
+				{From: "AwaitingUserConfirm", To: "AwaitingPeerConfirm", On: Internal("user_confirm"), Sends: []Send{{To: "acceptor", Msg: "confirm_to_acceptor"}}, Updates: []VarUpdate{{Var: "initiator_user_confirmed", Expr: "\"true\""}}},
+				{From: "AwaitingPeerConfirm", To: "Paired", On: Recv("confirm_to_initiator"), Do: "store_record", Updates: []VarUpdate{{Var: "initiator_received_confirm", Expr: "\"true\""}}},
 				{From: "AwaitingUserConfirm", To: "Aborted", On: Internal("user_cancel")},
 				{From: "AwaitingPeerConfirm", To: "Aborted", On: Internal("user_cancel")},
 			}},
@@ -165,8 +164,7 @@ func PairingCeremonyProtocol() *Protocol {
 			{Name: "adv_saved_initiator_eph", Initial: "\"none\"", Desc: "real initiator eph pubkey saved during MitM substitution"},
 			{Name: "recv_msg", Initial: "[type |-> \"none\"]", Desc: "last received message (staging slot)"},
 		},
-		Guards: []GuardDef{
-		},
+		Guards: []GuardDef{},
 		Operators: []Operator{
 			{Name: "KeyRank", Params: "k", Expr: "CASE k = \"adv_eph\" -> 0 [] k = \"initiator_eph\" -> 1 [] k = \"acceptor_eph\" -> 2 [] OTHER -> 3", Desc: "Stable rank for symbolic pubkeys so DeriveCode is order-independent."},
 			{Name: "DeriveCode", Params: "a, b", Expr: "IF KeyRank(a) <= KeyRank(b) THEN <<\"code\", a, b>> ELSE <<\"code\", b, a>>", Desc: "Confirmation code derived from both ephemeral pubkeys (order-independent)."},
@@ -182,38 +180,38 @@ func PairingCeremonyProtocol() *Protocol {
 			{Name: "HonestPairingCompletes", Kind: Liveness, Expr: "acceptor_state = acceptor_Paired /\\ initiator_state = initiator_Paired", Desc: "Without adversary interference and with both users pressing y, both sides eventually reach Paired."},
 		},
 		ChannelBound: 3,
-		OneShot: true,
+		OneShot:      true,
 	}
 }
 
 // PairingCeremonyProtocolAcceptorMachine is the generated state machine for the acceptor actor.
 type PairingCeremonyProtocolAcceptorMachine struct {
-	State State
-	AcceptorEphPub string // acceptor's ephemeral X25519 public key
-	AcceptorReceivedEphPub string // ephemeral pubkey acceptor saw in hello (may be adversary's)
+	State                    State
+	AcceptorEphPub           string // acceptor's ephemeral X25519 public key
+	AcceptorReceivedEphPub   string // ephemeral pubkey acceptor saw in hello (may be adversary's)
 	AcceptorReceivedIdentity string // identity pubkey acceptor saw in hello
 	AcceptorReceivedInstance string // instance ID acceptor saw in hello
-	AcceptorCode string // confirmation code acceptor derived from its (ephA, ephB) view
-	AcceptorUserConfirmed string // has the acceptor's local human pressed y?
-	AcceptorReceivedConfirm string // has the acceptor received initiator's confirm message?
+	AcceptorCode             string // confirmation code acceptor derived from its (ephA, ephB) view
+	AcceptorUserConfirmed    string // has the acceptor's local human pressed y?
+	AcceptorReceivedConfirm  string // has the acceptor received initiator's confirm message?
 
-	Guards  map[GuardID]func() bool
-	Actions map[ActionID]func() error
+	Guards   map[GuardID]func() bool
+	Actions  map[ActionID]func() error
 	OnChange func(varName string)
 }
 
 func NewPairingCeremonyProtocolAcceptorMachine() *PairingCeremonyProtocolAcceptorMachine {
 	return &PairingCeremonyProtocolAcceptorMachine{
-		State: PairingCeremonyProtocolAcceptorIdle,
-		AcceptorEphPub: "none",
-		AcceptorReceivedEphPub: "none",
+		State:                    PairingCeremonyProtocolAcceptorIdle,
+		AcceptorEphPub:           "none",
+		AcceptorReceivedEphPub:   "none",
 		AcceptorReceivedIdentity: "none",
 		AcceptorReceivedInstance: "none",
-		AcceptorCode: "",
-		AcceptorUserConfirmed: "false",
-		AcceptorReceivedConfirm: "false",
-		Guards:  make(map[GuardID]func() bool),
-		Actions: make(map[ActionID]func() error),
+		AcceptorCode:             "",
+		AcceptorUserConfirmed:    "false",
+		AcceptorReceivedConfirm:  "false",
+		Guards:                   make(map[GuardID]func() bool),
+		Actions:                  make(map[ActionID]func() error),
 	}
 }
 
@@ -221,7 +219,9 @@ func (m *PairingCeremonyProtocolAcceptorMachine) HandleMessage(msg MsgType) (boo
 	switch {
 	case m.State == PairingCeremonyProtocolAcceptorWaitingForHello && msg == PairingCeremonyProtocolMsgHello:
 		if fn := m.Actions[PairingCeremonyProtocolActionDeriveCode]; fn != nil {
-			if err := fn(); err != nil { return false, err }
+			if err := fn(); err != nil {
+				return false, err
+			}
 		}
 		// acceptor_received_eph_pub: recv_msg.eph_pub (set by action)
 		// acceptor_received_identity: recv_msg.identity_pub (set by action)
@@ -231,10 +231,14 @@ func (m *PairingCeremonyProtocolAcceptorMachine) HandleMessage(msg MsgType) (boo
 		return true, nil
 	case m.State == PairingCeremonyProtocolAcceptorAwaitingPeerConfirm && msg == PairingCeremonyProtocolMsgConfirmToAcceptor:
 		if fn := m.Actions[PairingCeremonyProtocolActionStoreRecord]; fn != nil {
-			if err := fn(); err != nil { return false, err }
+			if err := fn(); err != nil {
+				return false, err
+			}
 		}
 		m.AcceptorReceivedConfirm = "true"
-		if m.OnChange != nil { m.OnChange("acceptor_received_confirm") }
+		if m.OnChange != nil {
+			m.OnChange("acceptor_received_confirm")
+		}
 		m.State = PairingCeremonyProtocolAcceptorPaired
 		return true, nil
 	}
@@ -245,21 +249,29 @@ func (m *PairingCeremonyProtocolAcceptorMachine) Step(event EventID) (bool, erro
 	switch {
 	case m.State == PairingCeremonyProtocolAcceptorIdle && event == PairingCeremonyProtocolEventPairBegin:
 		if fn := m.Actions[PairingCeremonyProtocolActionGenEphemeral]; fn != nil {
-			if err := fn(); err != nil { return false, err }
+			if err := fn(); err != nil {
+				return false, err
+			}
 		}
 		m.AcceptorEphPub = "acceptor_eph"
-		if m.OnChange != nil { m.OnChange("acceptor_eph_pub") }
+		if m.OnChange != nil {
+			m.OnChange("acceptor_eph_pub")
+		}
 		m.State = PairingCeremonyProtocolAcceptorGeneratingEphemeral
 		return true, nil
 	case m.State == PairingCeremonyProtocolAcceptorGeneratingEphemeral && event == PairingCeremonyProtocolEventEphemeralReady:
 		if fn := m.Actions[PairingCeremonyProtocolActionRegisterRelay]; fn != nil {
-			if err := fn(); err != nil { return false, err }
+			if err := fn(); err != nil {
+				return false, err
+			}
 		}
 		m.State = PairingCeremonyProtocolAcceptorRegisteringRelay
 		return true, nil
 	case m.State == PairingCeremonyProtocolAcceptorRegisteringRelay && event == PairingCeremonyProtocolEventRelayRegistered:
 		if fn := m.Actions[PairingCeremonyProtocolActionEmitToken]; fn != nil {
-			if err := fn(); err != nil { return false, err }
+			if err := fn(); err != nil {
+				return false, err
+			}
 		}
 		m.State = PairingCeremonyProtocolAcceptorWaitingForHello
 		return true, nil
@@ -268,7 +280,9 @@ func (m *PairingCeremonyProtocolAcceptorMachine) Step(event EventID) (bool, erro
 		return true, nil
 	case m.State == PairingCeremonyProtocolAcceptorAwaitingUserConfirm && event == PairingCeremonyProtocolEventUserConfirm:
 		m.AcceptorUserConfirmed = "true"
-		if m.OnChange != nil { m.OnChange("acceptor_user_confirmed") }
+		if m.OnChange != nil {
+			m.OnChange("acceptor_user_confirmed")
+		}
 		m.State = PairingCeremonyProtocolAcceptorAwaitingPeerConfirm
 		return true, nil
 	case m.State == PairingCeremonyProtocolAcceptorAwaitingUserConfirm && event == PairingCeremonyProtocolEventUserCancel:
@@ -285,27 +299,37 @@ func (m *PairingCeremonyProtocolAcceptorMachine) HandleEvent(ev EventID) ([]CmdI
 	switch {
 	case m.State == PairingCeremonyProtocolAcceptorIdle && ev == PairingCeremonyProtocolEventPairBegin:
 		if fn := m.Actions[PairingCeremonyProtocolActionGenEphemeral]; fn != nil {
-			if err := fn(); err != nil { return nil, err }
+			if err := fn(); err != nil {
+				return nil, err
+			}
 		}
 		m.AcceptorEphPub = "acceptor_eph"
-		if m.OnChange != nil { m.OnChange("acceptor_eph_pub") }
+		if m.OnChange != nil {
+			m.OnChange("acceptor_eph_pub")
+		}
 		m.State = PairingCeremonyProtocolAcceptorGeneratingEphemeral
 		return nil, nil
 	case m.State == PairingCeremonyProtocolAcceptorGeneratingEphemeral && ev == PairingCeremonyProtocolEventEphemeralReady:
 		if fn := m.Actions[PairingCeremonyProtocolActionRegisterRelay]; fn != nil {
-			if err := fn(); err != nil { return nil, err }
+			if err := fn(); err != nil {
+				return nil, err
+			}
 		}
 		m.State = PairingCeremonyProtocolAcceptorRegisteringRelay
 		return nil, nil
 	case m.State == PairingCeremonyProtocolAcceptorRegisteringRelay && ev == PairingCeremonyProtocolEventRelayRegistered:
 		if fn := m.Actions[PairingCeremonyProtocolActionEmitToken]; fn != nil {
-			if err := fn(); err != nil { return nil, err }
+			if err := fn(); err != nil {
+				return nil, err
+			}
 		}
 		m.State = PairingCeremonyProtocolAcceptorWaitingForHello
 		return nil, nil
 	case m.State == PairingCeremonyProtocolAcceptorWaitingForHello && ev == PairingCeremonyProtocolEventRecvHello:
 		if fn := m.Actions[PairingCeremonyProtocolActionDeriveCode]; fn != nil {
-			if err := fn(); err != nil { return nil, err }
+			if err := fn(); err != nil {
+				return nil, err
+			}
 		}
 		// acceptor_received_eph_pub: recv_msg.eph_pub (set by action)
 		// acceptor_received_identity: recv_msg.identity_pub (set by action)
@@ -318,15 +342,21 @@ func (m *PairingCeremonyProtocolAcceptorMachine) HandleEvent(ev EventID) ([]CmdI
 		return nil, nil
 	case m.State == PairingCeremonyProtocolAcceptorAwaitingUserConfirm && ev == PairingCeremonyProtocolEventUserConfirm:
 		m.AcceptorUserConfirmed = "true"
-		if m.OnChange != nil { m.OnChange("acceptor_user_confirmed") }
+		if m.OnChange != nil {
+			m.OnChange("acceptor_user_confirmed")
+		}
 		m.State = PairingCeremonyProtocolAcceptorAwaitingPeerConfirm
 		return nil, nil
 	case m.State == PairingCeremonyProtocolAcceptorAwaitingPeerConfirm && ev == PairingCeremonyProtocolEventRecvConfirmToAcceptor:
 		if fn := m.Actions[PairingCeremonyProtocolActionStoreRecord]; fn != nil {
-			if err := fn(); err != nil { return nil, err }
+			if err := fn(); err != nil {
+				return nil, err
+			}
 		}
 		m.AcceptorReceivedConfirm = "true"
-		if m.OnChange != nil { m.OnChange("acceptor_received_confirm") }
+		if m.OnChange != nil {
+			m.OnChange("acceptor_received_confirm")
+		}
 		m.State = PairingCeremonyProtocolAcceptorPaired
 		return nil, nil
 	case m.State == PairingCeremonyProtocolAcceptorAwaitingUserConfirm && ev == PairingCeremonyProtocolEventUserCancel:
@@ -341,38 +371,38 @@ func (m *PairingCeremonyProtocolAcceptorMachine) HandleEvent(ev EventID) ([]CmdI
 
 // PairingCeremonyProtocolInitiatorMachine is the generated state machine for the initiator actor.
 type PairingCeremonyProtocolInitiatorMachine struct {
-	State State
-	InitiatorEphPub string // initiator's ephemeral X25519 public key
-	ReceivedAcceptorEphPub string // acceptor ephemeral pubkey from token (trusted, out-of-band)
-	ReceivedAcceptorIdentity string // acceptor identity pubkey from token
-	ReceivedAcceptorInstance string // acceptor instance ID from token
-	InitiatorReceivedEphPub string // ephemeral pubkey initiator saw in welcome (may be adversary's)
+	State                     State
+	InitiatorEphPub           string // initiator's ephemeral X25519 public key
+	ReceivedAcceptorEphPub    string // acceptor ephemeral pubkey from token (trusted, out-of-band)
+	ReceivedAcceptorIdentity  string // acceptor identity pubkey from token
+	ReceivedAcceptorInstance  string // acceptor instance ID from token
+	InitiatorReceivedEphPub   string // ephemeral pubkey initiator saw in welcome (may be adversary's)
 	InitiatorReceivedIdentity string // identity pubkey initiator saw in welcome
 	InitiatorReceivedInstance string // instance ID initiator saw in welcome
-	InitiatorCode string // confirmation code initiator derived from its (ephA, ephB) view
-	InitiatorUserConfirmed string // has the initiator's local human pressed y?
-	InitiatorReceivedConfirm string // has the initiator received acceptor's confirm message?
+	InitiatorCode             string // confirmation code initiator derived from its (ephA, ephB) view
+	InitiatorUserConfirmed    string // has the initiator's local human pressed y?
+	InitiatorReceivedConfirm  string // has the initiator received acceptor's confirm message?
 
-	Guards  map[GuardID]func() bool
-	Actions map[ActionID]func() error
+	Guards   map[GuardID]func() bool
+	Actions  map[ActionID]func() error
 	OnChange func(varName string)
 }
 
 func NewPairingCeremonyProtocolInitiatorMachine() *PairingCeremonyProtocolInitiatorMachine {
 	return &PairingCeremonyProtocolInitiatorMachine{
-		State: PairingCeremonyProtocolInitiatorIdle,
-		InitiatorEphPub: "none",
-		ReceivedAcceptorEphPub: "none",
-		ReceivedAcceptorIdentity: "none",
-		ReceivedAcceptorInstance: "none",
-		InitiatorReceivedEphPub: "none",
+		State:                     PairingCeremonyProtocolInitiatorIdle,
+		InitiatorEphPub:           "none",
+		ReceivedAcceptorEphPub:    "none",
+		ReceivedAcceptorIdentity:  "none",
+		ReceivedAcceptorInstance:  "none",
+		InitiatorReceivedEphPub:   "none",
 		InitiatorReceivedIdentity: "none",
 		InitiatorReceivedInstance: "none",
-		InitiatorCode: "",
-		InitiatorUserConfirmed: "false",
-		InitiatorReceivedConfirm: "false",
-		Guards:  make(map[GuardID]func() bool),
-		Actions: make(map[ActionID]func() error),
+		InitiatorCode:             "",
+		InitiatorUserConfirmed:    "false",
+		InitiatorReceivedConfirm:  "false",
+		Guards:                    make(map[GuardID]func() bool),
+		Actions:                   make(map[ActionID]func() error),
 	}
 }
 
@@ -380,7 +410,9 @@ func (m *PairingCeremonyProtocolInitiatorMachine) HandleMessage(msg MsgType) (bo
 	switch {
 	case m.State == PairingCeremonyProtocolInitiatorAwaitingWelcome && msg == PairingCeremonyProtocolMsgWelcome:
 		if fn := m.Actions[PairingCeremonyProtocolActionDeriveCode]; fn != nil {
-			if err := fn(); err != nil { return false, err }
+			if err := fn(); err != nil {
+				return false, err
+			}
 		}
 		// initiator_received_eph_pub: recv_msg.eph_pub (set by action)
 		// initiator_received_identity: recv_msg.identity_pub (set by action)
@@ -390,10 +422,14 @@ func (m *PairingCeremonyProtocolInitiatorMachine) HandleMessage(msg MsgType) (bo
 		return true, nil
 	case m.State == PairingCeremonyProtocolInitiatorAwaitingPeerConfirm && msg == PairingCeremonyProtocolMsgConfirmToInitiator:
 		if fn := m.Actions[PairingCeremonyProtocolActionStoreRecord]; fn != nil {
-			if err := fn(); err != nil { return false, err }
+			if err := fn(); err != nil {
+				return false, err
+			}
 		}
 		m.InitiatorReceivedConfirm = "true"
-		if m.OnChange != nil { m.OnChange("initiator_received_confirm") }
+		if m.OnChange != nil {
+			m.OnChange("initiator_received_confirm")
+		}
 		m.State = PairingCeremonyProtocolInitiatorPaired
 		return true, nil
 	}
@@ -404,27 +440,41 @@ func (m *PairingCeremonyProtocolInitiatorMachine) Step(event EventID) (bool, err
 	switch {
 	case m.State == PairingCeremonyProtocolInitiatorIdle && event == PairingCeremonyProtocolEventTokenReceived:
 		if fn := m.Actions[PairingCeremonyProtocolActionDecodeToken]; fn != nil {
-			if err := fn(); err != nil { return false, err }
+			if err := fn(); err != nil {
+				return false, err
+			}
 		}
 		m.ReceivedAcceptorEphPub = "acceptor_eph"
-		if m.OnChange != nil { m.OnChange("received_acceptor_eph_pub") }
+		if m.OnChange != nil {
+			m.OnChange("received_acceptor_eph_pub")
+		}
 		m.ReceivedAcceptorIdentity = "acceptor_id"
-		if m.OnChange != nil { m.OnChange("received_acceptor_identity") }
+		if m.OnChange != nil {
+			m.OnChange("received_acceptor_identity")
+		}
 		m.ReceivedAcceptorInstance = "acceptor_instance"
-		if m.OnChange != nil { m.OnChange("received_acceptor_instance") }
+		if m.OnChange != nil {
+			m.OnChange("received_acceptor_instance")
+		}
 		m.State = PairingCeremonyProtocolInitiatorDecodingToken
 		return true, nil
 	case m.State == PairingCeremonyProtocolInitiatorDecodingToken && event == PairingCeremonyProtocolEventTokenDecoded:
 		if fn := m.Actions[PairingCeremonyProtocolActionGenEphemeral]; fn != nil {
-			if err := fn(); err != nil { return false, err }
+			if err := fn(); err != nil {
+				return false, err
+			}
 		}
 		m.InitiatorEphPub = "initiator_eph"
-		if m.OnChange != nil { m.OnChange("initiator_eph_pub") }
+		if m.OnChange != nil {
+			m.OnChange("initiator_eph_pub")
+		}
 		m.State = PairingCeremonyProtocolInitiatorGeneratingEphemeral
 		return true, nil
 	case m.State == PairingCeremonyProtocolInitiatorGeneratingEphemeral && event == PairingCeremonyProtocolEventEphemeralReady:
 		if fn := m.Actions[PairingCeremonyProtocolActionDialRelay]; fn != nil {
-			if err := fn(); err != nil { return false, err }
+			if err := fn(); err != nil {
+				return false, err
+			}
 		}
 		m.State = PairingCeremonyProtocolInitiatorConnectingRelay
 		return true, nil
@@ -436,7 +486,9 @@ func (m *PairingCeremonyProtocolInitiatorMachine) Step(event EventID) (bool, err
 		return true, nil
 	case m.State == PairingCeremonyProtocolInitiatorAwaitingUserConfirm && event == PairingCeremonyProtocolEventUserConfirm:
 		m.InitiatorUserConfirmed = "true"
-		if m.OnChange != nil { m.OnChange("initiator_user_confirmed") }
+		if m.OnChange != nil {
+			m.OnChange("initiator_user_confirmed")
+		}
 		m.State = PairingCeremonyProtocolInitiatorAwaitingPeerConfirm
 		return true, nil
 	case m.State == PairingCeremonyProtocolInitiatorAwaitingUserConfirm && event == PairingCeremonyProtocolEventUserCancel:
@@ -453,27 +505,41 @@ func (m *PairingCeremonyProtocolInitiatorMachine) HandleEvent(ev EventID) ([]Cmd
 	switch {
 	case m.State == PairingCeremonyProtocolInitiatorIdle && ev == PairingCeremonyProtocolEventTokenReceived:
 		if fn := m.Actions[PairingCeremonyProtocolActionDecodeToken]; fn != nil {
-			if err := fn(); err != nil { return nil, err }
+			if err := fn(); err != nil {
+				return nil, err
+			}
 		}
 		m.ReceivedAcceptorEphPub = "acceptor_eph"
-		if m.OnChange != nil { m.OnChange("received_acceptor_eph_pub") }
+		if m.OnChange != nil {
+			m.OnChange("received_acceptor_eph_pub")
+		}
 		m.ReceivedAcceptorIdentity = "acceptor_id"
-		if m.OnChange != nil { m.OnChange("received_acceptor_identity") }
+		if m.OnChange != nil {
+			m.OnChange("received_acceptor_identity")
+		}
 		m.ReceivedAcceptorInstance = "acceptor_instance"
-		if m.OnChange != nil { m.OnChange("received_acceptor_instance") }
+		if m.OnChange != nil {
+			m.OnChange("received_acceptor_instance")
+		}
 		m.State = PairingCeremonyProtocolInitiatorDecodingToken
 		return nil, nil
 	case m.State == PairingCeremonyProtocolInitiatorDecodingToken && ev == PairingCeremonyProtocolEventTokenDecoded:
 		if fn := m.Actions[PairingCeremonyProtocolActionGenEphemeral]; fn != nil {
-			if err := fn(); err != nil { return nil, err }
+			if err := fn(); err != nil {
+				return nil, err
+			}
 		}
 		m.InitiatorEphPub = "initiator_eph"
-		if m.OnChange != nil { m.OnChange("initiator_eph_pub") }
+		if m.OnChange != nil {
+			m.OnChange("initiator_eph_pub")
+		}
 		m.State = PairingCeremonyProtocolInitiatorGeneratingEphemeral
 		return nil, nil
 	case m.State == PairingCeremonyProtocolInitiatorGeneratingEphemeral && ev == PairingCeremonyProtocolEventEphemeralReady:
 		if fn := m.Actions[PairingCeremonyProtocolActionDialRelay]; fn != nil {
-			if err := fn(); err != nil { return nil, err }
+			if err := fn(); err != nil {
+				return nil, err
+			}
 		}
 		m.State = PairingCeremonyProtocolInitiatorConnectingRelay
 		return nil, nil
@@ -482,7 +548,9 @@ func (m *PairingCeremonyProtocolInitiatorMachine) HandleEvent(ev EventID) ([]Cmd
 		return nil, nil
 	case m.State == PairingCeremonyProtocolInitiatorAwaitingWelcome && ev == PairingCeremonyProtocolEventRecvWelcome:
 		if fn := m.Actions[PairingCeremonyProtocolActionDeriveCode]; fn != nil {
-			if err := fn(); err != nil { return nil, err }
+			if err := fn(); err != nil {
+				return nil, err
+			}
 		}
 		// initiator_received_eph_pub: recv_msg.eph_pub (set by action)
 		// initiator_received_identity: recv_msg.identity_pub (set by action)
@@ -495,15 +563,21 @@ func (m *PairingCeremonyProtocolInitiatorMachine) HandleEvent(ev EventID) ([]Cmd
 		return nil, nil
 	case m.State == PairingCeremonyProtocolInitiatorAwaitingUserConfirm && ev == PairingCeremonyProtocolEventUserConfirm:
 		m.InitiatorUserConfirmed = "true"
-		if m.OnChange != nil { m.OnChange("initiator_user_confirmed") }
+		if m.OnChange != nil {
+			m.OnChange("initiator_user_confirmed")
+		}
 		m.State = PairingCeremonyProtocolInitiatorAwaitingPeerConfirm
 		return nil, nil
 	case m.State == PairingCeremonyProtocolInitiatorAwaitingPeerConfirm && ev == PairingCeremonyProtocolEventRecvConfirmToInitiator:
 		if fn := m.Actions[PairingCeremonyProtocolActionStoreRecord]; fn != nil {
-			if err := fn(); err != nil { return nil, err }
+			if err := fn(); err != nil {
+				return nil, err
+			}
 		}
 		m.InitiatorReceivedConfirm = "true"
-		if m.OnChange != nil { m.OnChange("initiator_received_confirm") }
+		if m.OnChange != nil {
+			m.OnChange("initiator_received_confirm")
+		}
 		m.State = PairingCeremonyProtocolInitiatorPaired
 		return nil, nil
 	case m.State == PairingCeremonyProtocolInitiatorAwaitingUserConfirm && ev == PairingCeremonyProtocolEventUserCancel:
@@ -515,4 +589,3 @@ func (m *PairingCeremonyProtocolInitiatorMachine) HandleEvent(ev EventID) ([]Cmd
 	}
 	return nil, nil
 }
-

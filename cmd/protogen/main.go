@@ -22,6 +22,7 @@ package main
 import (
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 
@@ -226,6 +227,19 @@ func writeFile(path string, fn func(*os.File) error) error {
 	if err != nil {
 		return err
 	}
-	defer f.Close()
-	return fn(f)
+	if err := fn(f); err != nil {
+		f.Close()
+		return err
+	}
+	if err := f.Close(); err != nil {
+		return err
+	}
+	// Run gofmt on .go outputs so freshly-regenerated files don't trip
+	// the bullseye gofmt check.
+	if strings.HasSuffix(path, ".go") {
+		if out, err := exec.Command("gofmt", "-w", path).CombinedOutput(); err != nil {
+			return fmt.Errorf("gofmt %s: %w (%s)", path, err, out)
+		}
+	}
+	return nil
 }

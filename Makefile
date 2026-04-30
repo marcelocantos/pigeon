@@ -173,6 +173,18 @@ bullseye:
 	@go vet ./... && echo "✓ go vet"
 	@go build ./... && echo "✓ go build"
 	@go test -count=1 -short -timeout=300s ./... >/tmp/bullseye-gotest.log 2>&1 && echo "✓ go test (all packages)" || (echo "✗ go test failing:"; cat /tmp/bullseye-gotest.log; exit 1)
+	@swift build >/tmp/bullseye-swift-build.log 2>&1 && echo "✓ swift build" || (echo "✗ swift build failing:"; cat /tmp/bullseye-swift-build.log; exit 1)
+	@swift test >/tmp/bullseye-swift-test.log 2>&1 && echo "✓ swift test" || (echo "✗ swift test failing:"; cat /tmp/bullseye-swift-test.log; exit 1)
+	@JAVA_HOME=$(JDK21) android/gradlew -p $(CURDIR)/android :pigeon:test --no-daemon --console=plain >/tmp/bullseye-kotlin.log 2>&1 \
+		&& echo "✓ kotlin :pigeon:test" \
+		|| (echo "✗ kotlin :pigeon:test failing:"; cat /tmp/bullseye-kotlin.log; exit 1)
+	@cd web && npx tsx --test src/crypto.test.ts src/PairingCeremonyMachine.test.ts >/tmp/bullseye-web.log 2>&1 \
+		&& echo "✓ web (tsx --test)" \
+		|| (echo "✗ web tests failing:"; cat /tmp/bullseye-web.log; exit 1)
+	@cd formal && ./tlc PairingCeremony >/tmp/bullseye-tlc-pairing.log 2>&1 \
+		&& grep -q "Model checking completed. No error has been found" /tmp/bullseye-tlc-pairing.log \
+		&& echo "✓ TLC PairingCeremony" \
+		|| (echo "✗ TLC PairingCeremony failing:"; tail -30 /tmp/bullseye-tlc-pairing.log; exit 1)
 
 # --- Clean ---
 

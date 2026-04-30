@@ -146,7 +146,10 @@ func TestE2ESingleClientChat(t *testing.T) {
 	}
 	defer listener.Close()
 
-	// Backend goroutine: accept one client, run echo on chat.
+	// Backend goroutine: accept one client, echo on chat until the
+	// client closes the stream (EOF). Driving the lifecycle from the
+	// client side avoids racing the backend's deferred Session.Close
+	// against the last echo's bytes still in flight on the QUIC stream.
 	bdone := make(chan error, 1)
 	go func() {
 		sess, err := listener.Accept(ctx)
@@ -160,18 +163,20 @@ func TestE2ESingleClientChat(t *testing.T) {
 			bdone <- fmt.Errorf("accept chat: %w", err)
 			return
 		}
-		for i := 0; i < 3; i++ {
+		for {
 			msg, err := chat.Recv(ctx)
 			if err != nil {
-				bdone <- fmt.Errorf("recv %d: %w", i, err)
+				// EOF / cancelled / context-done: the client is
+				// finishing up. The N successful round-trips before
+				// this point are what the test asserts on.
+				bdone <- nil
 				return
 			}
 			if err := chat.Send(append([]byte("echo: "), msg...)); err != nil {
-				bdone <- fmt.Errorf("send %d: %w", i, err)
+				bdone <- fmt.Errorf("send: %w", err)
 				return
 			}
 		}
-		bdone <- nil
 	}()
 
 	sess, err := pigeon.Connect(ctx, &pigeon.ConnectArgs{
@@ -184,7 +189,6 @@ func TestE2ESingleClientChat(t *testing.T) {
 	if err != nil {
 		t.Fatalf("connect: %v", err)
 	}
-	defer sess.Close()
 
 	chat, err := sess.OpenStream(ctx, "chat")
 	if err != nil {
@@ -204,6 +208,12 @@ func TestE2ESingleClientChat(t *testing.T) {
 			t.Fatalf("recv %q: got %q want %q", msg, got, want)
 		}
 	}
+
+	// Closing the client session signals EOF to the backend's Recv
+	// loop, which then exits and writes bdone. We then wait on bdone,
+	// guaranteeing the backend has observed the close *after* the
+	// last echo was successfully delivered to us.
+	_ = sess.Close()
 
 	if err := <-bdone; err != nil {
 		t.Fatalf("backend: %v", err)
