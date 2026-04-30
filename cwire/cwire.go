@@ -139,3 +139,71 @@ func DecodeClientStreamHeader(buf []byte) (string, int, error) {
 	name := C.GoStringN(&nameBuf[0], C.int(nameLen))
 	return name, int(n), nil
 }
+
+// EncodeDatagram composes the AEAD-encrypted datagram body, with an
+// optional 4-byte clientTag prefix on the backend side. The supplied
+// (sendKey, recvKey) is used to construct a fresh pigeon_channel.
+//
+// This is a thin wrapper for cross-language byte-parity testing — Go
+// callers that already have a *crypto.Channel should encrypt and
+// frame in Go directly.
+func EncodeDatagram(sendKey, recvKey []byte, isBackend bool, clientTag uint32, channelID uint64, payload []byte) ([]byte, error) {
+	if len(sendKey) != 32 || len(recvKey) != 32 {
+		return nil, errors.New("cwire: keys must be 32 bytes")
+	}
+	var ch C.pigeon_channel
+	C.pigeon_channel_init(&ch,
+		(*C.uint8_t)(unsafe.Pointer(&sendKey[0])),
+		(*C.uint8_t)(unsafe.Pointer(&recvKey[0])),
+		C.PIGEON_MODE_DATAGRAMS)
+
+	out := make([]byte, len(payload)+128)
+	var pPayload *C.uint8_t
+	if len(payload) > 0 {
+		pPayload = (*C.uint8_t)(unsafe.Pointer(&payload[0]))
+	}
+	var cIsBackend C.bool
+	if isBackend {
+		cIsBackend = C.bool(true)
+	}
+	n := C.pigeon_encode_datagram(&ch, cIsBackend, C.uint32_t(clientTag),
+		C.uint64_t(channelID), pPayload, C.size_t(len(payload)),
+		(*C.uint8_t)(unsafe.Pointer(&out[0])), C.size_t(len(out)))
+	if n < 0 {
+		return nil, errors.New("cwire: encode_datagram failed")
+	}
+	return out[:int(n)], nil
+}
+
+// DecodeDatagram inverts EncodeDatagram. Returns (clientTag — only
+// meaningful on backend side; 0 otherwise), the decoded channel ID,
+// the application payload, or an error.
+func DecodeDatagram(sendKey, recvKey []byte, isBackend bool, wire []byte) (uint32, uint64, []byte, error) {
+	if len(sendKey) != 32 || len(recvKey) != 32 {
+		return 0, 0, nil, errors.New("cwire: keys must be 32 bytes")
+	}
+	if len(wire) == 0 {
+		return 0, 0, nil, errors.New("cwire: empty wire")
+	}
+	var ch C.pigeon_channel
+	C.pigeon_channel_init(&ch,
+		(*C.uint8_t)(unsafe.Pointer(&sendKey[0])),
+		(*C.uint8_t)(unsafe.Pointer(&recvKey[0])),
+		C.PIGEON_MODE_DATAGRAMS)
+
+	var tag C.uint32_t
+	var cid C.uint64_t
+	out := make([]byte, len(wire))
+	var cIsBackend C.bool
+	if isBackend {
+		cIsBackend = C.bool(true)
+	}
+	n := C.pigeon_decode_datagram(&ch, cIsBackend,
+		(*C.uint8_t)(unsafe.Pointer(&wire[0])), C.size_t(len(wire)),
+		&tag, &cid,
+		(*C.uint8_t)(unsafe.Pointer(&out[0])), C.size_t(len(out)))
+	if n < 0 {
+		return 0, 0, nil, errors.New("cwire: decode_datagram failed")
+	}
+	return uint32(tag), uint64(cid), out[:int(n)], nil
+}

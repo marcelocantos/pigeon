@@ -38,6 +38,64 @@ func TestUvarintMatchesGo(t *testing.T) {
 	}
 }
 
+// TestDatagramRoundTripViaC drives encode_datagram → decode_datagram
+// through the C ABI from Go. Pinning the AEAD-with-channel-id wire
+// across Go/C/TS at this layer means a future drift on any side
+// turns this test red. (Byte-vector tests against a hardcoded wire
+// aren't possible here because AEAD ciphertext depends on the
+// per-channel sequence number.)
+func TestDatagramRoundTripViaC(t *testing.T) {
+	sendKey := make([]byte, 32)
+	recvKey := make([]byte, 32)
+	for i := range sendKey {
+		sendKey[i] = 0x42
+		recvKey[i] = 0x42
+	}
+
+	cases := []struct {
+		name      string
+		isBackend bool
+		tag       uint32
+		channelID uint64
+		payload   []byte
+	}{
+		{"client small chat", false, 0, 1, []byte("hello")},
+		{"client multi-byte channelID", false, 0, 300, []byte("xyz")},
+		{"client empty payload", false, 0, 7, nil},
+		{"backend with tag", true, 0xdeadbeef, 2, []byte("ping")},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			wire, err := cwire.EncodeDatagram(sendKey, recvKey, tc.isBackend, tc.tag, tc.channelID, tc.payload)
+			if err != nil {
+				t.Fatalf("encode: %v", err)
+			}
+			if tc.isBackend {
+				if len(wire) < 4 {
+					t.Fatalf("backend wire too short")
+				}
+				gotTag := uint32(wire[0])<<24 | uint32(wire[1])<<16 | uint32(wire[2])<<8 | uint32(wire[3])
+				if gotTag != tc.tag {
+					t.Errorf("tag prefix: got %#x want %#x", gotTag, tc.tag)
+				}
+			}
+			tag, cid, payload, err := cwire.DecodeDatagram(sendKey, recvKey, tc.isBackend, wire)
+			if err != nil {
+				t.Fatalf("decode: %v", err)
+			}
+			if tc.isBackend && tag != tc.tag {
+				t.Errorf("tag: got %#x want %#x", tag, tc.tag)
+			}
+			if cid != tc.channelID {
+				t.Errorf("channel id: got %d want %d", cid, tc.channelID)
+			}
+			if !bytes.Equal(payload, tc.payload) {
+				t.Errorf("payload: got %x want %x", payload, tc.payload)
+			}
+		})
+	}
+}
+
 // TestStreamHeaderMatchesReferenceVectors locks the C bridge against
 // the same wire vectors as wire_vectors_test.go and
 // c/test/test_pigeon.c::test_stream_header. Three independent
