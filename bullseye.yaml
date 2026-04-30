@@ -756,17 +756,29 @@ targets:
     discovered: 2026-04-30
     achieved: 2026-04-30
   T29:
-    name: Swift PigeonRelay ported to post-T22 wire protocol (register-mux, named streams, tagged datagrams)
+    name: Swift peer library is a SwiftPM C-target wrapper over libpigeon; idiomatic async API on top
     status: identified
     value: 0.0
     cost: 0.0
     showcase: true
     acceptance:
-    - Sources/Pigeon/PigeonRelay.swift speaks register-mux on the relay side.
-    - Swift Session API exposes OpenStream(name) and Datagram(name) channels mirroring the Go shape.
-    - Tests/PigeonRelayE2ETests/RelayE2ETests.swift exercises the new flow end-to-end against the in-process Go relay.
+    - Sources/Pigeon/PigeonRelay.swift (and friends) are reimplemented as a SwiftPM C-target wrapper over libpigeon.a.
+    - 'Idiomatic Swift API: async/await on top of the C ABI''s callback shape; AsyncSequence for streams; structured concurrency for cancellation.'
+    - Tests/PigeonRelayE2ETests passes against the wrapper.
+    - make bullseye stays green with the new wrapper.
+    context: |-
+      Apple's Network.framework QUIC stack (NWConnection + NWProtocolQUIC.Options) exposes the entire QUIC connection as a single stream-like channel — there is no public API for opening or accepting additional QUIC streams per connection. The current Sources/Pigeon/PigeonRelay.swift relies on this 1-stream-per-connection model. Porting to the post-T22 multi-channel wire requires one of:
+
+        (a) Drop Network.framework for QUIC and bind to a multi-stream QUIC library — most plausibly the same vendored ngtcp2 the C SDK uses, exposed to Swift via a C-bridge module. Brings Swift in line with the C SDK's transport.
+        (b) Migrate Swift transport to WebTransport-over-URLSession (or a third-party WebTransport client). Apple's WebTransport status is unclear; verify before committing.
+        (c) Per-stream NWConnections (each its own QUIC connection): defeats the multiplexing purpose and breaks the relay's clientTag routing assumption.
+
+      This needs a strategic decision and is out of scope for an autonomous execution pass. Once the path is chosen, the actual port work (named-stream first-message handshake, 4-byte clientTag prefix on backend-side, AEAD-with-channel-id datagrams, and a Swift Session/Stream/Datagram API mirroring the Go shape) is mechanical.
+
+      Until this lands, the existing PigeonConn keeps working at single-channel scope against the relay's bridgeClientPair, which is already covered by Tests/PigeonRelayE2ETests and is green in `make bullseye`.
     depends_on:
-    - T27
+    - T34
+    - T35
     origin: part of the T26..T31 roadmap
     discovered: 2026-04-30
   T3:
@@ -798,17 +810,19 @@ targets:
     discovered: 2026-04-08
     achieved: 2026-04-12
   T30:
-    name: Kotlin PigeonConn ported to post-T22 wire protocol
+    name: Kotlin peer library is a JNI wrapper over libpigeon; suspend-based API on top
     status: identified
     value: 0.0
     cost: 0.0
     showcase: true
     acceptance:
-    - android/pigeon/.../PigeonConn.kt speaks register-mux + named streams + tagged datagrams.
-    - PigeonConnE2ETest.kt is back in the default :pigeon:test suite and passes against an in-process Go relay.
+    - android/pigeon/ ships a JNI module wrapping libpigeon.a; Android NDK builds for arm64-v8a, x86_64; JVM builds for desktop.
+    - 'Idiomatic Kotlin API: suspend functions, Flow for streams, structured cancellation.'
+    - PigeonConnE2ETest passes against the wrapper.
+    - make bullseye stays green.
     depends_on:
-    - T27
-    - T29
+    - T34
+    - T35
     origin: part of the T26..T31 roadmap
     discovered: 2026-04-30
   T31:
@@ -824,6 +838,76 @@ targets:
     - T27
     - T29
     origin: part of the T26..T31 roadmap
+    discovered: 2026-04-30
+  T32:
+    name: 'C SDK at full post-T22 wire parity: register-mux, multi-client Listener, named streams, AEAD-channel-id datagrams, pairing ceremony driven from generated FSM'
+    status: identified
+    value: 0.0
+    cost: 0.0
+    showcase: true
+    acceptance:
+    - 'c/src/ implements the post-T22 wire end-to-end: register-mux handshake, 4-byte clientTag prefix on backend-side streams + datagrams, length-prefixed first-message [varint name-len][name] handshake on every stream, AEAD-encrypted [varint channel-id][payload] datagrams.'
+    - C peer library exposes Register/Listener/Accept (backend), Connect/Session (client), Session.OpenStream(name), Session.AcceptStream(name), Session.Datagram(name) as a stable C ABI in c/include/pigeon/pigeon.h.
+    - C pairing ceremony drives the regenerated c/src/pairingceremony_gen.c executor (matches pairing/pairing.go's structure).
+    - 'An in-process raw-QUIC test against the Go relay drives the C peer through: single-client chat round-trip, multi-stream + multi-datagram in one Session, two concurrent C clients sharing one C backend.'
+    - All of the above linked into c/test/test_pigeon and runnable via `make test-c-ngtcp2`.
+    context: |-
+      Architectural commitment: pigeon will have one peer-library implementation, in C. All other languages (Go, Swift, Kotlin) become thin language bindings over libpigeon.a. The relay (cmd/pigeon) is unaffected — it stays Go + quic-go because it's server-side and doesn't link any peer library.
+
+      This target is the bottleneck for everything downstream. Without C at parity:
+      - Swift can't bind it (T29).
+      - Kotlin can't bind it (T30).
+      - Go can't be folded (T36).
+      - Cross-language interop tests (T35) have nothing to test against.
+
+      Today's c/src/ is at the v0.16-era single-channel API. Bringing it to T22-parity is genuinely substantial: ~3000-5000 LOC of new C across the wire layer, the Session/Stream/Datagram surface, the multi-client Listener, and the FSM-driven pairing ceremony. The vendored ngtcp2 transport is already in place (c/src/ngtcp2_transport.c, c/test/test_ngtcp2.c) so the QUIC layer doesn't need new work — it's the pigeon-protocol layer above QUIC that needs to land.
+    origin: discovered while making the architectural decision to consolidate peer libraries into one C implementation
+    discovered: 2026-04-30
+  T33:
+    name: 'Cross-language wire interop: Go relay ↔ C peer at full multi-channel parity (backend + client roles, all four channels)'
+    status: identified
+    value: 0.0
+    cost: 0.0
+    showcase: true
+    acceptance:
+    - 'A test driver (probably in Go, controlling a C peer subprocess via stdio or via the relay''s wire) exercises: C-as-backend ↔ Go-acceptor-test ↔ Go-as-client (round-trip via relay).'
+    - 'Same in reverse: Go-as-backend ↔ relay ↔ C-as-client.'
+    - All four channels (chat stream, control stream, ping datagram, metric datagram) round-trip in both directions in both topologies.
+    - 'Multi-client: two C clients connected to one Go backend (and the symmetric form) — independent traffic, no cross-talk.'
+    - Test runs as part of `make bullseye`.
+    context: |-
+      Once T34 lands the C peer library at parity, this is the discipline that keeps it that way. Without continuous interop tests, C and Go drift silently and the consolidation argument collapses.
+
+      The Go relay is the wire's reference (cmd/pigeon is the only relay implementation, in Go). The C peer must speak that wire correctly to qualify as a viable replacement for the Go peer library.
+    depends_on:
+    - T34
+    origin: discovered while planning the consolidation
+    discovered: 2026-04-30
+  T34:
+    name: Go peer library is a cgo wrapper over libpigeon; native Go peer implementation removed
+    status: identified
+    value: 0.0
+    cost: 0.0
+    showcase: true
+    acceptance:
+    - pigeon.Register, pigeon.Connect, *Listener, *Session, *Stream, *Datagram, and the pairing package are reimplemented as cgo wrappers calling into libpigeon.a.
+    - The native Go peer-library implementation files (api.go, pairing/pairing.go, transport.go, et al.) are deleted.
+    - examples/echo/ and examples/demo/ build and run unchanged from the user's perspective.
+    - e2e_test.go and pairing/pairing_test.go pass against the cgo wrapper.
+    - 'The Makefile orchestrates: build-vendor-deps -> amalgamate -> libpigeon static lib -> go build (with cgo). `make demo` still works.'
+    - The relay (cmd/pigeon) is unaffected — it doesn't link libpigeon.
+    context: |-
+      The terminal step in the consolidation. After T34 (C SDK at parity) and T35 (interop verified), the Go peer library has nothing left to offer that libpigeon doesn't — keeping it parallel is just two implementations to maintain.
+
+      Risks to design around:
+      1. CGO_ENABLED=0 single-static-binary builds break for Go peer consumers (but cmd/pigeon-the-relay still works because it doesn't link libpigeon).
+      2. Idiomatic Go ergonomics (channels, contexts, errors) over a callback-shaped C ABI requires careful goroutine pumping; ~1500 LOC of wrapper code.
+      3. Cross-compilation hostility: every Go consumer triple needs a libpigeon.a built for that target.
+      4. Build-system ordering: `go build` now depends on the vendored C build chain.
+    depends_on:
+    - T34
+    - T35
+    origin: final step in the C-as-canonical consolidation
     discovered: 2026-04-30
   T4:
     name: Investigate STUN/NAT hole-punching as a transport
