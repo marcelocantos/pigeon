@@ -36,7 +36,7 @@ test-kotlin:
 		-p $(CURDIR)/android test --no-daemon --console=plain
 
 test-web:
-	cd web && npx tsx --test src/crypto.test.ts
+	cd web && npx tsx --test src/crypto.test.ts src/PairingCeremonyMachine.test.ts src/relay.test.ts
 
 # --- E2E tests (standalone, against local relay) ---
 
@@ -194,7 +194,7 @@ bullseye:
 	     --no-daemon --console=plain > /tmp/bullseye/kotlin.log 2>&1 \
 	   && echo ok > /tmp/bullseye/kotlin.status \
 	   || echo fail > /tmp/bullseye/kotlin.status ) & \
-	 ( cd web && npx tsx --test src/crypto.test.ts src/PairingCeremonyMachine.test.ts \
+	 ( cd web && npx tsx --test src/crypto.test.ts src/PairingCeremonyMachine.test.ts src/relay.test.ts \
 	     > /tmp/bullseye/web.log 2>&1 \
 	   && echo ok > /tmp/bullseye/web.status \
 	   || echo fail > /tmp/bullseye/web.status ) & \
