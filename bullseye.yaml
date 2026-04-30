@@ -938,6 +938,44 @@ targets:
     - T30
     origin: discovered when the T30 first slice shipped a loopback-only JNI bridge
     discovered: 2026-04-30
+  T37:
+    name: 'Real Swift transport: Ngtcp2Transport: PigeonTransport built on the multi-stream c/src/ngtcp2_transport.c'
+    status: identified
+    value: 0.0
+    cost: 0.0
+    showcase: true
+    acceptance:
+    - Sources/Pigeon/ ships an Ngtcp2Transport conforming to PigeonTransport that wraps the C ngtcp2 transport struct and drives it through the multi-stream callbacks added in T32 step 3.
+    - PigeonSession can be created against an Ngtcp2Transport pointed at a real Go relay; round-trip tests in Tests/PigeonRelayE2ETests verify against the in-process Go relay.
+    - Tests/PigeonRelayE2ETests::testCrossLanguageConfirmationCode (or its post-T22 successor) exercises Go relay ↔ Swift PigeonSession ↔ Swift PigeonStream / PigeonDatagram end-to-end. Replaces the legacy single-channel PigeonConn path.
+    context: T29 step 1 (commit a0d26ea) shipped the SwiftPM C-target + idiomatic Swift Session/Stream/Datagram API + LoopbackTransport for tests. 58/58 swift test green. The loopback transport is fine for unit testing the wire framing and AEAD round-trips; production usage needs a real Ngtcp2Transport built on the multi-stream-capable c/src/ngtcp2_transport.c (extended in T32 step 3, commit e057765). The PigeonTransport protocol is shaped to make this a non-API-breaking addition.
+    depends_on:
+    - T29
+    - T32
+    origin: discovered when the T29 first slice shipped a loopback-only Swift wrapper
+    discovered: 2026-04-30
+  T38:
+    name: 'C library: move 1 MiB stack buffers in pigeon_stream_*/pigeon_datagram_* to heap-allocated scratch on the pigeon_session'
+    status: identified
+    value: 0.0
+    cost: 0.0
+    showcase: true
+    acceptance:
+    - pigeon_stream_send/recv and pigeon_datagram_send/recv no longer stack-allocate buffers larger than ~16 KiB.
+    - Each pigeon_session carries (or is configured with) a single scratch buffer pair (encrypted + plaintext) that's pooled across send/recv calls.
+    - Existing tests pass; downstream wrappers (Swift's BigStackWorker, Kotlin's -Xss4m JVM flag) can drop their large-stack workarounds.
+    - Documented in c/include/pigeon/pigeon.h that the session struct now needs heap allocation OR a caller-provided scratch buffer.
+    context: |-
+      Both the Swift and Kotlin wrappers hit the same wall: pigeon_stream_send / pigeon_stream_recv / pigeon_datagram_send / pigeon_datagram_recv stack-allocate `uint8_t ct[PIGEON_MAX_MSG + 32]` (~1 MiB). Swift's cooperative thread pool gives ~256 KiB and DispatchQueue workers ~64 KiB; JVM threads default to 512 KiB on macOS aarch64. Both sides had to introduce a workaround:
+
+        - Swift: BigStackWorker — a dedicated serial Thread with stackSize=4 MiB hosting every C call (Sources/Pigeon/BigStackWorker.swift).
+        - Kotlin: build.gradle.kts test task gets `-Xss4m` so JUnit threads don't SIGILL.
+
+        Both workarounds disappear if the C library uses heap-allocated scratch (one buffer pair per session) instead of stack arrays. The fix is small and localised — replace the two `uint8_t ct[...]` declarations in pigeon_stream_send/recv and the analogous pair in pigeon_datagram_send/recv with pointers into pigeon_session.scratch_send / scratch_recv, lazily allocated at session_init time.
+
+        Should be done before T35 (Android NDK) and the Java-callback transport (T36) compound the workaround burden.
+    origin: discovered when both T29 (Swift) and T30 (Kotlin) first slices needed identical stack-size workarounds
+    discovered: 2026-04-30
   T4:
     name: Investigate STUN/NAT hole-punching as a transport
     status: achieved
