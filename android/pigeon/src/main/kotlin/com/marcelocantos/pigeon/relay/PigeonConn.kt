@@ -14,7 +14,14 @@ import java.nio.ByteBuffer
  * Transport abstraction for a QUIC-like connection.
  * Applications provide an implementation backed by their QUIC library
  * (Cronet, quiche, etc.).
+ *
+ * Legacy single-channel wire. New code should target the multi-stream
+ * peer API in [com.marcelocantos.pigeon.peer.Session] (T30), which
+ * delegates to the C peer library via JNI. This interface and
+ * [PigeonConn] remain for backwards-compat with the pre-T22 wire
+ * protocol and will be removed once all consumers have ported.
  */
+@Deprecated("Use com.marcelocantos.pigeon.peer.Session for the multi-stream wire (T30).")
 interface QuicTransport {
     /** The bidirectional stream for reliable messages. */
     val inputStream: InputStream
@@ -40,7 +47,12 @@ private const val MAX_MESSAGE_SIZE = 1_048_576 // 1 MiB
  * protocol: length-prefixed framing, handshake, and optional E2E encryption.
  *
  * Mirrors the Go `pigeon.Conn` type. Create via [register] or [connect].
+ *
+ * Legacy single-channel wire — superseded by
+ * [com.marcelocantos.pigeon.peer.Session] (T30). Retained for
+ * backwards-compat with the pre-T22 wire protocol.
  */
+@Deprecated("Use com.marcelocantos.pigeon.peer.Session for the multi-stream wire (T30).")
 class PigeonConn internal constructor(
     private val transport: QuicTransport,
     /** The relay-assigned instance ID. */
