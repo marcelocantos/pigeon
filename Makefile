@@ -6,7 +6,7 @@ JDK21 ?= /opt/homebrew/Cellar/openjdk@21/21.0.10/libexec/openjdk.jdk/Contents/Ho
 .PHONY: all build test test-go test-swift test-kotlin test-web \
         e2e e2e-go e2e-swift e2e-kotlin \
         test-live bench clean \
-        build-vendor-deps test-c test-c-asan test-c-ngtcp2 \
+        build-vendor-deps test-c test-c-only test-c-asan test-c-ngtcp2 \
         test-go-race \
         bullseye bullseye-prereq bullseye-strict demo server
 
@@ -113,7 +113,13 @@ generate:
 amalgamate: generate
 	./c/amalgamate.sh dist
 
-test-c: amalgamate
+test-c: amalgamate test-c-only
+
+# test-c without the amalgamate prereq, for callers (bullseye) that
+# already serialised generate+amalgamate up front and must not re-run
+# them in a parallel branch — the regen would rewrite Swift sources
+# mid-compile and trip "input file was modified during the build".
+test-c-only:
 	clang -DPIGEON_CRYPTO_LIBSODIUM -Idist $$(pkg-config --cflags --libs libsodium) \
 		dist/pigeon.c c/test/test_pigeon.c -o c/test/test_pigeon
 	./c/test/test_pigeon
@@ -237,7 +243,7 @@ bullseye: bullseye-prereq
 	     > /tmp/bullseye/web.log 2>&1 \
 	   && echo ok > /tmp/bullseye/web.status \
 	   || echo fail > /tmp/bullseye/web.status ) & \
-	 ( $(MAKE) test-c > /tmp/bullseye/test-c.log 2>&1 \
+	 ( $(MAKE) test-c-only > /tmp/bullseye/test-c.log 2>&1 \
 	   && echo ok > /tmp/bullseye/test-c.status \
 	   || echo fail > /tmp/bullseye/test-c.status ) & \
 	 ( cd formal && ./tlc PairingCeremony > /tmp/bullseye/tlc.log 2>&1; \

@@ -15,6 +15,9 @@
 #ifndef PIGEON_LOOPBACK_H
 #define PIGEON_LOOPBACK_H
 
+#include <stddef.h>
+#include <stdint.h>
+
 #include "pigeon.h"
 
 #ifdef __cplusplus
