@@ -168,23 +168,55 @@ test-c-ngtcp2: build-vendor-deps amalgamate
 
 # --- Standing invariants (for bullseye_convergence) ---
 
+# Bullseye runs the SDK suites and TLC concurrently. Each step writes
+# its own log and a tiny status file (.ok or .fail-<step>); the main
+# target waits, then renders the per-step pass/fail summary in stable
+# order. Total wall-clock drops from ~serial-sum to roughly the slowest
+# single suite (today: swift test).
 bullseye:
-	@out=$$(gofmt -l .); test -z "$$out" && echo "✓ gofmt" || (echo "✗ gofmt issues:"; echo "$$out"; exit 1)
-	@go vet ./... && echo "✓ go vet"
-	@go build ./... && echo "✓ go build"
-	@go test -count=1 -short -timeout=300s ./... >/tmp/bullseye-gotest.log 2>&1 && echo "✓ go test (all packages)" || (echo "✗ go test failing:"; cat /tmp/bullseye-gotest.log; exit 1)
-	@swift build >/tmp/bullseye-swift-build.log 2>&1 && echo "✓ swift build" || (echo "✗ swift build failing:"; cat /tmp/bullseye-swift-build.log; exit 1)
-	@swift test >/tmp/bullseye-swift-test.log 2>&1 && echo "✓ swift test" || (echo "✗ swift test failing:"; cat /tmp/bullseye-swift-test.log; exit 1)
-	@JAVA_HOME=$(JDK21) android/gradlew -p $(CURDIR)/android :pigeon:test --no-daemon --console=plain >/tmp/bullseye-kotlin.log 2>&1 \
-		&& echo "✓ kotlin :pigeon:test" \
-		|| (echo "✗ kotlin :pigeon:test failing:"; cat /tmp/bullseye-kotlin.log; exit 1)
-	@cd web && npx tsx --test src/crypto.test.ts src/PairingCeremonyMachine.test.ts >/tmp/bullseye-web.log 2>&1 \
-		&& echo "✓ web (tsx --test)" \
-		|| (echo "✗ web tests failing:"; cat /tmp/bullseye-web.log; exit 1)
-	@cd formal && ./tlc PairingCeremony >/tmp/bullseye-tlc-pairing.log 2>&1 \
-		&& grep -q "Model checking completed. No error has been found" /tmp/bullseye-tlc-pairing.log \
-		&& echo "✓ TLC PairingCeremony" \
-		|| (echo "✗ TLC PairingCeremony failing:"; tail -30 /tmp/bullseye-tlc-pairing.log; exit 1)
+	@rm -rf /tmp/bullseye && mkdir -p /tmp/bullseye
+	@( out=$$(gofmt -l .); \
+	   if test -z "$$out"; then echo ok > /tmp/bullseye/gofmt.status; \
+	   else { echo "$$out" > /tmp/bullseye/gofmt.log; echo fail > /tmp/bullseye/gofmt.status; }; fi ) & \
+	 ( go vet ./... > /tmp/bullseye/govet.log 2>&1 \
+	   && echo ok > /tmp/bullseye/govet.status \
+	   || echo fail > /tmp/bullseye/govet.status ) & \
+	 ( go build ./... > /tmp/bullseye/gobuild.log 2>&1 \
+	   && echo ok > /tmp/bullseye/gobuild.status \
+	   || echo fail > /tmp/bullseye/gobuild.status ) & \
+	 ( go test -count=1 -short -timeout=300s ./... > /tmp/bullseye/gotest.log 2>&1 \
+	   && echo ok > /tmp/bullseye/gotest.status \
+	   || echo fail > /tmp/bullseye/gotest.status ) & \
+	 ( swift test > /tmp/bullseye/swift-test.log 2>&1 \
+	   && echo ok > /tmp/bullseye/swift-test.status \
+	   || echo fail > /tmp/bullseye/swift-test.status ) & \
+	 ( JAVA_HOME=$(JDK21) android/gradlew -p $(CURDIR)/android :pigeon:test \
+	     --no-daemon --console=plain > /tmp/bullseye/kotlin.log 2>&1 \
+	   && echo ok > /tmp/bullseye/kotlin.status \
+	   || echo fail > /tmp/bullseye/kotlin.status ) & \
+	 ( cd web && npx tsx --test src/crypto.test.ts src/PairingCeremonyMachine.test.ts \
+	     > /tmp/bullseye/web.log 2>&1 \
+	   && echo ok > /tmp/bullseye/web.status \
+	   || echo fail > /tmp/bullseye/web.status ) & \
+	 ( $(MAKE) test-c > /tmp/bullseye/test-c.log 2>&1 \
+	   && echo ok > /tmp/bullseye/test-c.status \
+	   || echo fail > /tmp/bullseye/test-c.status ) & \
+	 ( cd formal && ./tlc PairingCeremony > /tmp/bullseye/tlc.log 2>&1; \
+	   grep -q "Model checking completed. No error has been found" /tmp/bullseye/tlc.log \
+	   && echo ok > /tmp/bullseye/tlc.status \
+	   || echo fail > /tmp/bullseye/tlc.status ) & \
+	 wait
+	@fail=0; \
+	 for step in gofmt govet gobuild gotest swift-test kotlin web test-c tlc; do \
+	   if [ "$$(cat /tmp/bullseye/$$step.status 2>/dev/null)" = "ok" ]; then \
+	     printf "✓ %s\n" "$$step"; \
+	   else \
+	     printf "✗ %s\n" "$$step"; \
+	     tail -30 /tmp/bullseye/$$step.log 2>/dev/null | sed 's/^/    /'; \
+	     fail=1; \
+	   fi; \
+	 done; \
+	 exit $$fail
 
 # --- Clean ---
 

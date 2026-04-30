@@ -70,9 +70,12 @@ typedef struct {
     pigeon_channel datagram_channel;
     uint8_t hkdf_scratch[96];
 
-    // Pairing
+    // Pairing record (post-ceremony state). Callers drive the
+    // pairing ceremony itself via the generated state machines
+    // (pigeon_acceptor_machine / pigeon_initiator_machine in
+    // pairingceremony_gen.h) — this struct doesn't pre-allocate
+    // the FSM.
     pigeon_pairing_record record;
-    pigeon_ios_composite pairing;
 
     // Transport
     pigeon_transport transport;

@@ -420,10 +420,14 @@ static void test_send_recv_datagram_encrypted(void)
 
 static void test_state_machine_init(void)
 {
-    TEST("pairing machine init (ios actor)");
-    pigeon_ios_pairing_machine m;
-    pigeon_ios_pairing_machine_init(&m);
-    if (m.state != PIGEON_APP_PAIRING_IDLE) { FAIL("wrong initial state"); return; }
+    TEST("pairing machine init (acceptor + initiator)");
+    pigeon_acceptor_machine acc;
+    pigeon_acceptor_machine_init(&acc);
+    if (acc.state != PIGEON_ACCEPTOR_IDLE) { FAIL("wrong acceptor initial state"); return; }
+
+    pigeon_initiator_machine ini;
+    pigeon_initiator_machine_init(&ini);
+    if (ini.state != PIGEON_INITIATOR_IDLE) { FAIL("wrong initiator initial state"); return; }
 
     PASS();
 }
@@ -433,13 +437,17 @@ static void test_state_machine_init(void)
 static void test_ctx_init(void)
 {
     TEST("pigeon_ctx init");
-    // Use a smaller buffer size for the test to avoid stack overflow.
-    // The real pigeon_ctx with PIGEON_MAX_MSG=1MiB is too large for the stack.
-    // Just verify that init works with a NULL transport.
+    // Use static storage: pigeon_ctx with PIGEON_MAX_MSG=1MiB is too
+    // large for the stack. The pairing FSM is no longer pre-allocated
+    // inside pigeon_ctx — callers declare their own
+    // pigeon_acceptor_machine / pigeon_initiator_machine — so the only
+    // post-init invariants to check are the channel state and the
+    // zeroed transport pointers.
     static pigeon_ctx ctx;
     pigeon_init(&ctx, NULL);
-    if (ctx.pairing.pairing.state != PIGEON_APP_PAIRING_IDLE) { FAIL("wrong pairing state"); return; }
     if (ctx.stream_channel.send_seq != 0) { FAIL("send_seq not zero"); return; }
+    if (ctx.stream_channel.established) { FAIL("stream channel should not be established"); return; }
+    if (ctx.datagram_channel.established) { FAIL("datagram channel should not be established"); return; }
 
     PASS();
 }
@@ -570,62 +578,98 @@ static void test_buffer_too_small(void)
 
 // --- State machine transitions for ios actor ---
 
-static int s_send_pair_hello_called;
-static int s_derive_secret_called;
+// Counters incremented by hooked-in pairing-ceremony actions, used to
+// verify the spec dispatches the right action on each transition.
+static int s_gen_ephemeral_called;
+static int s_register_relay_called;
+static int s_emit_token_called;
+static int s_derive_code_called;
+static int s_store_record_called;
+static int s_decode_token_called;
+static int s_dial_relay_called;
 
-static int action_set_send_pair_hello_flag(void *ctx)
-{
-    (void)ctx;
-    s_send_pair_hello_called = 1;
-    return 0;
-}
-
-static int action_set_derive_secret_flag(void *ctx)
-{
-    (void)ctx;
-    s_derive_secret_called = 1;
-    return 0;
-}
+static int act_gen_ephemeral(void *ctx)   { (void)ctx; s_gen_ephemeral_called++;   return 0; }
+static int act_register_relay(void *ctx)  { (void)ctx; s_register_relay_called++;  return 0; }
+static int act_emit_token(void *ctx)      { (void)ctx; s_emit_token_called++;      return 0; }
+static int act_derive_code(void *ctx)     { (void)ctx; s_derive_code_called++;     return 0; }
+static int act_store_record(void *ctx)    { (void)ctx; s_store_record_called++;    return 0; }
+static int act_decode_token(void *ctx)    { (void)ctx; s_decode_token_called++;    return 0; }
+static int act_dial_relay(void *ctx)      { (void)ctx; s_dial_relay_called++;      return 0; }
 
 static void test_state_machine_transitions(void)
 {
-    TEST("ios state machine transitions");
-    pigeon_ios_pairing_machine m;
-    pigeon_ios_pairing_machine_init(&m);
+    TEST("acceptor + initiator full happy paths");
 
-    // Initial state must be IDLE.
-    if (m.state != PIGEON_APP_PAIRING_IDLE) { FAIL("expected IDLE after init"); return; }
+    s_gen_ephemeral_called = 0;
+    s_register_relay_called = 0;
+    s_emit_token_called = 0;
+    s_derive_code_called = 0;
+    s_store_record_called = 0;
+    s_decode_token_called = 0;
+    s_dial_relay_called = 0;
 
-    // IDLE + USER_SCANS_QR → SCAN_QR
-    if (pigeon_ios_pairing_step(&m, PIGEON_EVENT_USER_SCANS_QR) != 1) { FAIL("step USER_SCANS_QR failed"); return; }
-    if (m.state != PIGEON_APP_PAIRING_SCAN_QR) { FAIL("expected SCAN_QR"); return; }
+    // ----- acceptor -----
+    pigeon_acceptor_machine acc;
+    pigeon_acceptor_machine_init(&acc);
+    acc.actions[PIGEON_ACTION_GEN_EPHEMERAL]  = act_gen_ephemeral;
+    acc.actions[PIGEON_ACTION_REGISTER_RELAY] = act_register_relay;
+    acc.actions[PIGEON_ACTION_EMIT_TOKEN]     = act_emit_token;
+    acc.actions[PIGEON_ACTION_DERIVE_CODE]    = act_derive_code;
+    acc.actions[PIGEON_ACTION_STORE_RECORD]   = act_store_record;
 
-    // SCAN_QR + QR_PARSED → CONNECT_RELAY
-    if (pigeon_ios_pairing_step(&m, PIGEON_EVENT_QR_PARSED) != 1) { FAIL("step QR_PARSED failed"); return; }
-    if (m.state != PIGEON_APP_PAIRING_CONNECT_RELAY) { FAIL("expected CONNECT_RELAY"); return; }
+    if (acc.state != PIGEON_ACCEPTOR_IDLE) { FAIL("acceptor: expected IDLE"); return; }
+    if (pigeon_acceptor_step(&acc, PIGEON_EVENT_PAIR_BEGIN) != 1) { FAIL("acceptor: step PAIR_BEGIN"); return; }
+    if (acc.state != PIGEON_ACCEPTOR_GENERATING_EPHEMERAL) { FAIL("acceptor: expected GENERATING_EPHEMERAL"); return; }
+    if (pigeon_acceptor_step(&acc, PIGEON_EVENT_EPHEMERAL_READY) != 1) { FAIL("acceptor: step EPHEMERAL_READY"); return; }
+    if (acc.state != PIGEON_ACCEPTOR_REGISTERING_RELAY) { FAIL("acceptor: expected REGISTERING_RELAY"); return; }
+    if (pigeon_acceptor_step(&acc, PIGEON_EVENT_RELAY_REGISTERED) != 1) { FAIL("acceptor: step RELAY_REGISTERED"); return; }
+    if (acc.state != PIGEON_ACCEPTOR_WAITING_FOR_HELLO) { FAIL("acceptor: expected WAITING_FOR_HELLO"); return; }
+    if (pigeon_acceptor_handle_message(&acc, PIGEON_MSG_HELLO) != 1) { FAIL("acceptor: handle HELLO"); return; }
+    if (acc.state != PIGEON_ACCEPTOR_DERIVING_CODE) { FAIL("acceptor: expected DERIVING_CODE"); return; }
+    if (pigeon_acceptor_step(&acc, PIGEON_EVENT_CODE_READY) != 1) { FAIL("acceptor: step CODE_READY"); return; }
+    if (acc.state != PIGEON_ACCEPTOR_AWAITING_USER_CONFIRM) { FAIL("acceptor: expected AWAITING_USER_CONFIRM"); return; }
+    if (pigeon_acceptor_step(&acc, PIGEON_EVENT_USER_CONFIRM) != 1) { FAIL("acceptor: step USER_CONFIRM"); return; }
+    if (acc.state != PIGEON_ACCEPTOR_AWAITING_PEER_CONFIRM) { FAIL("acceptor: expected AWAITING_PEER_CONFIRM"); return; }
+    if (pigeon_acceptor_handle_message(&acc, PIGEON_MSG_CONFIRM_TO_ACCEPTOR) != 1) { FAIL("acceptor: handle CONFIRM_TO_ACCEPTOR"); return; }
+    if (acc.state != PIGEON_ACCEPTOR_PAIRED) { FAIL("acceptor: expected PAIRED"); return; }
 
-    // CONNECT_RELAY + RELAY_CONNECTED → GEN_KEY_PAIR
-    if (pigeon_ios_pairing_step(&m, PIGEON_EVENT_RELAY_CONNECTED) != 1) { FAIL("step RELAY_CONNECTED failed"); return; }
-    if (m.state != PIGEON_APP_PAIRING_GEN_KEY_PAIR) { FAIL("expected GEN_KEY_PAIR"); return; }
+    if (s_gen_ephemeral_called  != 1) { FAIL("acceptor: gen_ephemeral did not fire"); return; }
+    if (s_register_relay_called != 1) { FAIL("acceptor: register_relay did not fire"); return; }
+    if (s_emit_token_called     != 1) { FAIL("acceptor: emit_token did not fire"); return; }
+    if (s_derive_code_called    != 1) { FAIL("acceptor: derive_code did not fire"); return; }
+    if (s_store_record_called   != 1) { FAIL("acceptor: store_record did not fire"); return; }
 
-    // Register SEND_PAIR_HELLO action before triggering KEY_PAIR_GENERATED.
-    s_send_pair_hello_called = 0;
-    m.actions[PIGEON_ACTION_SEND_PAIR_HELLO] = action_set_send_pair_hello_flag;
+    // ----- initiator -----
+    pigeon_initiator_machine ini;
+    pigeon_initiator_machine_init(&ini);
+    ini.actions[PIGEON_ACTION_DECODE_TOKEN]  = act_decode_token;
+    ini.actions[PIGEON_ACTION_GEN_EPHEMERAL] = act_gen_ephemeral;
+    ini.actions[PIGEON_ACTION_DIAL_RELAY]    = act_dial_relay;
+    ini.actions[PIGEON_ACTION_DERIVE_CODE]   = act_derive_code;
+    ini.actions[PIGEON_ACTION_STORE_RECORD]  = act_store_record;
 
-    // GEN_KEY_PAIR + KEY_PAIR_GENERATED → WAIT_ACK; action must fire.
-    if (pigeon_ios_pairing_step(&m, PIGEON_EVENT_KEY_PAIR_GENERATED) != 1) { FAIL("step KEY_PAIR_GENERATED failed"); return; }
-    if (m.state != PIGEON_APP_PAIRING_WAIT_ACK) { FAIL("expected WAIT_ACK"); return; }
-    if (!s_send_pair_hello_called) { FAIL("SEND_PAIR_HELLO action did not fire"); return; }
+    if (pigeon_initiator_step(&ini, PIGEON_EVENT_TOKEN_RECEIVED) != 1) { FAIL("initiator: step TOKEN_RECEIVED"); return; }
+    if (ini.state != PIGEON_INITIATOR_DECODING_TOKEN) { FAIL("initiator: expected DECODING_TOKEN"); return; }
+    if (pigeon_initiator_step(&ini, PIGEON_EVENT_TOKEN_DECODED) != 1) { FAIL("initiator: step TOKEN_DECODED"); return; }
+    if (ini.state != PIGEON_INITIATOR_GENERATING_EPHEMERAL) { FAIL("initiator: expected GENERATING_EPHEMERAL"); return; }
+    if (pigeon_initiator_step(&ini, PIGEON_EVENT_EPHEMERAL_READY) != 1) { FAIL("initiator: step EPHEMERAL_READY"); return; }
+    if (ini.state != PIGEON_INITIATOR_CONNECTING_RELAY) { FAIL("initiator: expected CONNECTING_RELAY"); return; }
+    if (pigeon_initiator_step(&ini, PIGEON_EVENT_RELAY_CONNECTED) != 1) { FAIL("initiator: step RELAY_CONNECTED"); return; }
+    if (ini.state != PIGEON_INITIATOR_AWAITING_WELCOME) { FAIL("initiator: expected AWAITING_WELCOME"); return; }
+    if (pigeon_initiator_handle_message(&ini, PIGEON_MSG_WELCOME) != 1) { FAIL("initiator: handle WELCOME"); return; }
+    if (ini.state != PIGEON_INITIATOR_DERIVING_CODE) { FAIL("initiator: expected DERIVING_CODE"); return; }
+    if (pigeon_initiator_step(&ini, PIGEON_EVENT_CODE_READY) != 1) { FAIL("initiator: step CODE_READY"); return; }
+    if (ini.state != PIGEON_INITIATOR_AWAITING_USER_CONFIRM) { FAIL("initiator: expected AWAITING_USER_CONFIRM"); return; }
+    if (pigeon_initiator_step(&ini, PIGEON_EVENT_USER_CONFIRM) != 1) { FAIL("initiator: step USER_CONFIRM"); return; }
+    if (ini.state != PIGEON_INITIATOR_AWAITING_PEER_CONFIRM) { FAIL("initiator: expected AWAITING_PEER_CONFIRM"); return; }
+    if (pigeon_initiator_handle_message(&ini, PIGEON_MSG_CONFIRM_TO_INITIATOR) != 1) { FAIL("initiator: handle CONFIRM_TO_INITIATOR"); return; }
+    if (ini.state != PIGEON_INITIATOR_PAIRED) { FAIL("initiator: expected PAIRED"); return; }
 
-    // Register DERIVE_SECRET action before the handle_message call.
-    s_derive_secret_called = 0;
-    m.actions[PIGEON_ACTION_DERIVE_SECRET] = action_set_derive_secret_flag;
-
-    // WAIT_ACK + PAIR_HELLO_ACK message → E2E_READY; DERIVE_SECRET action must fire.
-    int ret = pigeon_ios_pairing_handle_message(&m, PIGEON_MSG_PAIR_HELLO_ACK);
-    if (ret != 1) { FAIL("handle_message PAIR_HELLO_ACK should return 1"); return; }
-    if (m.state != PIGEON_APP_PAIRING_E2E_READY) { FAIL("expected E2E_READY"); return; }
-    if (!s_derive_secret_called) { FAIL("DERIVE_SECRET action did not fire"); return; }
+    if (s_decode_token_called   != 1) { FAIL("initiator: decode_token did not fire"); return; }
+    if (s_gen_ephemeral_called  != 2) { FAIL("initiator: gen_ephemeral count"); return; }
+    if (s_dial_relay_called     != 1) { FAIL("initiator: dial_relay did not fire"); return; }
+    if (s_derive_code_called    != 2) { FAIL("initiator: derive_code count"); return; }
+    if (s_store_record_called   != 2) { FAIL("initiator: store_record count"); return; }
 
     PASS();
 }
