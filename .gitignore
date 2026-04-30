@@ -33,3 +33,4 @@ c/test/test_pigeon
 c/test/test_ngtcp2
 .claude/
 .playwright-mcp/
+/c/test/test_pigeon_asan

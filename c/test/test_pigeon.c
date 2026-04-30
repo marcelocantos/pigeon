@@ -1379,6 +1379,8 @@ static void test_session_stream_roundtrip(void)
     if (got != 5 || memcmp(buf, "world", 5) != 0) { FAIL("A recv"); return; }
 
     pigeon_stream_close(&sa_chat);
+    pigeon_session_close(&sa);
+    pigeon_session_close(&sb);
 
     PASS();
 }
@@ -1429,6 +1431,9 @@ static void test_session_datagram_roundtrip(void)
     uint8_t buf[32];
     int got = pigeon_datagram_recv(&db_ping, buf, sizeof(buf));
     if (got != 2 || memcmp(buf, "p1", 2) != 0) { FAIL("B recv ping"); return; }
+
+    pigeon_session_close(&sa);
+    pigeon_session_close(&sb);
 
     PASS();
 }

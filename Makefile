@@ -6,8 +6,9 @@ JDK21 ?= /opt/homebrew/Cellar/openjdk@21/21.0.10/libexec/openjdk.jdk/Contents/Ho
 .PHONY: all build test test-go test-swift test-kotlin test-web \
         e2e e2e-go e2e-swift e2e-kotlin \
         test-live bench clean \
-        build-vendor-deps test-c test-c-ngtcp2 \
-        bullseye demo server
+        build-vendor-deps test-c test-c-asan test-c-ngtcp2 \
+        test-go-race \
+        bullseye bullseye-prereq bullseye-strict demo server
 
 # --- Build ---
 
@@ -117,6 +118,30 @@ test-c: amalgamate
 		dist/pigeon.c c/test/test_pigeon.c -o c/test/test_pigeon
 	./c/test/test_pigeon
 
+# --- Sanitiser-instrumented C tests ---
+#
+# AddressSanitizer + UndefinedBehaviorSanitizer catch the kinds of
+# memory bugs the heap-scratch and cgo-bridge work introduces (use-
+# after-free, leaks, oob, signed overflow, null deref). Run as a
+# separate target so the bullseye fast loop stays fast.
+#
+# UBSan settles for -fno-sanitize=function on Apple silicon where the
+# function-type check trips on libsodium's call-into-C pattern.
+test-c-asan: amalgamate
+	clang -O1 -g -fno-omit-frame-pointer \
+		-fsanitize=address,undefined -fno-sanitize=function \
+		-DPIGEON_CRYPTO_LIBSODIUM -Idist \
+		$$(pkg-config --cflags --libs libsodium) \
+		dist/pigeon.c c/test/test_pigeon.c \
+		-o c/test/test_pigeon_asan
+	ASAN_OPTIONS=detect_leaks=1:abort_on_error=1:halt_on_error=1 \
+		UBSAN_OPTIONS=halt_on_error=1:print_stacktrace=1 \
+		./c/test/test_pigeon_asan
+
+# Go race detector on the cwire bridge (covers AEAD nonce races etc).
+test-go-race:
+	go test -race -count=1 -timeout=120s ./cwire/ ./crypto/ ./
+
 # --- Vendored C dependencies (ngtcp2 + quictls/openssl) ---
 #
 # Builds static libs under vendor/build/.
@@ -173,6 +198,13 @@ test-c-ngtcp2: build-vendor-deps amalgamate
 # target waits, then renders the per-step pass/fail summary in stable
 # order. Total wall-clock drops from ~serial-sum to roughly the slowest
 # single suite (today: swift test).
+#
+# `make bullseye-strict` adds ASan + UBSan on the C suite and Go's
+# race detector on cwire / crypto / root. Slower (~30-40s vs ~10s for
+# bullseye) so it's a separate target rather than always-on.
+bullseye-strict: bullseye test-c-asan test-go-race
+	@echo "✓ bullseye-strict (sanitisers green)"
+
 # Sequential prerequisites for bullseye: codegen and amalgamation must
 # happen before the parallel checks fan out, otherwise `make generate`
 # / `make amalgamate` (transitively required by test-c) races against

@@ -15,6 +15,7 @@ import (
 	"math/big"
 	"net"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -275,8 +276,9 @@ func TestE2EMultiStreamMultiDatagram(t *testing.T) {
 			}
 		}()
 
-		// control: respond "stats" with count of echoes
-		var echoes int
+		// control: respond "stats" with count of echoes (atomic — see
+		// the ping goroutine below that increments concurrently).
+		var echoes atomic.Int64
 		go func() {
 			ctrl, err := sess.AcceptStream(ctx, "control")
 			if err != nil {
@@ -288,7 +290,7 @@ func TestE2EMultiStreamMultiDatagram(t *testing.T) {
 					return
 				}
 				if string(msg) == "stats" {
-					_ = ctrl.Send(fmt.Appendf(nil, "echoes=%d", echoes))
+					_ = ctrl.Send(fmt.Appendf(nil, "echoes=%d", echoes.Load()))
 				}
 			}
 		}()
@@ -302,7 +304,7 @@ func TestE2EMultiStreamMultiDatagram(t *testing.T) {
 					return
 				}
 				_ = pingCh.Send(append([]byte("pong:"), p...))
-				echoes++
+				echoes.Add(1)
 			}
 		}()
 		go func() {
