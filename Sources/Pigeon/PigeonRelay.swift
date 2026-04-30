@@ -43,6 +43,16 @@ private let maxMessageSize: UInt32 = 1_048_576
 /// stream. Datagrams use the QUIC connection's unreliable datagram channel.
 ///
 /// Available on Apple platforms only (requires Network.framework).
+///
+/// **Legacy.** This is the v0.16-era single-channel client built on
+/// Network.framework's QUIC stack. T29 introduced the multi-channel
+/// `PigeonSession` / `PigeonStream` / `PigeonDatagram` API on top of
+/// the C peer-library (see `Session.swift`). New code should prefer
+/// that path; `PigeonConn` stays for backwards compatibility with
+/// the existing `Tests/PigeonRelayE2ETests` suite and will be
+/// retired once the multi-stream ngtcp2 transport on the C side is
+/// production-ready.
+@available(*, deprecated, message: "Use PigeonSession from Session.swift; this single-channel client over Network.framework predates the post-T22 wire and lacks named streams / per-channel datagrams.")
 public final class PigeonConn: @unchecked Sendable {
     /// The relay-assigned instance ID (set after register, or the target ID for connect).
     public let instanceID: String
