@@ -7,7 +7,7 @@ JDK21 ?= /opt/homebrew/Cellar/openjdk@21/21.0.10/libexec/openjdk.jdk/Contents/Ho
         e2e e2e-go e2e-swift e2e-kotlin \
         test-live bench clean \
         build-vendor-deps test-c test-c-ngtcp2 \
-        bullseye
+        bullseye demo server
 
 # --- Build ---
 
