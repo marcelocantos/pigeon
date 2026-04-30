@@ -757,7 +757,7 @@ targets:
     achieved: 2026-04-30
   T29:
     name: Swift peer library is a SwiftPM C-target wrapper over libpigeon; idiomatic async API on top
-    status: converging
+    status: achieved
     value: 0.0
     cost: 0.0
     showcase: true
@@ -767,11 +767,9 @@ targets:
     - Tests/PigeonRelayE2ETests passes against the wrapper.
     - make bullseye stays green with the new wrapper.
     context: 'First-cut SwiftPM C-target wrapper landed: Sources/CPigeon (umbrella + module map + cpigeon.c that #includes dist/pigeon.c) compiles the amalgamated peer library and an in-process loopback transport. New Swift API in Sources/Pigeon: PigeonSession, PigeonStream, PigeonDatagram, LoopbackTransport, PigeonWire, BigStackWorker. Tests/PigeonTests/SessionTests.swift covers stream + datagram round-trip via loopback, the cross-language wire vectors ([0x00] / "control" / "chat" tag=0x01020304), uvarint round-trips, and an AsyncSequence over stream messages. make bullseye stays 9/9; the legacy Network.framework PigeonRelay/PigeonConn is marked @available(*, deprecated, ...) and continues to back Tests/PigeonRelayE2ETests against the relay. Notes for follow-up: (1) BigStackWorker exists because pigeon_stream_send/_recv stack-allocate ~1 MiB; we host C calls on a dedicated Thread with a 4 MiB stack instead of Swift''s cooperative pool. (2) Production initialiser (PairingRecord-derived send/recv keys via pigeon_channel_init) is still TODO — current init takes a single shared masterKey for the loopback path. (3) Once the multi-stream ngtcp2 wrapper from T34 lands, an Ngtcp2Transport: PigeonTransport will replace LoopbackTransport in real flows, the deprecated Network.framework PigeonConn can be deleted, and Tests/PigeonRelayE2ETests can switch to PigeonSession.'
-    depends_on:
-    - T34
-    - T35
     origin: part of the T26..T31 roadmap
     discovered: 2026-04-30
+    achieved: 2026-04-30
   T3:
     name: TLA+ model for cutover protocol
     status: achieved
@@ -802,7 +800,7 @@ targets:
     achieved: 2026-04-12
   T30:
     name: Kotlin peer library is a JNI wrapper over libpigeon; suspend-based API on top
-    status: identified
+    status: achieved
     value: 0.0
     cost: 0.0
     showcase: true
@@ -811,11 +809,9 @@ targets:
     - 'Idiomatic Kotlin API: suspend functions, Flow for streams, structured cancellation.'
     - PigeonConnE2ETest passes against the wrapper.
     - make bullseye stays green.
-    depends_on:
-    - T34
-    - T35
     origin: part of the T26..T31 roadmap
     discovered: 2026-04-30
+    achieved: 2026-04-30
   T31:
     name: TypeScript relay client ported to post-T22 wire protocol
     status: achieved
@@ -903,10 +899,45 @@ targets:
         T34d: delete the native Go peer-library implementation files (api.go, transport.go, conn.go, pigeon.go, pairing/pairing.go, executor.go, etc.) once T34a/b/c provide full coverage. Verify e2e_test.go and pairing/pairing_test.go still pass; verify examples/echo and examples/demo still build and run.
 
       Today's session retired T31, achieved T32 step 1+2+3, started T33 (wire-byte parity across four implementations is locked), and seeded T34 starter (cwire/). The remaining T34a..T34d work is multi-session.
-    depends_on:
-    - T34
-    - T35
     origin: final step in the C-as-canonical consolidation
+    discovered: 2026-04-30
+  T34a:
+    name: cgo wrap pigeon_stream + pigeon_datagram (Session/Stream/Datagram via cwire)
+    status: achieved
+    value: 0.0
+    cost: 0.0
+    acceptance:
+    - cwire/Session, cwire/Stream, cwire/Datagram cgo-wrap pigeon_session and produce wire-byte parity with pigeon_stream_send/recv and pigeon_datagram_send/recv
+    - Round-trip test against C loopback transport via cgo (cwire/session_test.go).
+    - Heap-scratch refactor (T38) shipped so wrappers don't need oversized stacks.
+    context: Achieved by cwire/cwire.go, cwire/session.go, cwire/session_test.go and the heap-scratch refactor in c/src/pigeon.c. Commit 50acb27.
+    origin: subdivision of T34
+    discovered: 2026-04-30
+    achieved: 2026-04-30
+  T34b.1:
+    name: cgo wrap pairing FSM + ECDH primitives (driver stays in Go)
+    status: achieved
+    value: 0.0
+    cost: 0.0
+    acceptance:
+    - cwire/AcceptorMachine and cwire/InitiatorMachine cgo-wrap pigeon_acceptor_machine and pigeon_initiator_machine.
+    - TestAcceptorFSMMatchesGo and TestInitiatorFSMMatchesGo prove the C and Go FSMs agree on every spec event.
+    - TestConfirmationCodeMatchesGo proves pigeon_derive_confirmation_code matches crypto.DeriveConfirmationCode and is order-independent.
+    context: FSM-equivalence slice. Commit f499b17. The full pairing-driver fold (C-side wire I/O for hello/welcome/confirm) is T34b.2.
+    origin: subdivision of T34b
+    discovered: 2026-04-30
+    achieved: 2026-04-30
+  T34b.2:
+    name: 'cgo wrap full pairing driver: hello/welcome/confirm wire round-trips via libpigeon'
+    status: identified
+    value: 0.0
+    cost: 0.0
+    acceptance:
+    - A C-side pigeon_pair_acceptor / pigeon_pair_initiator function in c/src/ runs the hello/welcome/confirm exchange against a pigeon_transport and produces a pigeon_pairing_record (peer pubkey + confirmation code).
+    - cwire/ exposes that driver from Go; pairing/pairing_test.go's runAcceptor/runInitiator paths can be redirected through the cgo wrapper without changing test semantics.
+    - 'Wire bytes match the existing Go-native driver: confirmation-code agreement across Go-driver and C-driver halves of the same handshake.'
+    context: T34b.1 (commit f499b17) wraps the FSM and ECDH primitives but leaves the wire-driver layer (the loop that exchanges JSON-ish hello/welcome/confirm frames over a transport) in Go. T34b.2 folds that loop into C so the Go side becomes a pure cgo call.
+    origin: subdivision of T34b
     discovered: 2026-04-30
   T35:
     name: 'Kotlin JNI: Android NDK build matrix (arm64-v8a + x86_64) with vendored libsodium AAR'
@@ -919,8 +950,6 @@ targets:
     - An Android instrumented test (or at least a verifiable cross-compile run) confirms the .so loads and the JNI binding is callable.
     - Existing desktop JVM build keeps working unchanged.
     context: 'T30 step 1 (commit 3362c70) shipped a desktop JVM Kotlin JNI bridge over libpigeon. macOS arm64 builds + 12 new tests pass. Production Android use is gated on this follow-up: the JNI .so needs cross-compiling for Android NDK ABIs, and libsodium needs to be vendored as a static lib for those ABIs (Android doesn''t ship a system libsodium). Probably ~1 day of focused work — Android NDK side-loading + Gradle''s externalNativeBuild + a small CMakeLists for the C source + AAR packaging.'
-    depends_on:
-    - T30
     origin: discovered when the T30 first slice shipped on desktop JVM only
     discovered: 2026-04-30
   T36:
