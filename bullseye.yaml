@@ -757,7 +757,7 @@ targets:
     achieved: 2026-04-30
   T29:
     name: Swift peer library is a SwiftPM C-target wrapper over libpigeon; idiomatic async API on top
-    status: identified
+    status: converging
     value: 0.0
     cost: 0.0
     showcase: true
@@ -766,16 +766,7 @@ targets:
     - 'Idiomatic Swift API: async/await on top of the C ABI''s callback shape; AsyncSequence for streams; structured concurrency for cancellation.'
     - Tests/PigeonRelayE2ETests passes against the wrapper.
     - make bullseye stays green with the new wrapper.
-    context: |-
-      Apple's Network.framework QUIC stack (NWConnection + NWProtocolQUIC.Options) exposes the entire QUIC connection as a single stream-like channel — there is no public API for opening or accepting additional QUIC streams per connection. The current Sources/Pigeon/PigeonRelay.swift relies on this 1-stream-per-connection model. Porting to the post-T22 multi-channel wire requires one of:
-
-        (a) Drop Network.framework for QUIC and bind to a multi-stream QUIC library — most plausibly the same vendored ngtcp2 the C SDK uses, exposed to Swift via a C-bridge module. Brings Swift in line with the C SDK's transport.
-        (b) Migrate Swift transport to WebTransport-over-URLSession (or a third-party WebTransport client). Apple's WebTransport status is unclear; verify before committing.
-        (c) Per-stream NWConnections (each its own QUIC connection): defeats the multiplexing purpose and breaks the relay's clientTag routing assumption.
-
-      This needs a strategic decision and is out of scope for an autonomous execution pass. Once the path is chosen, the actual port work (named-stream first-message handshake, 4-byte clientTag prefix on backend-side, AEAD-with-channel-id datagrams, and a Swift Session/Stream/Datagram API mirroring the Go shape) is mechanical.
-
-      Until this lands, the existing PigeonConn keeps working at single-channel scope against the relay's bridgeClientPair, which is already covered by Tests/PigeonRelayE2ETests and is green in `make bullseye`.
+    context: 'First-cut SwiftPM C-target wrapper landed: Sources/CPigeon (umbrella + module map + cpigeon.c that #includes dist/pigeon.c) compiles the amalgamated peer library and an in-process loopback transport. New Swift API in Sources/Pigeon: PigeonSession, PigeonStream, PigeonDatagram, LoopbackTransport, PigeonWire, BigStackWorker. Tests/PigeonTests/SessionTests.swift covers stream + datagram round-trip via loopback, the cross-language wire vectors ([0x00] / "control" / "chat" tag=0x01020304), uvarint round-trips, and an AsyncSequence over stream messages. make bullseye stays 9/9; the legacy Network.framework PigeonRelay/PigeonConn is marked @available(*, deprecated, ...) and continues to back Tests/PigeonRelayE2ETests against the relay. Notes for follow-up: (1) BigStackWorker exists because pigeon_stream_send/_recv stack-allocate ~1 MiB; we host C calls on a dedicated Thread with a 4 MiB stack instead of Swift''s cooperative pool. (2) Production initialiser (PairingRecord-derived send/recv keys via pigeon_channel_init) is still TODO — current init takes a single shared masterKey for the loopback path. (3) Once the multi-stream ngtcp2 wrapper from T34 lands, an Ngtcp2Transport: PigeonTransport will replace LoopbackTransport in real flows, the deprecated Network.framework PigeonConn can be deleted, and Tests/PigeonRelayE2ETests can switch to PigeonSession.'
     depends_on:
     - T34
     - T35
@@ -916,6 +907,36 @@ targets:
     - T34
     - T35
     origin: final step in the C-as-canonical consolidation
+    discovered: 2026-04-30
+  T35:
+    name: 'Kotlin JNI: Android NDK build matrix (arm64-v8a + x86_64) with vendored libsodium AAR'
+    status: identified
+    value: 0.0
+    cost: 0.0
+    showcase: true
+    acceptance:
+    - android/pigeon Gradle module produces an AAR containing libpigeon-jni.so for arm64-v8a and x86_64 Android targets, plus matching libsodium static lib (vendored or fetched via Android NDK ports).
+    - An Android instrumented test (or at least a verifiable cross-compile run) confirms the .so loads and the JNI binding is callable.
+    - Existing desktop JVM build keeps working unchanged.
+    context: 'T30 step 1 (commit 3362c70) shipped a desktop JVM Kotlin JNI bridge over libpigeon. macOS arm64 builds + 12 new tests pass. Production Android use is gated on this follow-up: the JNI .so needs cross-compiling for Android NDK ABIs, and libsodium needs to be vendored as a static lib for those ABIs (Android doesn''t ship a system libsodium). Probably ~1 day of focused work — Android NDK side-loading + Gradle''s externalNativeBuild + a small CMakeLists for the C source + AAR packaging.'
+    depends_on:
+    - T30
+    origin: discovered when the T30 first slice shipped on desktop JVM only
+    discovered: 2026-04-30
+  T36:
+    name: 'Java-callback transport: C side calls back into a JVM/Kotlin QuicTransport via JNI'
+    status: identified
+    value: 0.0
+    cost: 0.0
+    showcase: true
+    acceptance:
+    - A C -> Java callback path lets c/jni/pigeon_jni.c invoke a Kotlin-implemented QuicTransport (open_stream / accept_stream / send_on_stream / recv_on_stream / close_stream / send_datagram / recv_datagram). Symmetric with the existing C -> Java direction.
+    - The existing Kotlin Kwik/Bridge transport implementations can plug into this callback shape (or at least one of them, e.g. Kwik), and a Kotlin Session can drive a real QUIC connection through a JVM-implemented transport.
+    - 'Tests verify the callback path: a small in-Kotlin transport (like the C-side loopback, but Kotlin code) exercises Session.openStream → Stream.send → recv with the C peer library doing all the AEAD/wire work.'
+    context: T30 step 1 only wraps the C-side loopback transport — fine for unit tests but useless in production where the QUIC stack lives in JVM-land (Kwik on desktop, possibly Cronet on Android). The C library's pigeon_transport vtable is already abstract enough; this is just JNI callback-binding work. The Swift port (T29) faces the same need. Both should agree on the JNI/Swift -> C -> back-to-host-language callback pattern.
+    depends_on:
+    - T30
+    origin: discovered when the T30 first slice shipped a loopback-only JNI bridge
     discovered: 2026-04-30
   T4:
     name: Investigate STUN/NAT hole-punching as a transport
