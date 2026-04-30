@@ -901,13 +901,17 @@ targets:
     - 'The Makefile orchestrates: build-vendor-deps -> amalgamate -> libpigeon static lib -> go build (with cgo). `make demo` still works.'
     - The relay (cmd/pigeon) is unaffected — it doesn't link libpigeon.
     context: |-
-      The terminal step in the consolidation. After T34 (C SDK at parity) and T35 (interop verified), the Go peer library has nothing left to offer that libpigeon doesn't — keeping it parallel is just two implementations to maintain.
+      Status: blocked on its own size. The full fold in one go is multi-day work; one autonomous agent attempt stalled at the 10-minute watchdog while still in exploration. This target needs to be split into smaller targets that can each ship green:
 
-      Risks to design around:
-      1. CGO_ENABLED=0 single-static-binary builds break for Go peer consumers (but cmd/pigeon-the-relay still works because it doesn't link libpigeon).
-      2. Idiomatic Go ergonomics (channels, contexts, errors) over a callback-shaped C ABI requires careful goroutine pumping; ~1500 LOC of wrapper code.
-      3. Cross-compilation hostility: every Go consumer triple needs a libpigeon.a built for that target.
-      4. Build-system ordering: `go build` now depends on the vendored C build chain.
+        T34a: cgo wrap of Stream/Datagram. Already partially done in cwire/ (wire helpers). Add cgo bridges for pigeon_session_init, pigeon_session_open_stream, pigeon_session_get_datagram, pigeon_stream_send/recv/close, pigeon_datagram_send/recv. Test against the C loopback transport (extract loopback_make_transport from c/test/test_pigeon.c into a public helper). Tractable in a single agent run.
+
+        T34b: cgo wrap of pairing ceremony. The pigeon_acceptor_machine / pigeon_initiator_machine generated FSM is already cgo-callable via dist/pigeon.h. Add a higher-level pigeon_pair_acceptor / pigeon_pair_initiator C function in c/src/ that exchanges hello/welcome/confirm wire messages and returns a pigeon_pairing_record (mirroring pairing/pairing.go::runAcceptor / runInitiator). Bridge that from cgo.
+
+        T34c: cgo wrap of Listener / Register / Connect. Hardest part because of the Pairing callback (Go-side function exposed to C via //export + an opaque-pointer registry). Identity (X25519+Ed25519 callbacks) similarly. Best done after T34a + T34b have settled the simpler bits.
+
+        T34d: delete the native Go peer-library implementation files (api.go, transport.go, conn.go, pigeon.go, pairing/pairing.go, executor.go, etc.) once T34a/b/c provide full coverage. Verify e2e_test.go and pairing/pairing_test.go still pass; verify examples/echo and examples/demo still build and run.
+
+      Today's session retired T31, achieved T32 step 1+2+3, started T33 (wire-byte parity across four implementations is locked), and seeded T34 starter (cwire/). The remaining T34a..T34d work is multi-session.
     depends_on:
     - T34
     - T35
