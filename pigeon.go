@@ -97,10 +97,14 @@ func WakeRelay(ctx context.Context, relayURL string, c Config) error {
 	return nil
 }
 
-// Register connects to the relay as a backend. By default uses raw QUIC
-// (ALPN "pigeon"). The relay assigns an instance ID, returned via
-// InstanceID(). The caller is responsible for closing the connection.
-func Register(ctx context.Context, relayURL string, c Config) (*Conn, error) {
+// DialRelayAcceptor connects to the relay as a backend, registering for
+// incoming clients. By default uses raw QUIC (ALPN "pigeon"). The relay
+// assigns an instance ID, returned via InstanceID(). The caller is
+// responsible for closing the connection. This is the lower-level relay
+// helper used internally by pigeon.Register and pigeon/pairing; most
+// callers want the higher-level pigeon.Register / pairing.Register
+// instead.
+func DialRelayAcceptor(ctx context.Context, relayURL string, c Config) (*Conn, error) {
 	WakeRelay(ctx, relayURL, c) // best-effort; wakes Fly.io if auto-stopped
 
 	var conn *Conn
@@ -123,9 +127,10 @@ func Register(ctx context.Context, relayURL string, c Config) (*Conn, error) {
 	return conn, nil
 }
 
-// Connect connects to a relay as a client targeting a specific backend
-// instance ID. By default uses raw QUIC (ALPN "pigeon").
-func Connect(ctx context.Context, relayURL, instanceID string, c Config) (*Conn, error) {
+// DialRelayInitiator connects to a relay as a client targeting a specific
+// backend instance ID. By default uses raw QUIC (ALPN "pigeon"). Lower-level
+// relay helper; most callers want pigeon.Connect / pairing.Initiate.
+func DialRelayInitiator(ctx context.Context, relayURL, instanceID string, c Config) (*Conn, error) {
 	WakeRelay(ctx, relayURL, c) // best-effort; wakes Fly.io if auto-stopped
 
 	var conn *Conn
@@ -162,8 +167,8 @@ func quicTLSConfig(c Config) *tls.Config {
 	return cfg
 }
 
-// quicAddr derives the raw QUIC address from a relay URL. The default
-// QUIC port is 4433 unless overridden by WithQUICPort.
+// quicAddr derives the raw QUIC address from a relay URL. Precedence:
+// (1) explicit Config.QUICPort, (2) port encoded in the URL, (3) 4433.
 func quicAddr(relayURL string, c Config) (string, error) {
 	u, err := url.Parse(relayURL)
 	if err != nil {
@@ -171,6 +176,9 @@ func quicAddr(relayURL string, c Config) (string, error) {
 	}
 	host := u.Hostname()
 	port := c.QUICPort
+	if port == "" {
+		port = u.Port()
+	}
 	if port == "" {
 		port = "4433"
 	}

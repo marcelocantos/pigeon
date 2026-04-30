@@ -232,7 +232,8 @@ func (s *WebTransportServer) handleRegister(w http.ResponseWriter, r *http.Reque
 	}
 
 	// Read the handshake message. May contain a requested instance ID:
-	// "register" or "register::INSTANCE_ID"
+	//   "register" or "register::INSTANCE_ID"               → pair-mode (1:1)
+	//   "register-mux" or "register-mux::INSTANCE_ID"       → mux-mode (multi-client)
 	handshake, err := readMessage(stream)
 	if err != nil {
 		slog.Error("register: read handshake failed", "err", err)
@@ -240,8 +241,14 @@ func (s *WebTransportServer) handleRegister(w http.ResponseWriter, r *http.Reque
 		return
 	}
 
-	var id string
+	muxMode := false
 	msg := string(handshake)
+	if strings.HasPrefix(msg, "register-mux") {
+		muxMode = true
+		msg = "register" + strings.TrimPrefix(msg, "register-mux")
+	}
+
+	var id string
 	if strings.HasPrefix(msg, "register::") {
 		id = msg[len("register::"):]
 	}
@@ -257,7 +264,7 @@ func (s *WebTransportServer) handleRegister(w http.ResponseWriter, r *http.Reque
 	}
 
 	sess := &wtSession{session: session, stream: stream}
-	inst := &instance{id: id, session: sess}
+	inst := &instance{id: id, session: sess, muxMode: muxMode}
 	s.hub.register(inst)
 	defer s.hub.unregister(id)
 
@@ -281,16 +288,6 @@ func (s *WebTransportServer) handleClient(w http.ResponseWriter, r *http.Request
 		http.Error(w, `{"error":"instance not found"}`, http.StatusNotFound)
 		return
 	}
-
-	// Track connected clients.
-	inst.mu.Lock()
-	inst.clients++
-	inst.mu.Unlock()
-	defer func() {
-		inst.mu.Lock()
-		inst.clients--
-		inst.mu.Unlock()
-	}()
 
 	session, err := s.wtServer.Upgrade(w, r)
 	if err != nil {

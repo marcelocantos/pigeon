@@ -174,7 +174,7 @@ func (s *QUICServer) handleConnection(conn *quic.Conn) {
 
 	msg := string(handshake)
 	switch {
-	case msg == "register" || strings.HasPrefix(msg, "register:"):
+	case msg == "register" || strings.HasPrefix(msg, "register:") || strings.HasPrefix(msg, "register-mux"):
 		s.handleRegister(conn, stream, msg)
 	case strings.HasPrefix(msg, "connect:"):
 		s.handleConnect(conn, stream, msg)
@@ -185,10 +185,18 @@ func (s *QUICServer) handleConnection(conn *quic.Conn) {
 }
 
 func (s *QUICServer) handleRegister(conn *quic.Conn, stream *quic.Stream, msg string) {
-	// Parse handshake: "register[:TOKEN[:INSTANCE_ID]]"
+	// Parse handshake:
+	//   "register[:TOKEN[:INSTANCE_ID]]"      → pair-mode (1:1, no tag)
+	//   "register-mux[:TOKEN[:INSTANCE_ID]]"  → mux-mode (multi-client, tag prefix)
 	var token, requestedID string
-	if strings.HasPrefix(msg, "register:") {
-		parts := strings.SplitN(msg[len("register:"):], ":", 2)
+	muxMode := false
+	body := msg
+	if strings.HasPrefix(body, "register-mux") {
+		muxMode = true
+		body = "register" + strings.TrimPrefix(body, "register-mux")
+	}
+	if strings.HasPrefix(body, "register:") {
+		parts := strings.SplitN(body[len("register:"):], ":", 2)
 		token = parts[0]
 		if len(parts) > 1 {
 			requestedID = parts[1]
@@ -216,7 +224,7 @@ func (s *QUICServer) handleRegister(conn *quic.Conn, stream *quic.Stream, msg st
 	}
 
 	sess := &quicSession{conn: conn, stream: stream}
-	inst := &instance{id: id, session: sess}
+	inst := &instance{id: id, session: sess, muxMode: muxMode}
 	s.hub.register(inst)
 	defer s.hub.unregister(id)
 
@@ -241,16 +249,6 @@ func (s *QUICServer) handleConnect(conn *quic.Conn, stream *quic.Stream, msg str
 		conn.CloseWithError(1, "instance not found")
 		return
 	}
-
-	// Track connected clients.
-	inst.mu.Lock()
-	inst.clients++
-	inst.mu.Unlock()
-	defer func() {
-		inst.mu.Lock()
-		inst.clients--
-		inst.mu.Unlock()
-	}()
 
 	slog.Info("client connected", "instance", instanceID, "transport", "quic")
 

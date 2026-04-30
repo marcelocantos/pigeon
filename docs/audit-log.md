@@ -126,3 +126,14 @@ maintenance activities. Append-only — newest entries at the bottom.
 - **Deferred**: (none)
 - **Known issues**:
   - `ci.yml` `Deploy to Fly.io` job continues to fail on master with `FLY_API_TOKEN` expired. Carried over from v0.18.0; orthogonal to release artifacts.
+
+## 2026-04-30 — multi-channel pigeon API (🎯T22, 🎯T22.5–T22.8)
+
+- **Commit**: working tree dirty — `0f0d87c`
+- **Outcome**: Landed the redesigned multi-channel pigeon API. New surface: `pigeon.Register` returns a `*Listener` over a single relay registration, `Listener.Accept` yields one `*Session` per connecting paired client. `Session.OpenStream(ctx, name)` opens a fresh QUIC stream per named channel with a length-prefixed `[varint name-len][name]` first-message handshake; the relay forwards every QUIC stream end-to-end opaquely. `Session.Datagram(name)` returns a pre-declared `*Datagram` whose wire format is `AEAD([varint channel-id][payload])` — channel-ids inside the AEAD envelope. Multi-client routing on the backend is done by a 4-byte `clientTag` the relay prepends to every stream/datagram it forwards to backend (mux mode); the legacy `register`-handshake path stays 1:1 (pair mode) so the pairing ceremony in `pairing/` keeps working unchanged. `crypto.Channel` is concurrency-safe (atomic monotonic seq, mutex-guarded Decrypt) and is now exercised by `crypto/channel_concurrency_test.go`. Three new e2e tests (`e2e_test.go`) drive the in-process raw-QUIC relay: single-client chat, multi-stream + multi-datagram in one Session, and two concurrent clients sharing one backend without cross-talk. `examples/echo/{backend,client}/main.go` rewritten to demonstrate all four channels (chat, control, ping, metric). Retired 🎯T22, 🎯T22.5, 🎯T22.6, 🎯T22.7, 🎯T22.8.
+- **Deferred**:
+  - Per-Session state-machine instance (lifting the executor inside Session). Not a precondition for the rich demo; tracked separately.
+  - 🎯T23 (macOS Keychain identity) — explicitly deferred per scope.
+  - Backend-initiated streams (Session.OpenStream from the backend side) work by the same tagged protocol; demo only exercises client-initiated.
+- **Known issues**:
+  - `ci.yml` `Deploy to Fly.io` job continues to fail on master with `FLY_API_TOKEN` expired. Carried over from v0.18.0; orthogonal to release artifacts.

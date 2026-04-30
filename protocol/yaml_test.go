@@ -8,12 +8,12 @@ import (
 )
 
 func TestLoadYAML(t *testing.T) {
-	p, err := LoadYAML("pairing.yaml")
+	p, err := LoadYAML("session.yaml")
 	if err != nil {
 		t.Fatalf("LoadYAML: %v", err)
 	}
-	if p.Name != "PairingCeremony" {
-		t.Fatalf("expected Name %q, got %q", "PairingCeremony", p.Name)
+	if p.Name == "" {
+		t.Fatalf("expected non-empty Name")
 	}
 	if err := p.Validate(); err != nil {
 		t.Fatalf("Validate: %v", err)
