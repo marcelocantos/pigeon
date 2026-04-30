@@ -1,18 +1,23 @@
-// pigeon-demo runs the entire pigeon stack — relay, backend, client —
-// in a single process behind an HTTP control server, then opens a web
-// UI showing the live message flow on every channel.
+// pigeon-demo runs the entire pigeon stack — relay, backend, and a
+// configurable number of clients — in a single process behind an HTTP
+// control server, then opens a web UI showing the live message flow on
+// every channel for every client, all multiplexed onto the one backend.
 //
 // Architecture
 //
-//	┌─────────┐   QUIC   ┌─────────┐   QUIC   ┌─────────┐
-//	│ client  │ ───────► │  relay  │ ───────► │ backend │
-//	│ Session │ ◄─────── │ (mux)   │ ◄─────── │ Session │
-//	└────┬────┘                                └────┬────┘
-//	     │ events                              events │
-//	     ▼                                            ▼
+//	┌──────────┐                              ┌─────────┐
+//	│ client-1 │ ──┐                       ┌─►│         │
+//	│  Session │ ──┤        ┌─────────┐    │  │ backend │
+//	└──────────┘   ├──QUIC─►│  relay  │◄───┤  │ Session │
+//	┌──────────┐   │        │ (mux)   │    │  │  (one)  │
+//	│ client-N │ ──┘        └─────────┘    └──│         │
+//	│  Session │                              └────┬────┘
+//	└──────────┘                              events │
+//	     │ events                                    │
+//	     ▼                                           ▼
 //	         ┌───────────────────────────────┐
 //	         │  control HTTP server (this)   │
-//	         │  /events (SSE) /client/*      │
+//	         │  /events (SSE) /client/{n}/*  │
 //	         └───────────────┬───────────────┘
 //	                         │ HTTP/SSE
 //	                         ▼
@@ -21,9 +26,7 @@
 //	                 └──────────────┘
 //
 // The pairing ceremony runs in-process at startup with auto-confirm —
-// no QR codes, no user prompts. Both peers use the same crypto.Identity
-// and PairingRecord types as the public API; this is a real pairing,
-// just non-interactive.
+// no QR codes, no user prompts.
 //
 // Copyright 2026 Marcelo Cantos
 // SPDX-License-Identifier: Apache-2.0
@@ -50,6 +53,8 @@ import (
 	"os/exec"
 	"os/signal"
 	"runtime"
+	"strconv"
+	"strings"
 	"sync"
 	"syscall"
 	"time"
@@ -69,27 +74,33 @@ var dgChannels = map[string]uint64{
 }
 
 // event is a single line in the live message-flow log. Sent over SSE
-// to the browser; the UI picks "pane" and "dir" to decide where to
-// render it (client pane, backend pane; arrow direction).
+// to the browser; the UI uses Pane / ClientID / Dir to decide where
+// and how to render it.
+//
+//	Pane:     "client" | "backend" | "system"
+//	ClientID: "client-1" / "client-2" / … on every client and backend
+//	          event so the UI can group and colour by client.
+//	Dir:      "out" | "in" | "info"
+//	Channel:  "chat" | "control" | "ping" | "metric" | ""
 type event struct {
-	Time    time.Time `json:"time"`
-	Pane    string    `json:"pane"`    // "client" | "backend" | "system"
-	Dir     string    `json:"dir"`     // "out" | "in" | "info"
-	Channel string    `json:"channel"` // "chat" | "control" | "ping" | "metric" | ""
-	Text    string    `json:"text"`
+	Time     time.Time `json:"time"`
+	Pane     string    `json:"pane"`
+	ClientID string    `json:"clientId,omitempty"`
+	Dir      string    `json:"dir"`
+	Channel  string    `json:"channel"`
+	Text     string    `json:"text"`
 }
 
 // bus fans out events to every connected SSE subscriber.
 type bus struct {
-	mu       sync.Mutex
-	subs     map[chan event]struct{}
-	history  []event
-	maxHist  int
-	seq      uint64
+	mu      sync.Mutex
+	subs    map[chan event]struct{}
+	history []event
+	maxHist int
 }
 
 func newBus() *bus {
-	return &bus{subs: map[chan event]struct{}{}, maxHist: 200}
+	return &bus{subs: map[chan event]struct{}{}, maxHist: 400}
 }
 
 func (b *bus) publish(ev event) {
@@ -110,13 +121,12 @@ func (b *bus) publish(ev event) {
 		select {
 		case c <- ev:
 		default:
-			// Slow subscriber — drop rather than block.
 		}
 	}
 }
 
 func (b *bus) subscribe() (chan event, []event, func()) {
-	c := make(chan event, 64)
+	c := make(chan event, 128)
 	b.mu.Lock()
 	b.subs[c] = struct{}{}
 	hist := append([]event(nil), b.history...)
@@ -130,10 +140,34 @@ func (b *bus) subscribe() (chan event, []event, func()) {
 	return c, hist, cancel
 }
 
+// clientHarness is one connected client with its four channels and
+// closure-based send methods that publish "out" events on the bus.
+type clientHarness struct {
+	id          string
+	instance    string
+	sess        *pigeon.Session
+	sendChat    func(text string) error
+	sendControl func(text string) error
+	sendPing    func(p []byte) error
+	sendMetric  func(p []byte) error
+}
+
+func (c *clientHarness) close() {
+	if c.sess != nil {
+		_ = c.sess.Close()
+	}
+}
+
 func main() {
 	httpPort := flag.Int("http-port", 7000, "control HTTP port (web UI lives here)")
 	openBrowser := flag.Bool("open", true, "open the demo UI in the default browser at startup")
+	numClients := flag.Int("clients", 3, "how many clients to spawn (1..16)")
 	flag.Parse()
+
+	if *numClients < 1 || *numClients > 16 {
+		fmt.Fprintln(os.Stderr, "--clients must be between 1 and 16")
+		os.Exit(2)
+	}
 
 	slog.SetDefault(slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelInfo})))
 
@@ -142,67 +176,90 @@ func main() {
 
 	b := newBus()
 
-	// 1. Start relay (raw QUIC on a free port; self-signed cert).
-	relayURL, _, err := startRelay(ctx, b)
+	relayURL, err := startRelay(ctx, b)
 	if err != nil {
 		slog.Error("start relay", "err", err)
 		os.Exit(1)
 	}
 	b.publish(event{Pane: "system", Dir: "info", Text: "relay up at " + relayURL})
 
-	// 2. Generate two identities.
 	tmp, err := os.MkdirTemp("", "pigeon-demo-")
 	if err != nil {
 		slog.Error("tempdir", "err", err)
 		os.Exit(1)
 	}
 	defer os.RemoveAll(tmp)
+
 	bid, err := crypto.NewFileIdentity(tmp + "/backend-id.json")
 	if err != nil {
 		slog.Error("backend identity", "err", err)
 		os.Exit(1)
 	}
-	cid, err := crypto.NewFileIdentity(tmp + "/client-id.json")
-	if err != nil {
-		slog.Error("client identity", "err", err)
-		os.Exit(1)
+
+	// Pair every client against the same backend up-front. This produces
+	// one PairingRecord-per-client on each side (the backend's lookup
+	// table; the client's own connect record).
+	type clientSeed struct {
+		id        string
+		identity  crypto.Identity
+		clientRec *crypto.PairingRecord
+	}
+	seeds := make([]clientSeed, 0, *numClients)
+	pairings := make(map[string]*crypto.PairingRecord, *numClients)
+
+	for i := 1; i <= *numClients; i++ {
+		cid, err := crypto.NewFileIdentity(fmt.Sprintf("%s/client-%d-id.json", tmp, i))
+		if err != nil {
+			slog.Error("client identity", "i", i, "err", err)
+			os.Exit(1)
+		}
+		brec, crec, err := autoPair(ctx, relayURL, bid, cid, b)
+		if err != nil {
+			slog.Error("auto-pair", "i", i, "err", err)
+			os.Exit(1)
+		}
+		pairings[cid.InstanceID()] = brec
+		seeds = append(seeds, clientSeed{
+			id:        fmt.Sprintf("client-%d", i),
+			identity:  cid,
+			clientRec: crec,
+		})
+		b.publish(event{Pane: "system", Dir: "info", Text: fmt.Sprintf("paired client-%d (%s)", i, cid.InstanceID())})
 	}
 
-	// 3. Pair them in-process (auto-confirm).
-	brec, crec, err := autoPair(ctx, relayURL, bid, cid, b)
-	if err != nil {
-		slog.Error("auto-pair", "err", err)
-		os.Exit(1)
-	}
-	b.publish(event{Pane: "system", Dir: "info", Text: "pairing complete (backend ↔ client)"})
-
-	// 4. Start the backend Listener loop.
+	// Start the backend Listener with the full pairings table.
 	backendReady := make(chan struct{})
-	go runBackend(ctx, relayURL, bid, cid.InstanceID(), brec, b, backendReady)
+	// idLookup maps a client InstanceID to its friendly demo name so
+	// backend events can attribute traffic to the right client tab.
+	idLookup := make(map[string]string, len(seeds))
+	for _, s := range seeds {
+		idLookup[s.identity.InstanceID()] = s.id
+	}
+	go runBackend(ctx, relayURL, bid, pairings, idLookup, b, backendReady)
 
-	// Wait until the backend is registered (so the client can connect).
 	select {
 	case <-backendReady:
 	case <-ctx.Done():
 		return
 	}
 
-	// 5. Connect the client.
-	cli, err := startClient(ctx, relayURL, cid, bid.InstanceID(), crec, b)
-	if err != nil {
-		slog.Error("start client", "err", err)
-		os.Exit(1)
+	// Connect every client.
+	clients := make([]*clientHarness, 0, len(seeds))
+	for _, s := range seeds {
+		c, err := startClient(ctx, relayURL, s.id, s.identity, bid.InstanceID(), s.clientRec, b)
+		if err != nil {
+			slog.Error("start client", "id", s.id, "err", err)
+			os.Exit(1)
+		}
+		clients = append(clients, c)
+		defer c.close()
 	}
-	defer cli.close()
 
-	// 6. Start the HTTP control server (web UI + SSE + POST endpoints).
 	mux := http.NewServeMux()
 
-	// Static web UI.
 	sub, _ := fs.Sub(webFS, "web")
 	mux.Handle("/", http.FileServer(http.FS(sub)))
 
-	// SSE event stream.
 	mux.HandleFunc("/events", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "text/event-stream")
 		w.Header().Set("Cache-Control", "no-cache")
@@ -214,15 +271,13 @@ func main() {
 		}
 		ch, hist, unsub := b.subscribe()
 		defer unsub()
-
-		writeEv := func(ev event) {
+		write := func(ev event) {
 			data, _ := json.Marshal(ev)
 			fmt.Fprintf(w, "data: %s\n\n", data)
 			fl.Flush()
 		}
-		// Replay history first so the UI has context on (re)connect.
 		for _, ev := range hist {
-			writeEv(ev)
+			write(ev)
 		}
 		for {
 			select {
@@ -230,19 +285,26 @@ func main() {
 				if !ok {
 					return
 				}
-				writeEv(ev)
+				write(ev)
 			case <-r.Context().Done():
 				return
 			}
 		}
 	})
 
-	// Snapshot of the wired-up state (instance IDs, channels) for the UI.
 	mux.HandleFunc("/state", func(w http.ResponseWriter, r *http.Request) {
+		type clientState struct {
+			ID       string `json:"id"`
+			Instance string `json:"instance"`
+		}
+		cs := make([]clientState, 0, len(clients))
+		for _, c := range clients {
+			cs = append(cs, clientState{ID: c.id, Instance: c.instance})
+		}
 		st := map[string]any{
 			"relay":            relayURL,
 			"backendInstance":  bid.InstanceID(),
-			"clientInstance":   cid.InstanceID(),
+			"clients":          cs,
 			"streamChannels":   []string{"chat", "control"},
 			"datagramChannels": dgChannels,
 		}
@@ -250,33 +312,36 @@ func main() {
 		_ = json.NewEncoder(w).Encode(st)
 	})
 
-	// Send-on-channel POST endpoints.
-	mux.HandleFunc("/client/chat", func(w http.ResponseWriter, r *http.Request) {
-		txt := readText(r)
-		if err := cli.sendChat(txt); err != nil {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
+	// /client/{n}/{action} — find harness, dispatch.
+	mux.HandleFunc("/client/", func(w http.ResponseWriter, r *http.Request) {
+		// path is "/client/<n>/<action>"
+		parts := strings.Split(strings.TrimPrefix(r.URL.Path, "/client/"), "/")
+		if len(parts) != 2 {
+			http.Error(w, "bad path", http.StatusNotFound)
 			return
 		}
-		w.WriteHeader(http.StatusNoContent)
-	})
-	mux.HandleFunc("/client/control", func(w http.ResponseWriter, r *http.Request) {
-		txt := readText(r)
-		if err := cli.sendControl(txt); err != nil {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
+		idx, err := strconv.Atoi(parts[0])
+		if err != nil || idx < 1 || idx > len(clients) {
+			http.Error(w, "bad client index", http.StatusNotFound)
 			return
 		}
-		w.WriteHeader(http.StatusNoContent)
-	})
-	mux.HandleFunc("/client/ping", func(w http.ResponseWriter, r *http.Request) {
+		c := clients[idx-1]
 		txt := readText(r)
-		if err := cli.sendPing([]byte(txt)); err != nil {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
+		var send func() error
+		switch parts[1] {
+		case "chat":
+			send = func() error { return c.sendChat(txt) }
+		case "control":
+			send = func() error { return c.sendControl(txt) }
+		case "ping":
+			send = func() error { return c.sendPing([]byte(txt)) }
+		case "metric":
+			send = func() error { return c.sendMetric([]byte("get")) }
+		default:
+			http.Error(w, "bad action", http.StatusNotFound)
 			return
 		}
-		w.WriteHeader(http.StatusNoContent)
-	})
-	mux.HandleFunc("/client/metric", func(w http.ResponseWriter, r *http.Request) {
-		if err := cli.sendMetric([]byte("get")); err != nil {
+		if err := send(); err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
@@ -292,9 +357,9 @@ func main() {
 		_ = srv.Shutdown(shutCtx)
 	}()
 	url := "http://" + addr
-	slog.Info("demo ready", "url", url)
+	slog.Info("demo ready", "url", url, "clients", len(clients))
 	fmt.Fprintln(os.Stderr, "")
-	fmt.Fprintln(os.Stderr, "  ┌─ pigeon demo ready ─────────────────────────────────")
+	fmt.Fprintf(os.Stderr, "  ┌─ pigeon demo ready (%d clients) ─────────────────────\n", len(clients))
 	fmt.Fprintln(os.Stderr, "  │  open: "+url)
 	fmt.Fprintln(os.Stderr, "  └─────────────────────────────────────────────────────")
 	fmt.Fprintln(os.Stderr, "")
@@ -334,27 +399,25 @@ func browseURL(url string) error {
 	return nil
 }
 
-// startRelay brings up an in-process raw-QUIC pigeon relay on a free
-// UDP port and returns its https://127.0.0.1:PORT URL.
-func startRelay(ctx context.Context, b *bus) (string, *pigeon.QUICServer, error) {
+func startRelay(ctx context.Context, b *bus) (string, error) {
 	cert, err := selfSignedCert()
 	if err != nil {
-		return "", nil, fmt.Errorf("cert: %w", err)
+		return "", fmt.Errorf("cert: %w", err)
 	}
 	tlsCfg := &tls.Config{Certificates: []tls.Certificate{cert}}
 
 	wtSrv, err := pigeon.NewWebTransportServer("127.0.0.1:0", tlsCfg, "")
 	if err != nil {
-		return "", nil, fmt.Errorf("wt server: %w", err)
+		return "", fmt.Errorf("wt server: %w", err)
 	}
 
 	udpAddr, err := net.ResolveUDPAddr("udp", "127.0.0.1:0")
 	if err != nil {
-		return "", nil, fmt.Errorf("resolve: %w", err)
+		return "", fmt.Errorf("resolve: %w", err)
 	}
 	udpConn, err := net.ListenUDP("udp", udpAddr)
 	if err != nil {
-		return "", nil, fmt.Errorf("listen udp: %w", err)
+		return "", fmt.Errorf("listen udp: %w", err)
 	}
 	port := udpConn.LocalAddr().(*net.UDPAddr).Port
 	qSrv := pigeon.NewQUICServer(fmt.Sprintf("127.0.0.1:%d", port), tlsCfg, "", wtSrv.Hub())
@@ -370,17 +433,14 @@ func startRelay(ctx context.Context, b *bus) (string, *pigeon.QUICServer, error)
 		_ = wtSrv.Close()
 	}()
 
-	// quic-go binds synchronously inside Listen, but allow a tick for
-	// the listener goroutine to schedule.
 	time.Sleep(100 * time.Millisecond)
-
-	return fmt.Sprintf("https://127.0.0.1:%d", port), qSrv, nil
+	return fmt.Sprintf("https://127.0.0.1:%d", port), nil
 }
 
-// autoPair runs the pairing ceremony on both sides in this process and
-// returns the resulting (backendRecord, clientRecord) pair, with both
-// sides auto-confirming once the codes match.
-func autoPair(ctx context.Context, relayURL string, bid, cid crypto.Identity, b *bus) (*crypto.PairingRecord, *crypto.PairingRecord, error) {
+// autoPair runs the pairing ceremony for one (backend, client) pair
+// and returns (backendRecord, clientRecord). Auto-confirms on both
+// sides as soon as the codes match.
+func autoPair(ctx context.Context, relayURL string, bid, cid crypto.Identity, _ *bus) (*crypto.PairingRecord, *crypto.PairingRecord, error) {
 	pairer, err := pairing.Register(ctx, &pairing.Args{Relay: relayURL, Identity: bid})
 	if err != nil {
 		return nil, nil, fmt.Errorf("pairing.Register: %w", err)
@@ -403,12 +463,11 @@ func autoPair(ctx context.Context, relayURL string, bid, cid crypto.Identity, b 
 		defer cer.Close()
 		tokenCh <- cer.Token
 
-		bcode, err := cer.Code(ctx)
+		_, err = cer.Code(ctx)
 		if err != nil {
 			accCh <- accResult{err: fmt.Errorf("backend code: %w", err)}
 			return
 		}
-		b.publish(event{Pane: "system", Dir: "info", Text: "pairing code (backend): " + bcode})
 		rec, err := cer.Confirm(ctx)
 		accCh <- accResult{rec: rec, err: err}
 	}()
@@ -427,11 +486,9 @@ func autoPair(ctx context.Context, relayURL string, bid, cid crypto.Identity, b 
 		return nil, nil, fmt.Errorf("pairing.Initiate: %w", err)
 	}
 	defer icer.Close()
-	icode, err := icer.Code(ctx)
-	if err != nil {
+	if _, err := icer.Code(ctx); err != nil {
 		return nil, nil, fmt.Errorf("client code: %w", err)
 	}
-	b.publish(event{Pane: "system", Dir: "info", Text: "pairing code (client): " + icode})
 	clientRec, err := icer.Confirm(ctx)
 	if err != nil {
 		return nil, nil, fmt.Errorf("client confirm: %w", err)
@@ -441,18 +498,18 @@ func autoPair(ctx context.Context, relayURL string, bid, cid crypto.Identity, b 
 	if res.err != nil {
 		return nil, nil, fmt.Errorf("backend confirm: %w", res.err)
 	}
-	if icode != "" && res.rec != nil {
-		// Codes were derived independently and must match; if they don't,
-		// the ceremony would have aborted, so this is just an assertion.
-	}
 	return res.rec, clientRec, nil
 }
 
-// runBackend registers the backend on the relay and serves accepted
-// Sessions on chat/control/ping/metric. Each message in or out emits
-// an event on the bus so the web UI can render it.
-func runBackend(ctx context.Context, relayURL string, identity crypto.Identity, expectedClientID string, brec *crypto.PairingRecord, b *bus, ready chan<- struct{}) {
-	pairings := map[string]*crypto.PairingRecord{expectedClientID: brec}
+func runBackend(
+	ctx context.Context,
+	relayURL string,
+	identity crypto.Identity,
+	pairings map[string]*crypto.PairingRecord,
+	idLookup map[string]string,
+	b *bus,
+	ready chan<- struct{},
+) {
 	tlsCfg := &tls.Config{InsecureSkipVerify: true}
 
 	lis, id, err := pigeon.Register(ctx, &pigeon.RegisterArgs{
@@ -484,14 +541,18 @@ func runBackend(ctx context.Context, relayURL string, identity crypto.Identity, 
 			}
 			return
 		}
-		go serveBackendSession(ctx, sess, b)
+		friendly := idLookup[sess.PeerID()]
+		if friendly == "" {
+			friendly = sess.PeerID()
+		}
+		go serveBackendSession(ctx, sess, friendly, b)
 	}
 }
 
-func serveBackendSession(ctx context.Context, sess *pigeon.Session, b *bus) {
+func serveBackendSession(ctx context.Context, sess *pigeon.Session, clientID string, b *bus) {
 	defer sess.Close()
-	b.publish(event{Pane: "backend", Dir: "info", Text: "client connected: " + sess.PeerID()})
-	defer b.publish(event{Pane: "backend", Dir: "info", Text: "client disconnected"})
+	b.publish(event{Pane: "backend", ClientID: clientID, Dir: "info", Text: clientID + " connected"})
+	defer b.publish(event{Pane: "backend", ClientID: clientID, Dir: "info", Text: clientID + " disconnected"})
 
 	var echoes int
 	var echoMu sync.Mutex
@@ -506,12 +567,12 @@ func serveBackendSession(ctx context.Context, sess *pigeon.Session, b *bus) {
 			if err != nil {
 				return
 			}
-			b.publish(event{Pane: "backend", Dir: "in", Channel: "chat", Text: string(msg)})
+			b.publish(event{Pane: "backend", ClientID: clientID, Dir: "in", Channel: "chat", Text: string(msg)})
 			reply := append([]byte("echo: "), msg...)
 			if err := chat.Send(reply); err != nil {
 				return
 			}
-			b.publish(event{Pane: "backend", Dir: "out", Channel: "chat", Text: string(reply)})
+			b.publish(event{Pane: "backend", ClientID: clientID, Dir: "out", Channel: "chat", Text: string(reply)})
 			echoMu.Lock()
 			echoes++
 			echoMu.Unlock()
@@ -528,7 +589,7 @@ func serveBackendSession(ctx context.Context, sess *pigeon.Session, b *bus) {
 			if err != nil {
 				return
 			}
-			b.publish(event{Pane: "backend", Dir: "in", Channel: "control", Text: string(msg)})
+			b.publish(event{Pane: "backend", ClientID: clientID, Dir: "in", Channel: "control", Text: string(msg)})
 			var reply []byte
 			switch string(msg) {
 			case "stats":
@@ -541,7 +602,7 @@ func serveBackendSession(ctx context.Context, sess *pigeon.Session, b *bus) {
 			if err := ctrl.Send(reply); err != nil {
 				return
 			}
-			b.publish(event{Pane: "backend", Dir: "out", Channel: "control", Text: string(reply)})
+			b.publish(event{Pane: "backend", ClientID: clientID, Dir: "out", Channel: "control", Text: string(reply)})
 		}
 	}()
 
@@ -552,12 +613,12 @@ func serveBackendSession(ctx context.Context, sess *pigeon.Session, b *bus) {
 			if err != nil {
 				return
 			}
-			b.publish(event{Pane: "backend", Dir: "in", Channel: "ping", Text: string(p)})
+			b.publish(event{Pane: "backend", ClientID: clientID, Dir: "in", Channel: "ping", Text: string(p)})
 			reply := append([]byte("pong:"), p...)
 			if err := ping.Send(reply); err != nil {
 				return
 			}
-			b.publish(event{Pane: "backend", Dir: "out", Channel: "ping", Text: string(reply)})
+			b.publish(event{Pane: "backend", ClientID: clientID, Dir: "out", Channel: "ping", Text: string(reply)})
 			echoMu.Lock()
 			echoes++
 			echoMu.Unlock()
@@ -571,39 +632,21 @@ func serveBackendSession(ctx context.Context, sess *pigeon.Session, b *bus) {
 			if err != nil {
 				return
 			}
-			b.publish(event{Pane: "backend", Dir: "in", Channel: "metric", Text: string(req)})
+			b.publish(event{Pane: "backend", ClientID: clientID, Dir: "in", Channel: "metric", Text: string(req)})
 			echoMu.Lock()
 			reply := fmt.Appendf(nil, "echoes=%d", echoes)
 			echoMu.Unlock()
 			if err := metric.Send(reply); err != nil {
 				return
 			}
-			b.publish(event{Pane: "backend", Dir: "out", Channel: "metric", Text: string(reply)})
+			b.publish(event{Pane: "backend", ClientID: clientID, Dir: "out", Channel: "metric", Text: string(reply)})
 		}
 	}()
 
 	<-ctx.Done()
 }
 
-// clientHarness wraps a connected pigeon.Session with the four channel
-// objects pre-opened, plus an event-publishing receive loop on each.
-// Send methods are function-valued fields so startClient can install
-// closures that publish "out" events alongside the actual transmit.
-type clientHarness struct {
-	sess        *pigeon.Session
-	sendChat    func(text string) error
-	sendControl func(text string) error
-	sendPing    func(p []byte) error
-	sendMetric  func(p []byte) error
-}
-
-func (c *clientHarness) close() {
-	if c.sess != nil {
-		_ = c.sess.Close()
-	}
-}
-
-func startClient(ctx context.Context, relayURL string, identity crypto.Identity, backendInstance string, crec *crypto.PairingRecord, b *bus) (*clientHarness, error) {
+func startClient(ctx context.Context, relayURL, demoID string, identity crypto.Identity, backendInstance string, crec *crypto.PairingRecord, b *bus) (*clientHarness, error) {
 	tlsCfg := &tls.Config{InsecureSkipVerify: true}
 	sess, err := pigeon.Connect(ctx, &pigeon.ConnectArgs{
 		InstanceID: backendInstance,
@@ -616,7 +659,7 @@ func startClient(ctx context.Context, relayURL string, identity crypto.Identity,
 	if err != nil {
 		return nil, fmt.Errorf("connect: %w", err)
 	}
-	b.publish(event{Pane: "client", Dir: "info", Text: "connected to " + backendInstance})
+	b.publish(event{Pane: "client", ClientID: demoID, Dir: "info", Text: "connected to " + backendInstance})
 
 	chat, err := sess.OpenStream(ctx, "chat")
 	if err != nil {
@@ -631,16 +674,17 @@ func startClient(ctx context.Context, relayURL string, identity crypto.Identity,
 	ping := sess.Datagram("ping")
 	metric := sess.Datagram("metric")
 
-	c := &clientHarness{sess: sess}
+	c := &clientHarness{id: demoID, instance: identity.InstanceID(), sess: sess}
 
-	// Spawn receive goroutines for each channel.
+	// Receive pumps: every inbound message tagged with this client's
+	// demoID so the UI can route it to the right client tab.
 	go func() {
 		for {
 			msg, err := chat.Recv(ctx)
 			if err != nil {
 				return
 			}
-			b.publish(event{Pane: "client", Dir: "in", Channel: "chat", Text: string(msg)})
+			b.publish(event{Pane: "client", ClientID: demoID, Dir: "in", Channel: "chat", Text: string(msg)})
 		}
 	}()
 	go func() {
@@ -649,7 +693,7 @@ func startClient(ctx context.Context, relayURL string, identity crypto.Identity,
 			if err != nil {
 				return
 			}
-			b.publish(event{Pane: "client", Dir: "in", Channel: "control", Text: string(msg)})
+			b.publish(event{Pane: "client", ClientID: demoID, Dir: "in", Channel: "control", Text: string(msg)})
 		}
 	}()
 	go func() {
@@ -658,7 +702,7 @@ func startClient(ctx context.Context, relayURL string, identity crypto.Identity,
 			if err != nil {
 				return
 			}
-			b.publish(event{Pane: "client", Dir: "in", Channel: "ping", Text: string(p)})
+			b.publish(event{Pane: "client", ClientID: demoID, Dir: "in", Channel: "ping", Text: string(p)})
 		}
 	}()
 	go func() {
@@ -667,46 +711,42 @@ func startClient(ctx context.Context, relayURL string, identity crypto.Identity,
 			if err != nil {
 				return
 			}
-			b.publish(event{Pane: "client", Dir: "in", Channel: "metric", Text: string(m)})
+			b.publish(event{Pane: "client", ClientID: demoID, Dir: "in", Channel: "metric", Text: string(m)})
 		}
 	}()
 
-	// Also publish "out" events for each send. Wrap by replacing the
-	// methods with bus-aware variants.
 	c.sendChat = func(text string) error {
 		if err := chat.Send([]byte(text)); err != nil {
 			return err
 		}
-		b.publish(event{Pane: "client", Dir: "out", Channel: "chat", Text: text})
+		b.publish(event{Pane: "client", ClientID: demoID, Dir: "out", Channel: "chat", Text: text})
 		return nil
 	}
 	c.sendControl = func(text string) error {
 		if err := ctrl.Send([]byte(text)); err != nil {
 			return err
 		}
-		b.publish(event{Pane: "client", Dir: "out", Channel: "control", Text: text})
+		b.publish(event{Pane: "client", ClientID: demoID, Dir: "out", Channel: "control", Text: text})
 		return nil
 	}
 	c.sendPing = func(p []byte) error {
 		if err := ping.Send(p); err != nil {
 			return err
 		}
-		b.publish(event{Pane: "client", Dir: "out", Channel: "ping", Text: string(p)})
+		b.publish(event{Pane: "client", ClientID: demoID, Dir: "out", Channel: "ping", Text: string(p)})
 		return nil
 	}
 	c.sendMetric = func(p []byte) error {
 		if err := metric.Send(p); err != nil {
 			return err
 		}
-		b.publish(event{Pane: "client", Dir: "out", Channel: "metric", Text: string(p)})
+		b.publish(event{Pane: "client", ClientID: demoID, Dir: "out", Channel: "metric", Text: string(p)})
 		return nil
 	}
 
 	return c, nil
 }
 
-// selfSignedCert produces a single-day-validity P-256 self-signed cert
-// for 127.0.0.1 — fine for the demo, never use in production.
 func selfSignedCert() (tls.Certificate, error) {
 	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	if err != nil {

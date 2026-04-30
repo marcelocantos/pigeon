@@ -11,69 +11,45 @@
   <div class="title">
     <span class="logo">🕊</span>
     <span>pigeon</span>
-    <span class="subtitle">multi-channel relay demo</span>
+    <span class="subtitle">multi-channel · multi-client relay demo</span>
+  </div>
+  <div class="topbar-actions">
+    <button id="all-auto-btn">▶ all clients auto (1/s)</button>
   </div>
   <div class="state" id="state">connecting…</div>
 </header>
 
 <div class="lanes">
 
-  <!-- CLIENT pane -->
-  <section class="pane client" id="pane-client">
-    <h2>client</h2>
-    <div class="meta">
-      <div><span class="label">instance</span><code id="client-instance">—</code></div>
-    </div>
-
-    <div class="channels">
-      <div class="channel" data-channel="chat"   data-pane="client"><span class="dot"></span>chat</div>
-      <div class="channel" data-channel="control" data-pane="client"><span class="dot"></span>control</div>
-      <div class="channel" data-channel="ping"   data-pane="client"><span class="dot"></span>ping</div>
-      <div class="channel" data-channel="metric" data-pane="client"><span class="dot"></span>metric</div>
-    </div>
-
-    <div class="log" id="log-client"></div>
-
-    <div class="composer">
-      <div class="row">
-        <input id="chat-input" placeholder="type a chat message and press Enter…" autocomplete="off">
-        <button data-act="chat">chat ►</button>
-      </div>
-      <div class="row tight">
-        <button data-act="stats">/stats (control stream)</button>
-        <button data-act="ping">ping (datagram)</button>
-        <button data-act="metric">metric (datagram)</button>
-        <button data-act="burst">▶ 10 chat burst</button>
-        <button data-act="auto" id="auto-btn">▶ auto (1/s)</button>
-      </div>
-    </div>
+  <!-- LEFT: clients column. One card per client, stacked. -->
+  <section class="clients-column" id="clients-column">
+    <!-- Client cards inserted here at runtime by app.js. -->
   </section>
 
-  <!-- RELAY rail (just a visual) -->
+  <!-- MIDDLE: relay rail. Pulses tinted by which client just spoke. -->
   <div class="relay-rail">
     <div class="relay-pulse" id="relay-pulse"></div>
     <div class="relay-label">relay</div>
   </div>
 
-  <!-- BACKEND pane -->
+  <!-- RIGHT: single backend pane (one Listener, multiplexing N clients). -->
   <section class="pane backend" id="pane-backend">
-    <h2>backend</h2>
-    <div class="meta">
-      <div><span class="label">instance</span><code id="backend-instance">—</code></div>
-    </div>
+    <header class="pane-head">
+      <h2>backend</h2>
+      <div class="meta">
+        <span class="label">instance</span>
+        <code id="backend-instance">—</code>
+      </div>
+    </header>
 
     <div class="channels">
-      <div class="channel" data-channel="chat"   data-pane="backend"><span class="dot"></span>chat</div>
-      <div class="channel" data-channel="control" data-pane="backend"><span class="dot"></span>control</div>
-      <div class="channel" data-channel="ping"   data-pane="backend"><span class="dot"></span>ping</div>
-      <div class="channel" data-channel="metric" data-pane="backend"><span class="dot"></span>metric</div>
+      <div class="channel" data-channel="chat"><span class="dot"></span>chat</div>
+      <div class="channel" data-channel="control"><span class="dot"></span>control</div>
+      <div class="channel" data-channel="ping"><span class="dot"></span>ping</div>
+      <div class="channel" data-channel="metric"><span class="dot"></span>metric</div>
     </div>
 
-    <div class="log" id="log-backend"></div>
-
-    <div class="composer hint">
-      <p>The backend is read-only here — it just echoes whatever the client sends.</p>
-    </div>
+    <div class="log backend-log" id="log-backend"></div>
   </section>
 
 </div>
@@ -81,6 +57,43 @@
 <footer class="footer">
   <span id="counts">—</span>
 </footer>
+
+<!-- Single client-card template, cloned for each client at startup. -->
+<template id="tmpl-client-card">
+  <section class="pane client">
+    <header class="pane-head">
+      <div class="client-badge"></div>
+      <h2 class="client-name"></h2>
+      <div class="meta">
+        <span class="label">instance</span>
+        <code class="client-instance">—</code>
+      </div>
+    </header>
+
+    <div class="channels">
+      <div class="channel" data-channel="chat"><span class="dot"></span>chat</div>
+      <div class="channel" data-channel="control"><span class="dot"></span>control</div>
+      <div class="channel" data-channel="ping"><span class="dot"></span>ping</div>
+      <div class="channel" data-channel="metric"><span class="dot"></span>metric</div>
+    </div>
+
+    <div class="log client-log"></div>
+
+    <div class="composer">
+      <div class="row">
+        <input class="chat-input" placeholder="type and press Enter…" autocomplete="off">
+        <button data-act="chat">chat ►</button>
+      </div>
+      <div class="row tight">
+        <button data-act="stats">/stats</button>
+        <button data-act="ping">ping</button>
+        <button data-act="metric">metric</button>
+        <button data-act="burst">▶ burst 10</button>
+        <button data-act="auto">▶ auto</button>
+      </div>
+    </div>
+  </section>
+</template>
 
 <script src="app.js"></script>
 </body>
