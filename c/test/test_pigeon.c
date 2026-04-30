@@ -967,6 +967,196 @@ static void test_pairing_record_roundtrip(void)
     PASS();
 }
 
+// --- Multi-channel wire helpers (post-T22) ---
+
+static void test_uvarint(void)
+{
+    TEST("Go-style uvarint encode/decode + reference vectors");
+
+    // Reference vectors verified against Go's encoding/binary.PutUvarint:
+    //   0       -> [0x00]
+    //   1       -> [0x01]
+    //   127     -> [0x7f]
+    //   128     -> [0x80, 0x01]
+    //   300     -> [0xac, 0x02]
+    //   16384   -> [0x80, 0x80, 0x01]
+    //   2^63    -> [0x80,0x80,0x80,0x80,0x80,0x80,0x80,0x80,0x80,0x01]
+    struct { uint64_t v; uint8_t bytes[10]; size_t n; } cases[] = {
+        {0,        {0x00}, 1},
+        {1,        {0x01}, 1},
+        {127,      {0x7f}, 1},
+        {128,      {0x80, 0x01}, 2},
+        {300,      {0xac, 0x02}, 2},
+        {16384,    {0x80, 0x80, 0x01}, 3},
+        {(uint64_t)1 << 63,
+                   {0x80,0x80,0x80,0x80,0x80,0x80,0x80,0x80,0x80,0x01}, 10},
+    };
+
+    for (size_t i = 0; i < sizeof(cases)/sizeof(cases[0]); i++) {
+        uint8_t buf[16];
+        int n = pigeon_uvarint_encode(cases[i].v, buf, sizeof(buf));
+        if (n != (int)cases[i].n) { FAIL("encode wrong length"); return; }
+        if (memcmp(buf, cases[i].bytes, cases[i].n) != 0) { FAIL("encode bytes mismatch"); return; }
+
+        uint64_t out = 0;
+        int consumed = pigeon_uvarint_decode(cases[i].bytes, cases[i].n, &out);
+        if (consumed != (int)cases[i].n) { FAIL("decode consumed wrong"); return; }
+        if (out != cases[i].v) { FAIL("decode value mismatch"); return; }
+    }
+
+    // Truncated input -> 0 (need more bytes).
+    uint8_t trunc[] = {0x80};
+    uint64_t v;
+    if (pigeon_uvarint_decode(trunc, 1, &v) != 0) { FAIL("truncated should return 0"); return; }
+
+    // Buffer-too-small on encode.
+    uint8_t small[1];
+    if (pigeon_uvarint_encode(128, small, 1) >= 0) { FAIL("encode should fail on small buf"); return; }
+
+    PASS();
+}
+
+static void test_stream_header(void)
+{
+    TEST("stream-header encode/decode (backend + client)");
+
+    // Backend: tag=0x01020304 ("\x01\x02\x03\x04"), name="chat" (length 4 -> varint 0x04).
+    // Expected wire: 01 02 03 04 04 'c' 'h' 'a' 't' = 9 bytes.
+    {
+        uint8_t out[32];
+        int n = pigeon_encode_stream_header(true, 0x01020304u, "chat", 4,
+                                            out, sizeof(out));
+        if (n != 9) { FAIL("backend encode wrong length"); return; }
+        const uint8_t want[] = {0x01,0x02,0x03,0x04, 0x04, 'c','h','a','t'};
+        if (memcmp(out, want, 9) != 0) { FAIL("backend encode bytes mismatch"); return; }
+
+        uint32_t tag = 0;
+        char name[32]; size_t name_len = 0;
+        int consumed = pigeon_decode_backend_stream_header(out, (size_t)n,
+                                                           &tag, name, sizeof(name),
+                                                           &name_len);
+        if (consumed != 9) { FAIL("backend decode consumed wrong"); return; }
+        if (tag != 0x01020304u) { FAIL("backend decode tag mismatch"); return; }
+        if (name_len != 4 || strcmp(name, "chat") != 0) { FAIL("backend decode name mismatch"); return; }
+    }
+
+    // Client primary: empty name -> [0x00] (just the varint 0).
+    {
+        uint8_t out[32];
+        int n = pigeon_encode_stream_header(false, 0, NULL, 0, out, sizeof(out));
+        if (n != 1) { FAIL("client empty encode wrong length"); return; }
+        if (out[0] != 0x00) { FAIL("client empty encode byte"); return; }
+
+        char name[8]; size_t name_len = 1;
+        int consumed = pigeon_decode_client_stream_header(out, (size_t)n,
+                                                          name, sizeof(name),
+                                                          &name_len);
+        if (consumed != 1) { FAIL("client empty decode consumed"); return; }
+        if (name_len != 0 || name[0] != '\0') { FAIL("client empty decode name"); return; }
+    }
+
+    // Client named: "control" (length 7 -> varint 0x07).
+    {
+        uint8_t out[32];
+        int n = pigeon_encode_stream_header(false, 0, "control", 7, out, sizeof(out));
+        if (n != 8) { FAIL("client named encode wrong length"); return; }
+        const uint8_t want[] = {0x07, 'c','o','n','t','r','o','l'};
+        if (memcmp(out, want, 8) != 0) { FAIL("client named encode bytes"); return; }
+
+        char name[16]; size_t name_len = 0;
+        int consumed = pigeon_decode_client_stream_header(out, (size_t)n,
+                                                          name, sizeof(name),
+                                                          &name_len);
+        if (consumed != 8) { FAIL("client named decode consumed"); return; }
+        if (name_len != 7 || strcmp(name, "control") != 0) { FAIL("client named decode name"); return; }
+    }
+
+    // Backend decode rejects a too-short buffer (< 4 bytes for tag).
+    {
+        uint8_t buf[3] = {0,0,0};
+        uint32_t tag = 0; char name[8]; size_t nl = 0;
+        if (pigeon_decode_backend_stream_header(buf, 3, &tag, name, sizeof(name), &nl) >= 0) {
+            FAIL("backend decode should reject buf<4"); return;
+        }
+    }
+
+    // Decode rejects a name longer than name_buf (must leave room for NUL).
+    {
+        uint8_t out[32];
+        int n = pigeon_encode_stream_header(false, 0, "abcdef", 6, out, sizeof(out));
+        if (n != 7) { FAIL("setup"); return; }
+        char small[6]; size_t nl = 0;
+        if (pigeon_decode_client_stream_header(out, (size_t)n, small, sizeof(small), &nl) >= 0) {
+            FAIL("decode should fail when name_buf too small for NUL"); return;
+        }
+    }
+
+    PASS();
+}
+
+static void test_datagram_framing(void)
+{
+    TEST("datagram framing: AEAD([varint id][payload]) + optional 4-byte tag");
+
+    uint8_t key[32];
+    randombytes_buf(key, 32);
+
+    // Two ends sharing the same symmetric key: client sends, backend receives.
+    pigeon_channel send_ch, recv_ch;
+    pigeon_channel_init(&send_ch, key, key, PIGEON_MODE_DATAGRAMS);
+    pigeon_channel_init(&recv_ch, key, key, PIGEON_MODE_DATAGRAMS);
+
+    // --- client side (no tag prefix) ---
+    {
+        const uint8_t payload[] = "hello";
+        uint8_t wire[256];
+        int wn = pigeon_encode_datagram(&send_ch, /*is_backend=*/false, 0,
+                                        /*channel_id=*/1,
+                                        payload, sizeof(payload) - 1,
+                                        wire, sizeof(wire));
+        if (wn < 0) { FAIL("client encode datagram"); return; }
+
+        uint64_t cid = 0; uint8_t out[256];
+        int pn = pigeon_decode_datagram(&recv_ch, /*is_backend=*/false,
+                                        wire, (size_t)wn,
+                                        NULL, &cid,
+                                        out, sizeof(out));
+        if (pn != (int)(sizeof(payload) - 1)) { FAIL("client decode wrong len"); return; }
+        if (cid != 1) { FAIL("client decode channel id"); return; }
+        if (memcmp(out, payload, sizeof(payload) - 1) != 0) { FAIL("client decode payload"); return; }
+    }
+
+    // --- backend side (4-byte tag prefix on wire) ---
+    randombytes_buf(key, 32);
+    pigeon_channel_init(&send_ch, key, key, PIGEON_MODE_DATAGRAMS);
+    pigeon_channel_init(&recv_ch, key, key, PIGEON_MODE_DATAGRAMS);
+    {
+        const uint8_t payload[] = "ping";
+        uint8_t wire[256];
+        int wn = pigeon_encode_datagram(&send_ch, /*is_backend=*/true,
+                                        /*client_tag=*/0xdeadbeefu,
+                                        /*channel_id=*/2,
+                                        payload, sizeof(payload) - 1,
+                                        wire, sizeof(wire));
+        if (wn < 5) { FAIL("backend encode datagram (too short)"); return; }
+        if (wire[0] != 0xde || wire[1] != 0xad || wire[2] != 0xbe || wire[3] != 0xef) {
+            FAIL("backend wire tag prefix mismatch"); return;
+        }
+
+        uint32_t tag = 0; uint64_t cid = 0; uint8_t out[256];
+        int pn = pigeon_decode_datagram(&recv_ch, /*is_backend=*/true,
+                                        wire, (size_t)wn,
+                                        &tag, &cid,
+                                        out, sizeof(out));
+        if (pn != (int)(sizeof(payload) - 1)) { FAIL("backend decode wrong len"); return; }
+        if (tag != 0xdeadbeefu) { FAIL("backend decode tag"); return; }
+        if (cid != 2) { FAIL("backend decode channel id"); return; }
+        if (memcmp(out, payload, sizeof(payload) - 1) != 0) { FAIL("backend decode payload"); return; }
+    }
+
+    PASS();
+}
+
 int main(void)
 {
     if (sodium_init() < 0) {
@@ -992,6 +1182,9 @@ int main(void)
     test_state_machine_transitions();
     test_cross_language_vectors();
     test_pairing_record_roundtrip();
+    test_uvarint();
+    test_stream_header();
+    test_datagram_framing();
     test_send_recv_unencrypted();
     test_send_recv_encrypted();
     test_send_recv_datagram_unencrypted();

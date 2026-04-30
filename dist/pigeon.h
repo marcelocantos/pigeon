@@ -268,6 +268,78 @@ int pigeon_frame_message(const uint8_t *payload, size_t len,
 // Read the length prefix from a 4-byte buffer. Returns the payload length.
 uint32_t pigeon_read_frame_length(const uint8_t *buf);
 
+// --- Multi-channel wire helpers (post-T22) ---
+//
+// Maximum number of bytes a Go-style unsigned varint can take (10 bytes
+// covers uint64). Matches encoding/binary.MaxVarintLen64.
+#define PIGEON_MAX_VARINT_LEN 10
+
+// Maximum size of an unencrypted stream-header (backend side):
+// 4 bytes (clientTag, big-endian uint32) + varint name-len + 256 bytes name.
+#define PIGEON_MAX_STREAM_HEADER (4 + PIGEON_MAX_VARINT_LEN + 256)
+
+// Encode an unsigned varint (Go's binary.PutUvarint format) into buf.
+// Returns number of bytes written, or -1 if buf_len is insufficient.
+// Each byte stores 7 bits of value; the high bit signals continuation.
+int pigeon_uvarint_encode(uint64_t v, uint8_t *buf, size_t buf_len);
+
+// Decode an unsigned varint from buf. On success, writes the decoded
+// value to *out and returns the number of bytes consumed (1..10).
+// Returns 0 if buf is too short, -1 if the encoding overflows uint64.
+int pigeon_uvarint_decode(const uint8_t *buf, size_t buf_len, uint64_t *out);
+
+// Encode the per-stream first-message header in the post-T22 wire:
+//   backend side: [4-byte clientTag-BE][varint name-len][name]
+//   client  side:                       [varint name-len][name]
+//
+// Returns the number of bytes written, or -1 if out_len is insufficient.
+// `name` may be NULL iff name_len == 0 (legitimate for the client primary
+// stream, which uses an empty name).
+int pigeon_encode_stream_header(bool is_backend, uint32_t client_tag,
+                                const char *name, size_t name_len,
+                                uint8_t *out, size_t out_len);
+
+// Decode a backend-side stream header: extracts the 4-byte clientTag and
+// then the varint-prefixed name. The name is copied into `name_buf` (NUL-
+// terminated; truncated and an error returned if name_buf_len is too
+// small). Writes the decoded name length to *name_len_out (excluding NUL).
+// Returns the total number of bytes consumed, or -1 on error.
+int pigeon_decode_backend_stream_header(const uint8_t *buf, size_t buf_len,
+                                        uint32_t *client_tag,
+                                        char *name_buf, size_t name_buf_len,
+                                        size_t *name_len_out);
+
+// Decode a client-side stream header (no clientTag).
+// Returns the total number of bytes consumed, or -1 on error.
+int pigeon_decode_client_stream_header(const uint8_t *buf, size_t buf_len,
+                                       char *name_buf, size_t name_buf_len,
+                                       size_t *name_len_out);
+
+// Compose a datagram payload for a named channel:
+//   plain    = [varint channel-id][payload]
+//   wire     = AEAD(plain)                    on the client side
+//   wire     = [4-byte tag-BE][AEAD(plain)]   on the backend side
+// `out` must be sized for the final wire bytes. The pigeon_channel
+// supplied performs the AEAD encryption in place after the optional tag
+// prefix. Returns total wire bytes written, or -1 on error.
+int pigeon_encode_datagram(pigeon_channel *ch,
+                           bool is_backend, uint32_t client_tag,
+                           uint64_t channel_id,
+                           const uint8_t *payload, size_t payload_len,
+                           uint8_t *out, size_t out_len);
+
+// Decode a datagram in the post-T22 framing. On the backend side strips
+// the 4-byte tag prefix first and returns it via *client_tag. AEAD-
+// decrypts using the supplied channel. On success writes the channel id
+// to *channel_id and the application payload to `payload_buf`; returns
+// the payload length. -1 on AEAD failure or any framing error.
+int pigeon_decode_datagram(pigeon_channel *ch,
+                           bool is_backend,
+                           const uint8_t *wire, size_t wire_len,
+                           uint32_t *client_tag,
+                           uint64_t *channel_id,
+                           uint8_t *payload_buf, size_t payload_buf_len);
+
 // --- PairingRecord serialisation ---
 // Fixed-schema, zero-alloc format:
 //   [0]     magic byte 0x50 ('P')
