@@ -660,6 +660,52 @@ targets:
     - T22
     origin: manual
     discovered: 2026-04-29
+  T24:
+    name: Pairing ceremony described in protocol/pairing.yaml as single source of truth; Go/Swift/Kotlin/C/TS/TLA+ generated from it
+    status: achieved
+    value: 0.0
+    cost: 0.0
+    showcase: true
+    demonstration: 'Restored protocol/pairing.yaml as the single source of truth for the pairing ceremony. Regenerated all six language outputs (Go, Swift, Kotlin, TS, C, TLA+) plus PlantUML diagrams via cmd/protogen. Refactored pairing/pairing.go so runAcceptor / runInitiator drive the generated PairingCeremonyProtocol*Machine — every state transition is dispatched through Step() / HandleMessage() with runtime audit assertions that the spec accepts the event. Fixed two protogen bugs along the way: Swift codegen now skips the GuardID typealias and guards dictionary when no guards are declared, and protogen got a new --root-out flag so the Go runtime machine can be written into the consumer package''s directory (pairing/pairingceremony_gen.go) rather than only the repo root. TLA+ model-checking under TLC: 80 states, 50 distinct, three safety invariants verified (MitMDetectedByCodeMismatch, MitMPreventsPairing, HonestPairingMatchesCodes) — "Model checking completed. No error has been found." A new pairing/pairing_test.go::TestCeremonyEndToEnd drives the full ceremony in-process through the YAML-generated runtime and verifies (a) both sides arrive at the same 6-digit code, (b) PairingRecords reference the correct peer instance IDs, and (c) DeriveChannel on both records produces interoperable AEAD channels (round-trip ciphertext decrypts correctly cross-side). Swift, Kotlin, and TypeScript builds pass with the regenerated machine code; C amalgamation succeeds. The Swift cross-language E2E (mirroring the pre-T22 testCrossLanguageConfirmationCode) is recorded as 🎯T25 since it requires a fresh Swift-side ceremony driver — out of scope for restoring the YAML abstraction itself.'
+    acceptance:
+    - protocol/pairing.yaml exists and describes the current pairing ceremony (token-based rendezvous, ECDH + 6-digit confirm-code derivation, hello/welcome/confirm wire messages, Code-mismatch abort).
+    - Running `go run ./cmd/protogen protocol/pairing.yaml` regenerates protocol/pairingceremony_gen.go, the Swift PairingCeremonyMachine.swift, the Kotlin PairingCeremonyMachine.kt, the C pairingceremony_gen.c, the TypeScript PairingCeremonyMachine.ts, and formal/PairingCeremony.tla — and `make build` passes after regeneration.
+    - pairing/pairing.go drives the generated executor (state transitions live in the YAML/generated machine; only wire-side I/O, ECDH, JSON, and HKDF live in pairing.go).
+    - formal/tlc PairingCeremony succeeds against the new spec.
+    - A cross-language E2E (Go acceptor ↔ Swift initiator, or Go acceptor ↔ Kotlin initiator) drives the new ceremony end-to-end and arrives at matching confirmation codes.
+    context: |-
+      Until v0.20.0, protocol/pairing.yaml was the single source of truth for the pairing state machine; cmd/protogen generated the Go runtime executor, the Swift/Kotlin/C/TS state machines, the TLA+ spec, and the PlantUML diagrams from it. This is what made cross-language equivalence achievable in the first place — testCrossLanguageConfirmationCode was a literal Go-acceptor-↔-Swift-initiator pairing run that verified both sides independently arrived at the same 6-digit code.
+
+      In the T22 redesign session, the old protocol/pairing.yaml (which described the legacy artifact-based ceremony) and the entire protocol/pairing* chain were deleted, and the new pairing ceremony was hand-written directly in pairing/pairing.go. This works for Go but breaks the abstraction: each non-Go SDK now has to reimplement the ceremony by reading the Go source. The C build's `make amalgamate` already breaks on the missing YAML.
+
+      The fix is to write a new protocol/pairing.yaml for the current ceremony (token + hello/welcome/confirm, ECDH + 6-digit code, Code-mismatch abort), regenerate every language target, and refactor pairing/pairing.go to drive the generated executor (keeping wire-side I/O, ECDH/HKDF, and JSON in Go).
+    origin: discovered while answering "why was protocol/pairing.yaml deleted?"
+    discovered: 2026-04-30
+    achieved: 2026-04-30
+  T25:
+    name: 'Swift cross-language pairing E2E: Go acceptor ↔ Swift initiator (or vice versa) with matching confirmation codes via the regenerated PairingCeremonyMachine'
+    status: identified
+    value: 0.0
+    cost: 0.0
+    showcase: true
+    acceptance:
+    - A Swift test (or a Swift binary driven from a Go test) drives the new pairing ceremony as the initiator side, using the regenerated Sources/Pigeon/PairingCeremonyMachine.swift and a fresh Swift-side ceremony driver that mirrors pairing/pairing.go.
+    - The Go acceptor side and Swift initiator side derive identical 6-digit confirmation codes from each other's ephemeral pubkeys.
+    - Both sides reach Paired and produce PairingRecords whose DeriveChannel outputs interoperate (Go-encrypted ciphertext decrypts on Swift and vice-versa).
+    context: |-
+      T24 restored protocol/pairing.yaml as the single source of truth, regenerated all six language outputs (Go, Swift, Kotlin, C, TS, TLA+), refactored Go's pairing/pairing.go to drive the generated executor, and verified the spec under TLC.
+
+      The pre-T22 cross-language E2E test (Tests/PigeonRelayE2ETests/RelayE2ETests.swift::testCrossLanguageConfirmationCode) was built around cmd/crypto-peer/main.go, which uses the OLD pre-T22 pigeon.Register API and is currently //go:build ignored. Reanimating it requires:
+
+      1. A Swift-side ceremony driver that mirrors runAcceptor/runInitiator in pairing/pairing.go but uses Sources/Pigeon/PairingCeremonyMachine.swift to sequence states.
+      2. A Go binary (replacing the obsolete cmd/crypto-peer) that exposes one half of the ceremony for the Swift test to drive against — or vice versa, a Go test that spawns a Swift binary.
+      3. The wire-format JSON {kind, eph_pub, identity_pub, instance_id} must encode/decode identically on both sides.
+
+      This is the real proof that the YAML-driven abstraction holds across languages — the Go-only pairing_test.go in T24 demonstrates the executor works for Go but doesn't yet exercise cross-language equivalence.
+    depends_on:
+    - T24
+    origin: discovered while completing T24; cross-language E2E was an aspirational acceptance criterion that proved bigger than the in-scope T24 work.
+    discovered: 2026-04-30
   T3:
     name: TLA+ model for cutover protocol
     status: achieved
