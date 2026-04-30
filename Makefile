@@ -173,7 +173,14 @@ test-c-ngtcp2: build-vendor-deps amalgamate
 # target waits, then renders the per-step pass/fail summary in stable
 # order. Total wall-clock drops from ~serial-sum to roughly the slowest
 # single suite (today: swift test).
-bullseye:
+# Sequential prerequisites for bullseye: codegen and amalgamation must
+# happen before the parallel checks fan out, otherwise `make generate`
+# / `make amalgamate` (transitively required by test-c) races against
+# the gofmt and go vet/build/test branches scanning the same files.
+bullseye-prereq:
+	@$(MAKE) -s amalgamate >/dev/null
+
+bullseye: bullseye-prereq
 	@rm -rf /tmp/bullseye && mkdir -p /tmp/bullseye
 	@( out=$$(gofmt -l .); \
 	   if test -z "$$out"; then echo ok > /tmp/bullseye/gofmt.status; \
