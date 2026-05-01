@@ -182,7 +182,7 @@ maintenance activities. Append-only — newest entries at the bottom.
 
 ## 2026-05-01 — /release v0.21.0
 
-- **Commit**: `pending`
+- **Commit**: `a9cf09d`
 - **Outcome**: Released v0.21.0. The release re-bases all four language wrappers on a single C peer library: Swift (🎯T29) and Kotlin/JVM (🎯T30) are now thin shims over `libpigeon` (CPigeon SwiftPM C-target / JNI), Go (🎯T34, T34a, T34b, T34c.1, T38) is migrating to a cgo wrapper with the wire helpers, Session/Stream/Datagram, pairing FSM, confirmation code and `pigeon_transport` vtable bridged. C library extended with multi-channel session API, wire helpers, multi-stream callbacks, in-process loopback transport, PairingRecord binary serialisation and a restructured acceptor/initiator pairing FSM (🎯T32 steps 1-3, 🎯T33). TypeScript browser SDK gains the multi-channel API and wire-format unit tests locked to the Go byte vectors (🎯T31). New `crypto.Identity` interface and `NewFileIdentity`. New `Listener`/`Session`/`Stream`/`Datagram` Go types; `Register`/`Connect` now take struct-args (breaking). Visual `examples/demo` binary. `make bullseye` runs all SDK suites + TLC concurrently; `make bullseye-strict` adds ASan/UBSan + Go race. `protocol/pairing.yaml` is again the single source of truth (🎯T24). Released darwin-arm64, linux-amd64, linux-arm64. Homebrew formula updated.
 - **Bullseye fixes shipped in this release**:
   - `8387f0c` — serialised `make generate` + `make amalgamate` before the parallel branches to fix the gofmt-vs-codegen race introduced when `make bullseye` was parallelised.
