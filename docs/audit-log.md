@@ -179,3 +179,20 @@ maintenance activities. Append-only — newest entries at the bottom.
   - 🎯T25 — Swift cross-language pairing E2E (Go acceptor ↔ Swift initiator with matching codes via the regenerated Swift PairingCeremonyMachine). Layered on top of T29.
 - **Known issues**:
   - `ci.yml` `Deploy to Fly.io` job continues to fail on master with `FLY_API_TOKEN` expired. Carried over from v0.18.0; orthogonal to release artifacts.
+
+## 2026-05-01 — /release v0.21.0
+
+- **Commit**: `pending`
+- **Outcome**: Released v0.21.0. The release re-bases all four language wrappers on a single C peer library: Swift (🎯T29) and Kotlin/JVM (🎯T30) are now thin shims over `libpigeon` (CPigeon SwiftPM C-target / JNI), Go (🎯T34, T34a, T34b, T34c.1, T38) is migrating to a cgo wrapper with the wire helpers, Session/Stream/Datagram, pairing FSM, confirmation code and `pigeon_transport` vtable bridged. C library extended with multi-channel session API, wire helpers, multi-stream callbacks, in-process loopback transport, PairingRecord binary serialisation and a restructured acceptor/initiator pairing FSM (🎯T32 steps 1-3, 🎯T33). TypeScript browser SDK gains the multi-channel API and wire-format unit tests locked to the Go byte vectors (🎯T31). New `crypto.Identity` interface and `NewFileIdentity`. New `Listener`/`Session`/`Stream`/`Datagram` Go types; `Register`/`Connect` now take struct-args (breaking). Visual `examples/demo` binary. `make bullseye` runs all SDK suites + TLC concurrently; `make bullseye-strict` adds ASan/UBSan + Go race. `protocol/pairing.yaml` is again the single source of truth (🎯T24). Released darwin-arm64, linux-amd64, linux-arm64. Homebrew formula updated.
+- **Bullseye fixes shipped in this release**:
+  - `8387f0c` — serialised `make generate` + `make amalgamate` before the parallel branches to fix the gofmt-vs-codegen race introduced when `make bullseye` was parallelised.
+  - `61a471f` — split `test-c` into a deps-bearing wrapper and a body-only `test-c-only` target, and made `c/include/pigeon/loopback.h` self-contained (`<stddef.h>` + `<stdint.h>`). The bullseye fan-out's `test-c` branch was re-running codegen mid-fanout and rewriting Swift sources while `swift test` was compiling — "input file PairingCeremonyMachine.swift was modified during the build" — and `dist/loopback.h` only got `size_t` from a transitively-included `pigeon.h`, which broke the `import CPigeon` umbrella when the header was parsed first.
+- **Deferred**:
+  - 🎯T25 — Swift cross-language pairing E2E (Go acceptor ↔ Swift initiator) via the regenerated PairingCeremonyMachine. Now unblocked by 🎯T29 (CPigeon-backed Swift) but not yet implemented.
+  - 🎯T35 — Kotlin JNI Android NDK build matrix (arm64-v8a + x86_64) with vendored libsodium AAR. Desktop JVM works (🎯T30); Android still pending.
+  - 🎯T36 — Java-callback transport: C side calls back into a JVM/Kotlin `QuicTransport` via JNI.
+  - 🎯T37 — Swift `Ngtcp2Transport` built on `c/src/ngtcp2_transport.c`.
+  - Vendored libsodium for Android NDK (carried over from v0.20.0).
+  - `c/vendor/build.sh` qtlsclient example link failure (carried over from v0.20.0; the static libs we need build fine).
+- **Known issues**:
+  - None new. The `Deploy to Fly.io` CI job is now green on master HEAD.
