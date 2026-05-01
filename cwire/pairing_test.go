@@ -6,7 +6,9 @@ package cwire_test
 import (
 	"crypto/ecdh"
 	"crypto/rand"
+	"encoding/json"
 	"testing"
+	"unsafe"
 
 	"github.com/marcelocantos/pigeon/crypto"
 	"github.com/marcelocantos/pigeon/cwire"
@@ -226,4 +228,324 @@ func TestConfirmationCodeMatchesGo(t *testing.T) {
 	if swap != cCode {
 		t.Fatalf("order dependence: derive(A,B)=%q derive(B,A)=%q", cCode, swap)
 	}
+}
+
+// ---------------------------------------------------------------------------
+// Wire-parity tests
+//
+// Each sub-test pairs one Go-side driver with one C-side driver over an
+// in-process blocking channel transport. The C driver is exercised via
+// cwire.RunAcceptor / cwire.RunInitiator; the Go driver is a minimal inline
+// hello/welcome/confirm loop. Both sides block-wait on each other, avoiding
+// the ordering hazard of the non-blocking pipeTransport.
+//
+// Acceptance criterion: both sides derive the same 6-digit confirmation code.
+// ---------------------------------------------------------------------------
+
+// pairingMsg is the JSON structure the Go pairing package sends on the wire.
+type pairingMsg struct {
+	Kind        string `json:"kind"`
+	EphPub      []byte `json:"eph_pub,omitempty"`
+	IdentityPub []byte `json:"identity_pub,omitempty"`
+	InstanceID  string `json:"instance_id,omitempty"`
+}
+
+// newEphKey generates a fresh X25519 ephemeral key pair, fatal on error.
+func newEphKey(t *testing.T) (*ecdh.PrivateKey, *ecdh.PublicKey) {
+	t.Helper()
+	k, err := ecdh.X25519().GenerateKey(rand.Reader)
+	if err != nil {
+		t.Fatalf("keygen: %v", err)
+	}
+	return k, k.PublicKey()
+}
+
+// chanTransport is a simple blocking in-memory transport for pairing tests.
+// Two endpoints (A and B) share one bidirectional channel wire. Each endpoint
+// has a dedicated send and recv channel so messages from A→B flow through
+// aToB and messages from B→A flow through bToA. Stream opens are signalled
+// on a shared acceptCh; the opener sends a handle and the acceptor reads it.
+type chanTransport struct {
+	send     chan []byte         // messages I write (lands in peer's recv)
+	recv     chan []byte         // messages I read (from peer's send)
+	acceptCh chan unsafe.Pointer // I write here on OpenStream; peer reads on AcceptStream
+	// acceptRecv is the channel I read from on AcceptStream.
+	acceptRecv chan unsafe.Pointer
+}
+
+// newChanTransportPair creates two paired chanTransports. A opens streams
+// (sends handles to B's acceptRecv); B opens streams (sends handles to A's
+// acceptRecv).
+func newChanTransportPair() (a, b *chanTransport) {
+	aToB := make(chan []byte, 64)
+	bToA := make(chan []byte, 64)
+	aAccepts := make(chan unsafe.Pointer, 8) // B opens → A accepts
+	bAccepts := make(chan unsafe.Pointer, 8) // A opens → B accepts
+
+	a = &chanTransport{
+		send:       aToB,
+		recv:       bToA,
+		acceptCh:   bAccepts, // A.OpenStream puts handles in bAccepts (B reads)
+		acceptRecv: aAccepts, // A.AcceptStream reads from aAccepts (B puts there)
+	}
+	b = &chanTransport{
+		send:       bToA,
+		recv:       aToB,
+		acceptCh:   aAccepts, // B.OpenStream puts handles in aAccepts (A reads)
+		acceptRecv: bAccepts, // B.AcceptStream reads from bAccepts (A puts there)
+	}
+	return
+}
+
+// chanHandle is an opaque pointer per stream. One global store, address is stable.
+var chanHandleStore [256]byte
+var chanHandleIdx int
+
+func mintChanHandle() unsafe.Pointer {
+	i := chanHandleIdx
+	chanHandleIdx++
+	if chanHandleIdx >= len(chanHandleStore) {
+		chanHandleIdx = 0
+	}
+	return unsafe.Pointer(&chanHandleStore[i])
+}
+
+func (t *chanTransport) OpenStream() (unsafe.Pointer, error) {
+	h := mintChanHandle()
+	t.acceptCh <- h
+	return h, nil
+}
+
+func (t *chanTransport) AcceptStream() (unsafe.Pointer, error) {
+	return <-t.acceptRecv, nil
+}
+
+func (t *chanTransport) SendOnStream(_ unsafe.Pointer, msg []byte) error {
+	cp := make([]byte, len(msg))
+	copy(cp, msg)
+	t.send <- cp
+	return nil
+}
+
+func (t *chanTransport) RecvOnStream(_ unsafe.Pointer) ([]byte, error) {
+	return <-t.recv, nil
+}
+
+func (t *chanTransport) CloseStream(_ unsafe.Pointer) error { return nil }
+func (t *chanTransport) SendDatagram(payload []byte) error  { return nil }
+func (t *chanTransport) RecvDatagram() ([]byte, error)      { return nil, nil }
+
+// TestWireParityGoAcceptorCInitiator: Go acceptor ↔ C initiator.
+//
+// The C initiator (RunInitiator) calls transport->open_stream internally and
+// then runs hello→welcome→confirm. The Go acceptor blocks on AcceptStream
+// (via the channel transport) and runs the ceremony in parallel. Both sides
+// must derive the same confirmation code.
+func TestWireParityGoAcceptorCInitiator(t *testing.T) {
+	t.Parallel()
+
+	_, accEphPub := newEphKey(t)
+	initEphPriv, initEphPub := newEphKey(t)
+
+	accIdPub := make([]byte, 32)
+	initIdPub := make([]byte, 32)
+
+	// ca = acceptor side (Go), cb = initiator side (C).
+	ca, cb := newChanTransportPair()
+	refB := cwire.NewGoTransportRef(cb)
+	defer refB.Close()
+
+	type result struct {
+		code string
+		err  error
+	}
+	cCh := make(chan result, 1)
+	goCh := make(chan result, 1)
+
+	// C initiator goroutine.
+	go func() {
+		_, code, err := cwire.RunInitiator(&cwire.RunInitiatorArgs{
+			Ref:          refB,
+			LocalEphPriv: initEphPriv.Bytes(),
+			LocalEphPub:  initEphPub.Bytes(),
+			IdentityPub:  initIdPub,
+			InstanceID:   "c-initiator",
+			AccEphPub:    accEphPub.Bytes(),
+			AccInstance:  "go-acceptor",
+			ConfirmFn:    func(code string) bool { return true },
+		})
+		cCh <- result{code: code, err: err}
+	}()
+
+	// Go acceptor goroutine: blocks on AcceptStream.
+	go func() {
+		h, err := ca.AcceptStream()
+		if err != nil {
+			goCh <- result{err: err}
+			return
+		}
+		raw, err := ca.RecvOnStream(h)
+		if err != nil {
+			goCh <- result{err: err}
+			return
+		}
+		var hello pairingMsg
+		if err := json.Unmarshal(raw, &hello); err != nil || hello.Kind != "hello" {
+			goCh <- result{err: json.Unmarshal(raw, &hello)}
+			return
+		}
+		initEphPubParsed, err := ecdh.X25519().NewPublicKey(hello.EphPub)
+		if err != nil {
+			goCh <- result{err: err}
+			return
+		}
+		wb, _ := json.Marshal(pairingMsg{Kind: "welcome", EphPub: accEphPub.Bytes(), IdentityPub: accIdPub, InstanceID: "go-acceptor"})
+		if err := ca.SendOnStream(h, wb); err != nil {
+			goCh <- result{err: err}
+			return
+		}
+		code, err := crypto.DeriveConfirmationCode(accEphPub, initEphPubParsed)
+		if err != nil {
+			goCh <- result{err: err}
+			return
+		}
+		cb, _ := json.Marshal(pairingMsg{Kind: "confirm"})
+		if err := ca.SendOnStream(h, cb); err != nil {
+			goCh <- result{err: err}
+			return
+		}
+		raw, err = ca.RecvOnStream(h)
+		if err != nil {
+			goCh <- result{err: err}
+			return
+		}
+		var conf pairingMsg
+		if err := json.Unmarshal(raw, &conf); err != nil || conf.Kind != "confirm" {
+			goCh <- result{err: json.Unmarshal(raw, &conf)}
+			return
+		}
+		goCh <- result{code: code}
+	}()
+
+	cRes := <-cCh
+	goRes := <-goCh
+	if cRes.err != nil {
+		t.Fatalf("C initiator error: %v", cRes.err)
+	}
+	if goRes.err != nil {
+		t.Fatalf("Go acceptor error: %v", goRes.err)
+	}
+	if goRes.code != cRes.code {
+		t.Fatalf("code mismatch: Go acceptor=%q C initiator=%q", goRes.code, cRes.code)
+	}
+	if len(goRes.code) != 6 {
+		t.Fatalf("unexpected code length %d", len(goRes.code))
+	}
+	t.Logf("confirmation code: %s", goRes.code)
+}
+
+// TestWireParityCAcceptorGoInitiator: C acceptor ↔ Go initiator.
+//
+// The Go initiator opens the stream itself and runs hello→welcome→confirm.
+// The C acceptor (RunAcceptor) blocks on transport->accept_stream internally
+// and then runs the ceremony. Both sides must derive the same confirmation code.
+func TestWireParityCAcceptorGoInitiator(t *testing.T) {
+	t.Parallel()
+
+	accEphPriv, accEphPub := newEphKey(t)
+	_, initEphPub := newEphKey(t)
+
+	accIdPub := make([]byte, 32)
+	initIdPub := make([]byte, 32)
+
+	// ca = acceptor side (C), cb = initiator side (Go).
+	ca, cb := newChanTransportPair()
+	refA := cwire.NewGoTransportRef(ca)
+	defer refA.Close()
+
+	type result struct {
+		code string
+		err  error
+	}
+	cCh := make(chan result, 1)
+	goCh := make(chan result, 1)
+
+	// C acceptor goroutine: blocks on accept_stream internally.
+	go func() {
+		_, code, err := cwire.RunAcceptor(&cwire.RunAcceptorArgs{
+			Ref:          refA,
+			LocalEphPriv: accEphPriv.Bytes(),
+			LocalEphPub:  accEphPub.Bytes(),
+			IdentityPub:  accIdPub,
+			InstanceID:   "c-acceptor",
+			ConfirmFn:    func(code string) bool { return true },
+		})
+		cCh <- result{code: code, err: err}
+	}()
+
+	// Go initiator goroutine.
+	go func() {
+		h, err := cb.OpenStream()
+		if err != nil {
+			goCh <- result{err: err}
+			return
+		}
+		hb, _ := json.Marshal(pairingMsg{Kind: "hello", EphPub: initEphPub.Bytes(), IdentityPub: initIdPub, InstanceID: "go-initiator"})
+		if err := cb.SendOnStream(h, hb); err != nil {
+			goCh <- result{err: err}
+			return
+		}
+		raw, err := cb.RecvOnStream(h)
+		if err != nil {
+			goCh <- result{err: err}
+			return
+		}
+		var welcome pairingMsg
+		if err := json.Unmarshal(raw, &welcome); err != nil || welcome.Kind != "welcome" {
+			goCh <- result{err: json.Unmarshal(raw, &welcome)}
+			return
+		}
+		accEphPubParsed, err := ecdh.X25519().NewPublicKey(welcome.EphPub)
+		if err != nil {
+			goCh <- result{err: err}
+			return
+		}
+		code, err := crypto.DeriveConfirmationCode(accEphPubParsed, initEphPub)
+		if err != nil {
+			goCh <- result{err: err}
+			return
+		}
+		cb2, _ := json.Marshal(pairingMsg{Kind: "confirm"})
+		if err := cb.SendOnStream(h, cb2); err != nil {
+			goCh <- result{err: err}
+			return
+		}
+		raw, err = cb.RecvOnStream(h)
+		if err != nil {
+			goCh <- result{err: err}
+			return
+		}
+		var conf pairingMsg
+		if err := json.Unmarshal(raw, &conf); err != nil || conf.Kind != "confirm" {
+			goCh <- result{err: json.Unmarshal(raw, &conf)}
+			return
+		}
+		goCh <- result{code: code}
+	}()
+
+	cRes := <-cCh
+	goRes := <-goCh
+	if cRes.err != nil {
+		t.Fatalf("C acceptor error: %v", cRes.err)
+	}
+	if goRes.err != nil {
+		t.Fatalf("Go initiator error: %v", goRes.err)
+	}
+	if goRes.code != cRes.code {
+		t.Fatalf("code mismatch: Go initiator=%q C acceptor=%q", goRes.code, cRes.code)
+	}
+	if len(goRes.code) != 6 {
+		t.Fatalf("unexpected code length %d", len(goRes.code))
+	}
+	t.Logf("confirmation code: %s", goRes.code)
 }

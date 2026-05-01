@@ -85,3 +85,18 @@ void cwire_make_go_transport(void *udata, pigeon_transport *out)
     out->send_datagram   = cwireGoSendDatagram;
     out->recv_datagram   = cwireGoRecvDatagram;
 }
+
+// --- Pairing confirm trampoline ---
+//
+// pigeon_pair_acceptor / pigeon_pair_initiator call confirm_fn(userdata, code)
+// synchronously when the confirmation code is ready. We bridge this to Go
+// via a //export'd callback; userdata carries a cwire_go_udata* (same box
+// pattern used by the transport bridge) holding a cgo.Handle for the Go
+// closure.
+
+extern int cwireGoConfirm(void *udata, const char *code);
+
+int cwire_confirm_trampoline(void *udata, const char *code)
+{
+    return cwireGoConfirm(udata, code);
+}
