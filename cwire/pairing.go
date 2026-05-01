@@ -5,9 +5,46 @@ package cwire
 
 // #include "pigeon.h"
 // #include <stdlib.h>
+// #include <string.h>
 //
 // static void *cwire_calloc_acceptor(void) { return calloc(1, sizeof(pigeon_acceptor_machine));  }
 // static void *cwire_calloc_initiator(void){ return calloc(1, sizeof(pigeon_initiator_machine)); }
+//
+// // Trampoline defined in cwire_pigeon.c; bridges the C confirm callback to
+// // the //export'd cwireGoConfirm in gotransport.go.
+// extern int cwire_confirm_trampoline(void *udata, const char *code);
+//
+// // Defined in cwire_pigeon.c; also referenced by gotransport.go.
+// extern void cwire_make_go_transport(void *udata, pigeon_transport *out);
+//
+// typedef struct cwire_go_udata { uintptr_t handle; } cwire_go_udata;
+// extern cwire_go_udata *cwire_alloc_go_udata(uintptr_t handle);
+// extern void cwire_free_go_udata(cwire_go_udata *u);
+//
+// // Wrappers that pass cwire_confirm_trampoline as the confirm_fn so we
+// // don't need to convert a C function pointer to *[0]byte on the Go side.
+// static int cwire_run_acceptor(
+//     const pigeon_transport *t,
+//     const uint8_t *priv, const uint8_t *pub,
+//     const uint8_t *idpub, const char *iid,
+//     void *udata,
+//     pigeon_pairing_record *rec, char *code)
+// {
+//     return pigeon_pair_acceptor(t, priv, pub, idpub, iid,
+//                                 cwire_confirm_trampoline, udata, rec, code);
+// }
+// static int cwire_run_initiator(
+//     const pigeon_transport *t,
+//     const uint8_t *priv, const uint8_t *pub,
+//     const uint8_t *idpub, const char *iid,
+//     const uint8_t *accpub, const char *acciid,
+//     void *udata,
+//     pigeon_pairing_record *rec, char *code)
+// {
+//     return pigeon_pair_initiator(t, priv, pub, idpub, iid,
+//                                  accpub, acciid,
+//                                  cwire_confirm_trampoline, udata, rec, code);
+// }
 import "C"
 
 import (
@@ -223,4 +260,164 @@ func DeriveConfirmationCode(pubA, pubB []byte) (string, error) {
 		return "", errors.New("cwire: derive_confirmation_code failed")
 	}
 	return C.GoString(&out[0]), nil
+}
+
+// PairingRecord mirrors pigeon_pairing_record for return values from the
+// C pairing drivers. relay_url is not filled by the C driver (the caller
+// must supply the relay URL if needed).
+type PairingRecord struct {
+	PeerInstanceID string
+	LocalPrivKey   []byte // 32 bytes, X25519
+	LocalPubKey    []byte // 32 bytes, X25519
+	PeerPubKey     []byte // 32 bytes, X25519
+}
+
+// RunAcceptorArgs bundles the inputs for RunAcceptor so the signature
+// stays flat and extensible without functional-options.
+type RunAcceptorArgs struct {
+	// Ref provides the Go transport (open_stream / accept_stream /
+	// send_on_stream / recv_on_stream). pigeon_pair_acceptor calls
+	// accept_stream internally to wait for the initiator's stream.
+	Ref          *GoTransportRef
+	LocalEphPriv []byte // 32 bytes
+	LocalEphPub  []byte // 32 bytes
+	IdentityPub  []byte // 32 bytes
+	InstanceID   string
+	// ConfirmFn is called with the 6-digit code once it is derivable.
+	// Return true to confirm, false to abort.
+	ConfirmFn func(code string) bool
+}
+
+// RunAcceptor drives the C-side acceptor pairing driver. It blocks until
+// the initiator connects, the ceremony completes, and ConfirmFn returns.
+func RunAcceptor(args *RunAcceptorArgs) (*PairingRecord, string, error) {
+	if args == nil {
+		return nil, "", errors.New("cwire: RunAcceptor: args is nil")
+	}
+	if args.Ref == nil || args.Ref.cudata == nil {
+		return nil, "", errors.New("cwire: RunAcceptor: nil ref")
+	}
+	if len(args.LocalEphPriv) != 32 || len(args.LocalEphPub) != 32 || len(args.IdentityPub) != 32 {
+		return nil, "", errors.New("cwire: RunAcceptor: keys must be 32 bytes")
+	}
+	if args.ConfirmFn == nil {
+		return nil, "", errors.New("cwire: RunAcceptor: ConfirmFn required")
+	}
+	if args.InstanceID == "" {
+		return nil, "", errors.New("cwire: RunAcceptor: InstanceID required")
+	}
+
+	// Build a pigeon_transport vtable pointing at the Go transport.
+	var t C.pigeon_transport
+	C.cwire_make_go_transport(unsafe.Pointer(args.Ref.cudata), &t)
+
+	cInstanceID := C.CString(args.InstanceID)
+	defer C.free(unsafe.Pointer(cInstanceID))
+
+	var rec C.pigeon_pairing_record
+	var code [7]C.char
+
+	// ConfirmFn is invoked synchronously from pigeon_pair_acceptor; bridge
+	// it through a cgo.Handle so the C callback can call back into Go.
+	confirmH := newConfirmHandle(args.ConfirmFn)
+	defer confirmH.delete()
+
+	rv := C.cwire_run_acceptor(
+		&t,
+		(*C.uint8_t)(unsafe.Pointer(&args.LocalEphPriv[0])),
+		(*C.uint8_t)(unsafe.Pointer(&args.LocalEphPub[0])),
+		(*C.uint8_t)(unsafe.Pointer(&args.IdentityPub[0])),
+		cInstanceID,
+		confirmH.ptr(),
+		&rec,
+		&code[0])
+	if rv != 0 {
+		return nil, "", errors.New("cwire: pigeon_pair_acceptor failed")
+	}
+
+	pr := recordFromC(&rec)
+	codeStr := C.GoString(&code[0])
+	return pr, codeStr, nil
+}
+
+// RunInitiatorArgs bundles the inputs for RunInitiator.
+type RunInitiatorArgs struct {
+	// Ref provides the Go transport. pigeon_pair_initiator calls
+	// open_stream internally to open a stream toward the acceptor.
+	Ref          *GoTransportRef
+	LocalEphPriv []byte
+	LocalEphPub  []byte
+	IdentityPub  []byte
+	InstanceID   string
+	// AccEphPub is the acceptor's ephemeral public key decoded from the token.
+	AccEphPub   []byte // 32 bytes
+	AccInstance string
+	ConfirmFn   func(code string) bool
+}
+
+// RunInitiator drives the C-side initiator pairing driver, blocking until
+// paired or error.
+func RunInitiator(args *RunInitiatorArgs) (*PairingRecord, string, error) {
+	if args == nil {
+		return nil, "", errors.New("cwire: RunInitiator: args is nil")
+	}
+	if args.Ref == nil || args.Ref.cudata == nil {
+		return nil, "", errors.New("cwire: RunInitiator: nil ref")
+	}
+	if len(args.LocalEphPriv) != 32 || len(args.LocalEphPub) != 32 ||
+		len(args.IdentityPub) != 32 || len(args.AccEphPub) != 32 {
+		return nil, "", errors.New("cwire: RunInitiator: keys must be 32 bytes")
+	}
+	if args.ConfirmFn == nil {
+		return nil, "", errors.New("cwire: RunInitiator: ConfirmFn required")
+	}
+	if args.InstanceID == "" || args.AccInstance == "" {
+		return nil, "", errors.New("cwire: RunInitiator: InstanceIDs required")
+	}
+
+	var t C.pigeon_transport
+	C.cwire_make_go_transport(unsafe.Pointer(args.Ref.cudata), &t)
+
+	cInstanceID := C.CString(args.InstanceID)
+	defer C.free(unsafe.Pointer(cInstanceID))
+	cAccInstance := C.CString(args.AccInstance)
+	defer C.free(unsafe.Pointer(cAccInstance))
+
+	var rec C.pigeon_pairing_record
+	var code [7]C.char
+
+	confirmH := newConfirmHandle(args.ConfirmFn)
+	defer confirmH.delete()
+
+	rv := C.cwire_run_initiator(
+		&t,
+		(*C.uint8_t)(unsafe.Pointer(&args.LocalEphPriv[0])),
+		(*C.uint8_t)(unsafe.Pointer(&args.LocalEphPub[0])),
+		(*C.uint8_t)(unsafe.Pointer(&args.IdentityPub[0])),
+		cInstanceID,
+		(*C.uint8_t)(unsafe.Pointer(&args.AccEphPub[0])),
+		cAccInstance,
+		confirmH.ptr(),
+		&rec,
+		&code[0])
+	if rv != 0 {
+		return nil, "", errors.New("cwire: pigeon_pair_initiator failed")
+	}
+
+	pr := recordFromC(&rec)
+	codeStr := C.GoString(&code[0])
+	return pr, codeStr, nil
+}
+
+func recordFromC(rec *C.pigeon_pairing_record) *PairingRecord {
+	pr := &PairingRecord{
+		PeerInstanceID: C.GoString(&rec.peer_instance_id[0]),
+		LocalPrivKey:   make([]byte, 32),
+		LocalPubKey:    make([]byte, 32),
+		PeerPubKey:     make([]byte, 32),
+	}
+	copy(pr.LocalPrivKey, (*[32]byte)(unsafe.Pointer(&rec.local_private_key[0]))[:])
+	copy(pr.LocalPubKey, (*[32]byte)(unsafe.Pointer(&rec.local_public_key[0]))[:])
+	copy(pr.PeerPubKey, (*[32]byte)(unsafe.Pointer(&rec.peer_public_key[0]))[:])
+	return pr
 }
