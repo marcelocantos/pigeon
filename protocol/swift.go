@@ -204,7 +204,9 @@ func (p *Protocol) ExportSwift(w io.Writer) error {
 		fmt.Fprintf(&b, "/// %s%sMachine is the generated state machine for the %s actor.\n", protoName, typeName, a.Name)
 		fmt.Fprintf(&b, "public final class %s%sMachine: @unchecked Sendable {\n", protoName, typeName)
 		fmt.Fprintf(&b, "    public typealias MessageType = %s.MessageType\n", protoPrefix)
-		fmt.Fprintf(&b, "    public typealias GuardID = %s.GuardID\n", protoPrefix)
+		if len(p.Guards) > 0 {
+			fmt.Fprintf(&b, "    public typealias GuardID = %s.GuardID\n", protoPrefix)
+		}
 		fmt.Fprintf(&b, "    public typealias ActionID = %s.ActionID\n", protoPrefix)
 		fmt.Fprintf(&b, "    public typealias EventID = %s.EventID\n", protoPrefix)
 		if len(p.Commands) > 0 {
@@ -227,7 +229,9 @@ func (p *Protocol) ExportSwift(w io.Writer) error {
 		}
 
 		b.WriteString("\n")
-		b.WriteString("    public var guards: [GuardID: () -> Bool] = [:]\n")
+		if len(p.Guards) > 0 {
+			b.WriteString("    public var guards: [GuardID: () -> Bool] = [:]\n")
+		}
 		b.WriteString("    public var actions: [ActionID: () throws -> Void] = [:]\n")
 		b.WriteString("\n")
 
@@ -427,7 +431,9 @@ func writeSwiftComposedActor(b *strings.Builder, p *Protocol, a Actor, protoName
 		fmt.Fprintf(b, "/// %sMachine is the generated state machine for %s/%s.\n", machTypeName, a.Name, m.Name)
 		fmt.Fprintf(b, "public final class %sMachine: @unchecked Sendable {\n", machTypeName)
 		fmt.Fprintf(b, "    public typealias MessageType = %s.MessageType\n", protoPrefix)
-		fmt.Fprintf(b, "    public typealias GuardID = %s.GuardID\n", protoPrefix)
+		if len(p.Guards) > 0 {
+			fmt.Fprintf(b, "    public typealias GuardID = %s.GuardID\n", protoPrefix)
+		}
 		fmt.Fprintf(b, "    public typealias ActionID = %s.ActionID\n", protoPrefix)
 		fmt.Fprintf(b, "    public typealias EventID = %s.EventID\n", protoPrefix)
 		if len(p.Commands) > 0 {
@@ -449,7 +455,9 @@ func writeSwiftComposedActor(b *strings.Builder, p *Protocol, a Actor, protoName
 		}
 
 		b.WriteString("\n")
-		b.WriteString("    public var guards: [GuardID: () -> Bool] = [:]\n")
+		if len(p.Guards) > 0 {
+			b.WriteString("    public var guards: [GuardID: () -> Bool] = [:]\n")
+		}
 		b.WriteString("    public var actions: [ActionID: () throws -> Void] = [:]\n")
 		b.WriteString("\n")
 

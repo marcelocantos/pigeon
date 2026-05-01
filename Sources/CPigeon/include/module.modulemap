@@ -1,0 +1,5 @@
+module CPigeon {
+    umbrella header "CPigeon.h"
+    export *
+    module * { export * }
+}

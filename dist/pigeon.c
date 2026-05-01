@@ -12,313 +12,190 @@
 
 
 
-void pigeon_server_pairing_machine_init(pigeon_server_pairing_machine *m)
+void pigeon_acceptor_machine_init(pigeon_acceptor_machine *m)
 {
 	memset(m, 0, sizeof(*m));
-	m->state = PIGEON_SERVER_PAIRING_IDLE;
-	m->current_token = "none";
-	m->server_ecdh_pub = "none";
-	m->received_client_pub = "none";
-	m->code_attempts = 0;
-	m->device_secret = "none";
+	m->state = PIGEON_ACCEPTOR_IDLE;
+	m->acceptor_eph_pub = "none";
+	m->acceptor_received_eph_pub = "none";
+	m->acceptor_received_identity = "none";
+	m->acceptor_received_instance = "none";
+	m->acceptor_user_confirmed = "false";
+	m->acceptor_received_confirm = "false";
 }
 
-int pigeon_server_pairing_handle_message(pigeon_server_pairing_machine *m, pairing_ceremony_msg_type msg)
+int pigeon_acceptor_handle_message(pigeon_acceptor_machine *m, pairing_ceremony_msg_type msg)
 {
-	if (m->state == PIGEON_SERVER_PAIRING_IDLE && msg == PIGEON_MSG_PAIR_BEGIN) {
-		if (m->actions[PIGEON_ACTION_GENERATE_TOKEN]) {
-			int err = m->actions[PIGEON_ACTION_GENERATE_TOKEN](m->userdata);
+	if (m->state == PIGEON_ACCEPTOR_WAITING_FOR_HELLO && msg == PIGEON_MSG_HELLO) {
+		if (m->actions[PIGEON_ACTION_DERIVE_CODE]) {
+			int err = m->actions[PIGEON_ACTION_DERIVE_CODE](m->userdata);
 			if (err) return -err;
 		}
-		m->current_token = "tok_1";
-		if (m->on_change) m->on_change("current_token", m->userdata);
-		// active_tokens: active_tokens \union {"tok_1"} (set by action)
-		m->state = PIGEON_SERVER_PAIRING_GENERATE_TOKEN;
+		// acceptor_received_eph_pub: recv_msg.eph_pub (set by action)
+		// acceptor_received_identity: recv_msg.identity_pub (set by action)
+		// acceptor_received_instance: recv_msg.instance_id (set by action)
+		// acceptor_code: DeriveCode(acceptor_eph_pub, recv_msg.eph_pub) (set by action)
+		m->state = PIGEON_ACCEPTOR_DERIVING_CODE;
 		return 1;
 	}
-	if (m->state == PIGEON_SERVER_PAIRING_WAITING_FOR_CLIENT && msg == PIGEON_MSG_PAIR_HELLO && m->guards[PIGEON_GUARD_TOKEN_VALID] && m->guards[PIGEON_GUARD_TOKEN_VALID](m->userdata)) {
-		if (m->actions[PIGEON_ACTION_DERIVE_SECRET]) {
-			int err = m->actions[PIGEON_ACTION_DERIVE_SECRET](m->userdata);
+	if (m->state == PIGEON_ACCEPTOR_AWAITING_PEER_CONFIRM && msg == PIGEON_MSG_CONFIRM_TO_ACCEPTOR) {
+		if (m->actions[PIGEON_ACTION_STORE_RECORD]) {
+			int err = m->actions[PIGEON_ACTION_STORE_RECORD](m->userdata);
 			if (err) return -err;
 		}
-		// received_client_pub: recv_msg.pubkey (set by action)
-		m->server_ecdh_pub = "server_pub";
-		if (m->on_change) m->on_change("server_ecdh_pub", m->userdata);
-		// server_shared_key: DeriveKey("server_pub", recv_msg.pubkey) (set by action)
-		// server_code: DeriveCode("server_pub", recv_msg.pubkey) (set by action)
-		// active_tokens: active_tokens \ {current_token} (set by action)
-		// used_tokens: used_tokens \union {current_token} (set by action)
-		m->state = PIGEON_SERVER_PAIRING_DERIVE_SECRET;
-		return 1;
-	}
-	if (m->state == PIGEON_SERVER_PAIRING_WAITING_FOR_CLIENT && msg == PIGEON_MSG_PAIR_HELLO && m->guards[PIGEON_GUARD_TOKEN_INVALID] && m->guards[PIGEON_GUARD_TOKEN_INVALID](m->userdata)) {
-		m->state = PIGEON_SERVER_PAIRING_IDLE;
-		return 1;
-	}
-	if (m->state == PIGEON_SERVER_PAIRING_WAITING_FOR_CODE && msg == PIGEON_MSG_CODE_SUBMIT) {
-		// received_code: recv_msg.code (set by action)
-		m->state = PIGEON_SERVER_PAIRING_VALIDATE_CODE;
+		m->acceptor_received_confirm = "true";
+		if (m->on_change) m->on_change("acceptor_received_confirm", m->userdata);
+		m->state = PIGEON_ACCEPTOR_PAIRED;
 		return 1;
 	}
 	return 0;
 }
 
-int pigeon_server_pairing_step(pigeon_server_pairing_machine *m, pairing_ceremony_event_id event)
+int pigeon_acceptor_step(pigeon_acceptor_machine *m, pairing_ceremony_event_id event)
 {
-	if (m->state == PIGEON_SERVER_PAIRING_GENERATE_TOKEN && event == PIGEON_EVENT_TOKEN_CREATED) {
+	if (m->state == PIGEON_ACCEPTOR_IDLE && event == PIGEON_EVENT_PAIR_BEGIN) {
+		if (m->actions[PIGEON_ACTION_GEN_EPHEMERAL]) {
+			int err = m->actions[PIGEON_ACTION_GEN_EPHEMERAL](m->userdata);
+			if (err) return -err;
+		}
+		m->acceptor_eph_pub = "acceptor_eph";
+		if (m->on_change) m->on_change("acceptor_eph_pub", m->userdata);
+		m->state = PIGEON_ACCEPTOR_GENERATING_EPHEMERAL;
+		return 1;
+	}
+	if (m->state == PIGEON_ACCEPTOR_GENERATING_EPHEMERAL && event == PIGEON_EVENT_EPHEMERAL_READY) {
 		if (m->actions[PIGEON_ACTION_REGISTER_RELAY]) {
 			int err = m->actions[PIGEON_ACTION_REGISTER_RELAY](m->userdata);
 			if (err) return -err;
 		}
-		m->state = PIGEON_SERVER_PAIRING_REGISTER_RELAY;
+		m->state = PIGEON_ACCEPTOR_REGISTERING_RELAY;
 		return 1;
 	}
-	if (m->state == PIGEON_SERVER_PAIRING_REGISTER_RELAY && event == PIGEON_EVENT_RELAY_REGISTERED) {
-		m->state = PIGEON_SERVER_PAIRING_WAITING_FOR_CLIENT;
-		return 1;
-	}
-	if (m->state == PIGEON_SERVER_PAIRING_DERIVE_SECRET && event == PIGEON_EVENT_ECDH_COMPLETE) {
-		m->state = PIGEON_SERVER_PAIRING_SEND_ACK;
-		return 1;
-	}
-	if (m->state == PIGEON_SERVER_PAIRING_SEND_ACK && event == PIGEON_EVENT_SIGNAL_CODE_DISPLAY) {
-		m->state = PIGEON_SERVER_PAIRING_WAITING_FOR_CODE;
-		return 1;
-	}
-	if (m->state == PIGEON_SERVER_PAIRING_VALIDATE_CODE && event == PIGEON_EVENT_CHECK_CODE && m->guards[PIGEON_GUARD_CODE_CORRECT] && m->guards[PIGEON_GUARD_CODE_CORRECT](m->userdata)) {
-		m->state = PIGEON_SERVER_PAIRING_STORE_PAIRED;
-		return 1;
-	}
-	if (m->state == PIGEON_SERVER_PAIRING_VALIDATE_CODE && event == PIGEON_EVENT_CHECK_CODE && m->guards[PIGEON_GUARD_CODE_WRONG] && m->guards[PIGEON_GUARD_CODE_WRONG](m->userdata)) {
-		m->code_attempts = m->code_attempts + 1;
-		if (m->on_change) m->on_change("code_attempts", m->userdata);
-		m->state = PIGEON_SERVER_PAIRING_IDLE;
-		return 1;
-	}
-	if (m->state == PIGEON_SERVER_PAIRING_STORE_PAIRED && event == PIGEON_EVENT_FINALISE) {
-		if (m->actions[PIGEON_ACTION_STORE_DEVICE]) {
-			int err = m->actions[PIGEON_ACTION_STORE_DEVICE](m->userdata);
+	if (m->state == PIGEON_ACCEPTOR_REGISTERING_RELAY && event == PIGEON_EVENT_RELAY_REGISTERED) {
+		if (m->actions[PIGEON_ACTION_EMIT_TOKEN]) {
+			int err = m->actions[PIGEON_ACTION_EMIT_TOKEN](m->userdata);
 			if (err) return -err;
 		}
-		m->device_secret = "dev_secret_1";
-		if (m->on_change) m->on_change("device_secret", m->userdata);
-		// paired_devices: paired_devices \union {"device_1"} (set by action)
-		m->state = PIGEON_SERVER_PAIRING_PAIRING_COMPLETE;
+		m->state = PIGEON_ACCEPTOR_WAITING_FOR_HELLO;
+		return 1;
+	}
+	if (m->state == PIGEON_ACCEPTOR_DERIVING_CODE && event == PIGEON_EVENT_CODE_READY) {
+		m->state = PIGEON_ACCEPTOR_AWAITING_USER_CONFIRM;
+		return 1;
+	}
+	if (m->state == PIGEON_ACCEPTOR_AWAITING_USER_CONFIRM && event == PIGEON_EVENT_USER_CONFIRM) {
+		m->acceptor_user_confirmed = "true";
+		if (m->on_change) m->on_change("acceptor_user_confirmed", m->userdata);
+		m->state = PIGEON_ACCEPTOR_AWAITING_PEER_CONFIRM;
+		return 1;
+	}
+	if (m->state == PIGEON_ACCEPTOR_AWAITING_USER_CONFIRM && event == PIGEON_EVENT_USER_CANCEL) {
+		m->state = PIGEON_ACCEPTOR_ABORTED;
+		return 1;
+	}
+	if (m->state == PIGEON_ACCEPTOR_AWAITING_PEER_CONFIRM && event == PIGEON_EVENT_USER_CANCEL) {
+		m->state = PIGEON_ACCEPTOR_ABORTED;
 		return 1;
 	}
 	return 0;
 }
 
-void pigeon_server_auth_machine_init(pigeon_server_auth_machine *m)
+void pigeon_initiator_machine_init(pigeon_initiator_machine *m)
 {
 	memset(m, 0, sizeof(*m));
-	m->state = PIGEON_SERVER_AUTH_IDLE;
-	m->received_device_id = "none";
-	m->received_auth_nonce = "none";
+	m->state = PIGEON_INITIATOR_IDLE;
+	m->initiator_eph_pub = "none";
+	m->received_acceptor_eph_pub = "none";
+	m->received_acceptor_identity = "none";
+	m->received_acceptor_instance = "none";
+	m->initiator_received_eph_pub = "none";
+	m->initiator_received_identity = "none";
+	m->initiator_received_instance = "none";
+	m->initiator_user_confirmed = "false";
+	m->initiator_received_confirm = "false";
 }
 
-int pigeon_server_auth_handle_message(pigeon_server_auth_machine *m, pairing_ceremony_msg_type msg)
+int pigeon_initiator_handle_message(pigeon_initiator_machine *m, pairing_ceremony_msg_type msg)
 {
-	if (m->state == PIGEON_SERVER_AUTH_PAIRED && msg == PIGEON_MSG_AUTH_REQUEST) {
-		// received_device_id: recv_msg.device_id (set by action)
-		// received_auth_nonce: recv_msg.nonce (set by action)
-		m->state = PIGEON_SERVER_AUTH_AUTH_CHECK;
-		return 1;
-	}
-	return 0;
-}
-
-int pigeon_server_auth_step(pigeon_server_auth_machine *m, pairing_ceremony_event_id event)
-{
-	if (m->state == PIGEON_SERVER_AUTH_IDLE && event == PIGEON_EVENT_CREDENTIAL_READY) {
-		m->state = PIGEON_SERVER_AUTH_PAIRED;
-		return 1;
-	}
-	if (m->state == PIGEON_SERVER_AUTH_AUTH_CHECK && event == PIGEON_EVENT_VERIFY && m->guards[PIGEON_GUARD_DEVICE_KNOWN] && m->guards[PIGEON_GUARD_DEVICE_KNOWN](m->userdata)) {
-		if (m->actions[PIGEON_ACTION_VERIFY_DEVICE]) {
-			int err = m->actions[PIGEON_ACTION_VERIFY_DEVICE](m->userdata);
+	if (m->state == PIGEON_INITIATOR_AWAITING_WELCOME && msg == PIGEON_MSG_WELCOME) {
+		if (m->actions[PIGEON_ACTION_DERIVE_CODE]) {
+			int err = m->actions[PIGEON_ACTION_DERIVE_CODE](m->userdata);
 			if (err) return -err;
 		}
-		// auth_nonces_used: auth_nonces_used \union {received_auth_nonce} (set by action)
-		m->state = PIGEON_SERVER_AUTH_SESSION_ACTIVE;
+		// initiator_received_eph_pub: recv_msg.eph_pub (set by action)
+		// initiator_received_identity: recv_msg.identity_pub (set by action)
+		// initiator_received_instance: recv_msg.instance_id (set by action)
+		// initiator_code: DeriveCode(initiator_eph_pub, recv_msg.eph_pub) (set by action)
+		m->state = PIGEON_INITIATOR_DERIVING_CODE;
 		return 1;
 	}
-	if (m->state == PIGEON_SERVER_AUTH_AUTH_CHECK && event == PIGEON_EVENT_VERIFY && m->guards[PIGEON_GUARD_DEVICE_UNKNOWN] && m->guards[PIGEON_GUARD_DEVICE_UNKNOWN](m->userdata)) {
-		m->state = PIGEON_SERVER_AUTH_IDLE;
-		return 1;
-	}
-	if (m->state == PIGEON_SERVER_AUTH_SESSION_ACTIVE && event == PIGEON_EVENT_DISCONNECT) {
-		m->state = PIGEON_SERVER_AUTH_PAIRED;
-		return 1;
-	}
-	return 0;
-}
-
-void pigeon_server_composite_init(pigeon_server_composite *c)
-{
-	memset(c, 0, sizeof(*c));
-	pigeon_server_pairing_machine_init(&c->pairing);
-	pigeon_server_auth_machine_init(&c->auth);
-}
-
-int pigeon_server_route(pigeon_server_composite *c, const char *from, pairing_ceremony_event_id event)
-{
-	if (strcmp(from, "pairing") == 0 && event == PIGEON_EVENT_PAIRED) {
-		pigeon_server_auth_step(&c->auth, PIGEON_EVENT_CREDENTIAL_READY);
-	}
-	return 0;
-}
-
-void pigeon_ios_pairing_machine_init(pigeon_ios_pairing_machine *m)
-{
-	memset(m, 0, sizeof(*m));
-	m->state = PIGEON_APP_PAIRING_IDLE;
-	m->received_server_pub = "none";
-}
-
-int pigeon_ios_pairing_handle_message(pigeon_ios_pairing_machine *m, pairing_ceremony_msg_type msg)
-{
-	if (m->state == PIGEON_APP_PAIRING_WAIT_ACK && msg == PIGEON_MSG_PAIR_HELLO_ACK) {
-		if (m->actions[PIGEON_ACTION_DERIVE_SECRET]) {
-			int err = m->actions[PIGEON_ACTION_DERIVE_SECRET](m->userdata);
+	if (m->state == PIGEON_INITIATOR_AWAITING_PEER_CONFIRM && msg == PIGEON_MSG_CONFIRM_TO_INITIATOR) {
+		if (m->actions[PIGEON_ACTION_STORE_RECORD]) {
+			int err = m->actions[PIGEON_ACTION_STORE_RECORD](m->userdata);
 			if (err) return -err;
 		}
-		// received_server_pub: recv_msg.pubkey (set by action)
-		// client_shared_key: DeriveKey("client_pub", recv_msg.pubkey) (set by action)
-		m->state = PIGEON_APP_PAIRING_E2E_READY;
+		m->initiator_received_confirm = "true";
+		if (m->on_change) m->on_change("initiator_received_confirm", m->userdata);
+		m->state = PIGEON_INITIATOR_PAIRED;
 		return 1;
 	}
-	if (m->state == PIGEON_APP_PAIRING_E2E_READY && msg == PIGEON_MSG_PAIR_CONFIRM) {
-		// ios_code: DeriveCode(received_server_pub, "client_pub") (set by action)
-		m->state = PIGEON_APP_PAIRING_SHOW_CODE;
-		return 1;
-	}
-	if (m->state == PIGEON_APP_PAIRING_WAIT_PAIR_COMPLETE && msg == PIGEON_MSG_PAIR_COMPLETE) {
-		if (m->actions[PIGEON_ACTION_STORE_SECRET]) {
-			int err = m->actions[PIGEON_ACTION_STORE_SECRET](m->userdata);
+	return 0;
+}
+
+int pigeon_initiator_step(pigeon_initiator_machine *m, pairing_ceremony_event_id event)
+{
+	if (m->state == PIGEON_INITIATOR_IDLE && event == PIGEON_EVENT_TOKEN_RECEIVED) {
+		if (m->actions[PIGEON_ACTION_DECODE_TOKEN]) {
+			int err = m->actions[PIGEON_ACTION_DECODE_TOKEN](m->userdata);
 			if (err) return -err;
 		}
-		m->state = PIGEON_APP_PAIRING_PAIRING_COMPLETE;
+		m->received_acceptor_eph_pub = "acceptor_eph";
+		if (m->on_change) m->on_change("received_acceptor_eph_pub", m->userdata);
+		m->received_acceptor_identity = "acceptor_id";
+		if (m->on_change) m->on_change("received_acceptor_identity", m->userdata);
+		m->received_acceptor_instance = "acceptor_instance";
+		if (m->on_change) m->on_change("received_acceptor_instance", m->userdata);
+		m->state = PIGEON_INITIATOR_DECODING_TOKEN;
 		return 1;
 	}
-	return 0;
-}
-
-int pigeon_ios_pairing_step(pigeon_ios_pairing_machine *m, pairing_ceremony_event_id event)
-{
-	if (m->state == PIGEON_APP_PAIRING_IDLE && event == PIGEON_EVENT_USER_SCANS_QR) {
-		m->state = PIGEON_APP_PAIRING_SCAN_QR;
-		return 1;
-	}
-	if (m->state == PIGEON_APP_PAIRING_SCAN_QR && event == PIGEON_EVENT_QR_PARSED) {
-		m->state = PIGEON_APP_PAIRING_CONNECT_RELAY;
-		return 1;
-	}
-	if (m->state == PIGEON_APP_PAIRING_CONNECT_RELAY && event == PIGEON_EVENT_RELAY_CONNECTED) {
-		m->state = PIGEON_APP_PAIRING_GEN_KEY_PAIR;
-		return 1;
-	}
-	if (m->state == PIGEON_APP_PAIRING_GEN_KEY_PAIR && event == PIGEON_EVENT_KEY_PAIR_GENERATED) {
-		if (m->actions[PIGEON_ACTION_SEND_PAIR_HELLO]) {
-			int err = m->actions[PIGEON_ACTION_SEND_PAIR_HELLO](m->userdata);
+	if (m->state == PIGEON_INITIATOR_DECODING_TOKEN && event == PIGEON_EVENT_TOKEN_DECODED) {
+		if (m->actions[PIGEON_ACTION_GEN_EPHEMERAL]) {
+			int err = m->actions[PIGEON_ACTION_GEN_EPHEMERAL](m->userdata);
 			if (err) return -err;
 		}
-		m->state = PIGEON_APP_PAIRING_WAIT_ACK;
+		m->initiator_eph_pub = "initiator_eph";
+		if (m->on_change) m->on_change("initiator_eph_pub", m->userdata);
+		m->state = PIGEON_INITIATOR_GENERATING_EPHEMERAL;
 		return 1;
 	}
-	if (m->state == PIGEON_APP_PAIRING_SHOW_CODE && event == PIGEON_EVENT_CODE_DISPLAYED) {
-		m->state = PIGEON_APP_PAIRING_WAIT_PAIR_COMPLETE;
+	if (m->state == PIGEON_INITIATOR_GENERATING_EPHEMERAL && event == PIGEON_EVENT_EPHEMERAL_READY) {
+		if (m->actions[PIGEON_ACTION_DIAL_RELAY]) {
+			int err = m->actions[PIGEON_ACTION_DIAL_RELAY](m->userdata);
+			if (err) return -err;
+		}
+		m->state = PIGEON_INITIATOR_CONNECTING_RELAY;
 		return 1;
 	}
-	return 0;
-}
-
-void pigeon_ios_auth_machine_init(pigeon_ios_auth_machine *m)
-{
-	memset(m, 0, sizeof(*m));
-	m->state = PIGEON_APP_AUTH_IDLE;
-}
-
-int pigeon_ios_auth_handle_message(pigeon_ios_auth_machine *m, pairing_ceremony_msg_type msg)
-{
-	if (m->state == PIGEON_APP_AUTH_SEND_AUTH && msg == PIGEON_MSG_AUTH_OK) {
-		m->state = PIGEON_APP_AUTH_SESSION_ACTIVE;
+	if (m->state == PIGEON_INITIATOR_CONNECTING_RELAY && event == PIGEON_EVENT_RELAY_CONNECTED) {
+		m->state = PIGEON_INITIATOR_AWAITING_WELCOME;
 		return 1;
 	}
-	return 0;
-}
-
-int pigeon_ios_auth_step(pigeon_ios_auth_machine *m, pairing_ceremony_event_id event)
-{
-	if (m->state == PIGEON_APP_AUTH_IDLE && event == PIGEON_EVENT_CREDENTIAL_READY) {
-		m->state = PIGEON_APP_AUTH_PAIRED;
+	if (m->state == PIGEON_INITIATOR_DERIVING_CODE && event == PIGEON_EVENT_CODE_READY) {
+		m->state = PIGEON_INITIATOR_AWAITING_USER_CONFIRM;
 		return 1;
 	}
-	if (m->state == PIGEON_APP_AUTH_PAIRED && event == PIGEON_EVENT_APP_LAUNCH) {
-		m->state = PIGEON_APP_AUTH_RECONNECT;
+	if (m->state == PIGEON_INITIATOR_AWAITING_USER_CONFIRM && event == PIGEON_EVENT_USER_CONFIRM) {
+		m->initiator_user_confirmed = "true";
+		if (m->on_change) m->on_change("initiator_user_confirmed", m->userdata);
+		m->state = PIGEON_INITIATOR_AWAITING_PEER_CONFIRM;
 		return 1;
 	}
-	if (m->state == PIGEON_APP_AUTH_RECONNECT && event == PIGEON_EVENT_RELAY_CONNECTED) {
-		m->state = PIGEON_APP_AUTH_SEND_AUTH;
+	if (m->state == PIGEON_INITIATOR_AWAITING_USER_CONFIRM && event == PIGEON_EVENT_USER_CANCEL) {
+		m->state = PIGEON_INITIATOR_ABORTED;
 		return 1;
 	}
-	if (m->state == PIGEON_APP_AUTH_SESSION_ACTIVE && event == PIGEON_EVENT_DISCONNECT) {
-		m->state = PIGEON_APP_AUTH_PAIRED;
-		return 1;
-	}
-	return 0;
-}
-
-void pigeon_ios_composite_init(pigeon_ios_composite *c)
-{
-	memset(c, 0, sizeof(*c));
-	pigeon_ios_pairing_machine_init(&c->pairing);
-	pigeon_ios_auth_machine_init(&c->auth);
-}
-
-int pigeon_ios_route(pigeon_ios_composite *c, const char *from, pairing_ceremony_event_id event)
-{
-	if (strcmp(from, "pairing") == 0 && event == PIGEON_EVENT_PAIRED) {
-		pigeon_ios_auth_step(&c->auth, PIGEON_EVENT_CREDENTIAL_READY);
-	}
-	return 0;
-}
-
-void pigeon_cli_machine_init(pigeon_cli_machine *m)
-{
-	memset(m, 0, sizeof(*m));
-	m->state = PIGEON_CLI_IDLE;
-}
-
-int pigeon_cli_handle_message(pigeon_cli_machine *m, pairing_ceremony_msg_type msg)
-{
-	if (m->state == PIGEON_CLI_BEGIN_PAIR && msg == PIGEON_MSG_TOKEN_RESPONSE) {
-		m->state = PIGEON_CLI_SHOW_QR;
-		return 1;
-	}
-	if (m->state == PIGEON_CLI_SHOW_QR && msg == PIGEON_MSG_WAITING_FOR_CODE) {
-		m->state = PIGEON_CLI_PROMPT_CODE;
-		return 1;
-	}
-	if (m->state == PIGEON_CLI_SUBMIT_CODE && msg == PIGEON_MSG_PAIR_STATUS) {
-		m->state = PIGEON_CLI_DONE;
-		return 1;
-	}
-	return 0;
-}
-
-int pigeon_cli_step(pigeon_cli_machine *m, pairing_ceremony_event_id event)
-{
-	if (m->state == PIGEON_CLI_IDLE && event == PIGEON_EVENT_CLI_INIT) {
-		m->state = PIGEON_CLI_GET_KEY;
-		return 1;
-	}
-	if (m->state == PIGEON_CLI_GET_KEY && event == PIGEON_EVENT_KEY_STORED) {
-		m->state = PIGEON_CLI_BEGIN_PAIR;
-		return 1;
-	}
-	if (m->state == PIGEON_CLI_PROMPT_CODE && event == PIGEON_EVENT_USER_ENTERS_CODE) {
-		m->state = PIGEON_CLI_SUBMIT_CODE;
+	if (m->state == PIGEON_INITIATOR_AWAITING_PEER_CONFIRM && event == PIGEON_EVENT_USER_CANCEL) {
+		m->state = PIGEON_INITIATOR_ABORTED;
 		return 1;
 	}
 	return 0;
@@ -563,7 +440,6 @@ void pigeon_init(pigeon_ctx *ctx, const pigeon_transport *transport)
     if (transport) {
         ctx->transport = *transport;
     }
-    pigeon_ios_composite_init(&ctx->pairing);
 }
 
 int pigeon_send(pigeon_ctx *ctx, const uint8_t *data, size_t len)
@@ -695,6 +571,194 @@ uint32_t pigeon_read_frame_length(const uint8_t *buf)
            ((uint32_t)buf[3]);
 }
 
+// --- Multi-channel wire helpers ---
+
+int pigeon_uvarint_encode(uint64_t v, uint8_t *buf, size_t buf_len)
+{
+    size_t i = 0;
+    while (v >= 0x80) {
+        if (i >= buf_len) return -1;
+        buf[i++] = (uint8_t)(v) | 0x80u;
+        v >>= 7;
+    }
+    if (i >= buf_len) return -1;
+    buf[i++] = (uint8_t)(v);
+    return (int)i;
+}
+
+int pigeon_uvarint_decode(const uint8_t *buf, size_t buf_len, uint64_t *out)
+{
+    uint64_t v = 0;
+    unsigned shift = 0;
+    for (size_t i = 0; i < buf_len; i++) {
+        uint8_t b = buf[i];
+        if (i == 9 && b > 1) {
+            // 10th byte may only contribute 1 bit (uint64 max).
+            return -1;
+        }
+        v |= (uint64_t)(b & 0x7fu) << shift;
+        if ((b & 0x80u) == 0) {
+            *out = v;
+            return (int)(i + 1);
+        }
+        shift += 7;
+        if (shift >= 64) return -1;
+    }
+    return 0; // truncated
+}
+
+int pigeon_encode_stream_header(bool is_backend, uint32_t client_tag,
+                                const char *name, size_t name_len,
+                                uint8_t *out, size_t out_len)
+{
+    size_t off = 0;
+    if (is_backend) {
+        if (off + 4 > out_len) return -1;
+        out[off++] = (uint8_t)(client_tag >> 24);
+        out[off++] = (uint8_t)(client_tag >> 16);
+        out[off++] = (uint8_t)(client_tag >> 8);
+        out[off++] = (uint8_t)(client_tag);
+    }
+    int n = pigeon_uvarint_encode((uint64_t)name_len, out + off, out_len - off);
+    if (n < 0) return -1;
+    off += (size_t)n;
+    if (off + name_len > out_len) return -1;
+    if (name_len > 0) {
+        if (!name) return -1;
+        memcpy(out + off, name, name_len);
+        off += name_len;
+    }
+    return (int)off;
+}
+
+// Internal: shared body of decode_{backend,client}_stream_header.
+// `tag_in` is non-NULL on backend side (consumes 4 leading bytes).
+static int decode_stream_header_inner(const uint8_t *buf, size_t buf_len,
+                                      uint32_t *tag_out,
+                                      char *name_buf, size_t name_buf_len,
+                                      size_t *name_len_out)
+{
+    size_t off = 0;
+    if (tag_out) {
+        if (buf_len < 4) return -1;
+        *tag_out = ((uint32_t)buf[0] << 24)
+                 | ((uint32_t)buf[1] << 16)
+                 | ((uint32_t)buf[2] <<  8)
+                 |  (uint32_t)buf[3];
+        off = 4;
+    }
+    uint64_t name_len = 0;
+    int n = pigeon_uvarint_decode(buf + off, buf_len - off, &name_len);
+    if (n <= 0) return -1;
+    off += (size_t)n;
+    if (name_len > buf_len - off) return -1;
+    // Reserve one byte for the trailing NUL.
+    if (name_len + 1 > name_buf_len) return -1;
+    if (name_len > 0) memcpy(name_buf, buf + off, (size_t)name_len);
+    name_buf[name_len] = '\0';
+    if (name_len_out) *name_len_out = (size_t)name_len;
+    off += (size_t)name_len;
+    return (int)off;
+}
+
+int pigeon_decode_backend_stream_header(const uint8_t *buf, size_t buf_len,
+                                        uint32_t *client_tag,
+                                        char *name_buf, size_t name_buf_len,
+                                        size_t *name_len_out)
+{
+    if (!client_tag) return -1;
+    return decode_stream_header_inner(buf, buf_len, client_tag,
+                                      name_buf, name_buf_len, name_len_out);
+}
+
+int pigeon_decode_client_stream_header(const uint8_t *buf, size_t buf_len,
+                                       char *name_buf, size_t name_buf_len,
+                                       size_t *name_len_out)
+{
+    return decode_stream_header_inner(buf, buf_len, NULL,
+                                      name_buf, name_buf_len, name_len_out);
+}
+
+int pigeon_encode_datagram(pigeon_channel *ch,
+                           bool is_backend, uint32_t client_tag,
+                           uint64_t channel_id,
+                           const uint8_t *payload, size_t payload_len,
+                           uint8_t *out, size_t out_len)
+{
+    if (!ch || !ch->established) return -1;
+    if (payload_len > PIGEON_MAX_MSG) return -1;
+
+    // Compose the AEAD-plaintext on the heap: [varint channel-id]
+    // [payload]. Heap-allocate so the caller's thread doesn't need
+    // a 1 MiB stack to invoke this — see T38 in the audit log.
+    size_t plain_cap = PIGEON_MAX_VARINT_LEN + PIGEON_MAX_MSG;
+    uint8_t *plain = (uint8_t *)malloc(plain_cap);
+    if (!plain) return -1;
+
+    int idn = pigeon_uvarint_encode(channel_id, plain, plain_cap);
+    if (idn < 0) { free(plain); return -1; }
+    if ((size_t)idn + payload_len > plain_cap) { free(plain); return -1; }
+    if (payload_len > 0) memcpy(plain + idn, payload, payload_len);
+    size_t plain_len = (size_t)idn + payload_len;
+
+    // Wire = (optional 4-byte tag) ++ AEAD(plain).
+    size_t off = 0;
+    if (is_backend) {
+        if (off + 4 > out_len) { free(plain); return -1; }
+        out[off++] = (uint8_t)(client_tag >> 24);
+        out[off++] = (uint8_t)(client_tag >> 16);
+        out[off++] = (uint8_t)(client_tag >> 8);
+        out[off++] = (uint8_t)(client_tag);
+    }
+    int ct = pigeon_channel_encrypt(ch, plain, plain_len,
+                                    out + off, out_len - off);
+    free(plain);
+    if (ct < 0) return -1;
+    return (int)off + ct;
+}
+
+int pigeon_decode_datagram(pigeon_channel *ch,
+                           bool is_backend,
+                           const uint8_t *wire, size_t wire_len,
+                           uint32_t *client_tag,
+                           uint64_t *channel_id,
+                           uint8_t *payload_buf, size_t payload_buf_len)
+{
+    if (!ch || !ch->established) return -1;
+
+    size_t off = 0;
+    if (is_backend) {
+        if (wire_len < 4) return -1;
+        if (client_tag) {
+            *client_tag = ((uint32_t)wire[0] << 24)
+                        | ((uint32_t)wire[1] << 16)
+                        | ((uint32_t)wire[2] <<  8)
+                        |  (uint32_t)wire[3];
+        }
+        off = 4;
+    }
+
+    // AEAD-decrypt into a heap scratch buffer, then peel the
+    // channel-id varint. Heap-allocated for the same reason as
+    // pigeon_encode_datagram above (T38).
+    uint8_t *plain = (uint8_t *)malloc(PIGEON_MAX_MSG);
+    if (!plain) return -1;
+    int pn = pigeon_channel_decrypt(ch, wire + off, wire_len - off,
+                                    plain, PIGEON_MAX_MSG);
+    if (pn < 0) { free(plain); return -1; }
+
+    uint64_t cid = 0;
+    int idn = pigeon_uvarint_decode(plain, (size_t)pn, &cid);
+    if (idn <= 0) { free(plain); return -1; }
+    if (channel_id) *channel_id = cid;
+
+    size_t payload_len = (size_t)pn - (size_t)idn;
+    if (payload_len > payload_buf_len) { free(plain); return -1; }
+    if (payload_len > 0) memcpy(payload_buf, plain + idn, payload_len);
+    free(plain);
+    return (int)payload_len;
+}
+
 // Magic bytes and version for PairingRecord serialisation.
 #define PIGEON_PR_MAGIC0 0x50u /* 'P' */
 #define PIGEON_PR_MAGIC1 0x47u /* 'G' */
@@ -736,4 +800,422 @@ int pigeon_pairing_record_deserialize(pigeon_pairing_record *rec,
     memcpy(rec->peer_public_key,   buf + 388,  32);
 
     return PIGEON_PAIRING_RECORD_SIZE;
+}
+
+// --- Multi-channel session API ---
+
+// Lazily allocate the per-session scratch buffers. Idempotent.
+static int pigeon_session_ensure_scratch(pigeon_session *s)
+{
+    if (s->scratch_a && s->scratch_b) return 0;
+    // Sized for the largest single send/recv: AEAD ciphertext expansion
+    // is ~32 bytes (8-byte seq + 16-byte tag + slack); datagrams add a
+    // 4-byte clientTag prefix. 64 bytes of slack is comfortable.
+    size_t sz = PIGEON_MAX_MSG + 64;
+    if (!s->scratch_a) s->scratch_a = (uint8_t *)malloc(sz);
+    if (!s->scratch_b) s->scratch_b = (uint8_t *)malloc(sz);
+    if (!s->scratch_a || !s->scratch_b) {
+        free(s->scratch_a); free(s->scratch_b);
+        s->scratch_a = s->scratch_b = NULL;
+        return -1;
+    }
+    s->scratch_size = sz;
+    return 0;
+}
+
+void pigeon_session_close(pigeon_session *s)
+{
+    if (!s) return;
+    free(s->scratch_a); s->scratch_a = NULL;
+    free(s->scratch_b); s->scratch_b = NULL;
+    s->scratch_size = 0;
+}
+
+int pigeon_session_init(pigeon_session *s,
+                        const pigeon_transport *transport,
+                        const pigeon_channel *channel,
+                        bool is_backend,
+                        uint32_t client_tag,
+                        const pigeon_dgchannel_def *datagrams,
+                        size_t datagram_count)
+{
+    if (!s || !transport || !channel) return -1;
+    if (datagram_count > PIGEON_MAX_DATAGRAM_CHANNELS) return -1;
+
+    memset(s, 0, sizeof(*s));
+    s->transport  = *transport;
+    s->channel    = *channel;
+    s->is_backend = is_backend;
+    s->client_tag = client_tag;
+
+    // Validate the (name, id) list: no duplicate ids, no id == 0
+    // (reserved), no name overflow.
+    for (size_t i = 0; i < datagram_count; i++) {
+        if (datagrams[i].channel_id == 0) return -1;
+        size_t nl = strlen(datagrams[i].name);
+        if (nl == 0 || nl >= PIGEON_MAX_NAME_LEN) return -1;
+        for (size_t j = 0; j < i; j++) {
+            if (datagrams[j].channel_id == datagrams[i].channel_id) return -1;
+        }
+        s->datagrams[i] = datagrams[i];
+    }
+    s->datagram_count = datagram_count;
+    return 0;
+}
+
+int pigeon_session_open_stream(pigeon_session *s,
+                               const char *name,
+                               pigeon_stream *out_stream)
+{
+    if (!s || !name || !out_stream) return -1;
+    size_t name_len = strlen(name);
+    if (name_len == 0 || name_len >= PIGEON_MAX_NAME_LEN) return -1;
+    if (!s->transport.open_stream || !s->transport.send_on_stream) return -1;
+
+    pigeon_stream_handle *h = NULL;
+    if (s->transport.open_stream(s->transport.userdata, &h) != 0) return -1;
+
+    // Compose the unencrypted name-binding header and write it as the
+    // first message on the stream.
+    uint8_t hdr[PIGEON_MAX_STREAM_HEADER];
+    int hn = pigeon_encode_stream_header(s->is_backend, s->client_tag,
+                                         name, name_len, hdr, sizeof(hdr));
+    if (hn < 0) {
+        if (s->transport.close_stream) s->transport.close_stream(s->transport.userdata, h);
+        return -1;
+    }
+    if (s->transport.send_on_stream(s->transport.userdata, h, hdr, (size_t)hn) != 0) {
+        if (s->transport.close_stream) s->transport.close_stream(s->transport.userdata, h);
+        return -1;
+    }
+
+    out_stream->session = s;
+    out_stream->handle  = h;
+    memcpy(out_stream->name, name, name_len);
+    out_stream->name[name_len] = '\0';
+    return 0;
+}
+
+int pigeon_session_get_datagram(pigeon_session *s,
+                                const char *name,
+                                pigeon_datagram *out)
+{
+    if (!s || !name || !out) return -1;
+    for (size_t i = 0; i < s->datagram_count; i++) {
+        if (strcmp(s->datagrams[i].name, name) == 0) {
+            out->session    = s;
+            out->channel_id = s->datagrams[i].channel_id;
+            size_t nl = strlen(name);
+            memcpy(out->name, name, nl);
+            out->name[nl] = '\0';
+            return 0;
+        }
+    }
+    return -1;
+}
+
+int pigeon_stream_send(pigeon_stream *s,
+                       const uint8_t *msg, size_t msg_len)
+{
+    if (!s || !s->session || !s->handle) return -1;
+    pigeon_session *sess = s->session;
+    if (!sess->transport.send_on_stream) return -1;
+    if (pigeon_session_ensure_scratch(sess) != 0) return -1;
+
+    // AEAD-encrypt the application payload and write the ciphertext as
+    // one length-prefixed message on the stream.
+    int ctn = pigeon_channel_encrypt(&sess->channel, msg, msg_len,
+                                     sess->scratch_a, sess->scratch_size);
+    if (ctn < 0) return -1;
+    return sess->transport.send_on_stream(sess->transport.userdata, s->handle,
+                                          sess->scratch_a, (size_t)ctn);
+}
+
+int pigeon_stream_recv(pigeon_stream *s,
+                       uint8_t *buf, size_t buf_len)
+{
+    if (!s || !s->session || !s->handle) return -1;
+    pigeon_session *sess = s->session;
+    if (!sess->transport.recv_on_stream) return -1;
+    if (pigeon_session_ensure_scratch(sess) != 0) return -1;
+
+    size_t got = 0;
+    if (sess->transport.recv_on_stream(sess->transport.userdata, s->handle,
+                                       sess->scratch_a, sess->scratch_size, &got) != 0) {
+        return -1;
+    }
+    return pigeon_channel_decrypt(&sess->channel, sess->scratch_a, got, buf, buf_len);
+}
+
+int pigeon_stream_close(pigeon_stream *s)
+{
+    if (!s || !s->session || !s->handle) return -1;
+    if (!s->session->transport.close_stream) return 0;
+    return s->session->transport.close_stream(s->session->transport.userdata, s->handle);
+}
+
+int pigeon_datagram_send(pigeon_datagram *d,
+                         const uint8_t *payload, size_t payload_len)
+{
+    if (!d || !d->session) return -1;
+    pigeon_session *sess = d->session;
+    if (!sess->transport.send_datagram) return -1;
+    if (pigeon_session_ensure_scratch(sess) != 0) return -1;
+
+    int wn = pigeon_encode_datagram(&sess->channel,
+                                    sess->is_backend, sess->client_tag,
+                                    d->channel_id,
+                                    payload, payload_len,
+                                    sess->scratch_a, sess->scratch_size);
+    if (wn < 0) return -1;
+    return sess->transport.send_datagram(sess->transport.userdata,
+                                         sess->scratch_a, (size_t)wn);
+}
+
+int pigeon_datagram_recv(pigeon_datagram *d,
+                         uint8_t *buf, size_t buf_len)
+{
+    if (!d || !d->session) return -1;
+    pigeon_session *sess = d->session;
+    if (!sess->transport.recv_datagram) return -1;
+    if (pigeon_session_ensure_scratch(sess) != 0) return -1;
+
+    size_t got = 0;
+    if (sess->transport.recv_datagram(sess->transport.userdata,
+                                      sess->scratch_a, sess->scratch_size, &got) != 0) {
+        return -1;
+    }
+    uint64_t cid = 0;
+    int pn = pigeon_decode_datagram(&sess->channel, sess->is_backend,
+                                    sess->scratch_a, got, NULL, &cid,
+                                    buf, buf_len);
+    if (pn < 0) return -1;
+    if (cid != d->channel_id) {
+        // Datagram belongs to a different channel; the caller should
+        // route to a sibling pigeon_datagram. Returning 0 (zero-byte
+        // application payload) is ambiguous, so we surface a distinct
+        // sentinel: -2.
+        return -2;
+    }
+    return pn;
+}
+
+// --- In-process loopback transport ---
+
+
+#include "loopback.h"
+
+
+#define LOOP_MAX_STREAMS 32
+#define LOOP_MAX_PENDING 64
+
+typedef struct loop_stream {
+    int id;
+    uint8_t *msgs[LOOP_MAX_PENDING]; // heap-allocated, sized PIGEON_MAX_MSG
+    size_t   msg_lens[LOOP_MAX_PENDING];
+    int      msg_head, msg_tail, msg_count;
+    bool     in_use;
+    bool     accepted;
+} loop_stream;
+
+struct pigeon_loopback_endpoint {
+    loop_stream  streams[LOOP_MAX_STREAMS];
+
+    // Inbound datagram ringbuffer.
+    uint8_t *dgrams[LOOP_MAX_PENDING];   // heap-allocated, sized PIGEON_MAX_MSG + 64
+    size_t   dgram_lens[LOOP_MAX_PENDING];
+    int      dgram_head, dgram_tail, dgram_count;
+
+    // Stream IDs awaiting accept.
+    int accept_queue[LOOP_MAX_STREAMS];
+    int accept_head, accept_tail, accept_count;
+
+    struct pigeon_loopback_endpoint *peer;
+};
+
+static void free_stream(loop_stream *s)
+{
+    for (int i = 0; i < LOOP_MAX_PENDING; i++) {
+        free(s->msgs[i]);
+        s->msgs[i] = NULL;
+    }
+}
+
+static loop_stream *lb_alloc_stream(pigeon_loopback_endpoint *e)
+{
+    for (int i = 0; i < LOOP_MAX_STREAMS; i++) {
+        if (!e->streams[i].in_use) {
+            free_stream(&e->streams[i]);
+            memset(&e->streams[i], 0, sizeof(e->streams[i]));
+            e->streams[i].in_use = true;
+            e->streams[i].id = i;
+            return &e->streams[i];
+        }
+    }
+    return NULL;
+}
+
+static int lb_open_stream(void *ud, pigeon_stream_handle **out)
+{
+    pigeon_loopback_endpoint *e = (pigeon_loopback_endpoint *)ud;
+    loop_stream *me = lb_alloc_stream(e);
+    if (!me) return -1;
+    pigeon_loopback_endpoint *p = e->peer;
+    if (!p) return -1;
+    if (p->streams[me->id].in_use) return -1;
+    free_stream(&p->streams[me->id]);
+    memset(&p->streams[me->id], 0, sizeof(p->streams[me->id]));
+    p->streams[me->id].in_use = true;
+    p->streams[me->id].id = me->id;
+    p->accept_queue[p->accept_tail] = me->id;
+    p->accept_tail = (p->accept_tail + 1) % LOOP_MAX_STREAMS;
+    p->accept_count++;
+    *out = (pigeon_stream_handle *)me;
+    return 0;
+}
+
+static int lb_accept_stream(void *ud, pigeon_stream_handle **out)
+{
+    pigeon_loopback_endpoint *e = (pigeon_loopback_endpoint *)ud;
+    if (e->accept_count == 0) return -1;
+    int id = e->accept_queue[e->accept_head];
+    e->accept_head = (e->accept_head + 1) % LOOP_MAX_STREAMS;
+    e->accept_count--;
+    if (id < 0 || id >= LOOP_MAX_STREAMS) return -1;
+    if (!e->streams[id].in_use) return -1;
+    e->streams[id].accepted = true;
+    *out = (pigeon_stream_handle *)&e->streams[id];
+    return 0;
+}
+
+static int lb_send_on_stream(void *ud, pigeon_stream_handle *h,
+                             const uint8_t *data, size_t len)
+{
+    pigeon_loopback_endpoint *e = (pigeon_loopback_endpoint *)ud;
+    loop_stream *me = (loop_stream *)h;
+    if (!me || !me->in_use) return -1;
+    if (!e->peer) return -1;
+    loop_stream *peer = &e->peer->streams[me->id];
+    if (!peer->in_use) return -1;
+    if (peer->msg_count >= LOOP_MAX_PENDING) return -1;
+    if (len > PIGEON_MAX_MSG) return -1;
+    if (!peer->msgs[peer->msg_tail]) {
+        peer->msgs[peer->msg_tail] = (uint8_t *)malloc(PIGEON_MAX_MSG);
+        if (!peer->msgs[peer->msg_tail]) return -1;
+    }
+    memcpy(peer->msgs[peer->msg_tail], data, len);
+    peer->msg_lens[peer->msg_tail] = len;
+    peer->msg_tail = (peer->msg_tail + 1) % LOOP_MAX_PENDING;
+    peer->msg_count++;
+    return 0;
+}
+
+static int lb_recv_on_stream(void *ud, pigeon_stream_handle *h,
+                             uint8_t *buf, size_t buf_len, size_t *out_len)
+{
+    (void)ud;
+    loop_stream *me = (loop_stream *)h;
+    if (!me || !me->in_use) return -1;
+    if (me->msg_count == 0) return -1;
+    size_t n = me->msg_lens[me->msg_head];
+    if (n > buf_len) return -1;
+    memcpy(buf, me->msgs[me->msg_head], n);
+    me->msg_head = (me->msg_head + 1) % LOOP_MAX_PENDING;
+    me->msg_count--;
+    *out_len = n;
+    return 0;
+}
+
+static int lb_close_stream(void *ud, pigeon_stream_handle *h)
+{
+    (void)ud;
+    loop_stream *me = (loop_stream *)h;
+    if (me) {
+        free_stream(me);
+        me->in_use = false;
+    }
+    return 0;
+}
+
+static int lb_send_datagram(void *ud, const uint8_t *data, size_t len)
+{
+    pigeon_loopback_endpoint *e = (pigeon_loopback_endpoint *)ud;
+    if (!e->peer) return -1;
+    pigeon_loopback_endpoint *p = e->peer;
+    if (p->dgram_count >= LOOP_MAX_PENDING) return -1;
+    if (len > PIGEON_MAX_MSG + 64) return -1;
+    if (!p->dgrams[p->dgram_tail]) {
+        p->dgrams[p->dgram_tail] = (uint8_t *)malloc(PIGEON_MAX_MSG + 64);
+        if (!p->dgrams[p->dgram_tail]) return -1;
+    }
+    memcpy(p->dgrams[p->dgram_tail], data, len);
+    p->dgram_lens[p->dgram_tail] = len;
+    p->dgram_tail = (p->dgram_tail + 1) % LOOP_MAX_PENDING;
+    p->dgram_count++;
+    return 0;
+}
+
+static int lb_recv_datagram(void *ud, uint8_t *buf, size_t buf_len, size_t *out_len)
+{
+    pigeon_loopback_endpoint *e = (pigeon_loopback_endpoint *)ud;
+    if (e->dgram_count == 0) return -1;
+    size_t n = e->dgram_lens[e->dgram_head];
+    if (n > buf_len) return -1;
+    memcpy(buf, e->dgrams[e->dgram_head], n);
+    e->dgram_head = (e->dgram_head + 1) % LOOP_MAX_PENDING;
+    e->dgram_count--;
+    *out_len = n;
+    return 0;
+}
+
+pigeon_loopback_endpoint *pigeon_loopback_new(void)
+{
+    return (pigeon_loopback_endpoint *)calloc(1, sizeof(pigeon_loopback_endpoint));
+}
+
+void pigeon_loopback_pair(pigeon_loopback_endpoint *a,
+                          pigeon_loopback_endpoint *b)
+{
+    if (a) a->peer = b;
+    if (b) b->peer = a;
+}
+
+void pigeon_loopback_fill_transport(pigeon_transport *t,
+                                    pigeon_loopback_endpoint *e)
+{
+    memset(t, 0, sizeof(*t));
+    t->userdata        = e;
+    t->open_stream     = lb_open_stream;
+    t->accept_stream   = lb_accept_stream;
+    t->send_on_stream  = lb_send_on_stream;
+    t->recv_on_stream  = lb_recv_on_stream;
+    t->close_stream    = lb_close_stream;
+    t->send_datagram   = lb_send_datagram;
+    t->recv_datagram   = lb_recv_datagram;
+}
+
+int pigeon_loopback_accept_with_header(pigeon_loopback_endpoint *e,
+                                       pigeon_stream_handle **out_handle,
+                                       uint8_t *hdr, size_t hdr_len,
+                                       size_t *hdr_out_len)
+{
+    pigeon_stream_handle *h = NULL;
+    if (lb_accept_stream(e, &h) != 0) return -1;
+    size_t n = 0;
+    if (lb_recv_on_stream(e, h, hdr, hdr_len, &n) != 0) return -1;
+    *out_handle = h;
+    if (hdr_out_len) *hdr_out_len = n;
+    return 0;
+}
+
+void pigeon_loopback_free(pigeon_loopback_endpoint *e)
+{
+    if (!e) return;
+    for (int i = 0; i < LOOP_MAX_STREAMS; i++) {
+        free_stream(&e->streams[i]);
+    }
+    for (int i = 0; i < LOOP_MAX_PENDING; i++) {
+        free(e->dgrams[i]);
+    }
+    free(e);
 }

@@ -3,6 +3,7 @@
 /pigeon-test-binary
 /protogen
 /crypto-peer
+/demo
 *.test
 .DS_Store
 sqlite_mcp_server.db
@@ -31,3 +32,5 @@ formal/*_TTrace_*.tla
 c/test/test_pigeon
 c/test/test_ngtcp2
 .claude/
+.playwright-mcp/
+/c/test/test_pigeon_asan

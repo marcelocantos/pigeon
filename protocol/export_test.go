@@ -4,8 +4,6 @@
 package protocol
 
 import (
-	"bytes"
-	"strings"
 	"testing"
 )
 
@@ -66,79 +64,6 @@ func TestSwiftCase(t *testing.T) {
 	}
 }
 
-func TestExportGoStructure(t *testing.T) {
-	p := PairingCeremony()
-	var buf bytes.Buffer
-	if err := p.ExportGo(&buf, "protocol", "PairingCeremony"); err != nil {
-		t.Fatalf("ExportGo: %v", err)
-	}
-
-	out := buf.String()
-
-	checks := []string{
-		"package protocol",
-		"ServerPairingIdle",
-		"MsgPairBegin",
-		"GuardTokenValid",
-		"ActionGenerateToken",
-		"func PairingCeremony",
-		"ChannelBound",
-		"OneShot",
-	}
-
-	for _, want := range checks {
-		if !strings.Contains(out, want) {
-			t.Errorf("ExportGo output missing %q", want)
-		}
-	}
-}
-
-func TestExportSwiftStructure(t *testing.T) {
-	p := PairingCeremony()
-	var buf bytes.Buffer
-	if err := p.ExportSwift(&buf); err != nil {
-		t.Fatalf("ExportSwift: %v", err)
-	}
-
-	out := buf.String()
-
-	checks := []string{
-		"MessageType",
-		"ServerPairingState",
-		"IosAuthState",
-		"CliState",
-		"Transitions",
-		"public",
-	}
-
-	for _, want := range checks {
-		if !strings.Contains(out, want) {
-			t.Errorf("ExportSwift output missing %q", want)
-		}
-	}
-}
-
-func TestExportPlantUMLStructure(t *testing.T) {
-	p := PairingCeremony()
-	var buf bytes.Buffer
-	if err := p.ExportPlantUML(&buf); err != nil {
-		t.Fatalf("ExportPlantUML: %v", err)
-	}
-
-	out := buf.String()
-
-	checks := []string{
-		"@startuml",
-		"@enduml",
-		"PairingCeremony",
-		"server",
-		"ios",
-		"cli",
-	}
-
-	for _, want := range checks {
-		if !strings.Contains(out, want) {
-			t.Errorf("ExportPlantUML output missing %q", want)
-		}
-	}
-}
+// PairingCeremony-based export tests removed along with the old
+// pairing artifacts. Codegen export is still exercised through the
+// session-protocol pipeline in protocol_test.go.

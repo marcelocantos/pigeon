@@ -1,471 +1,329 @@
 # Pairing ceremony protocol definition.
-# Source of truth for: Go runtime, Swift runtime, TLA+ spec, PlantUML diagram.
 #
-# The server and ios actors use composable sub-machines:
-#   pairing — one-time QR/ECDH/confirmation ceremony
-#   auth    — reconnection using stored credentials
-# The cli actor is flat (pairing only, no reconnection).
+# Source of truth for: Go runtime executor (pairing/), Swift runtime,
+# Kotlin runtime, TypeScript runtime, C runtime, TLA+ spec, PlantUML
+# diagram. All language implementations are regenerated from this file
+# by `go run ./cmd/protogen protocol/pairing.yaml`.
+#
+# Two actors:
+#   acceptor  — long-lived backend listener that initiates a fresh
+#               pairing on demand; produces a base64-encoded rendezvous
+#               token containing its ephemeral pubkey, identity pubkey,
+#               instance ID, and relay URL.
+#   initiator — short-lived client that scans/pastes the rendezvous
+#               token, derives the same 6-digit confirmation code from
+#               both ephemeral pubkeys, awaits a local user "y", then
+#               exchanges confirm messages with the acceptor.
+#
+# The token itself is NOT a wire message — it travels out-of-band (QR
+# scan, paste, etc.). On-the-wire messages are hello, welcome, confirm.
+#
+# Confirmation-code derivation is symmetric and order-independent:
+#   code = HKDF(min(eph_pub_a, eph_pub_b) ++ max(eph_pub_a, eph_pub_b))
+# so under honest conditions both sides arrive at the same 6-digit code.
+# Under MitM (adversary substituting its own ephemeral pubkey in transit),
+# each side derives a code from a different pair of pubkeys, so the codes
+# differ and the human comparison aborts the ceremony.
+#
+# Resource lifecycle (relay session, ephemeral keypair, channel state)
+# is modelled as state vars; the executors read state diffs and rebind.
 
 name: PairingCeremony
-one_shot: true     # pairing runs once, actors don't loop
-channel_bound: 3   # max messages per channel (1 real + adversary slack)
+one_shot: true     # pairing runs once; actors don't loop
+channel_bound: 3   # max pending messages per direction (real + adversary slack)
 
 messages:
-  pair_begin:
-    from: cli
-    to: server
-    desc: POST /api/pair/begin
-  token_response:
-    from: server
-    to: cli
-    desc: '{instance_id, pairing_token}'
-  pair_hello:
-    from: ios
-    to: server
-    desc: ECDH pubkey + pairing token
-  pair_hello_ack:
-    from: server
-    to: ios
-    desc: ECDH pubkey
-  pair_confirm:
-    from: server
-    to: ios
-    desc: signal to compute and display code
-  waiting_for_code:
-    from: server
-    to: cli
-    desc: prompt for code entry
-  code_submit:
-    from: cli
-    to: server
-    desc: POST /api/pair/confirm
-  pair_complete:
-    from: server
-    to: ios
-    desc: encrypted device secret
-  pair_status:
-    from: server
-    to: cli
-    desc: 'status: paired'
-  auth_request:
-    from: ios
-    to: server
-    desc: encrypted auth with nonce
-  auth_ok:
-    from: server
-    to: ios
-    desc: session established
+  hello:
+    from: initiator
+    to: acceptor
+    desc: 'JSON {kind: "hello", eph_pub, identity_pub, instance_id}'
+  welcome:
+    from: acceptor
+    to: initiator
+    desc: 'JSON {kind: "welcome", eph_pub, identity_pub, instance_id}'
+  confirm_to_initiator:
+    from: acceptor
+    to: initiator
+    desc: 'JSON {kind: "confirm"} — sent after acceptor''s local user pressed y'
+  confirm_to_acceptor:
+    from: initiator
+    to: acceptor
+    desc: 'JSON {kind: "confirm"} — sent after initiator''s local user pressed y'
 
 actors:
-  server:
-    machines:
-      pairing:
-        initial: Idle
-        reports: [paired]
-        transitions:
-          - from: Idle
-            to: GenerateToken
-            on: recv pair_begin
-            do: generate_token
-            updates:
-              current_token: '"tok_1"'
-              active_tokens: 'active_tokens \union {"tok_1"}'
-          - from: GenerateToken
-            to: RegisterRelay
-            on: token created
-            do: register_relay
-          - from: RegisterRelay
-            to: WaitingForClient
-            on: relay registered
-            sends:
-              - to: cli
-                msg: token_response
-                fields:
-                  token: current_token
-                  instance_id: '"inst_1"'
-          - from: WaitingForClient
-            to: DeriveSecret
-            on: recv pair_hello
-            guard: token_valid
-            do: derive_secret
-            updates:
-              received_client_pub: recv_msg.pubkey
-              server_ecdh_pub: '"server_pub"'
-              server_shared_key: 'DeriveKey("server_pub", recv_msg.pubkey)'
-              server_code: 'DeriveCode("server_pub", recv_msg.pubkey)'
-              active_tokens: 'active_tokens \ {current_token}'
-              used_tokens: 'used_tokens \union {current_token}'
-          - from: WaitingForClient
-            to: Idle
-            on: recv pair_hello
-            guard: token_invalid
-          - from: DeriveSecret
-            to: SendAck
-            on: ECDH complete
-            sends:
-              - to: ios
-                msg: pair_hello_ack
-                fields:
-                  pubkey: server_ecdh_pub
-          - from: SendAck
-            to: WaitingForCode
-            on: signal code display
-            sends:
-              - to: ios
-                msg: pair_confirm
-              - to: cli
-                msg: waiting_for_code
-          - from: WaitingForCode
-            to: ValidateCode
-            on: recv code_submit
-            updates:
-              received_code: recv_msg.code
-          - from: ValidateCode
-            to: StorePaired
-            on: check code
-            guard: code_correct
-          - from: ValidateCode
-            to: Idle
-            on: check code
-            guard: code_wrong
-            updates:
-              code_attempts: code_attempts + 1
-          - from: StorePaired
-            to: PairingComplete
-            on: finalise
-            do: store_device
-            sends:
-              - to: ios
-                msg: pair_complete
-                fields:
-                  key: server_shared_key
-                  secret: '"dev_secret_1"'
-              - to: cli
-                msg: pair_status
-                fields:
-                  status: '"paired"'
-            updates:
-              device_secret: '"dev_secret_1"'
-              paired_devices: 'paired_devices \union {"device_1"}'
-      auth:
-        initial: Idle
-        accepts: [credential_ready]
-        transitions:
-          - from: Idle
-            to: Paired
-            on: credential_ready
-          - from: Paired
-            to: AuthCheck
-            on: recv auth_request
-            updates:
-              received_device_id: recv_msg.device_id
-              received_auth_nonce: recv_msg.nonce
-          - from: AuthCheck
-            to: SessionActive
-            on: verify
-            guard: device_known
-            do: verify_device
-            sends:
-              - to: ios
-                msg: auth_ok
-            updates:
-              auth_nonces_used: 'auth_nonces_used \union {received_auth_nonce}'
-          - from: AuthCheck
-            to: Idle
-            on: verify
-            guard: device_unknown
-          - from: SessionActive
-            to: Paired
-            on: disconnect
-    routes:
-      - on: paired
-        from: pairing
-        sends:
-          - to: auth
-            event: credential_ready
 
-  ios:
-    machines:
-      pairing:
-        initial: Idle
-        reports: [paired]
-        transitions:
-          - from: Idle
-            to: ScanQR
-            on: user scans QR
-          - from: ScanQR
-            to: ConnectRelay
-            on: QR parsed
-          - from: ConnectRelay
-            to: GenKeyPair
-            on: relay connected
-          - from: GenKeyPair
-            to: WaitAck
-            on: key pair generated
-            do: send_pair_hello
-            sends:
-              - to: server
-                msg: pair_hello
-                fields:
-                  token: current_token
-                  pubkey: '"client_pub"'
-          - from: WaitAck
-            to: E2EReady
-            on: recv pair_hello_ack
-            do: derive_secret
-            updates:
-              received_server_pub: recv_msg.pubkey
-              client_shared_key: 'DeriveKey("client_pub", recv_msg.pubkey)'
-          - from: E2EReady
-            to: ShowCode
-            on: recv pair_confirm
-            updates:
-              ios_code: 'DeriveCode(received_server_pub, "client_pub")'
-          - from: ShowCode
-            to: WaitPairComplete
-            on: code displayed
-          - from: WaitPairComplete
-            to: PairingComplete
-            on: recv pair_complete
-            do: store_secret
-      auth:
-        initial: Idle
-        accepts: [credential_ready]
-        transitions:
-          - from: Idle
-            to: Paired
-            on: credential_ready
-          - from: Paired
-            to: Reconnect
-            on: app launch
-          - from: Reconnect
-            to: SendAuth
-            on: relay connected
-            sends:
-              - to: server
-                msg: auth_request
-                fields:
-                  device_id: '"device_1"'
-                  secret: device_secret
-                  nonce: '"nonce_1"'
-                  key: client_shared_key
-          - from: SendAuth
-            to: SessionActive
-            on: recv auth_ok
-          - from: SessionActive
-            to: Paired
-            on: disconnect
-    routes:
-      - on: paired
-        from: pairing
-        sends:
-          - to: auth
-            event: credential_ready
-
-  cli:
+  acceptor:
     initial: Idle
     transitions:
+      # --- Token preparation ---
       - from: Idle
-        to: GetKey
-        on: cli --init
-      - from: GetKey
-        to: BeginPair
-        on: key stored
+        to: GeneratingEphemeral
+        on: pair_begin
+        do: gen_ephemeral
+        updates:
+          acceptor_eph_pub: '"acceptor_eph"'
+
+      - from: GeneratingEphemeral
+        to: RegisteringRelay
+        on: ephemeral_ready
+        do: register_relay
+
+      - from: RegisteringRelay
+        to: WaitingForHello
+        on: relay_registered
+        do: emit_token
+
+      # --- Receive hello ---
+      - from: WaitingForHello
+        to: DerivingCode
+        on: recv hello
+        do: derive_code
+        updates:
+          acceptor_received_eph_pub: recv_msg.eph_pub
+          acceptor_received_identity: recv_msg.identity_pub
+          acceptor_received_instance: recv_msg.instance_id
+          acceptor_code: 'DeriveCode(acceptor_eph_pub, recv_msg.eph_pub)'
+
+      - from: DerivingCode
+        to: AwaitingUserConfirm
+        on: code_ready
         sends:
-          - to: server
-            msg: pair_begin
-      - from: BeginPair
-        to: ShowQR
-        on: recv token_response
-      - from: ShowQR
-        to: PromptCode
-        on: recv waiting_for_code
-      - from: PromptCode
-        to: SubmitCode
-        on: user enters code
-        sends:
-          - to: server
-            msg: code_submit
+          - to: initiator
+            msg: welcome
             fields:
-              code: ios_code
-      - from: SubmitCode
-        to: Done
-        on: recv pair_status
+              eph_pub: acceptor_eph_pub
+              identity_pub: acceptor_identity_pub
+              instance_id: acceptor_instance_id
+
+      # --- User confirm flow ---
+      - from: AwaitingUserConfirm
+        to: AwaitingPeerConfirm
+        on: user_confirm
+        sends:
+          - to: initiator
+            msg: confirm_to_initiator
+        updates:
+          acceptor_user_confirmed: '"true"'
+
+      - from: AwaitingPeerConfirm
+        to: Paired
+        on: recv confirm_to_acceptor
+        do: store_record
+        updates:
+          acceptor_received_confirm: '"true"'
+
+      # --- Abort paths ---
+      - from: AwaitingUserConfirm
+        to: Aborted
+        on: user_cancel
+
+      - from: AwaitingPeerConfirm
+        to: Aborted
+        on: user_cancel
+
+  initiator:
+    initial: Idle
+    transitions:
+      # --- Token rendezvous ---
+      - from: Idle
+        to: DecodingToken
+        on: token_received
+        do: decode_token
+        updates:
+          received_acceptor_eph_pub: '"acceptor_eph"'
+          received_acceptor_identity: '"acceptor_id"'
+          received_acceptor_instance: '"acceptor_instance"'
+
+      - from: DecodingToken
+        to: GeneratingEphemeral
+        on: token_decoded
+        do: gen_ephemeral
+        updates:
+          initiator_eph_pub: '"initiator_eph"'
+
+      - from: GeneratingEphemeral
+        to: ConnectingRelay
+        on: ephemeral_ready
+        do: dial_relay
+
+      # --- Send hello ---
+      - from: ConnectingRelay
+        to: AwaitingWelcome
+        on: relay_connected
+        sends:
+          - to: acceptor
+            msg: hello
+            fields:
+              eph_pub: initiator_eph_pub
+              identity_pub: initiator_identity_pub
+              instance_id: initiator_instance_id
+
+      # --- Receive welcome ---
+      - from: AwaitingWelcome
+        to: DerivingCode
+        on: recv welcome
+        do: derive_code
+        updates:
+          initiator_received_eph_pub: recv_msg.eph_pub
+          initiator_received_identity: recv_msg.identity_pub
+          initiator_received_instance: recv_msg.instance_id
+          initiator_code: 'DeriveCode(initiator_eph_pub, recv_msg.eph_pub)'
+
+      - from: DerivingCode
+        to: AwaitingUserConfirm
+        on: code_ready
+
+      # --- User confirm flow ---
+      - from: AwaitingUserConfirm
+        to: AwaitingPeerConfirm
+        on: user_confirm
+        sends:
+          - to: acceptor
+            msg: confirm_to_acceptor
+        updates:
+          initiator_user_confirmed: '"true"'
+
+      - from: AwaitingPeerConfirm
+        to: Paired
+        on: recv confirm_to_initiator
+        do: store_record
+        updates:
+          initiator_received_confirm: '"true"'
+
+      # --- Abort paths ---
+      - from: AwaitingUserConfirm
+        to: Aborted
+        on: user_cancel
+
+      - from: AwaitingPeerConfirm
+        to: Aborted
+        on: user_cancel
 
 vars:
-  current_token:
+  # Acceptor view.
+  acceptor_eph_pub:
     initial: '"none"'
-    desc: pairing token currently in play
-  active_tokens:
-    initial: '{}'
-    desc: set of valid (non-revoked) tokens
-  used_tokens:
-    initial: '{}'
-    desc: set of revoked tokens
-  server_ecdh_pub:
+    desc: acceptor's ephemeral X25519 public key
+  acceptor_identity_pub:
+    initial: '"acceptor_id"'
+    desc: acceptor's long-term Identity public key
+  acceptor_instance_id:
+    initial: '"acceptor_instance"'
+    desc: acceptor's stable instance ID
+  acceptor_received_eph_pub:
     initial: '"none"'
-    desc: server ECDH public key
-  received_client_pub:
+    desc: ephemeral pubkey acceptor saw in hello (may be adversary's)
+  acceptor_received_identity:
     initial: '"none"'
-    desc: pubkey server received in pair_hello (may be adversary's)
-  received_server_pub:
+    desc: identity pubkey acceptor saw in hello
+  acceptor_received_instance:
     initial: '"none"'
-    desc: pubkey ios received in pair_hello_ack (may be adversary's)
-  server_shared_key:
+    desc: instance ID acceptor saw in hello
+  acceptor_code:
     initial: '<<"none">>'
-    desc: ECDH key derived by server (tuple to match DeriveKey output type)
-  client_shared_key:
-    initial: '<<"none">>'
-    desc: ECDH key derived by ios (tuple to match DeriveKey output type)
-  server_code:
-    initial: '<<"none">>'
-    desc: code computed by server from its view of the pubkeys (tuple to match DeriveCode output type)
-  ios_code:
-    initial: '<<"none">>'
-    desc: code computed by ios from its view of the pubkeys (tuple to match DeriveCode output type)
-  received_code:
-    initial: '<<"none">>'
-    desc: code received in code_submit (tuple to match DeriveCode output type)
-  code_attempts:
-    type: int
-    initial: '0'
-    desc: failed code submission attempts
-  device_secret:
+    desc: 'confirmation code acceptor derived from its (ephA, ephB) view'
+  acceptor_user_confirmed:
+    initial: '"false"'
+    desc: 'has the acceptor''s local human pressed y?'
+  acceptor_received_confirm:
+    initial: '"false"'
+    desc: 'has the acceptor received initiator''s confirm message?'
+
+  # Initiator view.
+  initiator_eph_pub:
     initial: '"none"'
-    desc: persistent device secret
-  paired_devices:
-    initial: '{}'
-    desc: device IDs that completed pairing
-  received_device_id:
+    desc: initiator's ephemeral X25519 public key
+  initiator_identity_pub:
+    initial: '"initiator_id"'
+    desc: initiator's long-term Identity public key
+  initiator_instance_id:
+    initial: '"initiator_instance"'
+    desc: initiator's stable instance ID
+  received_acceptor_eph_pub:
     initial: '"none"'
-    desc: device_id from auth_request
-  auth_nonces_used:
-    initial: '{}'
-    desc: set of consumed auth nonces
-  received_auth_nonce:
+    desc: acceptor ephemeral pubkey from token (trusted, out-of-band)
+  received_acceptor_identity:
     initial: '"none"'
-    desc: nonce from auth_request
+    desc: acceptor identity pubkey from token
+  received_acceptor_instance:
+    initial: '"none"'
+    desc: acceptor instance ID from token
+  initiator_received_eph_pub:
+    initial: '"none"'
+    desc: ephemeral pubkey initiator saw in welcome (may be adversary's)
+  initiator_received_identity:
+    initial: '"none"'
+    desc: identity pubkey initiator saw in welcome
+  initiator_received_instance:
+    initial: '"none"'
+    desc: instance ID initiator saw in welcome
+  initiator_code:
+    initial: '<<"none">>'
+    desc: 'confirmation code initiator derived from its (ephA, ephB) view'
+  initiator_user_confirmed:
+    initial: '"false"'
+    desc: 'has the initiator''s local human pressed y?'
+  initiator_received_confirm:
+    initial: '"false"'
+    desc: 'has the initiator received acceptor''s confirm message?'
+
+  # Adversary state (used only in TLA+ model checking).
   adversary_keys:
     initial: '{}'
-    desc: encryption keys the adversary knows
-  adv_ecdh_pub:
-    initial: '"adv_pub"'
-    desc: adversary's ECDH public key
-  adv_saved_client_pub:
+    desc: ephemeral pubkeys the adversary has injected
+  adv_eph_pub:
+    initial: '"adv_eph"'
+    desc: adversary's ephemeral X25519 public key
+  adv_saved_acceptor_eph:
     initial: '"none"'
-    desc: real client pubkey saved during MitM
-  adv_saved_server_pub:
+    desc: real acceptor eph pubkey saved during MitM substitution
+  adv_saved_initiator_eph:
     initial: '"none"'
-    desc: real server pubkey saved during MitM
+    desc: real initiator eph pubkey saved during MitM substitution
   recv_msg:
     initial: '[type |-> "none"]'
-    desc: last received message (staging)
-
-guards:
-  token_valid: 'recv_msg.token \in active_tokens'
-  token_invalid: 'recv_msg.token \notin active_tokens'
-  code_correct: received_code = server_code
-  code_wrong: received_code /= server_code
-  device_known: 'received_device_id \in paired_devices'
-  device_unknown: 'received_device_id \notin paired_devices'
-  nonce_fresh: 'received_auth_nonce \notin auth_nonces_used'
+    desc: last received message (staging slot)
 
 operators:
   KeyRank:
     params: k
-    expr: 'CASE k = "adv_pub" -> 0 [] k = "client_pub" -> 1 [] k = "server_pub" -> 2 [] OTHER -> 3'
-    desc: 'Assign numeric rank to pubkey names for deterministic ordering'
-  DeriveKey:
-    params: a, b
-    expr: 'IF KeyRank(a) <= KeyRank(b) THEN <<"ecdh", a, b>> ELSE <<"ecdh", b, a>>'
-    desc: 'Symbolic ECDH: deterministic key from two public keys (order-independent)'
+    expr: 'CASE k = "adv_eph" -> 0 [] k = "initiator_eph" -> 1 [] k = "acceptor_eph" -> 2 [] OTHER -> 3'
+    desc: 'Stable rank for symbolic pubkeys so DeriveCode is order-independent.'
   DeriveCode:
     params: a, b
     expr: 'IF KeyRank(a) <= KeyRank(b) THEN <<"code", a, b>> ELSE <<"code", b, a>>'
-    desc: 'Key-bound confirmation code: deterministic from both pubkeys (order-independent)'
+    desc: 'Confirmation code derived from both ephemeral pubkeys (order-independent).'
 
 adversary:
-  - name: QR_shoulder_surf
-    desc: observe QR code content (token + instance_id)
+  - name: MitM_hello
+    desc: intercept hello and substitute adversary ephemeral pubkey
     code: |
-      await current_token /= "none";
-      adversary_knowledge := adversary_knowledge \union {[type |-> "qr_token", token |-> current_token]};
-  - name: MitM_pair_hello
-    desc: intercept pair_hello and substitute adversary ECDH pubkey
+      await Len(chan_initiator_acceptor) > 0 /\ Head(chan_initiator_acceptor).type = MSG_hello;
+      adv_saved_initiator_eph := Head(chan_initiator_acceptor).eph_pub;
+      adversary_keys := adversary_keys \union {adv_eph_pub};
+      chan_initiator_acceptor := <<[type |-> MSG_hello, eph_pub |-> adv_eph_pub, identity_pub |-> Head(chan_initiator_acceptor).identity_pub, instance_id |-> Head(chan_initiator_acceptor).instance_id]>> \o Tail(chan_initiator_acceptor);
+  - name: MitM_welcome
+    desc: intercept welcome and substitute adversary ephemeral pubkey
     code: |
-      await Len(chan_ios_server) > 0 /\ Head(chan_ios_server).type = MSG_pair_hello;
-      adv_saved_client_pub := Head(chan_ios_server).pubkey;
-      chan_ios_server := <<[type |-> MSG_pair_hello, token |-> Head(chan_ios_server).token, pubkey |-> adv_ecdh_pub]>> \o Tail(chan_ios_server);
-  - name: MitM_pair_hello_ack
-    desc: intercept pair_hello_ack and substitute adversary ECDH pubkey, derive both shared secrets
-    code: |
-      await Len(chan_server_ios) > 0 /\ Head(chan_server_ios).type = MSG_pair_hello_ack;
-      adv_saved_server_pub := Head(chan_server_ios).pubkey;
-      adversary_keys := adversary_keys \union {DeriveKey(adv_ecdh_pub, adv_saved_server_pub), DeriveKey(adv_ecdh_pub, adv_saved_client_pub)};
-      chan_server_ios := <<[type |-> MSG_pair_hello_ack, pubkey |-> adv_ecdh_pub]>> \o Tail(chan_server_ios);
-  - name: MitM_reencrypt_secret
-    desc: decrypt pair_complete with MitM key, learn device secret
-    code: |
-      await Len(chan_server_ios) > 0 /\ Head(chan_server_ios).type = MSG_pair_complete /\ Head(chan_server_ios).key \in adversary_keys;
-      with msg = Head(chan_server_ios) do
-        adversary_knowledge := adversary_knowledge \union {[type |-> "plaintext_secret", secret |-> msg.secret]};
-        chan_server_ios := <<[type |-> MSG_pair_complete, key |-> DeriveKey(adv_ecdh_pub, adv_saved_client_pub), secret |-> msg.secret]>> \o Tail(chan_server_ios);
-      end with;
-  - name: concurrent_pair
-    desc: race a forged pair_hello using shoulder-surfed token
-    code: |
-      await \E m \in adversary_knowledge : m = [type |-> "qr_token", token |-> current_token];
-      await Len(chan_ios_server) < 3;
-      chan_ios_server := Append(chan_ios_server, [type |-> MSG_pair_hello, token |-> current_token, pubkey |-> adv_ecdh_pub]);
-  - name: token_bruteforce
-    desc: send pair_hello with fabricated token
-    code: |
-      await Len(chan_ios_server) < 3;
-      chan_ios_server := Append(chan_ios_server, [type |-> MSG_pair_hello, token |-> "fake_token", pubkey |-> adv_ecdh_pub]);
-  - name: code_guess
-    desc: submit fabricated confirmation code via CLI channel
-    code: |
-      await Len(chan_cli_server) < 3;
-      chan_cli_server := Append(chan_cli_server, [type |-> MSG_code_submit, code |-> <<"guess", "000000">>]);
-  - name: session_replay
-    desc: replay captured auth_request with stale nonce
-    code: |
-      await Len(chan_ios_server) < 3;
-      await \E m \in adversary_knowledge : m.type = MSG_auth_request;
-      with msg \in {m \in adversary_knowledge : m.type = MSG_auth_request} do
-        chan_ios_server := Append(chan_ios_server, msg);
-      end with;
+      await Len(chan_acceptor_initiator) > 0 /\ Head(chan_acceptor_initiator).type = MSG_welcome;
+      adv_saved_acceptor_eph := Head(chan_acceptor_initiator).eph_pub;
+      adversary_keys := adversary_keys \union {adv_eph_pub};
+      chan_acceptor_initiator := <<[type |-> MSG_welcome, eph_pub |-> adv_eph_pub, identity_pub |-> Head(chan_acceptor_initiator).identity_pub, instance_id |-> Head(chan_acceptor_initiator).instance_id]>> \o Tail(chan_acceptor_initiator);
 
 properties:
-  - name: NoTokenReuse
-    kind: invariant
-    expr: 'used_tokens \intersect active_tokens = {}'
-    desc: A revoked pairing token is never accepted again
   - name: MitMDetectedByCodeMismatch
     kind: invariant
-    expr: '(server_shared_key \in adversary_keys /\ server_code /= <<"none">> /\ ios_code /= <<"none">>) => server_code /= ios_code'
-    desc: If the current session's shared key is compromised and both sides computed codes, the codes differ
-  - name: MitMPrevented
+    expr: '(adv_eph_pub \in adversary_keys /\ acceptor_code /= <<"none">> /\ initiator_code /= <<"none">>) => acceptor_code /= initiator_code'
+    desc: 'If the adversary has injected its ephemeral pubkey AND both sides have computed codes, the codes differ — so the human comparison would catch the MitM.'
+  - name: MitMPreventsPairing
     kind: invariant
-    expr: 'server_shared_key \in adversary_keys => server_pairing_state \notin {"StorePaired", "PairingComplete"}'
-    desc: If the current session's key is compromised, pairing never completes
-  - name: AuthRequiresCompletedPairing
+    expr: '(adv_eph_pub \in adversary_keys /\ acceptor_code /= initiator_code) => (acceptor_state /= acceptor_Paired \/ initiator_state /= initiator_Paired)'
+    desc: 'When codes differ (MitM detected), at least one side never reaches Paired (because the human cancels).'
+  - name: HonestPairingMatchesCodes
     kind: invariant
-    expr: 'server_auth_state = "SessionActive" => received_device_id \in paired_devices'
-    desc: A session is only active for a device that completed pairing
-  - name: NoNonceReuse
-    kind: invariant
-    expr: 'server_auth_state = "SessionActive" => received_auth_nonce \notin (auth_nonces_used \ {received_auth_nonce})'
-    desc: Each auth nonce is accepted at most once
-  - name: WrongCodeDoesNotPair
-    kind: invariant
-    expr: '(server_pairing_state = "StorePaired" \/ server_pairing_state = "PairingComplete") => received_code = server_code \/ received_code = <<"none">>'
-    desc: Pairing only completes with the correct confirmation code
-  - name: DeviceSecretSecrecy
-    kind: invariant
-    expr: '\A m \in adversary_knowledge : "type" \in DOMAIN m => m.type /= "plaintext_secret"'
-    desc: Adversary never learns the device secret in plaintext
+    expr: '(adversary_keys = {} /\ acceptor_code /= <<"none">> /\ initiator_code /= <<"none">>) => acceptor_code = initiator_code'
+    desc: 'Without adversary interference, both sides derive the same 6-digit code.'
   - name: HonestPairingCompletes
     kind: liveness
-    expr: 'cli_state = "Done" /\ ios_pairing_state = "PairingComplete"'
-    desc: If all actors cooperate honestly (no MitM), pairing eventually completes
+    expr: 'acceptor_state = acceptor_Paired /\ initiator_state = initiator_Paired'
+    desc: 'Without adversary interference and with both users pressing y, both sides eventually reach Paired.'

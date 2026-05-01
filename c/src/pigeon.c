@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 #include "pigeon/pigeon.h"
+#include <stdlib.h>
 #include <string.h>
 
 void pigeon_init(pigeon_ctx *ctx, const pigeon_transport *transport)
@@ -10,7 +11,6 @@ void pigeon_init(pigeon_ctx *ctx, const pigeon_transport *transport)
     if (transport) {
         ctx->transport = *transport;
     }
-    pigeon_ios_composite_init(&ctx->pairing);
 }
 
 int pigeon_send(pigeon_ctx *ctx, const uint8_t *data, size_t len)
@@ -142,6 +142,194 @@ uint32_t pigeon_read_frame_length(const uint8_t *buf)
            ((uint32_t)buf[3]);
 }
 
+// --- Multi-channel wire helpers ---
+
+int pigeon_uvarint_encode(uint64_t v, uint8_t *buf, size_t buf_len)
+{
+    size_t i = 0;
+    while (v >= 0x80) {
+        if (i >= buf_len) return -1;
+        buf[i++] = (uint8_t)(v) | 0x80u;
+        v >>= 7;
+    }
+    if (i >= buf_len) return -1;
+    buf[i++] = (uint8_t)(v);
+    return (int)i;
+}
+
+int pigeon_uvarint_decode(const uint8_t *buf, size_t buf_len, uint64_t *out)
+{
+    uint64_t v = 0;
+    unsigned shift = 0;
+    for (size_t i = 0; i < buf_len; i++) {
+        uint8_t b = buf[i];
+        if (i == 9 && b > 1) {
+            // 10th byte may only contribute 1 bit (uint64 max).
+            return -1;
+        }
+        v |= (uint64_t)(b & 0x7fu) << shift;
+        if ((b & 0x80u) == 0) {
+            *out = v;
+            return (int)(i + 1);
+        }
+        shift += 7;
+        if (shift >= 64) return -1;
+    }
+    return 0; // truncated
+}
+
+int pigeon_encode_stream_header(bool is_backend, uint32_t client_tag,
+                                const char *name, size_t name_len,
+                                uint8_t *out, size_t out_len)
+{
+    size_t off = 0;
+    if (is_backend) {
+        if (off + 4 > out_len) return -1;
+        out[off++] = (uint8_t)(client_tag >> 24);
+        out[off++] = (uint8_t)(client_tag >> 16);
+        out[off++] = (uint8_t)(client_tag >> 8);
+        out[off++] = (uint8_t)(client_tag);
+    }
+    int n = pigeon_uvarint_encode((uint64_t)name_len, out + off, out_len - off);
+    if (n < 0) return -1;
+    off += (size_t)n;
+    if (off + name_len > out_len) return -1;
+    if (name_len > 0) {
+        if (!name) return -1;
+        memcpy(out + off, name, name_len);
+        off += name_len;
+    }
+    return (int)off;
+}
+
+// Internal: shared body of decode_{backend,client}_stream_header.
+// `tag_in` is non-NULL on backend side (consumes 4 leading bytes).
+static int decode_stream_header_inner(const uint8_t *buf, size_t buf_len,
+                                      uint32_t *tag_out,
+                                      char *name_buf, size_t name_buf_len,
+                                      size_t *name_len_out)
+{
+    size_t off = 0;
+    if (tag_out) {
+        if (buf_len < 4) return -1;
+        *tag_out = ((uint32_t)buf[0] << 24)
+                 | ((uint32_t)buf[1] << 16)
+                 | ((uint32_t)buf[2] <<  8)
+                 |  (uint32_t)buf[3];
+        off = 4;
+    }
+    uint64_t name_len = 0;
+    int n = pigeon_uvarint_decode(buf + off, buf_len - off, &name_len);
+    if (n <= 0) return -1;
+    off += (size_t)n;
+    if (name_len > buf_len - off) return -1;
+    // Reserve one byte for the trailing NUL.
+    if (name_len + 1 > name_buf_len) return -1;
+    if (name_len > 0) memcpy(name_buf, buf + off, (size_t)name_len);
+    name_buf[name_len] = '\0';
+    if (name_len_out) *name_len_out = (size_t)name_len;
+    off += (size_t)name_len;
+    return (int)off;
+}
+
+int pigeon_decode_backend_stream_header(const uint8_t *buf, size_t buf_len,
+                                        uint32_t *client_tag,
+                                        char *name_buf, size_t name_buf_len,
+                                        size_t *name_len_out)
+{
+    if (!client_tag) return -1;
+    return decode_stream_header_inner(buf, buf_len, client_tag,
+                                      name_buf, name_buf_len, name_len_out);
+}
+
+int pigeon_decode_client_stream_header(const uint8_t *buf, size_t buf_len,
+                                       char *name_buf, size_t name_buf_len,
+                                       size_t *name_len_out)
+{
+    return decode_stream_header_inner(buf, buf_len, NULL,
+                                      name_buf, name_buf_len, name_len_out);
+}
+
+int pigeon_encode_datagram(pigeon_channel *ch,
+                           bool is_backend, uint32_t client_tag,
+                           uint64_t channel_id,
+                           const uint8_t *payload, size_t payload_len,
+                           uint8_t *out, size_t out_len)
+{
+    if (!ch || !ch->established) return -1;
+    if (payload_len > PIGEON_MAX_MSG) return -1;
+
+    // Compose the AEAD-plaintext on the heap: [varint channel-id]
+    // [payload]. Heap-allocate so the caller's thread doesn't need
+    // a 1 MiB stack to invoke this — see T38 in the audit log.
+    size_t plain_cap = PIGEON_MAX_VARINT_LEN + PIGEON_MAX_MSG;
+    uint8_t *plain = (uint8_t *)malloc(plain_cap);
+    if (!plain) return -1;
+
+    int idn = pigeon_uvarint_encode(channel_id, plain, plain_cap);
+    if (idn < 0) { free(plain); return -1; }
+    if ((size_t)idn + payload_len > plain_cap) { free(plain); return -1; }
+    if (payload_len > 0) memcpy(plain + idn, payload, payload_len);
+    size_t plain_len = (size_t)idn + payload_len;
+
+    // Wire = (optional 4-byte tag) ++ AEAD(plain).
+    size_t off = 0;
+    if (is_backend) {
+        if (off + 4 > out_len) { free(plain); return -1; }
+        out[off++] = (uint8_t)(client_tag >> 24);
+        out[off++] = (uint8_t)(client_tag >> 16);
+        out[off++] = (uint8_t)(client_tag >> 8);
+        out[off++] = (uint8_t)(client_tag);
+    }
+    int ct = pigeon_channel_encrypt(ch, plain, plain_len,
+                                    out + off, out_len - off);
+    free(plain);
+    if (ct < 0) return -1;
+    return (int)off + ct;
+}
+
+int pigeon_decode_datagram(pigeon_channel *ch,
+                           bool is_backend,
+                           const uint8_t *wire, size_t wire_len,
+                           uint32_t *client_tag,
+                           uint64_t *channel_id,
+                           uint8_t *payload_buf, size_t payload_buf_len)
+{
+    if (!ch || !ch->established) return -1;
+
+    size_t off = 0;
+    if (is_backend) {
+        if (wire_len < 4) return -1;
+        if (client_tag) {
+            *client_tag = ((uint32_t)wire[0] << 24)
+                        | ((uint32_t)wire[1] << 16)
+                        | ((uint32_t)wire[2] <<  8)
+                        |  (uint32_t)wire[3];
+        }
+        off = 4;
+    }
+
+    // AEAD-decrypt into a heap scratch buffer, then peel the
+    // channel-id varint. Heap-allocated for the same reason as
+    // pigeon_encode_datagram above (T38).
+    uint8_t *plain = (uint8_t *)malloc(PIGEON_MAX_MSG);
+    if (!plain) return -1;
+    int pn = pigeon_channel_decrypt(ch, wire + off, wire_len - off,
+                                    plain, PIGEON_MAX_MSG);
+    if (pn < 0) { free(plain); return -1; }
+
+    uint64_t cid = 0;
+    int idn = pigeon_uvarint_decode(plain, (size_t)pn, &cid);
+    if (idn <= 0) { free(plain); return -1; }
+    if (channel_id) *channel_id = cid;
+
+    size_t payload_len = (size_t)pn - (size_t)idn;
+    if (payload_len > payload_buf_len) { free(plain); return -1; }
+    if (payload_len > 0) memcpy(payload_buf, plain + idn, payload_len);
+    free(plain);
+    return (int)payload_len;
+}
+
 // Magic bytes and version for PairingRecord serialisation.
 #define PIGEON_PR_MAGIC0 0x50u /* 'P' */
 #define PIGEON_PR_MAGIC1 0x47u /* 'G' */
@@ -183,4 +371,202 @@ int pigeon_pairing_record_deserialize(pigeon_pairing_record *rec,
     memcpy(rec->peer_public_key,   buf + 388,  32);
 
     return PIGEON_PAIRING_RECORD_SIZE;
+}
+
+// --- Multi-channel session API ---
+
+// Lazily allocate the per-session scratch buffers. Idempotent.
+static int pigeon_session_ensure_scratch(pigeon_session *s)
+{
+    if (s->scratch_a && s->scratch_b) return 0;
+    // Sized for the largest single send/recv: AEAD ciphertext expansion
+    // is ~32 bytes (8-byte seq + 16-byte tag + slack); datagrams add a
+    // 4-byte clientTag prefix. 64 bytes of slack is comfortable.
+    size_t sz = PIGEON_MAX_MSG + 64;
+    if (!s->scratch_a) s->scratch_a = (uint8_t *)malloc(sz);
+    if (!s->scratch_b) s->scratch_b = (uint8_t *)malloc(sz);
+    if (!s->scratch_a || !s->scratch_b) {
+        free(s->scratch_a); free(s->scratch_b);
+        s->scratch_a = s->scratch_b = NULL;
+        return -1;
+    }
+    s->scratch_size = sz;
+    return 0;
+}
+
+void pigeon_session_close(pigeon_session *s)
+{
+    if (!s) return;
+    free(s->scratch_a); s->scratch_a = NULL;
+    free(s->scratch_b); s->scratch_b = NULL;
+    s->scratch_size = 0;
+}
+
+int pigeon_session_init(pigeon_session *s,
+                        const pigeon_transport *transport,
+                        const pigeon_channel *channel,
+                        bool is_backend,
+                        uint32_t client_tag,
+                        const pigeon_dgchannel_def *datagrams,
+                        size_t datagram_count)
+{
+    if (!s || !transport || !channel) return -1;
+    if (datagram_count > PIGEON_MAX_DATAGRAM_CHANNELS) return -1;
+
+    memset(s, 0, sizeof(*s));
+    s->transport  = *transport;
+    s->channel    = *channel;
+    s->is_backend = is_backend;
+    s->client_tag = client_tag;
+
+    // Validate the (name, id) list: no duplicate ids, no id == 0
+    // (reserved), no name overflow.
+    for (size_t i = 0; i < datagram_count; i++) {
+        if (datagrams[i].channel_id == 0) return -1;
+        size_t nl = strlen(datagrams[i].name);
+        if (nl == 0 || nl >= PIGEON_MAX_NAME_LEN) return -1;
+        for (size_t j = 0; j < i; j++) {
+            if (datagrams[j].channel_id == datagrams[i].channel_id) return -1;
+        }
+        s->datagrams[i] = datagrams[i];
+    }
+    s->datagram_count = datagram_count;
+    return 0;
+}
+
+int pigeon_session_open_stream(pigeon_session *s,
+                               const char *name,
+                               pigeon_stream *out_stream)
+{
+    if (!s || !name || !out_stream) return -1;
+    size_t name_len = strlen(name);
+    if (name_len == 0 || name_len >= PIGEON_MAX_NAME_LEN) return -1;
+    if (!s->transport.open_stream || !s->transport.send_on_stream) return -1;
+
+    pigeon_stream_handle *h = NULL;
+    if (s->transport.open_stream(s->transport.userdata, &h) != 0) return -1;
+
+    // Compose the unencrypted name-binding header and write it as the
+    // first message on the stream.
+    uint8_t hdr[PIGEON_MAX_STREAM_HEADER];
+    int hn = pigeon_encode_stream_header(s->is_backend, s->client_tag,
+                                         name, name_len, hdr, sizeof(hdr));
+    if (hn < 0) {
+        if (s->transport.close_stream) s->transport.close_stream(s->transport.userdata, h);
+        return -1;
+    }
+    if (s->transport.send_on_stream(s->transport.userdata, h, hdr, (size_t)hn) != 0) {
+        if (s->transport.close_stream) s->transport.close_stream(s->transport.userdata, h);
+        return -1;
+    }
+
+    out_stream->session = s;
+    out_stream->handle  = h;
+    memcpy(out_stream->name, name, name_len);
+    out_stream->name[name_len] = '\0';
+    return 0;
+}
+
+int pigeon_session_get_datagram(pigeon_session *s,
+                                const char *name,
+                                pigeon_datagram *out)
+{
+    if (!s || !name || !out) return -1;
+    for (size_t i = 0; i < s->datagram_count; i++) {
+        if (strcmp(s->datagrams[i].name, name) == 0) {
+            out->session    = s;
+            out->channel_id = s->datagrams[i].channel_id;
+            size_t nl = strlen(name);
+            memcpy(out->name, name, nl);
+            out->name[nl] = '\0';
+            return 0;
+        }
+    }
+    return -1;
+}
+
+int pigeon_stream_send(pigeon_stream *s,
+                       const uint8_t *msg, size_t msg_len)
+{
+    if (!s || !s->session || !s->handle) return -1;
+    pigeon_session *sess = s->session;
+    if (!sess->transport.send_on_stream) return -1;
+    if (pigeon_session_ensure_scratch(sess) != 0) return -1;
+
+    // AEAD-encrypt the application payload and write the ciphertext as
+    // one length-prefixed message on the stream.
+    int ctn = pigeon_channel_encrypt(&sess->channel, msg, msg_len,
+                                     sess->scratch_a, sess->scratch_size);
+    if (ctn < 0) return -1;
+    return sess->transport.send_on_stream(sess->transport.userdata, s->handle,
+                                          sess->scratch_a, (size_t)ctn);
+}
+
+int pigeon_stream_recv(pigeon_stream *s,
+                       uint8_t *buf, size_t buf_len)
+{
+    if (!s || !s->session || !s->handle) return -1;
+    pigeon_session *sess = s->session;
+    if (!sess->transport.recv_on_stream) return -1;
+    if (pigeon_session_ensure_scratch(sess) != 0) return -1;
+
+    size_t got = 0;
+    if (sess->transport.recv_on_stream(sess->transport.userdata, s->handle,
+                                       sess->scratch_a, sess->scratch_size, &got) != 0) {
+        return -1;
+    }
+    return pigeon_channel_decrypt(&sess->channel, sess->scratch_a, got, buf, buf_len);
+}
+
+int pigeon_stream_close(pigeon_stream *s)
+{
+    if (!s || !s->session || !s->handle) return -1;
+    if (!s->session->transport.close_stream) return 0;
+    return s->session->transport.close_stream(s->session->transport.userdata, s->handle);
+}
+
+int pigeon_datagram_send(pigeon_datagram *d,
+                         const uint8_t *payload, size_t payload_len)
+{
+    if (!d || !d->session) return -1;
+    pigeon_session *sess = d->session;
+    if (!sess->transport.send_datagram) return -1;
+    if (pigeon_session_ensure_scratch(sess) != 0) return -1;
+
+    int wn = pigeon_encode_datagram(&sess->channel,
+                                    sess->is_backend, sess->client_tag,
+                                    d->channel_id,
+                                    payload, payload_len,
+                                    sess->scratch_a, sess->scratch_size);
+    if (wn < 0) return -1;
+    return sess->transport.send_datagram(sess->transport.userdata,
+                                         sess->scratch_a, (size_t)wn);
+}
+
+int pigeon_datagram_recv(pigeon_datagram *d,
+                         uint8_t *buf, size_t buf_len)
+{
+    if (!d || !d->session) return -1;
+    pigeon_session *sess = d->session;
+    if (!sess->transport.recv_datagram) return -1;
+    if (pigeon_session_ensure_scratch(sess) != 0) return -1;
+
+    size_t got = 0;
+    if (sess->transport.recv_datagram(sess->transport.userdata,
+                                      sess->scratch_a, sess->scratch_size, &got) != 0) {
+        return -1;
+    }
+    uint64_t cid = 0;
+    int pn = pigeon_decode_datagram(&sess->channel, sess->is_backend,
+                                    sess->scratch_a, got, NULL, &cid,
+                                    buf, buf_len);
+    if (pn < 0) return -1;
+    if (cid != d->channel_id) {
+        // Datagram belongs to a different channel; the caller should
+        // route to a sibling pigeon_datagram. Returning 0 (zero-byte
+        // application payload) is ambiguous, so we surface a distinct
+        // sentinel: -2.
+        return -2;
+    }
+    return pn;
 }

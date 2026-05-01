@@ -5,6 +5,12 @@
 // to/from stdin/stdout using length-prefixed framing. Intended for
 // driving E2E tests from languages without native QUIC support.
 //
+// Uses the lower-level pigeon.DialRelayAcceptor / DialRelayInitiator
+// helpers (legacy 1:1 bridge mode) rather than the multi-channel
+// pigeon.Register / pigeon.Connect path; pigeon-bridge predates the
+// multi-channel API and exists only to drive single-stream browser
+// E2E tests via stdin/stdout.
+//
 // Usage:
 //
 //	pigeon-bridge register <relay-url> [token]
@@ -63,7 +69,7 @@ func main() {
 		if len(os.Args) > 3 && os.Args[3] != "" {
 			cfg.Token = os.Args[3]
 		}
-		conn, err = pigeon.Register(ctx, relayURL, cfg)
+		conn, err = pigeon.DialRelayAcceptor(ctx, relayURL, cfg)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "register: %v\n", err)
 			os.Exit(1)
@@ -77,7 +83,7 @@ func main() {
 			os.Exit(1)
 		}
 		instanceID := os.Args[3]
-		conn, err = pigeon.Connect(ctx, relayURL, instanceID, pigeon.Config{TLS: tlsConfig, QUICPort: quicPort})
+		conn, err = pigeon.DialRelayInitiator(ctx, relayURL, instanceID, pigeon.Config{TLS: tlsConfig, QUICPort: quicPort})
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "connect: %v\n", err)
 			os.Exit(1)

@@ -94,7 +94,7 @@ func PathSwitch() *Protocol {
 		Name: "PathSwitch",
 		Actors: []Actor{
 			{Name: "backend", Initial: "RelayConnected", Transitions: []Transition{
-				{From: "RelayConnected", To: "LANOffered", On: Internal("lan_server_ready"), Sends: []Send{{To: "client", Msg: "lan_offer", Fields: map[string]string{"addr": "lan_addr", "challenge": "challenge_bytes"}}}},
+				{From: "RelayConnected", To: "LANOffered", On: Internal("lan_server_ready"), Sends: []Send{{To: "client", Msg: "lan_offer", Fields: map[string]string{"addr": "lan_addr", "cert_hash": "cert_hash_bytes", "challenge": "challenge_bytes"}}}},
 				{From: "LANOffered", To: "LANActive", On: Recv("lan_verify"), Guard: "challenge_valid", Do: "activate_lan", Sends: []Send{{To: "client", Msg: "lan_confirm"}}, Updates: []VarUpdate{{Var: "ping_failures", Expr: "0"}, {Var: "backoff_level", Expr: "0"}, {Var: "active_path", Expr: "\"lan\""}, {Var: "monitor_target", Expr: "\"lan\""}, {Var: "dispatcher_path", Expr: "\"lan\""}, {Var: "lan_signal", Expr: "\"ready\""}}},
 				{From: "LANOffered", To: "RelayConnected", On: Recv("lan_verify"), Guard: "challenge_invalid"},
 				{From: "LANOffered", To: "RelayBackoff", On: Internal("offer_timeout"), Updates: []VarUpdate{{Var: "backoff_level", Expr: "Min(backoff_level + 1, max_backoff_level)"}}},
@@ -104,9 +104,9 @@ func PathSwitch() *Protocol {
 				{From: "LANDegraded", To: "LANActive", On: Recv("path_pong"), Do: "reset_failures", Updates: []VarUpdate{{Var: "ping_failures", Expr: "0"}}},
 				{From: "LANDegraded", To: "LANDegraded", On: Internal("ping_timeout"), Guard: "under_max_failures", Updates: []VarUpdate{{Var: "ping_failures", Expr: "ping_failures + 1"}}},
 				{From: "LANDegraded", To: "RelayBackoff", On: Internal("ping_timeout"), Guard: "at_max_failures", Do: "fallback_to_relay", Updates: []VarUpdate{{Var: "backoff_level", Expr: "Min(backoff_level + 1, max_backoff_level)"}, {Var: "active_path", Expr: "\"relay\""}, {Var: "monitor_target", Expr: "\"none\""}, {Var: "dispatcher_path", Expr: "\"relay\""}, {Var: "lan_signal", Expr: "\"pending\""}, {Var: "ping_failures", Expr: "0"}}},
-				{From: "RelayBackoff", To: "LANOffered", On: Internal("backoff_expired"), Sends: []Send{{To: "client", Msg: "lan_offer", Fields: map[string]string{"addr": "lan_addr", "challenge": "challenge_bytes"}}}},
-				{From: "RelayBackoff", To: "LANOffered", On: Internal("lan_server_changed"), Sends: []Send{{To: "client", Msg: "lan_offer", Fields: map[string]string{"addr": "lan_addr", "challenge": "challenge_bytes"}}}, Updates: []VarUpdate{{Var: "backoff_level", Expr: "0"}}},
-				{From: "RelayConnected", To: "LANOffered", On: Internal("readvertise_tick"), Guard: "lan_server_available", Sends: []Send{{To: "client", Msg: "lan_offer", Fields: map[string]string{"addr": "lan_addr", "challenge": "challenge_bytes"}}}},
+				{From: "RelayBackoff", To: "LANOffered", On: Internal("backoff_expired"), Sends: []Send{{To: "client", Msg: "lan_offer", Fields: map[string]string{"addr": "lan_addr", "cert_hash": "cert_hash_bytes", "challenge": "challenge_bytes"}}}},
+				{From: "RelayBackoff", To: "LANOffered", On: Internal("lan_server_changed"), Sends: []Send{{To: "client", Msg: "lan_offer", Fields: map[string]string{"addr": "lan_addr", "cert_hash": "cert_hash_bytes", "challenge": "challenge_bytes"}}}, Updates: []VarUpdate{{Var: "backoff_level", Expr: "0"}}},
+				{From: "RelayConnected", To: "LANOffered", On: Internal("readvertise_tick"), Guard: "lan_server_available", Sends: []Send{{To: "client", Msg: "lan_offer", Fields: map[string]string{"addr": "lan_addr", "cert_hash": "cert_hash_bytes", "challenge": "challenge_bytes"}}}},
 			}},
 			{Name: "client", Initial: "RelayConnected", Transitions: []Transition{
 				{From: "RelayConnected", To: "LANConnecting", On: Recv("lan_offer"), Guard: "lan_enabled", Do: "dial_lan"},
@@ -129,7 +129,7 @@ func PathSwitch() *Protocol {
 			}},
 		},
 		Messages: []Message{
-			{Type: "lan_offer", From: "backend", To: "client", Desc: "LAN address + challenge (sent via relay)"},
+			{Type: "lan_offer", From: "backend", To: "client", Desc: "LAN address + challenge + cert hash (sent via relay)"},
 			{Type: "lan_verify", From: "client", To: "backend", Desc: "challenge response + instance ID (sent via LAN)"},
 			{Type: "lan_confirm", From: "backend", To: "client", Desc: "LAN verified, path is live (sent via LAN)"},
 			{Type: "path_ping", From: "backend", To: "client", Desc: "health check on active direct path"},
@@ -140,6 +140,7 @@ func PathSwitch() *Protocol {
 		Vars: []VarDef{
 			{Name: "lan_addr", Initial: "\"none\"", Desc: "LAN server address (host:port)"},
 			{Name: "challenge_bytes", Initial: "\"none\"", Desc: "32-byte random challenge for LAN verification"},
+			{Name: "cert_hash_bytes", Initial: "\"none\"", Desc: "SHA-256 of DER cert for browser serverCertificateHashes"},
 			{Name: "offer_challenge", Initial: "\"none\"", Desc: "challenge from the most recent LAN offer"},
 			{Name: "instance_id", Initial: "\"none\"", Desc: "relay instance ID of this peer"},
 			{Name: "ping_failures", Initial: "0", Desc: "consecutive failed pings on the direct path"},

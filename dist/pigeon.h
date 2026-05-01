@@ -8,138 +8,71 @@
 #include <stddef.h>
 #include <stdint.h>
 
-// PairingCeremony server/pairing states.
+// PairingCeremony acceptor states.
 typedef enum {
-	PIGEON_SERVER_PAIRING_IDLE = 0,
-	PIGEON_SERVER_PAIRING_GENERATE_TOKEN,
-	PIGEON_SERVER_PAIRING_REGISTER_RELAY,
-	PIGEON_SERVER_PAIRING_WAITING_FOR_CLIENT,
-	PIGEON_SERVER_PAIRING_DERIVE_SECRET,
-	PIGEON_SERVER_PAIRING_SEND_ACK,
-	PIGEON_SERVER_PAIRING_WAITING_FOR_CODE,
-	PIGEON_SERVER_PAIRING_VALIDATE_CODE,
-	PIGEON_SERVER_PAIRING_STORE_PAIRED,
-	PIGEON_SERVER_PAIRING_PAIRING_COMPLETE,
-	PIGEON_SERVER_PAIRING_STATE_COUNT
-} pigeon_server_pairing_state;
+	PIGEON_ACCEPTOR_IDLE = 0,
+	PIGEON_ACCEPTOR_GENERATING_EPHEMERAL,
+	PIGEON_ACCEPTOR_REGISTERING_RELAY,
+	PIGEON_ACCEPTOR_WAITING_FOR_HELLO,
+	PIGEON_ACCEPTOR_DERIVING_CODE,
+	PIGEON_ACCEPTOR_AWAITING_USER_CONFIRM,
+	PIGEON_ACCEPTOR_AWAITING_PEER_CONFIRM,
+	PIGEON_ACCEPTOR_PAIRED,
+	PIGEON_ACCEPTOR_ABORTED,
+	PIGEON_ACCEPTOR_STATE_COUNT
+} pigeon_acceptor_state;
 
-// PairingCeremony server/auth states.
+// PairingCeremony initiator states.
 typedef enum {
-	PIGEON_SERVER_AUTH_IDLE = 0,
-	PIGEON_SERVER_AUTH_PAIRED,
-	PIGEON_SERVER_AUTH_AUTH_CHECK,
-	PIGEON_SERVER_AUTH_SESSION_ACTIVE,
-	PIGEON_SERVER_AUTH_STATE_COUNT
-} pigeon_server_auth_state;
-
-// PairingCeremony ios/pairing states.
-typedef enum {
-	PIGEON_APP_PAIRING_IDLE = 0,
-	PIGEON_APP_PAIRING_SCAN_QR,
-	PIGEON_APP_PAIRING_CONNECT_RELAY,
-	PIGEON_APP_PAIRING_GEN_KEY_PAIR,
-	PIGEON_APP_PAIRING_WAIT_ACK,
-	PIGEON_APP_PAIRING_E2E_READY,
-	PIGEON_APP_PAIRING_SHOW_CODE,
-	PIGEON_APP_PAIRING_WAIT_PAIR_COMPLETE,
-	PIGEON_APP_PAIRING_PAIRING_COMPLETE,
-	PIGEON_APP_PAIRING_STATE_COUNT
-} pigeon_ios_pairing_state;
-
-// PairingCeremony ios/auth states.
-typedef enum {
-	PIGEON_APP_AUTH_IDLE = 0,
-	PIGEON_APP_AUTH_PAIRED,
-	PIGEON_APP_AUTH_RECONNECT,
-	PIGEON_APP_AUTH_SEND_AUTH,
-	PIGEON_APP_AUTH_SESSION_ACTIVE,
-	PIGEON_APP_AUTH_STATE_COUNT
-} pigeon_ios_auth_state;
-
-// PairingCeremony cli states.
-typedef enum {
-	PIGEON_CLI_IDLE = 0,
-	PIGEON_CLI_GET_KEY,
-	PIGEON_CLI_BEGIN_PAIR,
-	PIGEON_CLI_SHOW_QR,
-	PIGEON_CLI_PROMPT_CODE,
-	PIGEON_CLI_SUBMIT_CODE,
-	PIGEON_CLI_DONE,
-	PIGEON_CLI_STATE_COUNT
-} pigeon_cli_state;
+	PIGEON_INITIATOR_IDLE = 0,
+	PIGEON_INITIATOR_DECODING_TOKEN,
+	PIGEON_INITIATOR_GENERATING_EPHEMERAL,
+	PIGEON_INITIATOR_CONNECTING_RELAY,
+	PIGEON_INITIATOR_AWAITING_WELCOME,
+	PIGEON_INITIATOR_DERIVING_CODE,
+	PIGEON_INITIATOR_AWAITING_USER_CONFIRM,
+	PIGEON_INITIATOR_AWAITING_PEER_CONFIRM,
+	PIGEON_INITIATOR_PAIRED,
+	PIGEON_INITIATOR_ABORTED,
+	PIGEON_INITIATOR_STATE_COUNT
+} pigeon_initiator_state;
 
 // PairingCeremony message types.
 typedef enum {
-	PIGEON_MSG_PAIR_BEGIN = 0,
-	PIGEON_MSG_TOKEN_RESPONSE,
-	PIGEON_MSG_PAIR_HELLO,
-	PIGEON_MSG_PAIR_HELLO_ACK,
-	PIGEON_MSG_PAIR_CONFIRM,
-	PIGEON_MSG_WAITING_FOR_CODE,
-	PIGEON_MSG_CODE_SUBMIT,
-	PIGEON_MSG_PAIR_COMPLETE,
-	PIGEON_MSG_PAIR_STATUS,
-	PIGEON_MSG_AUTH_REQUEST,
-	PIGEON_MSG_AUTH_OK,
+	PIGEON_MSG_HELLO = 0,
+	PIGEON_MSG_WELCOME,
+	PIGEON_MSG_CONFIRM_TO_INITIATOR,
+	PIGEON_MSG_CONFIRM_TO_ACCEPTOR,
 	PIGEON_MSG_COUNT
 } pairing_ceremony_msg_type;
 
-// PairingCeremony guards.
-typedef enum {
-	PIGEON_GUARD_TOKEN_VALID = 0,
-	PIGEON_GUARD_TOKEN_INVALID,
-	PIGEON_GUARD_CODE_CORRECT,
-	PIGEON_GUARD_CODE_WRONG,
-	PIGEON_GUARD_DEVICE_KNOWN,
-	PIGEON_GUARD_DEVICE_UNKNOWN,
-	PIGEON_GUARD_NONCE_FRESH,
-	PIGEON_GUARD_COUNT
-} pairing_ceremony_guard_id;
-
 // PairingCeremony actions.
 typedef enum {
-	PIGEON_ACTION_GENERATE_TOKEN = 0,
+	PIGEON_ACTION_GEN_EPHEMERAL = 0,
 	PIGEON_ACTION_REGISTER_RELAY,
-	PIGEON_ACTION_DERIVE_SECRET,
-	PIGEON_ACTION_STORE_DEVICE,
-	PIGEON_ACTION_VERIFY_DEVICE,
-	PIGEON_ACTION_SEND_PAIR_HELLO,
-	PIGEON_ACTION_STORE_SECRET,
+	PIGEON_ACTION_EMIT_TOKEN,
+	PIGEON_ACTION_DERIVE_CODE,
+	PIGEON_ACTION_STORE_RECORD,
+	PIGEON_ACTION_DECODE_TOKEN,
+	PIGEON_ACTION_DIAL_RELAY,
 	PIGEON_ACTION_COUNT
 } pairing_ceremony_action_id;
 
 // PairingCeremony events.
 typedef enum {
-	PIGEON_EVENT_TOKEN_CREATED = 0,
+	PIGEON_EVENT_PAIR_BEGIN = 0,
+	PIGEON_EVENT_EPHEMERAL_READY,
 	PIGEON_EVENT_RELAY_REGISTERED,
-	PIGEON_EVENT_ECDH_COMPLETE,
-	PIGEON_EVENT_SIGNAL_CODE_DISPLAY,
-	PIGEON_EVENT_CHECK_CODE,
-	PIGEON_EVENT_FINALISE,
-	PIGEON_EVENT_CREDENTIAL_READY,
-	PIGEON_EVENT_VERIFY,
-	PIGEON_EVENT_DISCONNECT,
-	PIGEON_EVENT_USER_SCANS_QR,
-	PIGEON_EVENT_QR_PARSED,
+	PIGEON_EVENT_CODE_READY,
+	PIGEON_EVENT_USER_CONFIRM,
+	PIGEON_EVENT_USER_CANCEL,
+	PIGEON_EVENT_TOKEN_RECEIVED,
+	PIGEON_EVENT_TOKEN_DECODED,
 	PIGEON_EVENT_RELAY_CONNECTED,
-	PIGEON_EVENT_KEY_PAIR_GENERATED,
-	PIGEON_EVENT_CODE_DISPLAYED,
-	PIGEON_EVENT_APP_LAUNCH,
-	PIGEON_EVENT_CLI_INIT,
-	PIGEON_EVENT_KEY_STORED,
-	PIGEON_EVENT_USER_ENTERS_CODE,
-	PIGEON_EVENT_RECV_PAIR_BEGIN,
-	PIGEON_EVENT_RECV_PAIR_HELLO,
-	PIGEON_EVENT_RECV_CODE_SUBMIT,
-	PIGEON_EVENT_RECV_AUTH_REQUEST,
-	PIGEON_EVENT_RECV_PAIR_HELLO_ACK,
-	PIGEON_EVENT_RECV_PAIR_CONFIRM,
-	PIGEON_EVENT_RECV_PAIR_COMPLETE,
-	PIGEON_EVENT_RECV_AUTH_OK,
-	PIGEON_EVENT_RECV_TOKEN_RESPONSE,
-	PIGEON_EVENT_RECV_WAITING_FOR_CODE,
-	PIGEON_EVENT_RECV_PAIR_STATUS,
-	PIGEON_EVENT_PAIRED,
+	PIGEON_EVENT_RECV_HELLO,
+	PIGEON_EVENT_RECV_CONFIRM_TO_ACCEPTOR,
+	PIGEON_EVENT_RECV_WELCOME,
+	PIGEON_EVENT_RECV_CONFIRM_TO_INITIATOR,
 	PIGEON_EVENT_COUNT
 } pairing_ceremony_event_id;
 
@@ -148,109 +81,46 @@ typedef bool (*pigeon_guard_fn)(void *ctx);
 typedef int  (*pigeon_action_fn)(void *ctx);
 typedef void (*pigeon_change_fn)(const char *var_name, void *ctx);
 
-// PairingCeremony server/pairing state machine.
+// PairingCeremony acceptor state machine.
 typedef struct {
-	pigeon_server_pairing_state state;
-	const char * current_token; // pairing token currently in play
-	const char * active_tokens; // set of valid (non-revoked) tokens
-	const char * used_tokens; // set of revoked tokens
-	const char * server_ecdh_pub; // server ECDH public key
-	const char * received_client_pub; // pubkey server received in pair_hello (may be adversary's)
-	const char * server_shared_key; // ECDH key derived by server (tuple to match DeriveKey output type)
-	const char * server_code; // code computed by server from its view of the pubkeys (tuple to match DeriveCode output type)
-	const char * received_code; // code received in code_submit (tuple to match DeriveCode output type)
-	int code_attempts; // failed code submission attempts
-	const char * device_secret; // persistent device secret
-	const char * paired_devices; // device IDs that completed pairing
-	pigeon_guard_fn guards[PIGEON_GUARD_COUNT];
+	pigeon_acceptor_state state;
+	const char * acceptor_eph_pub; // acceptor's ephemeral X25519 public key
+	const char * acceptor_received_eph_pub; // ephemeral pubkey acceptor saw in hello (may be adversary's)
+	const char * acceptor_received_identity; // identity pubkey acceptor saw in hello
+	const char * acceptor_received_instance; // instance ID acceptor saw in hello
+	const char * acceptor_code; // confirmation code acceptor derived from its (ephA, ephB) view
+	const char * acceptor_user_confirmed; // has the acceptor's local human pressed y?
+	const char * acceptor_received_confirm; // has the acceptor received initiator's confirm message?
 	pigeon_action_fn actions[PIGEON_ACTION_COUNT];
 	pigeon_change_fn on_change;
 	void *userdata;
-} pigeon_server_pairing_machine;
+} pigeon_acceptor_machine;
 
-void pigeon_server_pairing_machine_init(pigeon_server_pairing_machine *m);
-int  pigeon_server_pairing_handle_message(pigeon_server_pairing_machine *m, pairing_ceremony_msg_type msg);
-int  pigeon_server_pairing_step(pigeon_server_pairing_machine *m, pairing_ceremony_event_id event);
+void pigeon_acceptor_machine_init(pigeon_acceptor_machine *m);
+int  pigeon_acceptor_handle_message(pigeon_acceptor_machine *m, pairing_ceremony_msg_type msg);
+int  pigeon_acceptor_step(pigeon_acceptor_machine *m, pairing_ceremony_event_id event);
 
-// PairingCeremony server/auth state machine.
+// PairingCeremony initiator state machine.
 typedef struct {
-	pigeon_server_auth_state state;
-	const char * received_device_id; // device_id from auth_request
-	const char * auth_nonces_used; // set of consumed auth nonces
-	const char * received_auth_nonce; // nonce from auth_request
-	pigeon_guard_fn guards[PIGEON_GUARD_COUNT];
+	pigeon_initiator_state state;
+	const char * initiator_eph_pub; // initiator's ephemeral X25519 public key
+	const char * received_acceptor_eph_pub; // acceptor ephemeral pubkey from token (trusted, out-of-band)
+	const char * received_acceptor_identity; // acceptor identity pubkey from token
+	const char * received_acceptor_instance; // acceptor instance ID from token
+	const char * initiator_received_eph_pub; // ephemeral pubkey initiator saw in welcome (may be adversary's)
+	const char * initiator_received_identity; // identity pubkey initiator saw in welcome
+	const char * initiator_received_instance; // instance ID initiator saw in welcome
+	const char * initiator_code; // confirmation code initiator derived from its (ephA, ephB) view
+	const char * initiator_user_confirmed; // has the initiator's local human pressed y?
+	const char * initiator_received_confirm; // has the initiator received acceptor's confirm message?
 	pigeon_action_fn actions[PIGEON_ACTION_COUNT];
 	pigeon_change_fn on_change;
 	void *userdata;
-} pigeon_server_auth_machine;
+} pigeon_initiator_machine;
 
-void pigeon_server_auth_machine_init(pigeon_server_auth_machine *m);
-int  pigeon_server_auth_handle_message(pigeon_server_auth_machine *m, pairing_ceremony_msg_type msg);
-int  pigeon_server_auth_step(pigeon_server_auth_machine *m, pairing_ceremony_event_id event);
-
-// PairingCeremony server composite actor.
-typedef struct {
-	pigeon_server_pairing_machine pairing;
-	pigeon_server_auth_machine auth;
-	pigeon_guard_fn route_guards[PIGEON_GUARD_COUNT];
-	void *userdata;
-} pigeon_server_composite;
-
-void pigeon_server_composite_init(pigeon_server_composite *c);
-int  pigeon_server_route(pigeon_server_composite *c, const char *from, pairing_ceremony_event_id event);
-
-// PairingCeremony ios/pairing state machine.
-typedef struct {
-	pigeon_ios_pairing_state state;
-	const char * received_server_pub; // pubkey ios received in pair_hello_ack (may be adversary's)
-	const char * client_shared_key; // ECDH key derived by ios (tuple to match DeriveKey output type)
-	const char * ios_code; // code computed by ios from its view of the pubkeys (tuple to match DeriveCode output type)
-	pigeon_guard_fn guards[PIGEON_GUARD_COUNT];
-	pigeon_action_fn actions[PIGEON_ACTION_COUNT];
-	pigeon_change_fn on_change;
-	void *userdata;
-} pigeon_ios_pairing_machine;
-
-void pigeon_ios_pairing_machine_init(pigeon_ios_pairing_machine *m);
-int  pigeon_ios_pairing_handle_message(pigeon_ios_pairing_machine *m, pairing_ceremony_msg_type msg);
-int  pigeon_ios_pairing_step(pigeon_ios_pairing_machine *m, pairing_ceremony_event_id event);
-
-// PairingCeremony ios/auth state machine.
-typedef struct {
-	pigeon_ios_auth_state state;
-	pigeon_guard_fn guards[PIGEON_GUARD_COUNT];
-	pigeon_action_fn actions[PIGEON_ACTION_COUNT];
-	pigeon_change_fn on_change;
-	void *userdata;
-} pigeon_ios_auth_machine;
-
-void pigeon_ios_auth_machine_init(pigeon_ios_auth_machine *m);
-int  pigeon_ios_auth_handle_message(pigeon_ios_auth_machine *m, pairing_ceremony_msg_type msg);
-int  pigeon_ios_auth_step(pigeon_ios_auth_machine *m, pairing_ceremony_event_id event);
-
-// PairingCeremony ios composite actor.
-typedef struct {
-	pigeon_ios_pairing_machine pairing;
-	pigeon_ios_auth_machine auth;
-	pigeon_guard_fn route_guards[PIGEON_GUARD_COUNT];
-	void *userdata;
-} pigeon_ios_composite;
-
-void pigeon_ios_composite_init(pigeon_ios_composite *c);
-int  pigeon_ios_route(pigeon_ios_composite *c, const char *from, pairing_ceremony_event_id event);
-
-// PairingCeremony cli state machine.
-typedef struct {
-	pigeon_cli_state state;
-	pigeon_guard_fn guards[PIGEON_GUARD_COUNT];
-	pigeon_action_fn actions[PIGEON_ACTION_COUNT];
-	pigeon_change_fn on_change;
-	void *userdata;
-} pigeon_cli_machine;
-
-void pigeon_cli_machine_init(pigeon_cli_machine *m);
-int  pigeon_cli_handle_message(pigeon_cli_machine *m, pairing_ceremony_msg_type msg);
-int  pigeon_cli_step(pigeon_cli_machine *m, pairing_ceremony_event_id event);
+void pigeon_initiator_machine_init(pigeon_initiator_machine *m);
+int  pigeon_initiator_handle_message(pigeon_initiator_machine *m, pairing_ceremony_msg_type msg);
+int  pigeon_initiator_step(pigeon_initiator_machine *m, pairing_ceremony_event_id event);
 
 
 #ifndef PIGEON_MAX_MSG
@@ -289,8 +159,22 @@ typedef struct {
 // --- Transport abstraction ---
 // User provides these callbacks to connect pigeon to their QUIC stack.
 
+// Opaque per-stream handle. The transport defines its own concrete type
+// behind this pointer and pigeon never inspects it; pigeon just stores
+// it on a pigeon_stream and hands it back on subsequent stream I/O.
+typedef struct pigeon_stream_handle pigeon_stream_handle;
+
 typedef struct {
     void *userdata;
+
+    // --- Single-stream + datagram (legacy / pair-mode) ---
+    //
+    // These callbacks operate on the transport's primary bidirectional
+    // stream and the connection-level datagram channel. They are the
+    // foundation of the v0.16-era single-channel API and remain
+    // available for backwards compatibility (e.g. the cmd/crypto-peer
+    // cross-language test).
+
     // Send length-prefixed message on the bidirectional stream.
     int (*send_stream)(void *userdata, const uint8_t *data, size_t len);
     // Receive a length-prefixed message. Returns message length in *out_len.
@@ -299,6 +183,35 @@ typedef struct {
     int (*send_datagram)(void *userdata, const uint8_t *data, size_t len);
     // Receive a raw datagram. Returns datagram length in *out_len.
     int (*recv_datagram)(void *userdata, uint8_t *buf, size_t buf_len, size_t *out_len);
+
+    // --- Multi-stream (post-T22) ---
+    //
+    // These callbacks support the post-T22 multi-channel wire. A
+    // transport that doesn't support multiple QUIC streams can leave
+    // them NULL; the higher-level pigeon_session API will refuse to
+    // open additional streams and return -1.
+    //
+    // Stream framing on the wire is length-prefixed messages (the
+    // transport handles framing). The first message on every stream
+    // is the unencrypted name-binding header produced by
+    // pigeon_encode_stream_header(); subsequent messages are AEAD-
+    // encrypted by pigeon_session_*_send and decrypted by the matching
+    // _recv on the peer.
+
+    // Open a new bidirectional stream. Returns 0 on success and writes
+    // the stream handle to *out_handle.
+    int (*open_stream)(void *userdata, pigeon_stream_handle **out_handle);
+    // Accept the next incoming bidirectional stream from the peer.
+    // Blocks until a stream arrives or the transport is closed.
+    int (*accept_stream)(void *userdata, pigeon_stream_handle **out_handle);
+    // Send a length-prefixed message on a specific stream.
+    int (*send_on_stream)(void *userdata, pigeon_stream_handle *handle,
+                          const uint8_t *data, size_t len);
+    // Receive the next length-prefixed message on a specific stream.
+    int (*recv_on_stream)(void *userdata, pigeon_stream_handle *handle,
+                          uint8_t *buf, size_t buf_len, size_t *out_len);
+    // Close a specific stream.
+    int (*close_stream)(void *userdata, pigeon_stream_handle *handle);
 } pigeon_transport;
 
 // --- Client context ---
@@ -312,9 +225,12 @@ typedef struct {
     pigeon_channel datagram_channel;
     uint8_t hkdf_scratch[96];
 
-    // Pairing
+    // Pairing record (post-ceremony state). Callers drive the
+    // pairing ceremony itself via the generated state machines
+    // (pigeon_acceptor_machine / pigeon_initiator_machine in
+    // pairingceremony_gen.h) — this struct doesn't pre-allocate
+    // the FSM.
     pigeon_pairing_record record;
-    pigeon_ios_composite pairing;
 
     // Transport
     pigeon_transport transport;
@@ -394,6 +310,219 @@ int pigeon_frame_message(const uint8_t *payload, size_t len,
 
 // Read the length prefix from a 4-byte buffer. Returns the payload length.
 uint32_t pigeon_read_frame_length(const uint8_t *buf);
+
+// --- Multi-channel wire helpers (post-T22) ---
+//
+// Maximum number of bytes a Go-style unsigned varint can take (10 bytes
+// covers uint64). Matches encoding/binary.MaxVarintLen64.
+#define PIGEON_MAX_VARINT_LEN 10
+
+// Maximum size of an unencrypted stream-header (backend side):
+// 4 bytes (clientTag, big-endian uint32) + varint name-len + 256 bytes name.
+#define PIGEON_MAX_STREAM_HEADER (4 + PIGEON_MAX_VARINT_LEN + 256)
+
+// Encode an unsigned varint (Go's binary.PutUvarint format) into buf.
+// Returns number of bytes written, or -1 if buf_len is insufficient.
+// Each byte stores 7 bits of value; the high bit signals continuation.
+int pigeon_uvarint_encode(uint64_t v, uint8_t *buf, size_t buf_len);
+
+// Decode an unsigned varint from buf. On success, writes the decoded
+// value to *out and returns the number of bytes consumed (1..10).
+// Returns 0 if buf is too short, -1 if the encoding overflows uint64.
+int pigeon_uvarint_decode(const uint8_t *buf, size_t buf_len, uint64_t *out);
+
+// Encode the per-stream first-message header in the post-T22 wire:
+//   backend side: [4-byte clientTag-BE][varint name-len][name]
+//   client  side:                       [varint name-len][name]
+//
+// Returns the number of bytes written, or -1 if out_len is insufficient.
+// `name` may be NULL iff name_len == 0 (legitimate for the client primary
+// stream, which uses an empty name).
+int pigeon_encode_stream_header(bool is_backend, uint32_t client_tag,
+                                const char *name, size_t name_len,
+                                uint8_t *out, size_t out_len);
+
+// Decode a backend-side stream header: extracts the 4-byte clientTag and
+// then the varint-prefixed name. The name is copied into `name_buf` (NUL-
+// terminated; truncated and an error returned if name_buf_len is too
+// small). Writes the decoded name length to *name_len_out (excluding NUL).
+// Returns the total number of bytes consumed, or -1 on error.
+int pigeon_decode_backend_stream_header(const uint8_t *buf, size_t buf_len,
+                                        uint32_t *client_tag,
+                                        char *name_buf, size_t name_buf_len,
+                                        size_t *name_len_out);
+
+// Decode a client-side stream header (no clientTag).
+// Returns the total number of bytes consumed, or -1 on error.
+int pigeon_decode_client_stream_header(const uint8_t *buf, size_t buf_len,
+                                       char *name_buf, size_t name_buf_len,
+                                       size_t *name_len_out);
+
+// Compose a datagram payload for a named channel:
+//   plain    = [varint channel-id][payload]
+//   wire     = AEAD(plain)                    on the client side
+//   wire     = [4-byte tag-BE][AEAD(plain)]   on the backend side
+// `out` must be sized for the final wire bytes. The pigeon_channel
+// supplied performs the AEAD encryption in place after the optional tag
+// prefix. Returns total wire bytes written, or -1 on error.
+int pigeon_encode_datagram(pigeon_channel *ch,
+                           bool is_backend, uint32_t client_tag,
+                           uint64_t channel_id,
+                           const uint8_t *payload, size_t payload_len,
+                           uint8_t *out, size_t out_len);
+
+// Decode a datagram in the post-T22 framing. On the backend side strips
+// the 4-byte tag prefix first and returns it via *client_tag. AEAD-
+// decrypts using the supplied channel. On success writes the channel id
+// to *channel_id and the application payload to `payload_buf`; returns
+// the payload length. -1 on AEAD failure or any framing error.
+int pigeon_decode_datagram(pigeon_channel *ch,
+                           bool is_backend,
+                           const uint8_t *wire, size_t wire_len,
+                           uint32_t *client_tag,
+                           uint64_t *channel_id,
+                           uint8_t *payload_buf, size_t payload_buf_len);
+
+// --- Multi-channel session API (post-T22) ---
+//
+// A pigeon_session is a single peer-to-peer association: backend ↔
+// one paired client (or vice-versa from the client side). It owns the
+// AEAD channel derived from the PairingRecord, the role-discriminator
+// (backend/client) and the relay-assigned clientTag (backend side
+// only), plus a small fixed-size table of pre-declared datagram
+// channels (name → varint id, agreed by both peers up-front). Streams
+// are opened on demand and live as long as the underlying transport
+// stream.
+//
+// This API does NOT include a pigeon_listener (multi-client demux on
+// the backend side); that's a separate concern that needs the
+// transport's accept_stream loop to dispatch by clientTag. For now,
+// pigeon_session is constructed by application code that knows whether
+// it's the backend or client side.
+
+#define PIGEON_MAX_DATAGRAM_CHANNELS 16
+#define PIGEON_MAX_NAME_LEN 64
+
+typedef struct {
+    char     name[PIGEON_MAX_NAME_LEN];
+    uint64_t channel_id;
+} pigeon_dgchannel_def;
+
+typedef struct {
+    // PairingRecord-derived AEAD channel. Encrypts every stream message
+    // (after the unencrypted name-binding header) and every datagram
+    // payload (before the optional clientTag prefix).
+    pigeon_channel channel;
+
+    // Role discriminator. is_backend == true means this Session is the
+    // server-side half of the pair; outbound stream/datagram framing
+    // includes the 4-byte clientTag prefix the relay routes by.
+    bool          is_backend;
+    uint32_t      client_tag;
+
+    // Transport vtable + opaque userdata.
+    pigeon_transport transport;
+
+    // Pre-declared datagram channels.
+    pigeon_dgchannel_def datagrams[PIGEON_MAX_DATAGRAM_CHANNELS];
+    size_t               datagram_count;
+
+    // Heap-allocated scratch buffers used by the per-call I/O wrappers
+    // (pigeon_stream_send/recv, pigeon_datagram_send/recv). Sized at
+    // PIGEON_MAX_MSG + AEAD overhead (max 64 bytes for tag + nonce
+    // prefix + 4-byte clientTag prefix on datagrams). Allocated lazily
+    // on first send/recv; freed by pigeon_session_close.
+    //
+    // Why heap: the previous stack-allocated [PIGEON_MAX_MSG + 64]
+    // arrays (≈ 1 MiB) overflow the default thread-stack size on every
+    // host runtime that wraps libpigeon — Swift's cooperative pool
+    // (~256 KiB), Apple's GCD workers (~64 KiB), JVM threads (~512 KiB
+    // on macOS aarch64). Per-session scratch on the heap keeps the C
+    // ABI usable from any host thread without 4 MiB stack workarounds.
+    uint8_t      *scratch_a;
+    uint8_t      *scratch_b;
+    size_t        scratch_size;
+} pigeon_session;
+
+typedef struct {
+    pigeon_session       *session;
+    pigeon_stream_handle *handle;
+    char                  name[PIGEON_MAX_NAME_LEN];
+} pigeon_stream;
+
+typedef struct {
+    pigeon_session *session;
+    uint64_t        channel_id;
+    char            name[PIGEON_MAX_NAME_LEN];
+} pigeon_datagram;
+
+// Initialise a session. Copies the transport vtable. Channel must
+// already be initialised (e.g. via pigeon_channel_init from
+// PairingRecord-derived send/recv keys).
+//
+// Returns 0 on success, -1 if validation fails (duplicate datagram ids,
+// names too long, etc.). The datagram-channel list is the pre-agreed
+// (name, id) mapping; both peers must declare an identical list.
+int pigeon_session_init(pigeon_session *s,
+                        const pigeon_transport *transport,
+                        const pigeon_channel *channel,
+                        bool is_backend,
+                        uint32_t client_tag,
+                        const pigeon_dgchannel_def *datagrams,
+                        size_t datagram_count);
+
+// Open a fresh named stream toward the peer. Writes the
+// [optional 4-byte tag][varint name-len][name] header as the first
+// message on the new stream. Returns 0 on success.
+int pigeon_session_open_stream(pigeon_session *s,
+                               const char *name,
+                               pigeon_stream *out_stream);
+
+// Look up a pre-declared datagram channel by name. Returns 0 on
+// success and populates *out, -1 if the name isn't in the session's
+// datagram-channel list.
+int pigeon_session_get_datagram(pigeon_session *s,
+                                const char *name,
+                                pigeon_datagram *out);
+
+// AEAD-encrypt and send one application-level message on the stream.
+// Returns 0 on success, -1 on transport or encryption error.
+int pigeon_stream_send(pigeon_stream *s,
+                       const uint8_t *msg, size_t msg_len);
+
+// Receive the next application-level message on the stream. AEAD-
+// decrypts and copies the plaintext to `buf`. Returns the plaintext
+// length, or -1 on transport / decryption error.
+int pigeon_stream_recv(pigeon_stream *s,
+                       uint8_t *buf, size_t buf_len);
+
+// Close the stream's underlying transport handle.
+int pigeon_stream_close(pigeon_stream *s);
+
+// Free the heap scratch buffers allocated lazily on first send/recv.
+// Idempotent. Call when the session is no longer needed; the rest of
+// the pigeon_session struct can still be re-initialised afterwards.
+void pigeon_session_close(pigeon_session *s);
+
+// Send one datagram on the named channel. Wraps with the post-T22
+// framing (AEAD([varint id][payload]) + optional 4-byte tag prefix on
+// backend side). Returns 0 on success.
+int pigeon_datagram_send(pigeon_datagram *d,
+                         const uint8_t *payload, size_t payload_len);
+
+// Receive the next datagram on the connection's datagram channel.
+// AEAD-decrypts, parses the channel-id, and — if the channel-id
+// matches the requested datagram — copies the application payload to
+// `buf` and returns its length. If the channel-id doesn't match,
+// returns 0 (the caller should re-dispatch this datagram). Returns -1
+// on framing or AEAD error.
+//
+// Application code that wants per-channel queues should run a single
+// pump on the connection's datagram channel and demultiplex into
+// per-channel buffers; pigeon_datagram_recv is a single-channel
+// convenience for tests and simple client-side patterns.
+int pigeon_datagram_recv(pigeon_datagram *d,
+                         uint8_t *buf, size_t buf_len);
 
 // --- PairingRecord serialisation ---
 // Fixed-schema, zero-alloc format:

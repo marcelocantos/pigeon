@@ -15,13 +15,20 @@ relay/pairing/crypto logic themselves.
 ## Build, Test & Run
 
 ```bash
-go build -o pigeon ./cmd/pigeon       # build relay server
+make bullseye                     # one-button validation: every SDK + TLC
+go build -o pigeon ./cmd/pigeon   # build relay server
 go test ./...                     # all Go tests (relay, crypto, protocol, E2E)
 go test -run TestE2E              # E2E integration test only
 swift test                        # Swift crypto + state machine tests
 JAVA_HOME=<jdk21> android/gradlew -p android test  # Kotlin tests
 go run ./cmd/protogen protocol/pairing.yaml  # regenerate from YAML spec
+make demo                         # in-process relay + N clients + web UI
 ```
+
+`make bullseye` is the durable green signal: gofmt, go vet, go build, go test
+(all packages), swift build, swift test, kotlin :pigeon:test, web (tsx
+--test), TLC PairingCeremony. If anything goes red across SDKs, this is
+the first thing to run.
 
 ## Package Structure
 

@@ -126,3 +126,73 @@ maintenance activities. Append-only — newest entries at the bottom.
 - **Deferred**: (none)
 - **Known issues**:
   - `ci.yml` `Deploy to Fly.io` job continues to fail on master with `FLY_API_TOKEN` expired. Carried over from v0.18.0; orthogonal to release artifacts.
+
+## 2026-04-30 — multi-channel pigeon API (🎯T22, 🎯T22.5–T22.8)
+
+- **Commit**: working tree dirty — `0f0d87c`
+- **Outcome**: Landed the redesigned multi-channel pigeon API. New surface: `pigeon.Register` returns a `*Listener` over a single relay registration, `Listener.Accept` yields one `*Session` per connecting paired client. `Session.OpenStream(ctx, name)` opens a fresh QUIC stream per named channel with a length-prefixed `[varint name-len][name]` first-message handshake; the relay forwards every QUIC stream end-to-end opaquely. `Session.Datagram(name)` returns a pre-declared `*Datagram` whose wire format is `AEAD([varint channel-id][payload])` — channel-ids inside the AEAD envelope. Multi-client routing on the backend is done by a 4-byte `clientTag` the relay prepends to every stream/datagram it forwards to backend (mux mode); the legacy `register`-handshake path stays 1:1 (pair mode) so the pairing ceremony in `pairing/` keeps working unchanged. `crypto.Channel` is concurrency-safe (atomic monotonic seq, mutex-guarded Decrypt) and is now exercised by `crypto/channel_concurrency_test.go`. Three new e2e tests (`e2e_test.go`) drive the in-process raw-QUIC relay: single-client chat, multi-stream + multi-datagram in one Session, and two concurrent clients sharing one backend without cross-talk. `examples/echo/{backend,client}/main.go` rewritten to demonstrate all four channels (chat, control, ping, metric). Retired 🎯T22, 🎯T22.5, 🎯T22.6, 🎯T22.7, 🎯T22.8.
+- **Deferred**:
+  - Per-Session state-machine instance (lifting the executor inside Session). Not a precondition for the rich demo; tracked separately.
+  - 🎯T23 (macOS Keychain identity) — explicitly deferred per scope.
+  - Backend-initiated streams (Session.OpenStream from the backend side) work by the same tagged protocol; demo only exercises client-initiated.
+- **Known issues**:
+  - `ci.yml` `Deploy to Fly.io` job continues to fail on master with `FLY_API_TOKEN` expired. Carried over from v0.18.0; orthogonal to release artifacts.
+
+## 2026-04-30 — architectural pivot: one C peer library; vendor build live (T32 + T33 step + T31 + T34 starter)
+
+- **Commit**: `882a58b` (in-progress; multiple commits since `0e14b44`)
+- **Outcome**: Pivot of the cross-language SDK strategy after the user locked five architectural decisions in dialogue:
+  - **D1A**: Swift binds the vendored ngtcp2 via a SwiftPM C-target.
+  - **D2a**: Kotlin binds vendored ngtcp2 via JNI.
+  - **D3**: TS becomes browser-only via the native `WebTransport` API; Node.js reserved for a future, possibly-different SDK.
+  - **D4 (the big one)**: ONE peer-library implementation, in C (`libpigeon.a`). Every other language is a thin idiomatic wrapper. The relay (`cmd/pigeon`, Go + quic-go) stays untouched because it's server-side.
+  - **D5 (extension of D4)**: even the Go peer library will be folded — `pigeon.Register/Connect/Session/Stream/Datagram` reimplemented as a cgo wrapper over libpigeon. Only the relay binary stays pure Go.
+
+  The session's deliverables, in commit order:
+  - **🎯T31 retired**: Browser TS rebuilt on `WebTransport`. Dropped Node-side `relay.e2e.ts` / `relay.local.e2e.ts`. New `web/src/relay.test.ts` adds 26 wire-format unit tests pinning the same byte vectors as the C side.
+  - **🎯T32 step 1** (commit `3ab14f4`): post-T22 wire-format helpers in C (`pigeon_uvarint_*`, `pigeon_encode_stream_header`, `pigeon_decode_{backend,client}_stream_header`, `pigeon_encode_datagram`, `pigeon_decode_datagram`), plus `wire_vectors_test.go` locking Go-emitted bytes against the C-side hardcoded vectors.
+  - **🎯T32 step 2** (commit `acd3225`): multi-channel C session API (`pigeon_session`, `pigeon_stream`, `pigeon_datagram`), `pigeon_transport` vtable extended with optional multi-stream callbacks (`open_stream`, `accept_stream`, `send_on_stream`, `recv_on_stream`, `close_stream`), in-process loopback transport for tests. 25/25 C tests pass.
+  - **🎯T32 step 3** (commit `e057765`): ngtcp2 transport gains multi-stream support — slot 0 stays the legacy primary, slots 1..16 are dynamic. Wired `stream_open_cb` / `stream_close_cb` ngtcp2 callbacks; new vtable callbacks invoke `ngtcp2_conn_open_bidi_stream`, drain an accept queue with a QUIC event-loop pump, and route per-stream recv data to per-slot ringbufs. Vendor submodules initialised (`git submodule update --init --recursive`) and quictls/openssl + ngtcp2 + ngtcp2_crypto_quictls built (the build.sh's example target failed for a dynamic-link reason but the static libs we need are in place; fix or split the script later). 6/6 ngtcp2 unit tests pass against the rebuilt vendor libs.
+  - **🎯T34 starter** (commit `7633280`): `cwire/` cgo bridge from Go to libpigeon's wire helpers. Tests prove byte-by-byte equivalence between Go's native encoder, the C encoder via cgo, and the hardcoded reference vectors. Foundation for the full Go-as-cgo-wrapper.
+  - **🎯T33 step** (commit `882a58b`): cwire bridge gains datagram-framing helpers (`EncodeDatagram` / `DecodeDatagram`) so the cross-language byte-parity check now covers the full post-T22 wire across Go-native, C-via-cgo, hardcoded vectors, and (via wire_vectors_test.go ↔ test_pigeon.c ↔ relay.test.ts) the TS browser side.
+  - **`make bullseye` parallelised** (commit `7231dce`): SDK suites + TLC fan out concurrently with per-step status files. Wall-clock dropped from ~28s sequential to ~10s parallel on M4 Max. Added the C suite (`make test-c`) to the standing invariants. Added `bullseye-prereq` to fix a gofmt-vs-codegen race introduced by the parallel fan-out.
+  - **In flight**: 🎯T29 Swift wrapper, 🎯T30 Kotlin JNI wrapper, 🎯T34 full Go cgo wrapper — running in parallel sub-agents at session end.
+- **Deferred**:
+  - Live multi-stream interop tests (Go relay ↔ C peer over ngtcp2) — the wire layer compiles and unit tests pass; live integration tests need a relay running and weren't run in this session.
+  - Vendored libsodium for Android NDK builds (T30).
+  - The `c/vendor/build.sh` failure on the qtlsclient example target — the libs we need built fine, but the script ought to either skip examples or fix the link flags.
+- **Known issues**:
+  - `ci.yml` `Deploy to Fly.io` job continues to fail on master with `FLY_API_TOKEN` expired. Carried over from v0.18.0; orthogonal to release artifacts.
+
+## 2026-04-30 — clean bill of health on testing (🎯T26 + T27 + T28 + T18)
+
+- **Commit**: `0e14b44`
+- **Outcome**: Brought every active SDK test suite from yellow/red to green and made `make bullseye` the durable one-button validator.
+  - **🎯T26** — Rewrote the orphaned FSM test fixtures in Swift (`Tests/PigeonTests/PairingCeremonyMachineTests.swift`), Kotlin (`android/.../PairingCeremonyMachineTest.kt`), and TypeScript (`web/src/PairingCeremonyMachine.test.ts`) against the new acceptor / initiator actors generated from `protocol/pairing.yaml`. Each suite is now ~10 tests covering: initial state, full happy path with action-firing-order assertions, user_cancel from both AwaitingUserConfirm and AwaitingPeerConfirm, action-throws propagation, and wire-string round-trips for MessageType / ActionID. Fixed a Swift codegen bug in protocol/swift.go (was emitting `public typealias GuardID = …` even when the YAML had no guards — added `len(p.Guards) > 0` checks).
+  - **🎯T27** — Audited every cross-language test that talks to a relay. Quarantine count: zero. The relay's bridgeClientPair preserves the legacy register / connect: wire, so Swift / Kotlin / TS continue to work at single-channel scope without porting. The only two real failures (Tests/PigeonRelayE2ETests/RelayE2ETests.swift::testCrossLanguageConfirmationCode and android/.../PigeonConnE2ETest.kt::cross-language confirmation code via relay) were unblocked by reviving cmd/crypto-peer/main.go: dropped its //go:build ignore tag and switched from the deprecated pigeon.Register signature to the still-exported pigeon.DialRelayAcceptor. Cross-language Go ↔ Swift and Go ↔ Kotlin confirmation-code agreement re-verified.
+  - **🎯T28** — Extended `make bullseye` to run gofmt → go vet → go build → go test (all packages, -short -count=1) → swift build → swift test → kotlin :pigeon:test → web (tsx --test crypto.test.ts + PairingCeremonyMachine.test.ts) → TLC PairingCeremony. Every line green on master HEAD. Added `--root-out=DIR` to cmd/protogen and made writeFile auto-run gofmt on freshly-emitted .go files so a regen leaves the tree clean — the previous behaviour was for fresh codegen to fail bullseye gofmt the next run.
+  - **T18** (already retired earlier; this is a related new flake) — A new TestE2ESingleClientChat flake (`recv "bye": EOF`) appeared after the T22 rewrite: the backend goroutine's deferred Session.Close raced against the client's third Recv, dropping the last echo's QUIC bytes mid-flush. Reshaped the test so the backend reads chat until EOF (driven by the client closing first) and the test explicitly closes the client session after receiving all echoes. Stress: 30/30 single-client and 20/20 all-three-E2E in parallel runs are green; previously ~1-in-N runs would fail.
+- **Deferred**:
+  - 🎯T29 — port Swift PigeonRelay to the post-T22 multi-channel wire protocol (register-mux + named-stream first-message + 4-byte clientTag prefix + AEAD-with-channel-id datagrams). Apple's Network.framework QUIC stack opens one stream per NWConnection by default; multi-stream multiplexing needs investigation into NWMultiplexGroup or per-stream NWConnections. Substantive port; not in scope for the bill-of-health pass.
+  - 🎯T30 — same as T29 for Kotlin.
+  - 🎯T31 — same as T29 for TypeScript.
+  - 🎯T25 — Swift cross-language pairing E2E (Go acceptor ↔ Swift initiator with matching codes via the regenerated Swift PairingCeremonyMachine). Layered on top of T29.
+- **Known issues**:
+  - `ci.yml` `Deploy to Fly.io` job continues to fail on master with `FLY_API_TOKEN` expired. Carried over from v0.18.0; orthogonal to release artifacts.
+
+## 2026-05-01 — /release v0.21.0
+
+- **Commit**: `pending`
+- **Outcome**: Released v0.21.0. The release re-bases all four language wrappers on a single C peer library: Swift (🎯T29) and Kotlin/JVM (🎯T30) are now thin shims over `libpigeon` (CPigeon SwiftPM C-target / JNI), Go (🎯T34, T34a, T34b, T34c.1, T38) is migrating to a cgo wrapper with the wire helpers, Session/Stream/Datagram, pairing FSM, confirmation code and `pigeon_transport` vtable bridged. C library extended with multi-channel session API, wire helpers, multi-stream callbacks, in-process loopback transport, PairingRecord binary serialisation and a restructured acceptor/initiator pairing FSM (🎯T32 steps 1-3, 🎯T33). TypeScript browser SDK gains the multi-channel API and wire-format unit tests locked to the Go byte vectors (🎯T31). New `crypto.Identity` interface and `NewFileIdentity`. New `Listener`/`Session`/`Stream`/`Datagram` Go types; `Register`/`Connect` now take struct-args (breaking). Visual `examples/demo` binary. `make bullseye` runs all SDK suites + TLC concurrently; `make bullseye-strict` adds ASan/UBSan + Go race. `protocol/pairing.yaml` is again the single source of truth (🎯T24). Released darwin-arm64, linux-amd64, linux-arm64. Homebrew formula updated.
+- **Bullseye fixes shipped in this release**:
+  - `8387f0c` — serialised `make generate` + `make amalgamate` before the parallel branches to fix the gofmt-vs-codegen race introduced when `make bullseye` was parallelised.
+  - `61a471f` — split `test-c` into a deps-bearing wrapper and a body-only `test-c-only` target, and made `c/include/pigeon/loopback.h` self-contained (`<stddef.h>` + `<stdint.h>`). The bullseye fan-out's `test-c` branch was re-running codegen mid-fanout and rewriting Swift sources while `swift test` was compiling — "input file PairingCeremonyMachine.swift was modified during the build" — and `dist/loopback.h` only got `size_t` from a transitively-included `pigeon.h`, which broke the `import CPigeon` umbrella when the header was parsed first.
+- **Deferred**:
+  - 🎯T25 — Swift cross-language pairing E2E (Go acceptor ↔ Swift initiator) via the regenerated PairingCeremonyMachine. Now unblocked by 🎯T29 (CPigeon-backed Swift) but not yet implemented.
+  - 🎯T35 — Kotlin JNI Android NDK build matrix (arm64-v8a + x86_64) with vendored libsodium AAR. Desktop JVM works (🎯T30); Android still pending.
+  - 🎯T36 — Java-callback transport: C side calls back into a JVM/Kotlin `QuicTransport` via JNI.
+  - 🎯T37 — Swift `Ngtcp2Transport` built on `c/src/ngtcp2_transport.c`.
+  - Vendored libsodium for Android NDK (carried over from v0.20.0).
+  - `c/vendor/build.sh` qtlsclient example link failure (carried over from v0.20.0; the static libs we need build fine).
+- **Known issues**:
+  - None new. The `Deploy to Fly.io` CI job is now green on master HEAD.

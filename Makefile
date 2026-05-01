@@ -6,8 +6,9 @@ JDK21 ?= /opt/homebrew/Cellar/openjdk@21/21.0.10/libexec/openjdk.jdk/Contents/Ho
 .PHONY: all build test test-go test-swift test-kotlin test-web \
         e2e e2e-go e2e-swift e2e-kotlin \
         test-live bench clean \
-        build-vendor-deps test-c test-c-ngtcp2 \
-        bullseye
+        build-vendor-deps test-c test-c-only test-c-asan test-c-ngtcp2 \
+        test-go-race \
+        bullseye bullseye-prereq bullseye-strict demo server
 
 # --- Build ---
 
@@ -36,7 +37,7 @@ test-kotlin:
 		-p $(CURDIR)/android test --no-daemon --console=plain
 
 test-web:
-	cd web && npx tsx --test src/crypto.test.ts
+	cd web && npx tsx --test src/crypto.test.ts src/PairingCeremonyMachine.test.ts src/relay.test.ts
 
 # --- E2E tests (standalone, against local relay) ---
 
@@ -93,6 +94,15 @@ endif
 server:
 	go run ./cmd/pigeon
 
+# --- Demo ---
+#
+# Runs the full pigeon stack — relay, backend, client — in one process
+# behind an HTTP control server, and opens a web UI at
+# http://127.0.0.1:7000 showing live traffic across every channel.
+
+demo:
+	go run ./examples/demo
+
 # --- Code generation ---
 
 generate:
@@ -103,10 +113,40 @@ generate:
 amalgamate: generate
 	./c/amalgamate.sh dist
 
-test-c: amalgamate
+test-c: amalgamate test-c-only
+
+# test-c without the amalgamate prereq, for callers (bullseye) that
+# already serialised generate+amalgamate up front and must not re-run
+# them in a parallel branch — the regen would rewrite Swift sources
+# mid-compile and trip "input file was modified during the build".
+test-c-only:
 	clang -DPIGEON_CRYPTO_LIBSODIUM -Idist $$(pkg-config --cflags --libs libsodium) \
 		dist/pigeon.c c/test/test_pigeon.c -o c/test/test_pigeon
 	./c/test/test_pigeon
+
+# --- Sanitiser-instrumented C tests ---
+#
+# AddressSanitizer + UndefinedBehaviorSanitizer catch the kinds of
+# memory bugs the heap-scratch and cgo-bridge work introduces (use-
+# after-free, leaks, oob, signed overflow, null deref). Run as a
+# separate target so the bullseye fast loop stays fast.
+#
+# UBSan settles for -fno-sanitize=function on Apple silicon where the
+# function-type check trips on libsodium's call-into-C pattern.
+test-c-asan: amalgamate
+	clang -O1 -g -fno-omit-frame-pointer \
+		-fsanitize=address,undefined -fno-sanitize=function \
+		-DPIGEON_CRYPTO_LIBSODIUM -Idist \
+		$$(pkg-config --cflags --libs libsodium) \
+		dist/pigeon.c c/test/test_pigeon.c \
+		-o c/test/test_pigeon_asan
+	ASAN_OPTIONS=detect_leaks=1:abort_on_error=1:halt_on_error=1 \
+		UBSAN_OPTIONS=halt_on_error=1:print_stacktrace=1 \
+		./c/test/test_pigeon_asan
+
+# Go race detector on the cwire bridge (covers AEAD nonce races etc).
+test-go-race:
+	go test -race -count=1 -timeout=120s ./cwire/ ./crypto/ ./
 
 # --- Vendored C dependencies (ngtcp2 + quictls/openssl) ---
 #
@@ -159,11 +199,69 @@ test-c-ngtcp2: build-vendor-deps amalgamate
 
 # --- Standing invariants (for bullseye_convergence) ---
 
-bullseye:
-	@out=$$(gofmt -l .); test -z "$$out" && echo "✓ gofmt" || (echo "✗ gofmt issues:"; echo "$$out"; exit 1)
-	@go vet ./... && echo "✓ go vet"
-	@go build ./... && echo "✓ go build"
-	@go test -count=1 -short -timeout=300s ./... >/tmp/bullseye-gotest.log 2>&1 && echo "✓ go test (all packages)" || (echo "✗ go test failing:"; cat /tmp/bullseye-gotest.log; exit 1)
+# Bullseye runs the SDK suites and TLC concurrently. Each step writes
+# its own log and a tiny status file (.ok or .fail-<step>); the main
+# target waits, then renders the per-step pass/fail summary in stable
+# order. Total wall-clock drops from ~serial-sum to roughly the slowest
+# single suite (today: swift test).
+#
+# `make bullseye-strict` adds ASan + UBSan on the C suite and Go's
+# race detector on cwire / crypto / root. Slower (~30-40s vs ~10s for
+# bullseye) so it's a separate target rather than always-on.
+bullseye-strict: bullseye test-c-asan test-go-race
+	@echo "✓ bullseye-strict (sanitisers green)"
+
+# Sequential prerequisites for bullseye: codegen and amalgamation must
+# happen before the parallel checks fan out, otherwise `make generate`
+# / `make amalgamate` (transitively required by test-c) races against
+# the gofmt and go vet/build/test branches scanning the same files.
+bullseye-prereq:
+	@$(MAKE) -s amalgamate >/dev/null
+
+bullseye: bullseye-prereq
+	@rm -rf /tmp/bullseye && mkdir -p /tmp/bullseye
+	@( out=$$(gofmt -l .); \
+	   if test -z "$$out"; then echo ok > /tmp/bullseye/gofmt.status; \
+	   else { echo "$$out" > /tmp/bullseye/gofmt.log; echo fail > /tmp/bullseye/gofmt.status; }; fi ) & \
+	 ( go vet ./... > /tmp/bullseye/govet.log 2>&1 \
+	   && echo ok > /tmp/bullseye/govet.status \
+	   || echo fail > /tmp/bullseye/govet.status ) & \
+	 ( go build ./... > /tmp/bullseye/gobuild.log 2>&1 \
+	   && echo ok > /tmp/bullseye/gobuild.status \
+	   || echo fail > /tmp/bullseye/gobuild.status ) & \
+	 ( go test -count=1 -short -timeout=300s ./... > /tmp/bullseye/gotest.log 2>&1 \
+	   && echo ok > /tmp/bullseye/gotest.status \
+	   || echo fail > /tmp/bullseye/gotest.status ) & \
+	 ( swift test > /tmp/bullseye/swift-test.log 2>&1 \
+	   && echo ok > /tmp/bullseye/swift-test.status \
+	   || echo fail > /tmp/bullseye/swift-test.status ) & \
+	 ( JAVA_HOME=$(JDK21) android/gradlew -p $(CURDIR)/android :pigeon:test \
+	     --no-daemon --console=plain > /tmp/bullseye/kotlin.log 2>&1 \
+	   && echo ok > /tmp/bullseye/kotlin.status \
+	   || echo fail > /tmp/bullseye/kotlin.status ) & \
+	 ( cd web && npx tsx --test src/crypto.test.ts src/PairingCeremonyMachine.test.ts src/relay.test.ts \
+	     > /tmp/bullseye/web.log 2>&1 \
+	   && echo ok > /tmp/bullseye/web.status \
+	   || echo fail > /tmp/bullseye/web.status ) & \
+	 ( $(MAKE) test-c-only > /tmp/bullseye/test-c.log 2>&1 \
+	   && echo ok > /tmp/bullseye/test-c.status \
+	   || echo fail > /tmp/bullseye/test-c.status ) & \
+	 ( cd formal && ./tlc PairingCeremony > /tmp/bullseye/tlc.log 2>&1; \
+	   grep -q "Model checking completed. No error has been found" /tmp/bullseye/tlc.log \
+	   && echo ok > /tmp/bullseye/tlc.status \
+	   || echo fail > /tmp/bullseye/tlc.status ) & \
+	 wait
+	@fail=0; \
+	 for step in gofmt govet gobuild gotest swift-test kotlin web test-c tlc; do \
+	   if [ "$$(cat /tmp/bullseye/$$step.status 2>/dev/null)" = "ok" ]; then \
+	     printf "✓ %s\n" "$$step"; \
+	   else \
+	     printf "✗ %s\n" "$$step"; \
+	     tail -30 /tmp/bullseye/$$step.log 2>/dev/null | sed 's/^/    /'; \
+	     fail=1; \
+	   fi; \
+	 done; \
+	 exit $$fail
 
 # --- Clean ---
 

@@ -49,6 +49,10 @@ jobs:
         with:
           go-version-file: go.mod
 
+      - name: Install libsodium (cwire cgo dep)
+        if: matrix.os == 'linux' && matrix.arch == 'amd64'
+        run: sudo apt-get update && sudo apt-get install -y libsodium-dev
+
       - name: Run tests
         if: matrix.os == 'linux' && matrix.arch == 'amd64'
         run: go test ./...

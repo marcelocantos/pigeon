@@ -57,7 +57,7 @@ EVT_verify_timeout == "verify_timeout"
 
 
 
-CONSTANTS lan_addr, challenge_bytes, offer_challenge, instance_id, max_ping_failures, max_backoff_level, lan_server_addr
+CONSTANTS lan_addr, challenge_bytes, cert_hash_bytes, offer_challenge, instance_id, max_ping_failures, max_backoff_level, lan_server_addr
 
 VARIABLES
     backend_state,
@@ -100,7 +100,7 @@ Init ==
 \* backend: RelayConnected -> LANOffered (lan_server_ready)
 backend_RelayConnected_to_LANOffered_lan_server_ready ==
     /\ backend_state = backend_RelayConnected
-    /\ received_lan_offer' = [type |-> MSG_lan_offer, addr |-> lan_addr, challenge |-> challenge_bytes]
+    /\ received_lan_offer' = [type |-> MSG_lan_offer, addr |-> lan_addr, cert_hash |-> cert_hash_bytes, challenge |-> challenge_bytes]
     /\ backend_state' = backend_LANOffered
     /\ UNCHANGED <<client_state, relay_state, ping_failures, backoff_level, active_path, dispatcher_path, monitor_target, lan_signal, relay_bridge, received_lan_verify, received_path_pong, received_lan_confirm, received_path_ping, received_relay_resume>>
 
@@ -190,14 +190,14 @@ backend_LANDegraded_to_RelayBackoff_ping_timeout_at_max_failures ==
 \* backend: RelayBackoff -> LANOffered (backoff_expired)
 backend_RelayBackoff_to_LANOffered_backoff_expired ==
     /\ backend_state = backend_RelayBackoff
-    /\ received_lan_offer' = [type |-> MSG_lan_offer, addr |-> lan_addr, challenge |-> challenge_bytes]
+    /\ received_lan_offer' = [type |-> MSG_lan_offer, addr |-> lan_addr, cert_hash |-> cert_hash_bytes, challenge |-> challenge_bytes]
     /\ backend_state' = backend_LANOffered
     /\ UNCHANGED <<client_state, relay_state, ping_failures, backoff_level, active_path, dispatcher_path, monitor_target, lan_signal, relay_bridge, received_lan_verify, received_path_pong, received_lan_confirm, received_path_ping, received_relay_resume>>
 
 \* backend: RelayBackoff -> LANOffered (lan_server_changed)
 backend_RelayBackoff_to_LANOffered_lan_server_changed ==
     /\ backend_state = backend_RelayBackoff
-    /\ received_lan_offer' = [type |-> MSG_lan_offer, addr |-> lan_addr, challenge |-> challenge_bytes]
+    /\ received_lan_offer' = [type |-> MSG_lan_offer, addr |-> lan_addr, cert_hash |-> cert_hash_bytes, challenge |-> challenge_bytes]
     /\ backend_state' = backend_LANOffered
     /\ backoff_level' = 0
     /\ UNCHANGED <<client_state, relay_state, ping_failures, active_path, dispatcher_path, monitor_target, lan_signal, relay_bridge, received_lan_verify, received_path_pong, received_lan_confirm, received_path_ping, received_relay_resume>>
@@ -206,7 +206,7 @@ backend_RelayBackoff_to_LANOffered_lan_server_changed ==
 backend_RelayConnected_to_LANOffered_readvertise_tick_lan_server_available ==
     /\ backend_state = backend_RelayConnected
     /\ lan_server_addr /= "none"
-    /\ received_lan_offer' = [type |-> MSG_lan_offer, addr |-> lan_addr, challenge |-> challenge_bytes]
+    /\ received_lan_offer' = [type |-> MSG_lan_offer, addr |-> lan_addr, cert_hash |-> cert_hash_bytes, challenge |-> challenge_bytes]
     /\ backend_state' = backend_LANOffered
     /\ UNCHANGED <<client_state, relay_state, ping_failures, backoff_level, active_path, dispatcher_path, monitor_target, lan_signal, relay_bridge, received_lan_verify, received_path_pong, received_lan_confirm, received_path_ping, received_relay_resume>>
 

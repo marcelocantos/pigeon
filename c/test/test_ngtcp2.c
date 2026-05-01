@@ -50,8 +50,10 @@ static void test_struct_size(void)
     TEST("pigeon_ngtcp2_transport struct size is reasonable");
     size_t sz = sizeof(pigeon_ngtcp2_transport);
     // Must fit on stack; must be large enough to hold all fields.
+    // The post-T22 multi-channel slot table adds 16 × ~64KB recv
+    // ringbufs, putting the upper bound at ~2 MB.
     if (sz < sizeof(pigeon_transport)) { FAIL("struct smaller than vtable"); }
-    if (sz > 1024 * 1024) { FAIL("struct unreasonably large"); }
+    if (sz > 2 * 1024 * 1024) { FAIL("struct unreasonably large"); }
     printf("(size=%zu) ", sz);
     PASS();
 }
