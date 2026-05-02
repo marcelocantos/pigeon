@@ -89,6 +89,15 @@ HEADER
         -e '/^\/\/ SPDX/d' \
         "$SRCDIR/src/pigeon.c"
 
+    # Pairing ceremony wire driver (strip includes + copyright).
+    echo ""
+    echo "// --- Pairing ceremony driver ---"
+    echo ""
+    sed -e '/^#include/d' \
+        -e '/^\/\/ Copyright/d' \
+        -e '/^\/\/ SPDX/d' \
+        "$SRCDIR/src/pairing.c"
+
     # Loopback transport (rewrite the header include from
     # "pigeon/loopback.h" to "loopback.h" so dist/loopback.h resolves
     # via the consumer's -I flag, strip system + copyright lines).

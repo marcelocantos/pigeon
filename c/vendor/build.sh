@@ -63,7 +63,7 @@ build_ngtcp2() {
         -DOPENSSL_INCLUDE_DIR="$BUILD/include" \
         -DOPENSSL_CRYPTO_LIBRARY="$BUILD/lib/libcrypto.a" \
         -DOPENSSL_SSL_LIBRARY="$BUILD/lib/libssl.a" \
-        -DENABLE_EXAMPLES=OFF \
+        -DENABLE_LIB_ONLY=ON \
         -DENABLE_GNUTLS=OFF \
         -DENABLE_BORINGSSL=OFF \
         -DENABLE_WOLFSSL=OFF \

@@ -412,6 +412,52 @@ int pigeon_datagram_send(pigeon_datagram *d,
 int pigeon_datagram_recv(pigeon_datagram *d,
                          uint8_t *buf, size_t buf_len);
 
+// --- Pairing ceremony wire driver ---
+//
+// These two functions implement the acceptor/initiator sides of the
+// hello/welcome/confirm wire exchange. They are wire-compatible with Go's
+// pairing.runAcceptor / runInitiator: messages are JSON with standard
+// base64-encoded byte fields, framed by the transport's send_on_stream /
+// recv_on_stream callbacks.
+//
+// transport: must have open_stream / accept_stream / send_on_stream /
+//   recv_on_stream populated. pigeon_pair_acceptor calls accept_stream to
+//   wait for the initiator; pigeon_pair_initiator calls open_stream.
+// local_eph_priv/pub: 32-byte X25519 key pair generated before the call.
+// identity_pub: 32-byte identity public key.
+// instance_id: NUL-terminated instance identifier string.
+// confirm_fn: called with (userdata, code) after the code is derived.
+//   Return 1 to confirm, 0 (or negative) to cancel.
+// out_record: filled on success with the new pairing record.
+// out_code: 7-byte buffer; receives the 6-digit code + NUL on success.
+// Returns 0 on success, -1 on any error.
+
+int pigeon_pair_acceptor(
+    const pigeon_transport *transport,
+    const uint8_t *local_eph_priv,
+    const uint8_t *local_eph_pub,
+    const uint8_t *identity_pub,
+    const char *instance_id,
+    int (*confirm_fn)(void *userdata, const char *code),
+    void *userdata,
+    pigeon_pairing_record *out_record,
+    char *out_code);
+
+// acc_eph_pub: 32-byte acceptor ephemeral public key decoded from the token.
+// acc_instance: acceptor's instance ID decoded from the token.
+int pigeon_pair_initiator(
+    const pigeon_transport *transport,
+    const uint8_t *local_eph_priv,
+    const uint8_t *local_eph_pub,
+    const uint8_t *identity_pub,
+    const char *instance_id,
+    const uint8_t *acc_eph_pub,
+    const char *acc_instance,
+    int (*confirm_fn)(void *userdata, const char *code),
+    void *userdata,
+    pigeon_pairing_record *out_record,
+    char *out_code);
+
 // --- PairingRecord serialisation ---
 // Fixed-schema, zero-alloc format:
 //   [0]     magic byte 0x50 ('P')

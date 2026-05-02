@@ -296,3 +296,48 @@ func recoverGoTransport(udata unsafe.Pointer) GoTransport {
 	h := cgo.Handle(cu.handle)
 	return h.Value().(GoTransport)
 }
+
+// confirmHandle wraps a Go confirm callback so it can be invoked from C
+// via the cwire_confirm_trampoline in cwire_pigeon.c.
+type confirmHandle struct {
+	handle cgo.Handle
+	cudata *C.cwire_go_udata
+}
+
+// newConfirmHandle registers fn and allocates the C-side userdata box.
+func newConfirmHandle(fn func(code string) bool) *confirmHandle {
+	h := cgo.NewHandle(fn)
+	cu := C.cwire_alloc_go_udata(C.uintptr_t(h))
+	return &confirmHandle{handle: h, cudata: cu}
+}
+
+// ptr returns the userdata pointer to pass as the confirm_fn userdata arg.
+func (c *confirmHandle) ptr() unsafe.Pointer {
+	return unsafe.Pointer(c.cudata)
+}
+
+// delete releases the cgo.Handle and C-side box.
+func (c *confirmHandle) delete() {
+	if c == nil {
+		return
+	}
+	if c.cudata != nil {
+		C.cwire_free_go_udata(c.cudata)
+		c.cudata = nil
+	}
+	if c.handle != 0 {
+		c.handle.Delete()
+		c.handle = 0
+	}
+}
+
+//export cwireGoConfirm
+func cwireGoConfirm(udata unsafe.Pointer, code *C.char) C.int {
+	cu := (*C.cwire_go_udata)(udata)
+	h := cgo.Handle(cu.handle)
+	fn := h.Value().(func(code string) bool)
+	if fn(C.GoString(code)) {
+		return 1
+	}
+	return 0
+}
