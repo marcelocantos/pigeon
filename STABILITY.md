@@ -10,7 +10,7 @@ The pre-1.0 period (currently v0.x.x) exists to get the interaction surface righ
 
 ## Interaction Surface Catalogue
 
-*Snapshot as of v0.21.0.*
+*Snapshot as of v0.22.0.*
 
 ### Relay API (the binary's external interface)
 
@@ -550,13 +550,24 @@ int  pigeon_acceptor_step(pigeon_acceptor_machine *m, pairing_ceremony_event_id 
 void pigeon_initiator_machine_init(pigeon_initiator_machine *m);
 int  pigeon_initiator_handle_message(pigeon_initiator_machine *m, pairing_ceremony_msg_type msg);
 int  pigeon_initiator_step(pigeon_initiator_machine *m, pairing_ceremony_event_id event);
+
+// Pairing wire driver (new in v0.22 — runs the hello/welcome/confirm exchange end-to-end)
+typedef int (*pigeon_confirm_fn)(void *userdata, const char *code);
+int pigeon_pair_acceptor(const pigeon_transport *transport, const pigeon_keypair *kp,
+                         pigeon_confirm_fn confirm, void *confirm_ud,
+                         const char *relay_url, pigeon_pairing_record *out);
+int pigeon_pair_initiator(const pigeon_transport *transport, const pigeon_keypair *kp,
+                          pigeon_confirm_fn confirm, void *confirm_ud,
+                          const char *relay_url, pigeon_pairing_record *out);
 ```
 
 *Stability: Fluid — substantially extended in v0.21.0 (multi-channel session API,
-wire helpers, PairingRecord serialisation, FSM restructuring). The crypto primitives
-(`pigeon_channel_*`, `pigeon_keypair`, key derivation) are stable in content but not
-yet frozen by commitment. No project-version macros yet (only protocol-version
-`PIGEON_PR_VERSION`).*
+wire helpers, PairingRecord serialisation, FSM restructuring) and again in v0.22.0
+with the C-side pairing wire driver (`pigeon_pair_acceptor`/`pigeon_pair_initiator`)
+that runs the hello/welcome/confirm exchange end-to-end against a `pigeon_transport`.
+The crypto primitives (`pigeon_channel_*`, `pigeon_keypair`, key derivation) are
+stable in content but not yet frozen by commitment. No project-version macros yet
+(only protocol-version `PIGEON_PR_VERSION`).*
 
 ### C QUIC transport (`c/`, ngtcp2 backend)
 
