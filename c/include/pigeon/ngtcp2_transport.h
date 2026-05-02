@@ -63,14 +63,31 @@ typedef void pigeon_ngtcp2_conn_handle;
 // Maximum pending received stream data.
 #define PIGEON_NGTCP2_RECV_BUF 65536
 
+// Role of this transport endpoint relative to the relay handshake.
+typedef enum {
+    // Client side: send "connect:<instance_id>" on the primary stream.
+    // instance_id identifies the peer (backend) we want to reach.
+    PIGEON_ROLE_CONNECT = 0,
+
+    // Backend side, multi-client: send "register-mux[:<token>[:<instance_id>]]".
+    // instance_id is the (optional) self-assigned ID; the relay echoes
+    // back the actual assigned ID on the same stream. token is an
+    // (optional) bearer token. Either or both may be NULL/empty; the
+    // wire form collapses accordingly.
+    PIGEON_ROLE_REGISTER_MUX = 1,
+} pigeon_role;
+
 // Configuration passed to pigeon_ngtcp2_transport_init.
 typedef struct {
     const char *host;           // relay hostname or IP (required)
     const char *port;           // relay UDP port, e.g. "4433" (required)
-    const char *instance_id;    // pigeon instance ID to connect to (required)
+    const char *instance_id;    // pigeon instance ID — required for CONNECT,
+                                // optional self-assigned ID for REGISTER_MUX
     int         verify_peer;    // 1 = verify server cert, 0 = skip (default 0)
     const char *ca_cert_file;   // path to CA bundle PEM (NULL = system default)
     int         timeout_ms;     // overall connect+handshake timeout in ms (0 = 10 000)
+    pigeon_role role;           // CONNECT (default) or REGISTER_MUX
+    const char *token;          // optional bearer token for REGISTER_MUX (NULL/"" = none)
 } pigeon_ngtcp2_config;
 
 // Internal ring-buffer for stream receive data.
@@ -147,10 +164,12 @@ typedef struct pigeon_ngtcp2_transport {
     char      last_error[128];  // human-readable error string
 
     // ---- configuration (retained for reconnect / diagnostics) ----
-    char      host[256];
-    char      port[16];
-    char      instance_id[64];
-    int       verify_peer;
+    char        host[256];
+    char        port[16];
+    char        instance_id[64];
+    int         verify_peer;
+    pigeon_role role;
+    char        token[128];
 } pigeon_ngtcp2_transport;
 
 // Initialize the transport and establish a QUIC connection to the relay.
