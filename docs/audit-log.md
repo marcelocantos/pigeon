@@ -180,6 +180,24 @@ maintenance activities. Append-only — newest entries at the bottom.
 - **Known issues**:
   - `ci.yml` `Deploy to Fly.io` job continues to fail on master with `FLY_API_TOKEN` expired. Carried over from v0.18.0; orthogonal to release artifacts.
 
+## 2026-05-02 — /release v0.22.0
+
+- **Commit**: `pending`
+- **Outcome**: Released v0.22.0 (darwin-arm64, linux-amd64, linux-arm64). Two pieces of work, both landed in PR #28 after a parallel-agent fan-out from `/cv`. (1) **Vendor build fix** (🎯T32 unblocker): `c/vendor/build.sh` now uses `ENABLE_LIB_ONLY=ON` for ngtcp2's cmake. The previous `ENABLE_EXAMPLES=OFF` is not a valid ngtcp2 option; cmake silently ignored it, tried to build the examples, and `make install` bailed before staging the static libraries because the example link step needed brew-installed `libev`/`libnghttp3`. (2) **C-side full pairing wire driver** (🎯T34b.2): new `pigeon_pair_acceptor`/`pigeon_pair_initiator` in `c/src/pairing.c` run the hello/welcome/confirm exchange end-to-end against a `pigeon_transport` and produce a `pigeon_pairing_record`. Exposed from Go as `cwire.RunAcceptor`/`cwire.RunInitiator` via cgo wrappers that bridge the confirm callback through a `cgo.Handle` trampoline. Wire-byte parity locked by two new tests `TestWireParityGoAcceptorCInitiator`/`TestWireParityCAcceptorGoInitiator` driving both Go↔C and C↔Go halves of the same handshake over an in-process blocking `chanTransport`. Bonus root-cause fix: `b64_decode` in `c/src/pairing.c` used `0` as the past-end sentinel, but `0` is also a valid base64 char ('A'). For 32-byte X25519 keys (43 chars after stripping `=` padding) the final group's 4th slot was always present, causing an attempted 33rd-byte write into a 32-byte buffer. Switched to `-1`.
+- **Process notes**:
+  - First time the global "one PR per session" feedback was applied: the `/cv` fan-out spawned two worktree-isolated agents that each opened their own PR (#26 vendor fix + #27 pairing driver). User flagged this as costly to merge; consolidated both commits into a single branch and opened PR #28 in their place. Saved as `feedback_one_pr_at_a_time.md`. Still need to apply a matching directive to `~/.claude/CLAUDE.md` — pending user approval.
+  - 🎯T34b.2 was discovered to be the tractable sub-target after `/cv` initially recommended fanning out on the bare 🎯T34 parent, which is documented to stall single agents.
+- **Deferred**:
+  - 🎯T32 steps 1–4 (multi-stream `ngtcp2_transport`, register-mux variant, Listener/Session ABI, live in-process Go-relay round-trip) — the vendor unblocker is the first block of the substantive multi-day work; nothing else of T32 landed in this release.
+  - 🎯T34c.1 — cgo wrap of Listener / Register / Connect (the Pairing-callback piece). Context says best done after T34a + T34b have settled; T34b.2 settling now means this is unblocked for the next session.
+  - 🎯T34d — delete the native Go peer-library files once T34a/b/c provide full coverage. Still blocked on T34c.1.
+  - 🎯T25 — Swift cross-language pairing E2E (carried over from v0.21.0).
+  - 🎯T35 — Kotlin JNI Android NDK matrix (carried over).
+  - 🎯T36 — Java-callback transport (carried over).
+  - 🎯T37 — Swift `Ngtcp2Transport` (carried over).
+- **Known issues**:
+  - `c/vendor/build.sh` does not auto-init nested git submodules; the ngtcp2 source tree's `third-party/urlparse` submodule must already be initialised (e.g. via `git submodule update --init` in the ngtcp2 directory, or by cloning the parent repo with `--recurse-submodules`) before the script will succeed. Documented in PR #28 description; not blocking CI which uses fresh clones with full submodule init.
+
 ## 2026-05-01 — /release v0.21.0
 
 - **Commit**: `a9cf09d`
