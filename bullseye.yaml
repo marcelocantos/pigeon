@@ -841,17 +841,24 @@ targets:
     - 'An in-process raw-QUIC test against the Go relay drives the C peer through: single-client chat round-trip, multi-stream + multi-datagram in one Session, two concurrent C clients sharing one C backend.'
     - All of the above linked into c/test/test_pigeon and runnable via `make test-c-ngtcp2`.
     context: |-
-      Status: foundation landed. The pure wire-format helpers (varint, stream-header, AEAD-channel-id datagram framing) are implemented in C and locked to Go byte vectors via wire_vectors_test.go ↔ c/test/test_pigeon.c. 23/23 C tests pass; cross-language byte-vector parity verified by construction.
+      Status as of 2026-05-02: significantly further along than the original framing.
 
-      Remaining work for T32 — substantive, multi-day:
-      1. Extend c/src/ngtcp2_transport.c to support multiple QUIC streams: open new bidirectional streams on demand, accept incoming streams, per-stream send/recv buffers. Currently single-stream-only.
-      2. Add register-mux handshake variant (today only `connect:` is wired in the ngtcp2 transport; `register` and `register-mux` need the matching code paths).
-      3. Implement the higher-level Listener / Session / Stream / Datagram C ABI on top of the multi-stream transport. Multi-client backend with clientTag demux; per-Session pairing-FSM driver hooked to the regenerated pairingceremony_gen.c.
-      4. Tests: live round-trip against an in-process Go relay (mirroring what e2e_test.go does for Go).
+      Already shipped:
+      - Multi-stream transport vtable in c/src/ngtcp2_transport.c (open_stream / accept_stream / send_on_stream / recv_on_stream / close_stream) with extra_streams[] slots, peer-opened stream tracking via stream_open_cb, and an accept_queue ring buffer.
+      - pigeon_session API in c/include/pigeon/pigeon.h: init, open_stream, get_datagram, stream_send/recv/close, datagram_send/recv. pigeon_stream / pigeon_datagram types.
+      - Wire framing: varint, stream-header (backend [4-byte clientTag][varint name-len][name] / client [varint name-len][name]), AEAD-channel-id datagram framing. Locked to Go byte vectors via wire_vectors_test.go ↔ c/test/test_pigeon.c.
+      - pigeon_pair_acceptor / pigeon_pair_initiator wire drivers (T34b.2, v0.22.0).
+      - pigeon_pairing_record serialisation.
+      - Heap-scratch refactor (T38) so wrappers don't need oversized stacks.
+      - Vendored ngtcp2 + quictls build is operational (c/vendor/ submodules present, c/vendor/build/lib/*.a built, `make test-c-ngtcp2` green: 6/6 ngtcp2 tests).
 
-      The vendored ngtcp2 build (`make build-vendor-deps`) is currently broken because the `c/vendor/` source tree isn't initialised — quictls / ngtcp2 sources aren't present. Whoever picks up step 1 above will need to fix the vendor build first (likely git-clone the upstream ngtcp2 + quictls into the expected paths, or rewrite `c/vendor/build.sh` to fetch them).
+      Genuinely remaining for T32:
+      1. register / register-mux handshake variants — c/src/ngtcp2_transport.c::send_pigeon_handshake currently hardcodes "connect:<instance_id>". Add the register-side code paths.
+      2. pigeon_listener ABI — multi-client demux on the backend side. Header (line ~286-289) explicitly notes this is missing: "This API does NOT include a pigeon_listener (multi-client demux on the backend side); that's a separate concern that needs the transport's accept_stream loop to dispatch by clientTag." Open relay-bound primary stream with register-mux:<id>, run accept_stream loop, decode 4-byte clientTag prefix, hand each new logical client off as its own pigeon_session.
+      3. pigeon_register / pigeon_connect entry points — high-level "bring up transport + produce Session/Listener" functions in c/src/.
+      4. Live tests against an in-process Go relay in c/test/test_pigeon (or a new c/test/test_listener.c) covering: single-client chat round-trip, multi-stream + multi-datagram in one Session, two concurrent C clients sharing one C backend. Linked into `make test-c-ngtcp2`.
 
-      Until the multi-stream transport lands, the existing single-channel C SDK keeps working as it does today. Swift / Kotlin downstream ports (T29/T30) and the cgo-wrap of Go (T34) are all blocked on this.
+      Estimate: 1-2 focused days. This is the foundation T34c, T33, T37 wait on.
     origin: discovered while making the architectural decision to consolidate peer libraries into one C implementation
     discovered: 2026-04-30
   T33:
@@ -899,6 +906,8 @@ targets:
         T34d: delete the native Go peer-library implementation files (api.go, transport.go, conn.go, pigeon.go, pairing/pairing.go, executor.go, etc.) once T34a/b/c provide full coverage. Verify e2e_test.go and pairing/pairing_test.go still pass; verify examples/echo and examples/demo still build and run.
 
       Today's session retired T31, achieved T32 step 1+2+3, started T33 (wire-byte parity across four implementations is locked), and seeded T34 starter (cwire/). The remaining T34a..T34d work is multi-session.
+    depends_on:
+    - T32
     origin: final step in the C-as-canonical consolidation
     discovered: 2026-04-30
   T34a:
@@ -929,10 +938,11 @@ targets:
     achieved: 2026-04-30
   T34b.2:
     name: 'cgo wrap full pairing driver: hello/welcome/confirm wire round-trips via libpigeon'
-    status: identified
+    status: achieved
     value: 0.0
     cost: 0.0
     showcase: true
+    demonstration: Released v0.22.0 (https://github.com/marcelocantos/pigeon/releases/tag/v0.22.0). The C-side pigeon_pair_acceptor / pigeon_pair_initiator drivers run the full hello/welcome/confirm exchange end-to-end; cwire.RunAcceptor / cwire.RunInitiator expose them from Go. Wire-byte parity demonstrated by TestWireParityGoAcceptorCInitiator and TestWireParityCAcceptorGoInitiator both passing — both halves of the same handshake (Go-driver ↔ C-driver and C-driver ↔ Go-driver) derive matching confirmation codes over an in-process blocking chanTransport. Verified locally via `brew upgrade marcelocantos/tap/pigeon` → `pigeon --version` → `v0.22.0`.
     acceptance:
     - A C-side pigeon_pair_acceptor / pigeon_pair_initiator function in c/src/ runs the hello/welcome/confirm exchange against a pigeon_transport and produces a pigeon_pairing_record (peer pubkey + confirmation code).
     - cwire/ exposes that driver from Go; pairing/pairing_test.go's runAcceptor/runInitiator paths can be redirected through the cgo wrapper without changing test semantics.
@@ -940,6 +950,7 @@ targets:
     context: T34b.1 (commit f499b17) wraps the FSM and ECDH primitives but leaves the wire-driver layer (the loop that exchanges JSON-ish hello/welcome/confirm frames over a transport) in Go. T34b.2 folds that loop into C so the Go side becomes a pure cgo call.
     origin: subdivision of T34b
     discovered: 2026-04-30
+    achieved: 2026-05-02
   T34c.1:
     name: Go-callback bridge for pigeon_transport vtable
     status: achieved
