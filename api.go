@@ -7,7 +7,6 @@ import (
 	"context"
 	"crypto/tls"
 	"encoding/binary"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -211,27 +210,20 @@ func (l *Listener) acceptLoop() {
 	}
 }
 
-// acceptPrimary runs the connect-hello/ack handshake on a newly
-// arrived client primary stream and registers the resulting Session.
+// acceptPrimary runs the auth_request / auth_ok activation handshake
+// on a newly arrived client primary stream and registers the resulting
+// Session. Activation is driven through a per-client SessionMachine
+// (see runBackendActivation) — the spec models the auth flow as
+// Paired → AuthCheck → SessionActive, with the device_known guard
+// bound from the result of args.Pairing(deviceID).
 func (l *Listener) acceptPrimary(tag uint32, stream io.ReadWriteCloser) {
-	raw, err := readMessage(stream)
+	_, deviceID, rec, err := runBackendActivation(stream, l.args.Pairing)
 	if err != nil {
-		slog.Warn("listener: read connect-hello", "err", err)
+		slog.Warn("listener: activation", "err", err)
 		_ = stream.Close()
-		return
-	}
-	var hello connectHello
-	if err := json.Unmarshal(raw, &hello); err != nil {
-		slog.Warn("listener: parse connect-hello", "err", err)
-		_ = stream.Close()
-		return
-	}
-	rec, err := l.args.Pairing(hello.ClientInstanceID)
-	if err != nil || rec == nil {
-		nack, _ := json.Marshal(connectAck{OK: false, Reason: "unknown client"})
-		_ = writeMessage(stream, nack)
-		_ = stream.Close()
-		l.accepted <- acceptResult{err: fmt.Errorf("unknown client %q", hello.ClientInstanceID)}
+		if deviceID != "" {
+			l.accepted <- acceptResult{err: err}
+		}
 		return
 	}
 	channel, err := rec.DeriveChannel([]byte("backend->client"), []byte("client->backend"))
@@ -240,13 +232,8 @@ func (l *Listener) acceptPrimary(tag uint32, stream io.ReadWriteCloser) {
 		l.accepted <- acceptResult{err: fmt.Errorf("derive session channel: %w", err)}
 		return
 	}
-	ack, _ := json.Marshal(connectAck{OK: true})
-	if err := writeMessage(stream, ack); err != nil {
-		_ = stream.Close()
-		return
-	}
 
-	sess := newSession(l.ctx, l.transport, channel, hello.ClientInstanceID, tag, l.args.Datagrams, true)
+	sess := newSession(l.ctx, l.transport, channel, deviceID, tag, l.args.Datagrams, true)
 	sess.bindPrimary(stream)
 
 	l.mu.Lock()
@@ -295,19 +282,6 @@ func (l *Listener) removeSession(tag uint32) {
 	l.mu.Unlock()
 }
 
-// connectHello is the first application-level message a client sends on
-// the primary stream after the relay handshake completes; it identifies
-// the client to the backend.
-type connectHello struct {
-	ClientInstanceID string `json:"client_instance_id"`
-}
-
-// connectAck is the backend's reply.
-type connectAck struct {
-	OK     bool   `json:"ok"`
-	Reason string `json:"reason,omitempty"`
-}
-
 // Connect dials the backend identified by args.InstanceID and returns a
 // Session ready for OpenStream / Datagram. The client side runs a single
 // Session over a fresh QUIC connection to the relay; sub-streams open on
@@ -349,24 +323,9 @@ func Connect(ctx context.Context, args *ConnectArgs) (*Session, error) {
 		_ = tr.Close()
 		return nil, fmt.Errorf("write primary header: %w", err)
 	}
-	hello, _ := json.Marshal(connectHello{ClientInstanceID: args.Identity.InstanceID()})
-	if err := writeMessage(tr.primary, hello); err != nil {
+	if _, err := runClientActivation(tr.primary, args.Identity.InstanceID()); err != nil {
 		_ = tr.Close()
-		return nil, fmt.Errorf("send connect-hello: %w", err)
-	}
-	raw, err := readMessage(tr.primary)
-	if err != nil {
-		_ = tr.Close()
-		return nil, fmt.Errorf("recv connect-ack: %w", err)
-	}
-	var ack connectAck
-	if err := json.Unmarshal(raw, &ack); err != nil {
-		_ = tr.Close()
-		return nil, fmt.Errorf("parse connect-ack: %w", err)
-	}
-	if !ack.OK {
-		_ = tr.Close()
-		return nil, fmt.Errorf("backend rejected: %s", ack.Reason)
+		return nil, err
 	}
 
 	channel, err := args.Record.DeriveChannel([]byte("client->backend"), []byte("backend->client"))
