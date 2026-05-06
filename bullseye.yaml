@@ -1085,11 +1085,73 @@ targets:
     - 'Health monitor: the test verifies the executor''s relay liveness mechanism (ping/pong on the path-monitor sub-FSM, or — if the spec only models LAN ping/pong today — a deliberately scoped relay-keepalive transition added to session.yaml under this sub-target) actually fires and is observable from the test.'
     - 'Graceful close: app_close on either side drives the machine through the cleanup transitions and the corresponding commands (stop_monitor, close_lan_path skipped if no LAN, etc.); both sides observe the close cleanly without leaked goroutines (verified by goleak or an equivalent assertion).'
     - 'Showcase demonstration recorded with bullseye_retire: a paste of the green test output and a one-line summary of how it crosses the four lifecycle phases.'
-    context: This is the showcase that retires T39 itself once T39.1 (activation wired through executor) and T39.2 (TLA+ independence) land. The test must drive the *generated* executor end-to-end — no calls into pairing/pairing.go's hand-rolled driver, no JSON-shaped activation, no mocking of the machine. If the spec doesn't currently model relay-only health monitoring (current ping/pong is LAN-path only), this sub-target either (a) extends session.yaml with a minimal relay-keepalive transition or (b) narrows the showcase scope to "health monitor exercised in its current LAN form against a synthetic LAN path"; the choice is documented in the commit. Depends on T39.1 because the test must be able to call pigeon.Connect / Listen and have activation actually go through the executor; relatively independent of T39.2 (TLA+ rename) but conceptually pairs with it.
+    context: |-
+      This is the showcase that retires T39 itself once T39.1 (activation through executor), T39.4 (executor on Session), T39.5 (pairing off Conn), and T39.6 (Conn deleted) all land. With Conn gone, "drives the generated session executor" becomes unambiguous — Session is the only transport abstraction and it's executor-driven.
+
+      The test must drive the Session executor end-to-end — no calls into pairing/pairing.go's hand-rolled driver from inside the showcase, no JSON-shaped activation, no mocking of the machine. If the spec doesn't model relay-only health monitoring (current ping/pong is LAN-path only), this sub-target either (a) extends session.yaml with a minimal relay-keepalive transition or (b) narrows the showcase scope to "health monitor exercised in its current LAN form against a synthetic LAN path"; the choice is documented in the commit. Originally framed as depending only on T39.1 (2026-05-02); rescoped 2026-05-06 to depend on the full Conn-strip chain after the user directed the legacy approach be removed entirely.
+    depends_on:
+    - T39.1
+    - T39.4
+    - T39.5
+    - T39.6
+    origin: manual
+    discovered: 2026-05-02
+  T39.4:
+    name: pigeon.Session adopts the SessionMachine executor for all transport ops; the per-Session executor replaces hand-rolled clientAcceptLoop / clientDatagramLoop / inline Send / Recv
+    status: achieved
+    value: 0.0
+    cost: 0.0
+    acceptance:
+    - pigeon.Session owns the per-instance SessionMachine produced by activation (T39.1's runBackendActivation / runClientActivation no longer discard the machine they build). The machine is advanced through SessionEstablished so the post-activation state on the Session is SessionProtocol{Backend,Client}RelayConnected.
+    - Session.Close fires SessionProtocolEventDisconnect through the machine (the spec's RelayConnected → Paired transition) before tearing down the QUIC primary; this gives the spec model a defined post-close state instead of the current 'state freezes at RelayConnected and goroutines wind down' shape.
+    - The hand-rolled per-stream sub-stream demux (clientAcceptLoop) stays above the machine — docs/session-protocol.md §Boundaries explicitly puts StreamChannel I/O above the executor. Datagram routing (clientDatagramLoop) migrates onto the executor's per-channel datagram surface so the relay_datagram → deliver_recv_datagram path actually fires through HandleEvent. Replace the channel-based dg.rx queue on *Datagram with the executor's chanDgWaiters / chanDgBuffers semantics, or document why the channel form is kept.
+    - All existing root-package tests pass (TestE2ESingleClientChat, TestE2EMultiStreamMultiDatagram, TestE2EMultiClient, TestActivation_*). New activation_test assertions verify the machine on the Session is at RelayConnected post-Connect / post-Accept and at Paired post-Close.
+    - Conn keeps its own executor field for now — pairing.go and pigeon-bridge still consume it; full Conn removal is T39.5 → T39.6 territory. make bullseye stays green.
+    context: |-
+      Discovered while scoping T39.3 (2026-05-06): the executor (executor.go, ~1000 lines) and the path-switching / LAN upgrade machinery were never ported across when T22 introduced the multi-tenant Session/Listener API. The post-T22 Session re-implemented transport-side responsibilities as hand-rolled goroutines that bypass the SessionMachine entirely.
+
+      User direction (2026-05-06): "Do the port. I want the entire legacy approach stripped out." This sub-target is the first phase of that strip.
+
+      **Architectural finding (2026-05-06)**: the SessionMachine spec was written around Conn's single-primary-stream model (events like app_send / relay_stream_data presume one ongoing stream of mixed-type messages). Session uses per-named-sub-stream I/O instead, which docs/session-protocol.md §Boundaries explicitly puts ABOVE the machine. So an honest port doesn't replace clientAcceptLoop — that loop's per-stream demux is already correct-by-spec. What the executor genuinely owns on Session: (a) persisting the activation machine; (b) disconnect on Close; (c) datagram demux (the one I/O path the spec puts through the loop); (d) future health monitor / LAN.
+
+      Non-goal: this sub-target does NOT yet wire LAN upgrade into Session. The current Session is relay-only in production; LAN upgrade is gated on T37 (Swift Ngtcp2Transport) and T43 (STUN-reflexive) on the codepath side.
     depends_on:
     - T39.1
     origin: manual
-    discovered: 2026-05-02
+    discovered: 2026-05-06
+    achieved: 2026-05-06
+  T39.5:
+    name: pairing/pairing.go migrated off pigeon.Conn onto a 1:1 mode of the modern pigeon.Listener / pigeon.Connect API (or an equivalent ceremony-shaped helper)
+    status: identified
+    value: 0.0
+    cost: 0.0
+    acceptance:
+    - pairing/pairing.go no longer imports or references pigeon.Conn, pigeon.DialRelayAcceptor, pigeon.DialRelayInitiator, or pigeon.Config (or those imports are removed in favour of the modern API).
+    - 'The pairing ceremony''s wire exchanges (hello / welcome / confirm_to_initiator / confirm_to_acceptor as defined in protocol/pairing.yaml) ride on a thin ceremony-mode entry point on the modern API. Concretely: pigeon.Register / pigeon.Connect grow a 1:1 ceremony bridge mode (e.g. via a BridgeMode field on RegisterArgs / ConnectArgs, or a sibling pigeon.RegisterCeremony / pigeon.ConnectCeremony helper) that produces a bidirectional message-framed connection without register-mux''s per-client clientTag demux.'
+    - cmd/pigeon-bridge and cmd/crypto-peer either migrate to the new ceremony helper or are deleted (with their build tags / //go:build ignore directives removed and any documentation references cleaned up).
+    - All pairing tests still pass (the protocol/pairing.yaml contract under TLC, plus pairing_test.go's Go-side ceremony driver), proving the wire format is unchanged.
+    - make bullseye stays green.
+    context: pairing.go is the primary remaining consumer of Conn (~600 lines deeply entangled with Conn.OpenChannel / RecvMessage / etc.). Stripping Conn requires giving pairing a substitute transport. The relay already supports two greeting modes (connect:<id> for 1:1 bridge, register-mux for multi-client); the modern API only exposes register-mux today. Adding 1:1 to the modern API surface makes pairing migrate-able without losing the existing relay-side behaviour. Discovered alongside T39.4 while scoping the Conn strip.
+    depends_on:
+    - T39.4
+    origin: manual
+    discovered: 2026-05-06
+  T39.6:
+    name: pigeon.Conn and the legacy 1:1 transport surface (channel.go's Conn methods, pigeon.go's Dial* factories, lan.go's Conn entanglement) are deleted
+    status: identified
+    value: 0.0
+    cost: 0.0
+    acceptance:
+    - The Conn type and its constructor newConn are deleted from the pigeon package.
+    - channel.go's Conn-shaped OpenChannel / AcceptChannel / DatagramChannel methods are deleted (the modern Session.OpenStream / AcceptStream / Datagram surface replaces them).
+    - pigeon.go's DialRelayAcceptor / DialRelayInitiator / registerQUIC / connectQUIC / registerWebTransport / connectWebTransport package-level helpers are deleted (or reduced to internal building blocks of the modern Listener/Connect path).
+    - lan.go's LANServer.registerConn / handleConn entanglement with Conn is deleted; the LAN path lives entirely on the new Session/executor surface (or is itself parked behind a follow-up target if the LAN port is non-trivial).
+    - make bullseye stays green; nothing in cmd/, examples/, or pairing/ imports the deleted symbols.
+    context: Final removal of the parallel transport abstraction. Strictly downstream of T39.4 (executor on Session) and T39.5 (pairing migrated). Once Conn has no consumers, this sub-target deletes the type and its surrounding helpers in one mechanical pass. Net should be hundreds of lines deleted with zero functional change.
+    depends_on:
+    - T39.5
+    origin: manual
+    discovered: 2026-05-06
   T4:
     name: Investigate STUN/NAT hole-punching as a transport
     status: achieved
