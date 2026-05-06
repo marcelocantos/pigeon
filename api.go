@@ -217,13 +217,19 @@ func (l *Listener) acceptLoop() {
 // Paired → AuthCheck → SessionActive, with the device_known guard
 // bound from the result of args.Pairing(deviceID).
 func (l *Listener) acceptPrimary(tag uint32, stream io.ReadWriteCloser) {
-	_, deviceID, rec, err := runBackendActivation(stream, l.args.Pairing)
+	rawMachine, deviceID, rec, err := runBackendActivation(stream, l.args.Pairing)
 	if err != nil {
 		slog.Warn("listener: activation", "err", err)
 		_ = stream.Close()
 		if deviceID != "" {
 			l.accepted <- acceptResult{err: err}
 		}
+		return
+	}
+	machine, err := newBackendSessionMachine(rawMachine)
+	if err != nil {
+		_ = stream.Close()
+		l.accepted <- acceptResult{err: fmt.Errorf("post-activation transition: %w", err)}
 		return
 	}
 	channel, err := rec.DeriveChannel([]byte("backend->client"), []byte("client->backend"))
@@ -234,6 +240,7 @@ func (l *Listener) acceptPrimary(tag uint32, stream io.ReadWriteCloser) {
 	}
 
 	sess := newSession(l.ctx, l.transport, channel, deviceID, tag, l.args.Datagrams, true)
+	sess.machine = machine
 	sess.bindPrimary(stream)
 
 	l.mu.Lock()
@@ -323,9 +330,15 @@ func Connect(ctx context.Context, args *ConnectArgs) (*Session, error) {
 		_ = tr.Close()
 		return nil, fmt.Errorf("write primary header: %w", err)
 	}
-	if _, err := runClientActivation(tr.primary, args.Identity.InstanceID()); err != nil {
+	rawMachine, err := runClientActivation(tr.primary, args.Identity.InstanceID())
+	if err != nil {
 		_ = tr.Close()
 		return nil, err
+	}
+	machine, err := newClientSessionMachine(rawMachine)
+	if err != nil {
+		_ = tr.Close()
+		return nil, fmt.Errorf("post-activation transition: %w", err)
 	}
 
 	channel, err := args.Record.DeriveChannel([]byte("client->backend"), []byte("backend->client"))
@@ -338,6 +351,7 @@ func Connect(ctx context.Context, args *ConnectArgs) (*Session, error) {
 	sess := newSession(sCtx, tr, channel, args.InstanceID, 0, args.Datagrams, false)
 	sess.cancel = cancel
 	sess.ownsTransport = true
+	sess.machine = machine
 	sess.bindPrimary(tr.primary)
 	go sess.clientAcceptLoop()
 	go sess.clientDatagramLoop()
@@ -377,6 +391,14 @@ type Session struct {
 	listener *Listener // backend side only
 
 	primary io.ReadWriteCloser
+
+	// machine is the post-activation SessionMachine for this session.
+	// Per docs/session-protocol.md §Boundaries, per-stream I/O lives
+	// above the machine; the machine drives lifecycle transitions
+	// (activation already done by runBackendActivation/runClientActivation
+	// when this Session is constructed; disconnect on Close) and any
+	// future executor-mediated I/O (datagrams, health monitor, LAN).
+	machine *sessionMachine
 
 	// Stream rendezvous: pendingOpens map name → waiter; bufferedStreams
 	// holds streams that arrived before a local OpenStream caller.
@@ -513,6 +535,23 @@ func (s *Session) Datagram(name string) *Datagram {
 	return s.datagrams[id]
 }
 
+// deliverIncomingDatagram routes a decrypted, channel-id-prefixed
+// datagram to the matching *Datagram's rx queue.
+//
+// Why not the executor's chan-datagram surface (T39.4 deferred):
+// docs/session-protocol.md §Boundaries puts datagram I/O *through*
+// the machine's event loop, which would mean threading every inbound
+// datagram through HandleEvent(SessionProtocolEventRelayDatagram) and
+// dispatching CmdDeliverRecvDatagram via per-channel waiters
+// (executor.chanDgWaiters/chanDgBuffers). That migration is non-
+// trivial: the executor today is instantiated by Conn with a full
+// path-management/relay-reader/lan-reader scaffold that doesn't
+// apply to relay-only Session, and Session's per-name Datagram(name)
+// returns a *Datagram with a buffered rx channel — a different shape
+// from the executor's blocking recvDatagram(ctx) waiter. Standing up
+// a Session-shaped executor is its own work item; until then the rx
+// channel form below preserves correct demux behaviour without
+// pretending the machine drives it.
 func (s *Session) deliverIncomingDatagram(payload []byte) {
 	plain, err := s.channel.Decrypt(payload)
 	if err != nil {
@@ -583,9 +622,17 @@ func (s *Session) clientDatagramLoop() {
 	}
 }
 
-// Close tears down the Session.
+// Close tears down the Session. The SessionMachine is advanced
+// through the spec's RelayConnected → Paired transition before the
+// underlying QUIC primary is torn down so the spec model has a
+// defined post-close state.
 func (s *Session) Close() error {
 	s.closeOnce.Do(func() {
+		if s.machine != nil {
+			if err := s.machine.disconnect(); err != nil {
+				slog.Debug("session: disconnect transition", "peer", s.peerID, "err", err)
+			}
+		}
 		s.cancel()
 		if s.primary != nil {
 			_ = s.primary.Close()

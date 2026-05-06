@@ -113,6 +113,89 @@ func pairingPair(t *testing.T, relayURL string) (backendID crypto.Identity, clie
 	return bid, cid, backendRec, clientRec
 }
 
+// TestSessionMachineLifecycle proves the per-Session SessionMachine
+// (T39.4) is wired through the activation flow and the disconnect
+// transition: post-Connect / post-Accept the machine sits at the
+// spec's RelayConnected state on both sides; post-Close it has
+// advanced through the spec's RelayConnected → Paired transition.
+func TestSessionMachineLifecycle(t *testing.T) {
+	t.Parallel()
+	relayURL, teardown := startRelay(t)
+	defer teardown()
+	time.Sleep(200 * time.Millisecond)
+
+	bid, cid, brec, crec := pairingPair(t, relayURL)
+	pairings := map[string]*crypto.PairingRecord{cid.InstanceID(): brec}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+
+	tlsCfg := &tls.Config{InsecureSkipVerify: true}
+
+	listener, _, err := pigeon.Register(ctx, &pigeon.RegisterArgs{
+		Identity: bid,
+		Pairing: func(id string) (*crypto.PairingRecord, error) {
+			rec, ok := pairings[id]
+			if !ok {
+				return nil, fmt.Errorf("unknown client %q", id)
+			}
+			return rec, nil
+		},
+		Relay: relayURL,
+		TLS:   tlsCfg,
+	})
+	if err != nil {
+		t.Fatalf("register: %v", err)
+	}
+	defer listener.Close()
+
+	bsess := make(chan *pigeon.Session, 1)
+	go func() {
+		s, err := listener.Accept(ctx)
+		if err != nil {
+			t.Errorf("accept: %v", err)
+			bsess <- nil
+			return
+		}
+		bsess <- s
+	}()
+
+	csess, err := pigeon.Connect(ctx, &pigeon.ConnectArgs{
+		InstanceID: bid.InstanceID(),
+		Record:     crec,
+		Identity:   cid,
+		Relay:      relayURL,
+		TLS:        tlsCfg,
+	})
+	if err != nil {
+		t.Fatalf("connect: %v", err)
+	}
+
+	bs := <-bsess
+	if bs == nil {
+		t.Fatal("backend accept returned nil")
+	}
+
+	const wantConnected = "RelayConnected"
+	if got := string(csess.MachineState()); got != wantConnected {
+		t.Errorf("client machine post-Connect: got %q, want %q", got, wantConnected)
+	}
+	if got := string(bs.MachineState()); got != wantConnected {
+		t.Errorf("backend machine post-Accept: got %q, want %q", got, wantConnected)
+	}
+
+	_ = csess.Close()
+	_ = bs.Close()
+
+	const wantClosed = "Paired"
+	if got := string(csess.MachineState()); got != wantClosed {
+		t.Errorf("client machine post-Close: got %q, want %q (RelayConnected → Paired on disconnect)", got, wantClosed)
+	}
+	if got := string(bs.MachineState()); got != wantClosed {
+		t.Errorf("backend machine post-Close: got %q, want %q (RelayConnected → Paired on disconnect)", got, wantClosed)
+	}
+}
+
 // TestE2ESingleClientChat verifies the new pigeon.Register / pigeon.Connect
 // shape and the multi-stream channel API end-to-end.
 func TestE2ESingleClientChat(t *testing.T) {
