@@ -137,6 +137,7 @@ func PairingCeremony() *Protocol {
 		Operators: []Operator{
 			{Name: "KeyRank", Params: "k", Expr: "CASE k = \"adv_eph\" -> 0 [] k = \"initiator_eph\" -> 1 [] k = \"acceptor_eph\" -> 2 [] OTHER -> 3", Desc: "Stable rank for symbolic pubkeys so DeriveCode is order-independent."},
 			{Name: "DeriveCode", Params: "a, b", Expr: "IF KeyRank(a) <= KeyRank(b) THEN <<\"code\", a, b>> ELSE <<\"code\", b, a>>", Desc: "Confirmation code derived from both ephemeral pubkeys (order-independent)."},
+			{Name: "ValidPairingRecord", Params: "r", Expr: "r.peer_instance_id /= \"none\" /\\ r.peer_eph_pub /= \"none\"", Desc: "Interface contract with SessionMachine: a PairingRecord is well-formed iff it carries a non-default peer instance ID and ephemeral pubkey. Pairing proves it as a postcondition (PairingProducesValidRecord); SessionMachine assumes it over its initial state."},
 		},
 		AdvActions: []AdvAction{
 			{Name: "MitM_hello", Desc: "intercept hello and substitute adversary ephemeral pubkey", Code: "      await Len(chan_initiator_acceptor) > 0 /\\ Head(chan_initiator_acceptor).type = MSG_hello;\n      adv_saved_initiator_eph := Head(chan_initiator_acceptor).eph_pub;\n      adversary_keys := adversary_keys \\union {adv_eph_pub};\n      chan_initiator_acceptor := <<[type |-> MSG_hello, eph_pub |-> adv_eph_pub, identity_pub |-> Head(chan_initiator_acceptor).identity_pub, instance_id |-> Head(chan_initiator_acceptor).instance_id]>> \\o Tail(chan_initiator_acceptor);"},
@@ -147,6 +148,7 @@ func PairingCeremony() *Protocol {
 			{Name: "MitMPreventsPairing", Kind: Invariant, Expr: "(adv_eph_pub \\in adversary_keys /\\ acceptor_code /= initiator_code) => (acceptor_state /= acceptor_Paired \\/ initiator_state /= initiator_Paired)", Desc: "When codes differ (MitM detected), at least one side never reaches Paired (because the human cancels)."},
 			{Name: "HonestPairingMatchesCodes", Kind: Invariant, Expr: "(adversary_keys = {} /\\ acceptor_code /= <<\"none\">> /\\ initiator_code /= <<\"none\">>) => acceptor_code = initiator_code", Desc: "Without adversary interference, both sides derive the same 6-digit code."},
 			{Name: "HonestPairingCompletes", Kind: Liveness, Expr: "acceptor_state = acceptor_Paired /\\ initiator_state = initiator_Paired", Desc: "Without adversary interference and with both users pressing y, both sides eventually reach Paired."},
+			{Name: "PairingProducesValidRecord", Kind: Invariant, Expr: "(acceptor_state = acceptor_Paired => ValidPairingRecord([peer_instance_id |-> acceptor_received_instance, peer_eph_pub |-> acceptor_received_eph_pub])) /\\ (initiator_state = initiator_Paired => ValidPairingRecord([peer_instance_id |-> initiator_received_instance, peer_eph_pub |-> initiator_received_eph_pub]))", Desc: "Postcondition: whenever either side reaches Paired, the implicit PairingRecord built from received-peer fields satisfies the ValidPairingRecord interface contract that SessionMachine assumes."},
 		},
 		ChannelBound: 3,
 		OneShot:      true,

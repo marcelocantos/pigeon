@@ -1081,6 +1081,10 @@ operators:
     params: a, b
     expr: 'IF a < b THEN a ELSE b'
     desc: minimum of two values
+  ValidPairingRecord:
+    params: r
+    expr: 'r.peer_instance_id /= "none" /\ r.peer_eph_pub /= "none"'
+    desc: 'Interface contract with PairingCeremony.tla: a PairingRecord is well-formed iff it carries a non-default peer instance ID and ephemeral pubkey. SessionMachine treats this as an axiom over its initial state — the session begins with a record that PairingCeremony.tla''s PairingProducesValidRecord postcondition has already established.'
 
 # Phases group states for hierarchical diagramming and TLA+ splitting.
 # The names here become PlantUML superstates. For TLA+ export, each
