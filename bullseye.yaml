@@ -1060,7 +1060,7 @@ targets:
     achieved: 2026-05-04
   T39.2:
     name: formal/SessionMachine.tla is the canonical transport-phase spec; pairing and session TLA+ specs join via a ValidPairingRecord(r) interface contract
-    status: identified
+    status: achieved
     value: 0.0
     cost: 0.0
     acceptance:
@@ -1072,6 +1072,7 @@ targets:
     context: 'docs/session-protocol.md is explicit that cross-machine reasoning must decompose into per-machine local proofs joined by an interface contract — a prior attempt to verify a composed pairing+session spec blew up TLC''s state space and did not finish. The bones are in place: the YAML phases (Pairing / Transport) already split the variables and the TLA+ generator already emits Session_Pairing.tla and Session_Transport.tla as separate phase exports. The remaining work is mostly naming, deleting the obsolete composed Session.tla, and adding the ValidPairingRecord(r) operator on both sides so the interface is explicit in the model rather than implicit in the YAML structure. This sub-target is independent of T39.1 (activation wire-format) and T39.3 (Go showcase test); they can converge in any order.'
     origin: manual
     discovered: 2026-05-02
+    achieved: 2026-05-06
   T39.3:
     name: Go-only end-to-end test drives the generated session executor through activation, relay-only path selection, health monitor, and graceful close
     status: identified
