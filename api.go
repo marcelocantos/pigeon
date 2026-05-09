@@ -93,18 +93,30 @@ type acceptResult struct {
 // yields one Session per accepted client. The Listener owns a single
 // QUIC connection to the relay across its lifetime; each Accept call
 // returns the next paired client without re-registering.
+// Register publishes a backend on the relay. Two modes, distinguished
+// by whether args.Pairing is supplied:
+//
+//   - **Activation mode** (args.Pairing != nil): each accepted client
+//     runs the auth_request / auth_ok handshake against args.Pairing
+//     to resolve its PairingRecord, and the returned Session carries
+//     an AEAD channel derived from that record. This is the normal
+//     post-pairing operating mode.
+//   - **Pairing mode** (args.Pairing == nil): activation is skipped.
+//     Each accepted client is handed back as a raw Session with no
+//     AEAD channel — pairing.go uses this mode to run the pairing
+//     ceremony, which has its own crypto and emits a fresh
+//     PairingRecord on completion. Per docs/DESIGN.md §3 L2, this is
+//     the no-PairingRecord entry condition that pairing-mode selects.
 func Register(ctx context.Context, args *RegisterArgs) (*Listener, string, error) {
 	if args == nil {
 		return nil, "", fmt.Errorf("pigeon.Register: args is nil")
 	}
-	if args.Identity == nil {
-		return nil, "", fmt.Errorf("pigeon.Register: Identity is required")
-	}
-	if args.Pairing == nil {
-		return nil, "", fmt.Errorf("pigeon.Register: Pairing callback is required")
-	}
 	if args.Relay == "" {
 		return nil, "", fmt.Errorf("pigeon.Register: Relay is required")
+	}
+	pairingMode := args.Pairing == nil
+	if !pairingMode && args.Identity == nil {
+		return nil, "", fmt.Errorf("pigeon.Register: Identity is required in activation mode (Pairing supplied)")
 	}
 	if err := validateDatagrams(args.Datagrams); err != nil {
 		return nil, "", fmt.Errorf("pigeon.Register: %w", err)
@@ -115,9 +127,15 @@ func Register(ctx context.Context, args *RegisterArgs) (*Listener, string, error
 		tlsCfg = &tls.Config{InsecureSkipVerify: true}
 	}
 	cfg := Config{
-		TLS:        tlsCfg,
-		Token:      args.Token,
-		InstanceID: args.Identity.InstanceID(),
+		TLS:   tlsCfg,
+		Token: args.Token,
+	}
+	// In activation mode, the backend's stable instance ID identifies
+	// the long-lived listener. In pairing mode, each ceremony wants a
+	// fresh random ID that goes into the QR token — let the relay
+	// assign one.
+	if !pairingMode {
+		cfg.InstanceID = args.Identity.InstanceID()
 	}
 	tr, err := dialAcceptor(ctx, args.Relay, cfg)
 	if err != nil {
@@ -205,38 +223,51 @@ func (l *Listener) acceptLoop() {
 			_ = stream.Close()
 			continue
 		}
-		// New client: primary stream — run connect-hello/ack inline.
-		go l.acceptPrimary(tag, stream)
+		// New client: primary stream — run L2 handshake (or skip in
+		// pairing-mode) and register the Session synchronously, so any
+		// sub-stream the client opens immediately afterward (e.g. the
+		// pairing ceremony's "ceremony" stream) finds the tag → Session
+		// mapping in place when acceptLoop dispatches it.
+		l.acceptPrimary(tag, stream)
 	}
 }
 
-// acceptPrimary runs the auth_request / auth_ok activation handshake
-// on a newly arrived client primary stream and registers the resulting
-// Session. Activation is driven through a per-client SessionMachine
-// (see runBackendActivation) — the spec models the auth flow as
-// Paired → AuthCheck → SessionActive, with the device_known guard
-// bound from the result of args.Pairing(deviceID).
+// acceptPrimary runs the L2 handshake on a newly arrived client
+// primary stream and registers the resulting Session. In activation
+// mode (l.args.Pairing != nil) this drives the spec's Paired →
+// AuthCheck → SessionActive flow against args.Pairing's lookup; in
+// pairing mode (l.args.Pairing == nil) the handshake is skipped and
+// the raw stream is wrapped as a no-AEAD Session for the pairing
+// ceremony to use directly. See docs/DESIGN.md §3 L2.
 func (l *Listener) acceptPrimary(tag uint32, stream io.ReadWriteCloser) {
-	rawMachine, deviceID, rec, err := runBackendActivation(stream, l.args.Pairing)
-	if err != nil {
-		slog.Warn("listener: activation", "err", err)
-		_ = stream.Close()
-		if deviceID != "" {
-			l.accepted <- acceptResult{err: err}
+	var (
+		machine  *sessionMachine
+		channel  *crypto.Channel
+		deviceID string
+	)
+	if l.args.Pairing != nil {
+		rawMachine, did, rec, err := runBackendActivation(stream, l.args.Pairing)
+		if err != nil {
+			slog.Warn("listener: activation", "err", err)
+			_ = stream.Close()
+			if did != "" {
+				l.accepted <- acceptResult{err: err}
+			}
+			return
 		}
-		return
-	}
-	machine, err := newBackendSessionMachine(rawMachine)
-	if err != nil {
-		_ = stream.Close()
-		l.accepted <- acceptResult{err: fmt.Errorf("post-activation transition: %w", err)}
-		return
-	}
-	channel, err := rec.DeriveChannel([]byte("backend->client"), []byte("client->backend"))
-	if err != nil {
-		_ = stream.Close()
-		l.accepted <- acceptResult{err: fmt.Errorf("derive session channel: %w", err)}
-		return
+		machine, err = newBackendSessionMachine(rawMachine)
+		if err != nil {
+			_ = stream.Close()
+			l.accepted <- acceptResult{err: fmt.Errorf("post-activation transition: %w", err)}
+			return
+		}
+		channel, err = rec.DeriveChannel([]byte("backend->client"), []byte("client->backend"))
+		if err != nil {
+			_ = stream.Close()
+			l.accepted <- acceptResult{err: fmt.Errorf("derive session channel: %w", err)}
+			return
+		}
+		deviceID = did
 	}
 
 	sess := newSession(l.ctx, l.transport, channel, deviceID, tag, l.args.Datagrams, true)
@@ -247,11 +278,17 @@ func (l *Listener) acceptPrimary(tag uint32, stream io.ReadWriteCloser) {
 	l.sessions[tag] = sess
 	l.mu.Unlock()
 
-	select {
-	case l.accepted <- acceptResult{session: sess}:
-	case <-l.ctx.Done():
-		_ = sess.Close()
-	}
+	// Hand the Session off to whichever goroutine is in Accept.
+	// Run async so acceptLoop can continue processing further sub-
+	// streams (the ceremony's "ceremony" stream lands here too) while
+	// the application is still arranging its Accept call.
+	go func() {
+		select {
+		case l.accepted <- acceptResult{session: sess}:
+		case <-l.ctx.Done():
+			_ = sess.Close()
+		}
+	}()
 }
 
 // datagramLoop reads incoming datagrams from the relay, parses the
@@ -290,9 +327,18 @@ func (l *Listener) removeSession(tag uint32) {
 }
 
 // Connect dials the backend identified by args.InstanceID and returns a
-// Session ready for OpenStream / Datagram. The client side runs a single
-// Session over a fresh QUIC connection to the relay; sub-streams open on
-// that same QUIC connection.
+// Session ready for OpenStream / Datagram. Two modes, distinguished by
+// whether args.Record is supplied:
+//
+//   - **Activation mode** (args.Record != nil): the client identifies
+//     itself to the backend via the auth_request / auth_ok exchange
+//     and the resulting Session carries an AEAD channel derived from
+//     the supplied PairingRecord.
+//   - **Pairing mode** (args.Record == nil, args.Identity == nil):
+//     activation is skipped and the Session is returned with no AEAD
+//     channel — the pairing ceremony uses this mode to obtain a raw
+//     bidirectional bytes pipe to the acceptor and runs its own
+//     crypto over it. Per docs/DESIGN.md §3 L2.
 func Connect(ctx context.Context, args *ConnectArgs) (*Session, error) {
 	if args == nil {
 		return nil, fmt.Errorf("pigeon.Connect: args is nil")
@@ -300,14 +346,12 @@ func Connect(ctx context.Context, args *ConnectArgs) (*Session, error) {
 	if args.InstanceID == "" {
 		return nil, fmt.Errorf("pigeon.Connect: InstanceID is required")
 	}
-	if args.Record == nil {
-		return nil, fmt.Errorf("pigeon.Connect: Record is required")
-	}
-	if args.Identity == nil {
-		return nil, fmt.Errorf("pigeon.Connect: Identity is required")
-	}
 	if args.Relay == "" {
 		return nil, fmt.Errorf("pigeon.Connect: Relay is required")
+	}
+	pairingMode := args.Record == nil
+	if !pairingMode && args.Identity == nil {
+		return nil, fmt.Errorf("pigeon.Connect: Identity is required in activation mode (Record supplied)")
 	}
 	if err := validateDatagrams(args.Datagrams); err != nil {
 		return nil, fmt.Errorf("pigeon.Connect: %w", err)
@@ -330,21 +374,27 @@ func Connect(ctx context.Context, args *ConnectArgs) (*Session, error) {
 		_ = tr.Close()
 		return nil, fmt.Errorf("write primary header: %w", err)
 	}
-	rawMachine, err := runClientActivation(tr.primary, args.Identity.InstanceID())
-	if err != nil {
-		_ = tr.Close()
-		return nil, err
-	}
-	machine, err := newClientSessionMachine(rawMachine)
-	if err != nil {
-		_ = tr.Close()
-		return nil, fmt.Errorf("post-activation transition: %w", err)
-	}
 
-	channel, err := args.Record.DeriveChannel([]byte("client->backend"), []byte("backend->client"))
-	if err != nil {
-		_ = tr.Close()
-		return nil, fmt.Errorf("derive session channel: %w", err)
+	var (
+		machine *sessionMachine
+		channel *crypto.Channel
+	)
+	if !pairingMode {
+		rawMachine, err := runClientActivation(tr.primary, args.Identity.InstanceID())
+		if err != nil {
+			_ = tr.Close()
+			return nil, err
+		}
+		machine, err = newClientSessionMachine(rawMachine)
+		if err != nil {
+			_ = tr.Close()
+			return nil, fmt.Errorf("post-activation transition: %w", err)
+		}
+		channel, err = args.Record.DeriveChannel([]byte("client->backend"), []byte("backend->client"))
+		if err != nil {
+			_ = tr.Close()
+			return nil, fmt.Errorf("derive session channel: %w", err)
+		}
 	}
 
 	sCtx, cancel := context.WithCancel(ctx)
@@ -553,6 +603,12 @@ func (s *Session) Datagram(name string) *Datagram {
 // channel form below preserves correct demux behaviour without
 // pretending the machine drives it.
 func (s *Session) deliverIncomingDatagram(payload []byte) {
+	if s.channel == nil {
+		// Pairing-mode session: datagrams aren't expected. Drop
+		// rather than NPE-ing on Decrypt.
+		slog.Debug("session: datagram on pairing-mode session, dropping", "peer", s.peerID, "len", len(payload))
+		return
+	}
 	plain, err := s.channel.Decrypt(payload)
 	if err != nil {
 		slog.Debug("session: datagram decrypt", "peer", s.peerID, "err", err)
@@ -657,15 +713,24 @@ type Stream struct {
 	sendMu sync.Mutex
 }
 
-// Send writes one message on the stream.
+// Send writes one message on the stream. In activation-mode sessions
+// (s.channel != nil) the message is AEAD-encrypted before going on the
+// wire; in pairing-mode sessions (s.channel == nil) the message is sent
+// as plaintext — pairing's ceremony does its own crypto and the Session
+// is just a bytes pipe. See docs/DESIGN.md §3 L2 for why pairing-mode
+// has no AEAD context.
 func (s *Stream) Send(msg []byte) error {
-	ct := s.channel.Encrypt(msg)
+	payload := msg
+	if s.channel != nil {
+		payload = s.channel.Encrypt(msg)
+	}
 	s.sendMu.Lock()
 	defer s.sendMu.Unlock()
-	return writeMessage(s.rwc, ct)
+	return writeMessage(s.rwc, payload)
 }
 
-// Recv reads the next message from the stream.
+// Recv reads the next message from the stream. Pairing-mode mirror of
+// Send: bytes are returned plaintext when s.channel is nil.
 func (s *Stream) Recv(ctx context.Context) ([]byte, error) {
 	type result struct {
 		data []byte
@@ -676,6 +741,10 @@ func (s *Stream) Recv(ctx context.Context) ([]byte, error) {
 		raw, err := readMessage(s.rwc)
 		if err != nil {
 			ch <- result{err: err}
+			return
+		}
+		if s.channel == nil {
+			ch <- result{data: raw}
 			return
 		}
 		plain, err := s.channel.Decrypt(raw)

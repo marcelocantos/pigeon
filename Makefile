@@ -1,7 +1,7 @@
 # Copyright 2026 Marcelo Cantos
 # SPDX-License-Identifier: Apache-2.0
 
-JDK21 ?= /opt/homebrew/Cellar/openjdk@21/21.0.10/libexec/openjdk.jdk/Contents/Home
+JDK21 ?= /opt/homebrew/Cellar/openjdk@21/21.0.11/libexec/openjdk.jdk/Contents/Home
 
 .PHONY: all build test test-go test-swift test-kotlin test-web \
         e2e e2e-go e2e-swift e2e-kotlin \

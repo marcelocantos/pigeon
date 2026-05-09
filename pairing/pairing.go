@@ -103,34 +103,44 @@ func (p *Pairer) Close() error {
 // Accept blocks until the next initiator arrives. The returned Ceremony's
 // Token must be displayed to the user (typically as a QR code) and conveyed
 // out-of-band to the initiator.
+//
+// Each Accept call registers a fresh listener with the relay so the QR
+// token's SessionID is unique per ceremony. The acceptor then waits on
+// listener.Accept for the matching initiator's Connect to land. This runs
+// in pigeon.Register's pairing-mode (no Pairing callback supplied) per
+// docs/DESIGN.md §3 L2 — the resulting Session is a raw bytes pipe with
+// no AEAD context, since the ceremony establishes its own crypto.
 func (p *Pairer) Accept(ctx context.Context) (*Ceremony, error) {
 	eph, err := ecdh.X25519().GenerateKey(rand.Reader)
 	if err != nil {
 		return nil, fmt.Errorf("ephemeral keygen: %w", err)
 	}
 
-	cfg := pigeon.Config{TLS: &tls.Config{InsecureSkipVerify: true}}
-	conn, err := pigeon.DialRelayAcceptor(ctx, p.args.Relay, cfg)
+	listener, instanceID, err := pigeon.Register(ctx, &pigeon.RegisterArgs{
+		Relay: p.args.Relay,
+		TLS:   &tls.Config{InsecureSkipVerify: true},
+	})
 	if err != nil {
 		return nil, fmt.Errorf("relay register: %w", err)
 	}
 
 	payload := tokenPayload{
 		Relay:            p.args.Relay,
-		SessionID:        conn.InstanceID(),
+		SessionID:        instanceID,
 		AcceptorEphPub:   eph.PublicKey().Bytes(),
 		AcceptorIdPub:    p.args.Identity.PublicKey(),
 		AcceptorInstance: p.args.Identity.InstanceID(),
 	}
 	raw, err := json.Marshal(payload)
 	if err != nil {
-		conn.Close()
+		_ = listener.Close()
 		return nil, fmt.Errorf("marshal token: %w", err)
 	}
 	token := base64.RawURLEncoding.EncodeToString(raw)
 
-	cer := newCeremony(token, conn)
-	go runAcceptor(p.ctx, conn, eph, p.args.Identity, p.args.Relay, cer)
+	cer := newCeremony(token, nil)
+	cer.listener = listener
+	go runAcceptor(p.ctx, listener, eph, p.args.Identity, p.args.Relay, cer)
 	return cer, nil
 }
 
@@ -161,14 +171,17 @@ func Initiate(ctx context.Context, args *InitiateArgs) (*Ceremony, error) {
 		return nil, fmt.Errorf("ephemeral keygen: %w", err)
 	}
 
-	cfg := pigeon.Config{TLS: &tls.Config{InsecureSkipVerify: true}}
-	conn, err := pigeon.DialRelayInitiator(ctx, payload.Relay, payload.SessionID, cfg)
+	sess, err := pigeon.Connect(ctx, &pigeon.ConnectArgs{
+		InstanceID: payload.SessionID,
+		Relay:      payload.Relay,
+		TLS:        &tls.Config{InsecureSkipVerify: true},
+	})
 	if err != nil {
 		return nil, fmt.Errorf("relay connect: %w", err)
 	}
 
-	cer := newCeremony("", conn)
-	go runInitiator(context.Background(), conn, eph, args.Identity, &payload, cer)
+	cer := newCeremony("", sess)
+	go runInitiator(context.Background(), sess, eph, args.Identity, &payload, cer)
 	return cer, nil
 }
 
@@ -206,7 +219,8 @@ type Ceremony struct {
 
 	mu        sync.Mutex
 	closed    bool
-	conn      *pigeon.Conn
+	sess      *pigeon.Session  // initiator side; nil on acceptor pre-Accept
+	listener  *pigeon.Listener // acceptor side; nil on initiator
 	codeReady chan struct{}
 	codeOnce  sync.Once
 	code      string
@@ -223,10 +237,10 @@ type ceremonyResult struct {
 	err error
 }
 
-func newCeremony(token string, conn *pigeon.Conn) *Ceremony {
+func newCeremony(token string, sess *pigeon.Session) *Ceremony {
 	return &Ceremony{
 		Token:     token,
-		conn:      conn,
+		sess:      sess,
 		codeReady: make(chan struct{}),
 		confirmCh: make(chan struct{}),
 		result:    make(chan ceremonyResult, 1),
@@ -277,10 +291,14 @@ func (c *Ceremony) Close() error {
 		return nil
 	}
 	c.closed = true
-	conn := c.conn
+	sess := c.sess
+	listener := c.listener
 	c.mu.Unlock()
-	if conn != nil {
-		_ = conn.Close()
+	if sess != nil {
+		_ = sess.Close()
+	}
+	if listener != nil {
+		_ = listener.Close()
 	}
 	return nil
 }
@@ -303,12 +321,37 @@ func (c *Ceremony) deliverResult(rec *crypto.PairingRecord, err error) {
 	}
 }
 
+// ceremonyStreamName is the named pigeon Stream the pairing ceremony
+// rides on. Both peers AcceptStream / OpenStream this name to obtain
+// the bidirectional bytes pipe the JSON wire exchange flows over.
+const ceremonyStreamName = "ceremony"
+
 // runAcceptor drives the acceptor side of the ceremony. State
 // transitions are dispatched through the protogen-generated executor
 // (NewPairingCeremonyProtocolAcceptorMachine), so the Go code path is
 // provably equivalent to the Swift / Kotlin / TS / C / TLA+ outputs
 // generated from the same protocol/pairing.yaml.
-func runAcceptor(ctx context.Context, conn *pigeon.Conn, eph *ecdh.PrivateKey, identity crypto.Identity, relayURL string, cer *Ceremony) {
+func runAcceptor(ctx context.Context, listener *pigeon.Listener, eph *ecdh.PrivateKey, identity crypto.Identity, relayURL string, cer *Ceremony) {
+	sess, err := listener.Accept(ctx)
+	if err != nil {
+		cer.deliverResult(nil, fmt.Errorf("accept ceremony client: %w", err))
+		return
+	}
+	cer.mu.Lock()
+	cer.sess = sess
+	cer.mu.Unlock()
+	stream, err := sess.AcceptStream(ctx, ceremonyStreamName)
+	if err != nil {
+		cer.deliverResult(nil, fmt.Errorf("accept ceremony stream: %w", err))
+		return
+	}
+	defer stream.Close()
+	runAcceptorOnStream(ctx, stream, eph, identity, relayURL, cer)
+}
+
+// runAcceptorOnStream is the original ceremony driver, parameterised
+// over a *pigeon.Stream rather than the legacy *pigeon.Conn primary.
+func runAcceptorOnStream(ctx context.Context, stream *pigeon.Stream, eph *ecdh.PrivateKey, identity crypto.Identity, relayURL string, cer *Ceremony) {
 	m := NewPairingCeremonyProtocolAcceptorMachine()
 
 	// Setup-phase actions are no-ops: the orchestration above already
@@ -335,7 +378,7 @@ func runAcceptor(ctx context.Context, conn *pigeon.Conn, eph *ecdh.PrivateKey, i
 	}
 
 	// Read hello.
-	raw, err := conn.Recv(ctx)
+	raw, err := stream.Recv(ctx)
 	if err != nil {
 		cer.deliverResult(nil, fmt.Errorf("recv hello: %w", err))
 		return
@@ -368,7 +411,7 @@ func runAcceptor(ctx context.Context, conn *pigeon.Conn, eph *ecdh.PrivateKey, i
 		InstanceID:  identity.InstanceID(),
 	}
 	welcomeBytes, _ := json.Marshal(welcome)
-	if err := conn.Send(ctx, welcomeBytes); err != nil {
+	if err := stream.Send(welcomeBytes); err != nil {
 		cer.deliverResult(nil, fmt.Errorf("send welcome: %w", err))
 		return
 	}
@@ -381,7 +424,7 @@ func runAcceptor(ctx context.Context, conn *pigeon.Conn, eph *ecdh.PrivateKey, i
 	}
 	cer.signalCode(code, nil)
 
-	if err := exchangeConfirm(ctx, conn, cer, m, true); err != nil {
+	if err := exchangeConfirm(ctx, stream, cer, m, true); err != nil {
 		cer.deliverResult(nil, err)
 		return
 	}
@@ -396,7 +439,19 @@ func runAcceptor(ctx context.Context, conn *pigeon.Conn, eph *ecdh.PrivateKey, i
 }
 
 // runInitiator drives the initiator side via the generated executor.
-func runInitiator(ctx context.Context, conn *pigeon.Conn, eph *ecdh.PrivateKey, identity crypto.Identity, payload *tokenPayload, cer *Ceremony) {
+func runInitiator(ctx context.Context, sess *pigeon.Session, eph *ecdh.PrivateKey, identity crypto.Identity, payload *tokenPayload, cer *Ceremony) {
+	stream, err := sess.OpenStream(ctx, ceremonyStreamName)
+	if err != nil {
+		cer.deliverResult(nil, fmt.Errorf("open ceremony stream: %w", err))
+		return
+	}
+	defer stream.Close()
+	runInitiatorOnStream(ctx, stream, eph, identity, payload, cer)
+}
+
+// runInitiatorOnStream is the original ceremony driver, parameterised
+// over a *pigeon.Stream rather than the legacy *pigeon.Conn primary.
+func runInitiatorOnStream(ctx context.Context, stream *pigeon.Stream, eph *ecdh.PrivateKey, identity crypto.Identity, payload *tokenPayload, cer *Ceremony) {
 	m := NewPairingCeremonyProtocolInitiatorMachine()
 
 	m.Actions[PairingCeremonyProtocolActionDecodeToken] = func() error { return nil }
@@ -430,13 +485,13 @@ func runInitiator(ctx context.Context, conn *pigeon.Conn, eph *ecdh.PrivateKey, 
 		InstanceID:  identity.InstanceID(),
 	}
 	helloBytes, _ := json.Marshal(hello)
-	if err := conn.Send(ctx, helloBytes); err != nil {
+	if err := stream.Send(helloBytes); err != nil {
 		cer.deliverResult(nil, fmt.Errorf("send hello: %w", err))
 		return
 	}
 
 	// Read welcome.
-	raw, err := conn.Recv(ctx)
+	raw, err := stream.Recv(ctx)
 	if err != nil {
 		cer.deliverResult(nil, fmt.Errorf("recv welcome: %w", err))
 		return
@@ -468,7 +523,7 @@ func runInitiator(ctx context.Context, conn *pigeon.Conn, eph *ecdh.PrivateKey, 
 	}
 	cer.signalCode(code, nil)
 
-	if err := exchangeConfirm(ctx, conn, cer, m, false); err != nil {
+	if err := exchangeConfirm(ctx, stream, cer, m, false); err != nil {
 		cer.deliverResult(nil, err)
 		return
 	}
@@ -540,10 +595,10 @@ func initiatorRecv(m *PairingCeremonyProtocolInitiatorMachine, msg MsgType) erro
 // directions; the machine side uses two distinct MsgType constants
 // (ConfirmToInitiator and ConfirmToAcceptor) so the FSM can tell
 // where the message is going. The caller passes whichever applies.
-func exchangeConfirm(ctx context.Context, conn *pigeon.Conn, cer *Ceremony, machine any, acceptor bool) error {
+func exchangeConfirm(ctx context.Context, stream *pigeon.Stream, cer *Ceremony, machine any, acceptor bool) error {
 	peerCh := make(chan error, 1)
 	go func() {
-		raw, err := conn.Recv(ctx)
+		raw, err := stream.Recv(ctx)
 		if err != nil {
 			peerCh <- err
 			return
@@ -582,7 +637,7 @@ func exchangeConfirm(ctx context.Context, conn *pigeon.Conn, cer *Ceremony, mach
 
 	confirmMsg := pairingMessage{Kind: msgConfirm}
 	confirmBytes, _ := json.Marshal(confirmMsg)
-	if err := conn.Send(ctx, confirmBytes); err != nil {
+	if err := stream.Send(confirmBytes); err != nil {
 		return fmt.Errorf("send confirm: %w", err)
 	}
 
