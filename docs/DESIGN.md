@@ -111,99 +111,160 @@ from anything the relay knows.
 
 ## 3. Layered architecture
 
-Five layers, bottom-up. Each layer's contract is what the layer above
+Four layers, bottom-up. Each layer's contract is what the layer above
 sees; the implementation of the layer is free to change without breaking
-the contract.
+the contract. Each layer has a single sharp responsibility.
 
 ```
   ┌─────────────────────────────────────────────────────────────┐
-  │ 5. Application API     Listener / Session / Stream /        │
-  │                         Datagram (per-language idiomatic)   │
+  │ L4. Multiplexing        Named streams, per-channel          │
+  │                          datagrams, AEAD per-channel keys   │
+  │                          — the public application surface   │
   ├─────────────────────────────────────────────────────────────┤
-  │ 4. Path selection      ICE-like FSM: gather candidates,     │
-  │                         probe, nominate, swap, fall back    │
+  │ L3. Path management     Upgrade engine — owns N alternative │
+  │                          pipes (LAN-direct, STUN-reflexive, │
+  │                          ...) above an established session, │
+  │                          monitors, promotes, demotes        │
   ├─────────────────────────────────────────────────────────────┤
-  │ 3. Session             Logical, AEAD-bound, named-stream    │
-  │                         + named-datagram channel pair       │
+  │ L2. Session             Per-pipe handshake (auth_request /  │
+  │                          auth_ok) that turns a raw pipe     │
+  │                          into an AEAD-keyed session.        │
+  │                          Pairing is the no-PairingRecord    │
+  │                          mode of the same handshake — same  │
+  │                          layer, different mode              │
   ├─────────────────────────────────────────────────────────────┤
-  │ 2. Carrier             A single QUIC connection currently   │
-  │                         bearing the session — relay-tunnel  │
-  │                         or LAN-direct. Hot-swappable.       │
-  ├─────────────────────────────────────────────────────────────┤
-  │ 1. QUIC substrate      Real QUIC, host ↔ relay or peer.     │
-  │                         ngtcp2 / quic-go / NWConnection.    │
+  │ L1. Relay transport     Remote net.Listen / Accept over     │
+  │                          QUIC. Backend registers, calls     │
+  │                          listen N times; relay matches      │
+  │                          arriving clients to pending        │
+  │                          listens; per-client opaque QUIC    │
+  │                          pipe. The sole rendezvous —        │
+  │                          every session starts here          │
   └─────────────────────────────────────────────────────────────┘
 ```
 
-**Critical invariant.** A *session* is identified by its AEAD channel
-(derived from the PairingRecord). The carrier underneath is *not* part of
-the session's identity. The path-selection layer can swap carriers under
-the session — the session, its named streams, its datagram channel
-table, all carry over. Streams in flight require draining/replay logic at
-the swap moment (see §8); the cryptographic and naming state survives a
-swap by design.
+**Three architectural invariants pin this stack:**
 
-This is what makes "we found a better path" tractable. Without this
-invariant, every transport change would force re-pairing and lose
-in-flight state.
+1. **Identity invariant.** A *session* is identified by its AEAD context
+   (derived from the PairingRecord). The pipe carrying the session is
+   not part of the session's identity. L3 can swap pipes under the
+   session — the AEAD context, the named-stream demux table, the
+   datagram-channel table all carry over.
+2. **Single-rendezvous invariant.** L1 is the relay, full stop. Every
+   session starts on a relay-mediated pipe. There is no path-discovery
+   complexity at the entry layer; the relay is the universal
+   bootstrap. L3's job is *upgrade only* — promote relay → LAN /
+   STUN / ... — never "start on an alternative."
+3. **Permanent-baseline invariant.** The relay pipe stays open for the
+   lifetime of the session, even when L3 has promoted to a faster
+   alternative. Demote-to-relay is instant and free; control messages
+   (LAN re-advertise, candidate refresh, ...) ride on the relay pipe;
+   re-bootstrapping after NAT shuffles is not necessary. Do not describe
+   the relay as a "fallback that goes away when LAN is up."
 
-**Two state machines, not five.** The five-layer diagram above shows
+**Why these layers, not others:**
+
+- **L1 stays sharp by being relay-only.** Folding alternative providers
+  (LAN, STUN) into L1 hides huge complexity (NAT traversal, candidate
+  gathering, ICE-style negotiation) behind one verb. Keeping L1 = relay
+  means L1's contract is small and provable, and pairing — which has
+  no `PairingRecord` and therefore can't authenticate alternative
+  paths — uses identical L1 plumbing as a fully-paired session does.
+- **L2 stays a single layer with two modes** rather than splitting
+  pairing and activation into separate layers. Pairing is "L2 with no
+  `PairingRecord`, runs the pairing ceremony, produces a record."
+  Activation is "L2 with a `PairingRecord`, runs auth_request/auth_ok,
+  produces an AEAD context." Both consume an L1 pipe and emit an
+  L2-established session. One layer, two entry conditions.
+- **L3 is the upgrade engine, not a chooser.** L3 never decides "start
+  on LAN"; the session is already running on relay (L1+L2). L3
+  discovers candidate alternatives (the relay pipe is the signalling
+  channel for candidate exchange), validates them (the AEAD context
+  L2 established authenticates the LAN/STUN challenge handshakes),
+  promotes, monitors, demotes. The promotion direction is always
+  relay → alternative; demote direction is alternative → relay.
+- **L4 doesn't know which pipe is active.** It says "open a stream
+  named X" or "send a datagram on channel Y"; L3 routes onto whichever
+  pipe is currently nominated. A path swap is transparent to L4 by
+  design — application-visible swaps would force every consumer to
+  carry handling code for them.
+
+**Two state machines, not four.** The four-layer diagram above shows
 *responsibilities*, not state-machine count. There are exactly two
-state machines in pigeon, both expressed (or to be expressed) in
-protogen specs:
+state machines in pigeon, both protogen-generated:
 
-- **Pairing machine** — runs once per device pair; produces a
-  PairingRecord; lives in `protocol/pairing.yaml` today.
-- **Session machine** — runs once per logical connection; encompasses
-  activation, path selection (the §4 layer), and health monitoring as
-  sub-states of one FSM; lives in `docs/session-protocol.md` (designed)
-  and is the largest pending protogen YAML.
+- **Pairing machine** (`protocol/pairing.yaml` → `PairingCeremony.tla`)
+  — runs once per device pair; produces a `PairingRecord`.
+- **Session machine** (`protocol/session.yaml` Transport phase →
+  `SessionMachine.tla`) — runs once per logical session; encompasses
+  the L2 activation handshake, L3 path management, and health
+  monitoring as sub-states of one FSM.
 
-Path selection (layer 4 in the diagram) is a *sub-FSM of the session
-machine*, not a separate top-level state machine. Layering it
-separately in the diagram reflects the responsibility split — path
-selection operates on "which carrier"; session operates on "AEAD +
-naming" — but in execution they share one executor and one event loop.
+L3 path management is a *sub-FSM of the session machine*, not a
+separate top-level state machine. Layering it separately in the
+diagram reflects the responsibility split (L3 operates on "which pipe";
+L2 operates on "AEAD + naming") — but in execution they share one
+executor and one event loop. The two machines join through the
+`ValidPairingRecord(r)` interface contract: the pairing machine proves
+it as a postcondition; the session machine assumes it as an axiom over
+its initial state.
 
 **Per-layer notes:**
 
-1. **QUIC substrate** — owned by per-language QUIC libraries (`ngtcp2`
-   in C, `quic-go` in Go, `NWConnection`/`Network.framework` in Swift,
-   etc.). Provides streams, datagrams, connection migration,
-   congestion control. **Pigeon does not reimplement any of this.**
-   Native QUIC connection migration handles "my address changed" without
-   pigeon involvement (see §8 on what migration does *not* solve).
-2. **Carrier** — a single QUIC connection currently carrying the session.
-   In the relay-tunnelled case, the carrier is `host ↔ relay` and the
-   relay forwards opaquely to the peer. In the LAN-direct case, the
-   carrier is `host ↔ peer` directly. Either way, the carrier exposes
-   the same vtable to the layer above (open/accept/send/recv stream;
-   send/recv datagram). The C side defines this vtable explicitly
-   (`pigeon_transport` in `c/include/pigeon/pigeon.h`).
-3. **Session** — AEAD-bound logical entity. Owns the channel keys, the
-   clientTag (relay-side routing identifier), the named-stream demux
-   table, and the named-datagram channel table. Built on top of a
-   carrier; survives carrier swaps.
-4. **Path selection** — the FSM that decides which carrier the session
-   uses at any moment. Gathers candidates (relay always, LAN candidates
-   from local interfaces, future: STUN-reflexive). Probes connectivity.
-   Nominates a winning carrier. Swaps. Falls back to the relay
-   immediately on failure. Periodically re-probes for a better path.
-   The relay carrier is a *permanent baseline* — it stays up while the
-   session is active, never dropped, even when a better carrier is in
-   use. See `docs/session-protocol.md` for the full FSM (joined
-   pairing + transport state machine, TLA+-verified).
-5. **Application API** — the surface apps program against. Same
-   semantics across languages; idiomatic per-language surface
-   (single-threaded blocking in C, goroutines + channels in Go, async
-   in Swift / Kotlin).
+L1. **Relay transport.** Single bridging code path on the relay: an
+   incoming client connection is matched to one of the backend's
+   pending `listen` calls and the two QUIC connections are
+   byte-shovelled together. Each accepted client gets its own
+   end-to-end QUIC connection (backend has K outstanding listens →
+   K independent client pipes). No per-client tag prefix, no demux
+   layer, no shared QUIC connection between clients. Built on top of
+   the per-language QUIC library (`quic-go` in Go, `ngtcp2` in C,
+   `Network.framework` in Swift, etc.) — pigeon does not reimplement
+   QUIC. The wire greeting is one verb set: `register` (backend
+   announces its identity), `listen` (backend opens a slot), `connect`
+   (client requests bridging to a known backend identity).
 
-**Current state vs. target.** Layers 1, 2, 3, 5 are present in Go (full),
-Swift (most), Kotlin (most), C (post-T22 wire helpers + sessions; listener
-not yet shipped). Layer 4 (path selection) is fully designed in
-`docs/session-protocol.md` but not implemented in any SDK. The
-relay-permanent-baseline invariant is a binding design decision — do not
-describe the relay as a "fallback" that goes away when LAN is up.
+L2. **Session establishment.** Per-pipe handshake. Two modes
+   distinguished by whether the caller supplies a `PairingRecord`:
+   - *Activation mode* (record supplied): runs the auth_request /
+     auth_ok exchange specified in `protocol/session.yaml`; on success
+     hands the layer above an AEAD-keyed session.
+   - *Pairing mode* (no record): runs the pairing ceremony specified
+     in `protocol/pairing.yaml`; on success produces a fresh
+     `PairingRecord` for both sides to persist. The session layer
+     above either tears down (pairing-only ceremony) or proceeds to
+     activation on a subsequent pipe.
+
+L3. **Path management.** The upgrade engine. Owns the relay pipe
+   (always) plus zero-or-more alternative pipes (LAN candidates from
+   local interfaces, future STUN-reflexive candidates). Discovers
+   candidates by exchanging them with the peer over the existing
+   AEAD-keyed session. Validates candidates with a
+   challenge-response handshake authenticated by the L2 AEAD
+   context. Probes connectivity, nominates the best working
+   alternative, and routes L4's stream/datagram surface onto the
+   nominee. Monitors with periodic ping/pong; on degradation, demotes
+   to the next-best alternative or back to the relay; on relay-only
+   stability windows, periodically re-probes for upgrades.
+   See `docs/session-protocol.md` for the full FSM.
+
+L4. **Multiplexing.** The application surface — `OpenStream("name")`,
+   `AcceptStream("name")`, `Datagram("name")`. Named streams ride on
+   QUIC streams within the L3-active pipe; per-channel datagrams ride
+   on QUIC datagrams with channel-id framing. AEAD per-channel keys
+   are derived from the L2-established `PairingRecord`. Same
+   semantics across languages; idiomatic per-language surface.
+
+**Current state vs. target.** L1 currently has two parallel bridging
+modes (`bridgeClientPair` for 1:1, `bridgeClientMux` for N-clients
+with per-client tag prefix) and pigeon has two parallel session-
+shaped types (legacy `Conn` carrying L2+L3 plumbing; modern
+`Session` carrying L4 over a thinner L1 with no L3). The target above
+collapses both: single bridging mode at L1 (mux subsumed into the
+remote-Listen model), single session type carrying the L4 surface
+above an L3 layer that explicitly upgrades from relay. Migration is
+tracked under T39 sub-targets. Pairing's transition from
+`pigeon.Conn` to the modern API rides on L2's pairing-mode landing.
 
 ---
 
@@ -351,9 +412,12 @@ sockets, FFI).
   functions; no FSM. The wire byte layout (8-byte sequence + ciphertext
   + tag) is canonical and does belong in spec — but the *implementation*
   is per-language by necessity.
-- **Demux tables and queues.** Mapping clientTag → session, mapping
-  stream name → pending accept-stream waiter, datagram channel-id →
-  per-channel queue. Pure data structures; no protocol states.
+- **Demux tables and queues.** Stream name → pending accept-stream
+  waiter, datagram channel-id → per-channel queue. Pure data
+  structures; no protocol states. (Per-client demux tables on the
+  backend disappear in the §3 L1 model — each accepted client gets
+  its own end-to-end QUIC pipe rather than sharing one with N
+  siblings — but the per-stream-name and per-channel-id maps remain.)
 - **Length-prefix framing.** Read/write 4-byte big-endian length + body
   on stream messages. One function per direction; no protocol.
 - **Listener accept loop.** A blocking switch statement in C; a
@@ -439,10 +503,10 @@ task.
 
 ---
 
-## 8. Path optimisation
+## 8. Path optimisation (L3)
 
-**Path selection is a sub-FSM of the session machine** (see §3 and §4
-on the two-state-machine structure), not a third top-level machine.
+**Path management is L3** in the four-layer stack (§3) and is structured
+as a sub-FSM of the session machine, not a third top-level machine.
 This section describes its responsibilities and shape; the
 authoritative spec for the integrated session machine lives in
 `docs/session-protocol.md`.
@@ -452,52 +516,72 @@ changed; keep the connection going" (RFC 9000 §9). It does *not*
 handle "a better route exists between the same two peers." If client
 and backend both end up on the same LAN, QUIC alone has no concept of
 "bypass the relay" — the topology stays `client ↔ relay ↔ backend`.
-Optimising for the available path is pigeon's job.
+Discovering and switching to better paths is L3's job.
+
+**L3 is an upgrade engine, not a chooser** (see the single-rendezvous
+invariant in §3). The session is already running on the relay pipe by
+the time L3 enters the picture; L3 never decides "start on LAN
+instead." The only decisions L3 makes are *promote* (relay → faster
+alternative), *demote* (alternative → relay), and *re-probe* (look for
+better options on a bounded schedule).
 
 **The shape of the FSM** (ICE-like, simpler):
 
-- **Candidate gathering.** Each peer enumerates reachable addresses:
-  the relay (always available; permanent baseline), LAN host candidates
-  from local interfaces, future STUN-reflexive candidates (see
-  `docs/investigations/stun-hole-punching.md`).
+- **Candidate gathering.** Each peer enumerates reachable alternatives
+  to the already-established relay pipe: LAN host candidates from
+  local interfaces, future STUN-reflexive candidates (see
+  `docs/investigations/stun-hole-punching.md`). The relay itself is
+  not a "candidate" — it is the always-present baseline pipe and the
+  signalling channel for everything else.
 - **Candidate exchange.** Peers swap candidate lists over the existing
-  relay-mediated session, on a dedicated control stream.
-- **Connectivity checks.** Pair the candidates, probe each pair (a
-  challenge-response handshake on the candidate carrier).
-- **Nomination.** Pick the best working pair; the carrier swap moves
-  the session over to the new carrier.
-- **Fallback.** If the optimised carrier degrades (3 ping failures →
-  degraded → backoff schedule), drop back to the relay carrier
-  immediately. The relay stays up the entire time; fallback is
-  zero-cost.
-- **Periodic re-probe.** Try to re-optimise on a backoff-bounded
-  schedule when conditions change.
+  AEAD-keyed session (i.e. on the relay pipe), on a dedicated control
+  stream. The L2 AEAD context authenticates the exchange; an attacker
+  on the LAN can't substitute candidates without first compromising
+  the pairing.
+- **Connectivity checks.** Pair the candidates, probe each pair
+  (challenge-response handshake on the candidate pipe, MAC-verified
+  with the L2 AEAD context — same authentication source as candidate
+  exchange).
+- **Nomination.** Pick the best working pair; promote it. L4's stream
+  / datagram surface routes onto the nominee from this point.
+- **Demotion.** If the promoted pipe degrades (3 ping failures →
+  degraded → backoff schedule), L4 traffic returns to the relay
+  pipe immediately. The relay stays up the entire time; demotion is
+  zero-cost (per the permanent-baseline invariant in §3).
+- **Periodic re-probe.** When sitting on relay alone, periodically
+  re-attempt promotion on a backoff-bounded schedule as conditions
+  change.
 
-**Carrier-swap semantics.** Open question, not yet decided. Three
-candidate strategies:
+**Pipe-swap semantics.** Open question, not yet decided. Three
+candidate strategies for what happens to in-flight L4 streams when L3
+swaps the active pipe:
 
 - **(a) Drain-and-resume** — quiesce open streams, swap, reopen.
   Simplest; introduces latency at swap.
 - **(b) Replay window** — track unacked messages per stream, replay on
-  the new carrier post-swap. Cleaner UX; more bookkeeping.
+  the new pipe post-swap. Cleaner UX; more bookkeeping.
 - **(c) Application-visible** — surface the swap to the app, let it
   decide.
 
 (a) is the recommended v1 default; (b) is a credible v2; (c) is a
 foot-gun unless absolutely required by an application class. The
-decision point is deferred until path optimisation is implemented.
+decision point is deferred until L3 is implemented in code.
 
 **ICE-related future work.** STUN-reflexive candidate gathering for
 NAT traversal is a credible third tier between LAN-direct and relay.
 ~70-80% Wi-Fi coverage with simple STUN; mobile cellular with symmetric
 NAT requires full ICE+TURN. See `docs/investigations/stun-hole-punching.md`
-for the analysis.
+for the analysis. STUN candidates fit the same upgrade model as LAN —
+the relay session is the signalling channel; the AEAD context
+authenticates the connectivity check.
 
-**Current state vs. target.** Path optimisation is fully designed
-(`docs/session-protocol.md`) and not yet implemented in any SDK. The
-relay-tunnelled carrier is the only carrier shipping today; LAN-direct
-is the next major capability. STUN-reflexive is a third tier deferred
-behind LAN-direct.
+**Current state vs. target.** L3 is fully designed
+(`docs/session-protocol.md`) and not yet implemented as a clean layer
+in any SDK — the responsibilities are partially scattered across
+`executor.go`, `lan.go`, `path.go`, and `pathRouter` inside `Conn`.
+The relay-only path is the only one shipping today; LAN-direct is the
+next major capability and the natural first consumer of the cleanly-
+separated L3. STUN-reflexive is a third tier deferred behind LAN-direct.
 
 ---
 
@@ -505,20 +589,35 @@ behind LAN-direct.
 
 **Largest open architectural gaps:**
 
-1. **Wire interactions not yet protogen specs.** Stream-name binding
-   header, datagram channel-id framing, relay greeting variants,
-   session-open hello/ack, the joined session+transport FSM. Each is a
-   class of drift bugs eliminated by moving it into protogen.
-2. **Path optimisation unimplemented.** The carrier abstraction (§3)
-   and the FSM (§8) are designed; LAN-direct, candidate exchange,
-   probing, swap mechanics, and fallback all need first implementations.
-3. **Carrier-swap semantics undecided.** §8 lists the three candidate
-   strategies; v1 needs to commit to one before path optimisation
-   ships.
-4. **Cross-language API parity.** Swift / Kotlin / C are all behind Go
+1. **L1 has two parallel bridging modes today.** `bridgeClientPair`
+   (1:1, used by pairing) and `bridgeClientMux` (N-clients with
+   per-client tag prefix, used by sessions) are parallel
+   implementations of what should be a single `register / listen /
+   accept / connect` model with each accepted client getting its own
+   end-to-end QUIC pipe (§3 L1). Collapsing the two deletes the
+   `clientTag` concept across the entire codebase, the dual greeting
+   parser on the relay, and the legacy `pigeon.Conn` type. Tracked
+   under T39 sub-targets.
+2. **L2 doesn't yet support pairing-mode.** Today's `Register` /
+   `Connect` always force the auth_request / auth_ok handshake, which
+   needs a `PairingRecord`. Pairing therefore can't use the modern
+   API and stays on `pigeon.Conn`. Making L2 skippable when no
+   `PairingRecord` is supplied collapses the pairing-vs-session
+   distinction and is a precondition for `Conn` deletion.
+3. **L3 unimplemented as a clean layer.** The path-management
+   responsibilities (§3 L3, §8) are designed; LAN-direct, candidate
+   exchange, probing, swap mechanics, and demotion all need first
+   implementations on the cleanly-layered surface.
+4. **Pipe-swap semantics undecided.** §8 lists the three candidate
+   strategies; v1 needs to commit to one before L3 ships.
+5. **Wire interactions not yet protogen specs.** Stream-name binding
+   header, datagram channel-id framing, relay greeting variants. Each
+   is a class of drift bugs eliminated by moving it into protogen.
+   Tracked under T40.
+6. **Cross-language API parity.** Swift / Kotlin / C are all behind Go
    on at least one application-API edge (Swift's `setChannel`
    asymmetry is the documented case; others may exist).
-5. **Relay authentication mechanism.** Currently a bearer token in the
+7. **Relay authentication mechanism.** Currently a bearer token in the
    `register-mux` greeting. Should move to QUIC/TLS layer (mTLS or
    token exchange at handshake time) — application-greeting auth is
    the wrong layer. Captured in §2; the implementation change is
