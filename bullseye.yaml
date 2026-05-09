@@ -1156,8 +1156,46 @@ targets:
       The L1 layer's full collapse to the remote-Listen model from docs/DESIGN.md §3 L1 is a separate, larger epic tracked under T41 — T39.6 deletes the legacy pair-mode codepath but leaves the modern register-mux + clientTag plumbing in place.
     depends_on:
     - T39.5
+    - T39.6.1
+    - T39.6.2
     origin: manual
     discovered: 2026-05-06
+  T39.6.1:
+    name: cmd/pigeon-bridge and cmd/crypto-peer migrate to the modern API; the Swift / Kotlin / Web cross-language test consumers update to the modern wire
+    status: achieved
+    value: 0.0
+    cost: 0.0
+    acceptance:
+    - cmd/pigeon-bridge no longer imports pigeon.Conn / pigeon.DialRelayAcceptor / pigeon.DialRelayInitiator. The bridge uses pigeon.Register (pairing-mode) on the acceptor side and pigeon.Connect (pairing-mode) on the initiator side, with a single named stream (e.g. "bridge") carrying the stdin/stdout-pumped messages.
+    - cmd/crypto-peer no longer imports pigeon.Conn / pigeon.DialRelayAcceptor. crypto-peer uses pigeon.Register (pairing-mode) and exposes a named stream (e.g. "crypto") for the cross-language confirmation-code exchange.
+    - Tests/PigeonRelayE2ETests/RelayE2ETests.swift::testCrossLanguageConfirmationCode is updated to talk to crypto-peer via the modern wire — either by switching its raw-NWConnection / `connect:<id>` greeting code to the register-mux + clientTag + stream-name-header shape, or (cleaner) by routing through the high-level Sources/Pigeon/PigeonRelay.swift API.
+    - android/pigeon/src/test/kotlin/.../BridgeQuicTransport.kt and any consumers in android/.../PigeonConnE2ETest.kt update to the modern wire similarly. The cross-language confirmation-code agreement assertions still pass.
+    - web/src/test-helpers/GoRelayProcess.ts updates (or its now-dead BRIDGE_BIN / CRYPTO_PEER_BIN scaffolding is removed if it has no live web-side consumers).
+    - make bullseye stays green across all nine SDK steps. Cross-language confirmation-code interop coverage (audit-log.md §T27) is preserved — same property, new wire.
+    context: 'Discovered while scoping T39.6 (2026-05-10): cmd/pigeon-bridge and cmd/crypto-peer aren''t standalone tools, they''re cross-language test fixtures consumed by Swift''s testCrossLanguageConfirmationCode (raw NWConnection talking the legacy connect:<id> greeting), Kotlin''s BridgeQuicTransport (a QUIC-transport-substitute built on the bridge binary), and web/src/test-helpers/GoRelayProcess.ts (declares BRIDGE_BIN/CRYPTO_PEER_BIN; the spawnBridge function appears unused in web/src today). Both Go binaries currently consume pigeon.DialRelayAcceptor / DialRelayInitiator + the legacy bridgeClientPair 1:1 wire — and the Swift/Kotlin tests are tightly coupled to that wire shape (hand-written greeting + length-prefixed framing, not the high-level per-language relay API). Migrating just the Go binaries breaks the Swift/Kotlin tests; migrating the Swift/Kotlin tests to the modern wire is real per-language work. T39.6.1 carries that cross-language migration; T39.6.2 (Conn deletion proper) is then mechanical.'
+    depends_on:
+    - T39.5
+    origin: manual
+    discovered: 2026-05-10
+    achieved: 2026-05-10
+  T39.6.2:
+    name: 'Mechanical deletion: pigeon.Conn / channel.go Conn methods / pigeon.go Dial* helpers / lan.go Conn entanglement / bridgeClientPair / connect:&lt;id&gt; greeting parser'
+    status: identified
+    value: 0.0
+    cost: 0.0
+    acceptance:
+    - The Conn type and its constructor newConn are deleted from the pigeon package.
+    - channel.go's Conn-shaped OpenChannel / AcceptChannel / DatagramChannel methods are deleted (the modern Session.OpenStream / AcceptStream / Datagram surface is the replacement).
+    - pigeon.go's DialRelayAcceptor / DialRelayInitiator / registerQUIC / connectQUIC / registerWebTransport / connectWebTransport package-level helpers are deleted (or reduced to internal building blocks of the modern Listener / Connect path).
+    - lan.go's LANServer.registerConn / handleConn entanglement with Conn is deleted; the LAN-direct codepath migration is parked under T45 / a future L3 target rather than fixed under T39.6.2.
+    - The relay's bridgeClientPair function and the legacy `connect:<id>` greeting parser go away (no remaining consumers once T39.6.1 has migrated cmd/* and the cross-language tests). bridgeClientMux and the register-mux greeting remain untouched — the relay's L1 collapse to the remote-Listen model is T45 territory.
+    - make bullseye stays green; nothing in cmd/, examples/, pairing/, Tests/, android/, or web/ imports the deleted symbols.
+    - 'Net code change: hundreds of lines deleted with zero functional regression beyond what T39.6.1 already absorbed.'
+    context: The mechanical pass that retires Conn once T39.6.1 has unblocked it. Acceptance is the same as the original T39.6 minus the cross-language test fixture migration that T39.6.1 carries.
+    depends_on:
+    - T39.6.1
+    origin: manual
+    discovered: 2026-05-10
   T4:
     name: Investigate STUN/NAT hole-punching as a transport
     status: achieved
