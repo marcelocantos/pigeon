@@ -1122,20 +1122,21 @@ targets:
     achieved: 2026-05-06
   T39.5:
     name: pairing/pairing.go migrated off pigeon.Conn onto a 1:1 mode of the modern pigeon.Listener / pigeon.Connect API (or an equivalent ceremony-shaped helper)
-    status: identified
+    status: achieved
     value: 0.0
     cost: 0.0
     acceptance:
-    - pairing/pairing.go no longer imports or references pigeon.Conn, pigeon.DialRelayAcceptor, pigeon.DialRelayInitiator, or pigeon.Config (or those imports are removed in favour of the modern API).
-    - 'The pairing ceremony''s wire exchanges (hello / welcome / confirm_to_initiator / confirm_to_acceptor as defined in protocol/pairing.yaml) ride on a thin ceremony-mode entry point on the modern API. Concretely: pigeon.Register / pigeon.Connect grow a 1:1 ceremony bridge mode (e.g. via a BridgeMode field on RegisterArgs / ConnectArgs, or a sibling pigeon.RegisterCeremony / pigeon.ConnectCeremony helper) that produces a bidirectional message-framed connection without register-mux''s per-client clientTag demux.'
-    - cmd/pigeon-bridge and cmd/crypto-peer either migrate to the new ceremony helper or are deleted (with their build tags / //go:build ignore directives removed and any documentation references cleaned up).
-    - All pairing tests still pass (the protocol/pairing.yaml contract under TLC, plus pairing_test.go's Go-side ceremony driver), proving the wire format is unchanged.
+    - pigeon.RegisterArgs.Pairing and pigeon.ConnectArgs.Record become optional. When both are nil/absent, the modern Register / Connect path skips the auth_request / auth_ok activation handshake and hands back a Session whose `channel` is nil — a raw L1 pipe with no AEAD context. Per docs/DESIGN.md §3 this is L2 pairing-mode (the no-PairingRecord entry condition).
+    - pairing/pairing.go no longer imports pigeon.Conn, pigeon.DialRelayAcceptor, pigeon.DialRelayInitiator, or pigeon.Config. The ceremony driver uses pigeon.Register (acceptor) and pigeon.Connect (initiator) with no Pairing callback / no Record, and runs hello / welcome / confirm_to_initiator / confirm_to_acceptor over a single named ceremony stream on the resulting Session.
+    - All pairing tests pass unchanged (the pairing.yaml contract under TLC, plus pairing_test.go's Go-side ceremony driver). The wire format of the pairing ceremony itself does not change — only the transport plumbing under it.
     - make bullseye stays green.
+    - 'cmd/crypto-peer and cmd/pigeon-bridge cleanup is deferred to T39.6: they still consume the legacy pigeon.DialRelayAcceptor / Initiator entry points which remain in place until Conn deletion. T39.6''s acceptance already covers their migrate-or-delete decision.'
     context: pairing.go is the primary remaining consumer of Conn (~600 lines deeply entangled with Conn.OpenChannel / RecvMessage / etc.). Stripping Conn requires giving pairing a substitute transport. The relay already supports two greeting modes (connect:<id> for 1:1 bridge, register-mux for multi-client); the modern API only exposes register-mux today. Adding 1:1 to the modern API surface makes pairing migrate-able without losing the existing relay-side behaviour. Discovered alongside T39.4 while scoping the Conn strip.
     depends_on:
     - T39.4
     origin: manual
     discovered: 2026-05-06
+    achieved: 2026-05-10
   T39.6:
     name: pigeon.Conn and the legacy 1:1 transport surface (channel.go's Conn methods, pigeon.go's Dial* factories, lan.go's Conn entanglement) are deleted
     status: identified
@@ -1145,9 +1146,14 @@ targets:
     - The Conn type and its constructor newConn are deleted from the pigeon package.
     - channel.go's Conn-shaped OpenChannel / AcceptChannel / DatagramChannel methods are deleted (the modern Session.OpenStream / AcceptStream / Datagram surface replaces them).
     - pigeon.go's DialRelayAcceptor / DialRelayInitiator / registerQUIC / connectQUIC / registerWebTransport / connectWebTransport package-level helpers are deleted (or reduced to internal building blocks of the modern Listener/Connect path).
-    - lan.go's LANServer.registerConn / handleConn entanglement with Conn is deleted; the LAN path lives entirely on the new Session/executor surface (or is itself parked behind a follow-up target if the LAN port is non-trivial).
-    - make bullseye stays green; nothing in cmd/, examples/, or pairing/ imports the deleted symbols.
-    context: Final removal of the parallel transport abstraction. Strictly downstream of T39.4 (executor on Session) and T39.5 (pairing migrated). Once Conn has no consumers, this sub-target deletes the type and its surrounding helpers in one mechanical pass. Net should be hundreds of lines deleted with zero functional change.
+    - lan.go's LANServer.registerConn / handleConn entanglement with Conn is deleted; the LAN-direct codepath is parked behind T39.x or a future L3 target rather than ported under T39.6.
+    - cmd/pigeon-bridge and cmd/crypto-peer delete or migrate per T39.5; this sub-target verifies that nothing in cmd/, examples/, or pairing/ imports the deleted symbols.
+    - The relay's bridgeClientPair function and the legacy `connect:<id>` greeting parser go away (no consumer once Conn is gone). bridgeClientMux and the register-mux greeting remain untouched — the relay's L1 collapse to the remote-Listen model is T41 territory, not T39.6.
+    - make bullseye stays green; net code change is hundreds of lines deleted with zero functional regression.
+    context: |-
+      Final removal of the parallel legacy transport abstraction. Strictly downstream of T39.5 (pairing migrated). Once Conn has no consumers, this sub-target deletes the type and its surrounding helpers in one mechanical pass. Net should be hundreds of lines deleted with zero functional change.
+
+      The L1 layer's full collapse to the remote-Listen model from docs/DESIGN.md §3 L1 is a separate, larger epic tracked under T41 — T39.6 deletes the legacy pair-mode codepath but leaves the modern register-mux + clientTag plumbing in place.
     depends_on:
     - T39.5
     origin: manual
@@ -1243,6 +1249,30 @@ targets:
     context: docs/cascading-relay.md is an architecture exploration (no code yet). Future topology extension - explicitly not on the critical path for any current target. Captured here so it is not lost.
     origin: docs/DESIGN.md section 9 (future explorations); docs/cascading-relay.md is the deep exploration
     discovered: 2026-05-02
+  T45:
+    name: 'Relay''s L1 collapses to the remote-Listen model: register / listen / accept / connect with per-client end-to-end QUIC pipes, replacing the register-mux greeting and the clientTag prefix scheme'
+    status: identified
+    value: 0.0
+    cost: 0.0
+    showcase: true
+    acceptance:
+    - 'The relay''s wire greeting set becomes one verb family: `register:<id>` (backend control), `listen:<id>` (backend opens a slot), `connect:<id>` (client requests a backend). The legacy `register-mux[:token[:id]]` greeting and the legacy bare `connect:<id>` 1:1 form (already removed under T39.6) are gone. New greetings are protogen-specified per docs/DESIGN.md §4.'
+    - Per accepted client, the backend has its own end-to-end QUIC connection to the relay (each `listen` is a parked backend-side QUIC connection that becomes a client-bridge once matched). The 4-byte clientTag prefix on streams and datagrams is deleted across the codebase — the per-client demux moves out of the application layer because each client has its own QUIC pipe.
+    - The `acceptPrimary` machinery (which exists today only because mux needed a way to bind a tag to a Session via a first message on the primary) is deleted. The activation handshake T39.1 landed runs on the per-client QUIC pipe directly, not on a tag-prefixed sub-stream.
+    - All SDKs (Go, Swift, Kotlin, C, TS) update to the new greetings. wire_vectors_test.go and the cross-language byte-vector tests in audit-log.md §T27 either pass against the new wire or are explicitly retired.
+    - Authentication of the backend identity (currently the bearer token on register-mux greeting, tracked separately under T42) is preserved on the new register greeting.
+    - make bullseye stays green; the relay loses the demux dispatcher / instance.clients map / dispatchStreams / dispatchDatagrams machinery; net delete is substantial.
+    context: |-
+      Captures docs/DESIGN.md §3 L1's "Current state vs. target" gap: the modern API still uses the multi-tenant register-mux + per-client tag prefix scheme, even though the four-layer model says L1 should be a remote-Listen primitive that gives each accepted client its own end-to-end QUIC pipe. Discovered during the T39 design discussion (2026-05-06); deferred to its own epic because it's wire-protocol-breaking across all SDKs and substantially larger than the per-leaf T39.x work.
+
+      Depends on: T39.6 (Conn deletion) so that there's only one bridging mode left to collapse from; T40 (one-shot byte-format protogen specs) so that the new greeting set can ride that infrastructure rather than hand-roll it again.
+
+      Knock-on cleanups when this lands: the per-client demux tables, the clientTag concept, the entire §5 "Demux tables and queues" line about per-client tag mapping, and the asymmetric primary-stream concept all evaporate from the codebase.
+    depends_on:
+    - T39.6
+    - T40
+    origin: manual
+    discovered: 2026-05-10
   T5:
     name: Investigate Bluetooth as proximity oracle
     status: achieved
