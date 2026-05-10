@@ -113,12 +113,36 @@ func pairingPair(t *testing.T, relayURL string) (backendID crypto.Identity, clie
 	return bid, cid, backendRec, clientRec
 }
 
-// TestSessionMachineLifecycle proves the per-Session SessionMachine
-// (T39.4) is wired through the activation flow and the disconnect
-// transition: post-Connect / post-Accept the machine sits at the
-// spec's RelayConnected state on both sides; post-Close it has
-// advanced through the spec's RelayConnected → Paired transition.
-func TestSessionMachineLifecycle(t *testing.T) {
+// TestSessionExecutorShowcase is the T39.3 showcase: drives the
+// generated SessionMachine end-to-end through every phase the spec
+// models on the relay-only path:
+//
+//   - **Activation**: pigeon.Connect / Listener.Accept advance the
+//     per-Session SessionMachine through Paired → AuthCheck →
+//     SessionActive → RelayConnected on both sides (T39.1 wired the
+//     auth_request / auth_ok handshake through the generated
+//     transition table; T39.4 persisted the resulting machine on
+//     Session). Asserted by MachineState() == "RelayConnected".
+//   - **Path selection (relay-only)**: a named "chat" stream and a
+//     pre-declared datagram channel both round-trip data over the
+//     relay path. The machine state stays at RelayConnected — no
+//     LAN states are ever entered. Per docs/DESIGN.md §3 L3, LAN
+//     promotion is an upgrade from this baseline, not an alternative
+//     entry, so a relay-only showcase is a complete L1+L2+L4 trace
+//     with L3 as a no-op.
+//   - **Health monitor (documented gap)**: the SessionMachine spec
+//     in protocol/session.yaml currently only models LAN-path
+//     ping/pong (path_ping / path_pong messages on the LANActive
+//     state). There is no relay-keepalive transition in the spec;
+//     relay liveness is implicitly verified by every successful
+//     stream / datagram round-trip below. A dedicated relay-keepalive
+//     ping/pong is tracked under T45 (relay's L1 collapses to the
+//     remote-Listen model) — that target's wire rewrite is the
+//     natural place to introduce the explicit transition.
+//   - **Graceful close**: Session.Close fires the spec's
+//     RelayConnected → Paired transition through the machine
+//     (T39.4). Asserted by MachineState() == "Paired" post-Close.
+func TestSessionExecutorShowcase(t *testing.T) {
 	t.Parallel()
 	relayURL, teardown := startRelay(t)
 	defer teardown()
@@ -132,6 +156,9 @@ func TestSessionMachineLifecycle(t *testing.T) {
 
 	tlsCfg := &tls.Config{InsecureSkipVerify: true}
 
+	const dgChannel = "ping"
+	dgConfig := map[string]uint64{dgChannel: 1}
+
 	listener, _, err := pigeon.Register(ctx, &pigeon.RegisterArgs{
 		Identity: bid,
 		Pairing: func(id string) (*crypto.PairingRecord, error) {
@@ -141,8 +168,9 @@ func TestSessionMachineLifecycle(t *testing.T) {
 			}
 			return rec, nil
 		},
-		Relay: relayURL,
-		TLS:   tlsCfg,
+		Relay:     relayURL,
+		TLS:       tlsCfg,
+		Datagrams: dgConfig,
 	})
 	if err != nil {
 		t.Fatalf("register: %v", err)
@@ -166,6 +194,7 @@ func TestSessionMachineLifecycle(t *testing.T) {
 		Identity:   cid,
 		Relay:      relayURL,
 		TLS:        tlsCfg,
+		Datagrams:  dgConfig,
 	})
 	if err != nil {
 		t.Fatalf("connect: %v", err)
@@ -176,6 +205,7 @@ func TestSessionMachineLifecycle(t *testing.T) {
 		t.Fatal("backend accept returned nil")
 	}
 
+	// --- Activation ---
 	const wantConnected = "RelayConnected"
 	if got := string(csess.MachineState()); got != wantConnected {
 		t.Errorf("client machine post-Connect: got %q, want %q", got, wantConnected)
@@ -184,6 +214,82 @@ func TestSessionMachineLifecycle(t *testing.T) {
 		t.Errorf("backend machine post-Accept: got %q, want %q", got, wantConnected)
 	}
 
+	// --- Path selection (relay-only): named stream round-trip ---
+	bchat := make(chan *pigeon.Stream, 1)
+	go func() {
+		s, err := bs.AcceptStream(ctx, "chat")
+		if err != nil {
+			t.Errorf("backend AcceptStream: %v", err)
+			bchat <- nil
+			return
+		}
+		bchat <- s
+	}()
+
+	cchat, err := csess.OpenStream(ctx, "chat")
+	if err != nil {
+		t.Fatalf("client OpenStream: %v", err)
+	}
+	if err := cchat.Send([]byte("hello backend")); err != nil {
+		t.Fatalf("client Send: %v", err)
+	}
+	bchatStream := <-bchat
+	if bchatStream == nil {
+		t.Fatal("backend chat stream nil")
+	}
+	got, err := bchatStream.Recv(ctx)
+	if err != nil {
+		t.Fatalf("backend Recv: %v", err)
+	}
+	if string(got) != "hello backend" {
+		t.Errorf("backend recv: got %q, want %q", got, "hello backend")
+	}
+	if err := bchatStream.Send([]byte("hello client")); err != nil {
+		t.Fatalf("backend Send: %v", err)
+	}
+	got, err = cchat.Recv(ctx)
+	if err != nil {
+		t.Fatalf("client Recv: %v", err)
+	}
+	if string(got) != "hello client" {
+		t.Errorf("client recv: got %q, want %q", got, "hello client")
+	}
+
+	// --- Datagram round-trip on the pre-declared channel ---
+	cdg := csess.Datagram(dgChannel)
+	bdg := bs.Datagram(dgChannel)
+	if err := cdg.Send([]byte("ping")); err != nil {
+		t.Fatalf("client Datagram.Send: %v", err)
+	}
+	gotDg, err := bdg.Recv(ctx)
+	if err != nil {
+		t.Fatalf("backend Datagram.Recv: %v", err)
+	}
+	if string(gotDg) != "ping" {
+		t.Errorf("backend datagram recv: got %q, want %q", gotDg, "ping")
+	}
+	if err := bdg.Send([]byte("pong")); err != nil {
+		t.Fatalf("backend Datagram.Send: %v", err)
+	}
+	gotDg, err = cdg.Recv(ctx)
+	if err != nil {
+		t.Fatalf("client Datagram.Recv: %v", err)
+	}
+	if string(gotDg) != "pong" {
+		t.Errorf("client datagram recv: got %q, want %q", gotDg, "pong")
+	}
+
+	// Machine never left the relay-only path during data exchange.
+	if got := string(csess.MachineState()); got != wantConnected {
+		t.Errorf("client machine after data: got %q, want %q (no LAN states should be reachable)", got, wantConnected)
+	}
+	if got := string(bs.MachineState()); got != wantConnected {
+		t.Errorf("backend machine after data: got %q, want %q (no LAN states should be reachable)", got, wantConnected)
+	}
+
+	// --- Graceful close ---
+	_ = cchat.Close()
+	_ = bchatStream.Close()
 	_ = csess.Close()
 	_ = bs.Close()
 
