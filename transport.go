@@ -15,11 +15,33 @@ import (
 	"github.com/quic-go/webtransport-go"
 )
 
-// transport is a lightweight wrapper around a QUIC-backed relay session
-// (raw QUIC or WebTransport) used by the Session API. Unlike *Conn, it
-// does NOT run the executor / state-machine layer — the Session above
-// owns all framing, AEAD, and channel demux directly on raw streams and
-// datagrams.
+// datagrammer provides unreliable datagram send/receive on the
+// underlying QUIC connection or WebTransport session.
+type datagrammer interface {
+	SendDatagram([]byte) error
+	ReceiveDatagram(context.Context) ([]byte, error)
+}
+
+// streamOpener can open additional bidirectional streams on the
+// underlying QUIC connection or WebTransport session.
+type streamOpener interface {
+	OpenStream() (io.ReadWriteCloser, error)
+}
+
+// streamAcceptor can accept incoming bidirectional streams.
+type streamAcceptor interface {
+	AcceptStream(context.Context) (io.ReadWriteCloser, error)
+}
+
+// deadliner can set read/write deadlines on a stream. The executor's
+// pong-timeout / cutover-drain machinery uses this to bound waits.
+type deadliner interface {
+	SetReadDeadline(time.Time) error
+	SetWriteDeadline(time.Time) error
+}
+
+// transport is a lightweight wrapper around a QUIC-backed relay
+// session (raw QUIC or WebTransport) used by the Session API.
 type transport struct {
 	primary    io.ReadWriteCloser
 	opener     streamOpener

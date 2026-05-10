@@ -52,7 +52,6 @@ type LANServer struct {
 // pendingLAN tracks a client that should connect via LAN.
 type pendingLAN struct {
 	challenge []byte
-	conn      *Conn                                            // the relay Conn to upgrade (nil when executor-driven)
 	onVerify  func(stream io.ReadWriteCloser, conn *quic.Conn) // executor callback
 }
 
@@ -129,29 +128,6 @@ func (s *LANServer) CertHash() []byte { return s.certHash }
 // Close stops the LAN server.
 func (s *LANServer) Close() error {
 	return s.listener.Close()
-}
-
-// registerConn records a Conn for LAN upgrade. When a client connects
-// directly and presents the correct challenge, the Conn's transport
-// is swapped. Returns the lanOffer to send to the client via relay.
-func (s *LANServer) registerConn(c *Conn) (lanOffer, error) {
-	challenge := make([]byte, 32)
-	if _, err := rand.Read(challenge); err != nil {
-		return lanOffer{}, err
-	}
-
-	s.mu.Lock()
-	s.conns[c.instanceID] = &pendingLAN{
-		challenge: challenge,
-		conn:      c,
-	}
-	s.mu.Unlock()
-
-	return lanOffer{
-		Addr:      s.addr,
-		Challenge: challenge,
-		CertHash:  s.certHash,
-	}, nil
 }
 
 // acceptLoop accepts incoming LAN connections and verifies them.
