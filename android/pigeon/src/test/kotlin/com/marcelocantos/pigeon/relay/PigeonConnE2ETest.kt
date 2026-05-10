@@ -497,6 +497,15 @@ class PigeonConnE2ETest {
                 val transport = KwikQuicTransport.connect("127.0.0.1", relay.quicPort)
                 val client = connect(transport, instanceID)
 
+                // Send the modern-wire empty-name primary stream header.
+                // Post-T39.6.1 crypto-peer registers via pigeon.Register
+                // (pairing-mode), which routes through bridgeClientMux on
+                // the relay and expects each new client stream's first
+                // message to be the stream-name binding header. Empty
+                // primary = `varint(0)` = a single 0x00 byte; client.send
+                // adds the length prefix.
+                client.send(byteArrayOf(0x00))
+
                 try {
                     // 1. Receive crypto-peer's 32-byte X25519 public key.
                     val peerPubKey = client.recv()

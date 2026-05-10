@@ -250,6 +250,15 @@ final class RelayE2ETests: XCTestCase {
         let client = try await connect(instanceID)
         defer { client.cancel() }
 
+        // Send the modern-wire empty-name primary stream header. Post-T39.6.1
+        // crypto-peer registers in pairing-mode against the modern Register
+        // / Connect path, which routes through bridgeClientMux on the relay
+        // and expects the first message on a new client stream to be the
+        // primary's stream-name binding header. The header for an unnamed
+        // primary is just `varint(0)` = a single 0x00 byte; writeMsg adds
+        // the 4-byte length prefix.
+        try await writeMsg(client, Data([0x00]))
+
         // Receive crypto-peer's 32-byte public key. The connection is
         // cancelled after 10 seconds to ensure readMsg cannot hang.
         let peerPublicKey = try await readMsgWithTimeout(client, 10)

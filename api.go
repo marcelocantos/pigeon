@@ -575,6 +575,21 @@ func (s *Session) deliverIncomingStream(name string, rwc io.ReadWriteCloser) {
 	s.streamMu.Unlock()
 }
 
+// Primary returns the primary stream wrapped as a *Stream. Meaningful
+// in pairing-mode where the activation handshake is skipped and the
+// primary is otherwise unused — pairing.go and the cross-language
+// crypto-peer / pigeon-bridge fixtures use this to talk on the
+// primary without opening a sub-stream (the modern client side might
+// not support multi-stream QUIC, e.g. Swift NWConnection).
+//
+// In activation-mode the primary is consumed by runBackendActivation /
+// runClientActivation on Session construction; reading from it after
+// activation will block. Primary() is safe to call regardless, but
+// only useful in pairing-mode.
+func (s *Session) Primary() *Stream {
+	return &Stream{name: "", rwc: s.primary, channel: s.channel}
+}
+
 // Datagram returns the pre-configured datagram channel by name.
 // Calling with an undeclared name is a programmer error.
 func (s *Session) Datagram(name string) *Datagram {

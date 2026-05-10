@@ -3,18 +3,26 @@
 
 // pigeon-bridge connects to a pigeon relay via QUIC and bridges messages
 // to/from stdin/stdout using length-prefixed framing. Intended for
-// driving E2E tests from languages without native QUIC support.
+// driving E2E tests from languages without native QUIC support
+// (currently the Kotlin BridgeQuicTransport in
+// android/pigeon/src/test/kotlin/.../BridgeQuicTransport.kt).
 //
-// Uses the lower-level pigeon.DialRelayAcceptor / DialRelayInitiator
-// helpers (legacy 1:1 bridge mode) rather than the multi-channel
-// pigeon.Register / pigeon.Connect path; pigeon-bridge predates the
-// multi-channel API and exists only to drive single-stream browser
-// E2E tests via stdin/stdout.
+// Wire shape (modern, post-T39.6.1): both sides use pigeon.Register /
+// pigeon.Connect in pairing-mode (no PairingRecord required), and the
+// bridged bytes ride on the resulting Session's primary stream
+// (Session.Primary()). The two pigeon-bridge instances on either end
+// of a relay pairing therefore talk via the modern register-mux +
+// per-client-tag wire under the hood; the stdin/stdout interface to
+// the consumer is unchanged.
 //
 // Usage:
 //
 //	pigeon-bridge register <relay-url> [token]
 //	pigeon-bridge connect <relay-url> <instance-id>
+//
+// In `register` mode, the relay-assigned instance ID is written to
+// stdout as a length-prefixed message. In `connect` mode no header is
+// written; bridging starts immediately.
 //
 // Once connected, reads length-prefixed messages from stdin and sends
 // them to the relay. Messages from the relay are written to stdout
@@ -27,7 +35,6 @@ import (
 	"encoding/binary"
 	"fmt"
 	"io"
-	"net/url"
 	"os"
 	"time"
 
@@ -51,31 +58,32 @@ func main() {
 		InsecureSkipVerify: os.Getenv("PIGEON_INSECURE") == "1",
 	}
 
-	// Extract port from URL to use as QUIC port, allowing the bridge
-	// to connect to relays on non-default ports (e.g. local test servers).
-	var quicPort string
-	if u, err := url.Parse(relayURL); err == nil {
-		if p := u.Port(); p != "" {
-			quicPort = p
-		}
-	}
-
-	var conn *pigeon.Conn
-	var err error
+	var sess *pigeon.Session
 
 	switch cmd {
 	case "register":
-		cfg := pigeon.Config{TLS: tlsConfig, QUICPort: quicPort}
-		if len(os.Args) > 3 && os.Args[3] != "" {
-			cfg.Token = os.Args[3]
+		var token string
+		if len(os.Args) > 3 {
+			token = os.Args[3]
 		}
-		conn, err = pigeon.DialRelayAcceptor(ctx, relayURL, cfg)
+		listener, instanceID, err := pigeon.Register(ctx, &pigeon.RegisterArgs{
+			Relay: relayURL,
+			TLS:   tlsConfig,
+			Token: token,
+		})
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "register: %v\n", err)
 			os.Exit(1)
 		}
-		// Write instance ID to stdout as a length-prefixed message.
-		writeStdout([]byte(conn.InstanceID()))
+		defer listener.Close()
+		// Write instance ID to stdout as a length-prefixed message so
+		// the parent process can dial the matching `connect` side.
+		writeStdout([]byte(instanceID))
+		sess, err = listener.Accept(ctx)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "accept: %v\n", err)
+			os.Exit(1)
+		}
 
 	case "connect":
 		if len(os.Args) < 4 {
@@ -83,7 +91,12 @@ func main() {
 			os.Exit(1)
 		}
 		instanceID := os.Args[3]
-		conn, err = pigeon.DialRelayInitiator(ctx, relayURL, instanceID, pigeon.Config{TLS: tlsConfig, QUICPort: quicPort})
+		var err error
+		sess, err = pigeon.Connect(ctx, &pigeon.ConnectArgs{
+			InstanceID: instanceID,
+			Relay:      relayURL,
+			TLS:        tlsConfig,
+		})
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "connect: %v\n", err)
 			os.Exit(1)
@@ -94,16 +107,16 @@ func main() {
 		os.Exit(1)
 	}
 
-	defer conn.CloseNow()
+	defer sess.Close()
+	stream := sess.Primary()
 
-	// Bridge: relay → stdout. Exit the process when the relay closes so
-	// the stdin loop doesn't hang indefinitely waiting for more input.
+	// Bridge: relay → stdout. Exit the process when the relay closes
+	// so the stdin loop doesn't hang indefinitely waiting for more input.
 	go func() {
 		for {
-			data, err := conn.Recv(ctx)
+			data, err := stream.Recv(ctx)
 			if err != nil {
 				os.Exit(0)
-				return
 			}
 			writeStdout(data)
 		}
@@ -115,7 +128,7 @@ func main() {
 		if err != nil {
 			return
 		}
-		if err := conn.Send(ctx, data); err != nil {
+		if err := stream.Send(data); err != nil {
 			return
 		}
 	}
