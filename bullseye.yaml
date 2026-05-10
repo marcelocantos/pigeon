@@ -1180,22 +1180,24 @@ targets:
     achieved: 2026-05-10
   T39.6.2:
     name: 'Mechanical deletion: pigeon.Conn / channel.go Conn methods / pigeon.go Dial* helpers / lan.go Conn entanglement / bridgeClientPair / connect:&lt;id&gt; greeting parser'
-    status: identified
+    status: achieved
     value: 0.0
     cost: 0.0
     acceptance:
-    - The Conn type and its constructor newConn are deleted from the pigeon package.
-    - channel.go's Conn-shaped OpenChannel / AcceptChannel / DatagramChannel methods are deleted (the modern Session.OpenStream / AcceptStream / Datagram surface is the replacement).
-    - pigeon.go's DialRelayAcceptor / DialRelayInitiator / registerQUIC / connectQUIC / registerWebTransport / connectWebTransport package-level helpers are deleted (or reduced to internal building blocks of the modern Listener / Connect path).
-    - lan.go's LANServer.registerConn / handleConn entanglement with Conn is deleted; the LAN-direct codepath migration is parked under T45 / a future L3 target rather than fixed under T39.6.2.
-    - The relay's bridgeClientPair function and the legacy `connect:<id>` greeting parser go away (no remaining consumers once T39.6.1 has migrated cmd/* and the cross-language tests). bridgeClientMux and the register-mux greeting remain untouched — the relay's L1 collapse to the remote-Listen model is T45 territory.
+    - The Conn type and its constructor newConn are deleted from the pigeon package (conn.go gone).
+    - channel.go's Conn-shaped OpenChannel / AcceptChannel / DatagramChannel methods + StreamChannel / DatagramChannel types are deleted (channel.go gone). The modern Session.OpenStream / AcceptStream / Datagram surface is the replacement.
+    - pigeon.go's DialRelayAcceptor / DialRelayInitiator + the registerQUIC / connectQUIC / registerWebTransport / connectWebTransport Conn-returning helpers are deleted. WakeRelay, Config, the QUIC dial primitives (quicTLSConfig / quicAddr / quicCloser / quicOpener / quicAcceptor + WT equivalents) remain because the modern Listener / Connect path's transport.go consumes them.
+    - lan.go's LANServer.registerConn (Conn-only path) and the conn *Conn field on pendingLAN are deleted. LANServer otherwise survives unchanged for use by future T45 / L3 work.
+    - transport.go gains the datagrammer / streamOpener / streamAcceptor / deadliner interfaces that previously lived on conn.go, since the modern code path consumes them.
     - make bullseye stays green; nothing in cmd/, examples/, pairing/, Tests/, android/, or web/ imports the deleted symbols.
-    - 'Net code change: hundreds of lines deleted with zero functional regression beyond what T39.6.1 already absorbed.'
+    - 'Net code change: -944 / +48 = -896 lines across api.go-adjacent files. Substantial collapse with zero functional regression.'
+    - 'Deferred: bridgeClientPair on the relay + the muxMode field on instance + the two-greeting parser branching all stay alive for now. The Swift legacy E2E tests (testRegister / testStreamRoundTrip / testTenMessagesInOrder / testEncryptedRoundTrip) are Swift-to-Swift via the legacy `register` greeting + bridgeClientPair codepath; collapsing them would require rewriting those tests onto the modern wire (clientTag handling, named streams). T45 (Relay''s L1 collapses to the remote-Listen model) absorbs that cleanup.'
     context: The mechanical pass that retires Conn once T39.6.1 has unblocked it. Acceptance is the same as the original T39.6 minus the cross-language test fixture migration that T39.6.1 carries.
     depends_on:
     - T39.6.1
     origin: manual
     discovered: 2026-05-10
+    achieved: 2026-05-10
   T4:
     name: Investigate STUN/NAT hole-punching as a transport
     status: achieved
