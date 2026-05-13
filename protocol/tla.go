@@ -153,6 +153,12 @@ func (p *Protocol) ExportTLAPhase(w io.Writer, phaseName string) error {
 	if phase != nil {
 		moduleName += "_" + sanitiseTLA(phase.Name)
 	}
+	// 🎯T39.2: the Session protocol's Transport phase exports as
+	// SessionMachine.tla — keep the TLA module name in sync with that
+	// filename so TLC's "filename matches module name" check passes.
+	if p.Name == "Session" && phase != nil && phase.Name == "Transport" {
+		moduleName = "SessionMachine"
+	}
 
 	fmt.Fprintf(&b, "---- MODULE %s ----\n", moduleName)
 	b.WriteString("\\* Auto-generated from protocol YAML. Do not edit.\n")

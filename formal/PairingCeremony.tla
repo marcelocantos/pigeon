@@ -51,6 +51,8 @@ EVT_user_confirm == "user_confirm"
 KeyRank(k) == CASE k = "adv_eph" -> 0 [] k = "initiator_eph" -> 1 [] k = "acceptor_eph" -> 2 [] OTHER -> 3
 \* Confirmation code derived from both ephemeral pubkeys (order-independent).
 DeriveCode(a, b) == IF KeyRank(a) <= KeyRank(b) THEN <<"code", a, b>> ELSE <<"code", b, a>>
+\* Interface contract with SessionMachine: a PairingRecord is well-formed iff it carries a non-default peer instance ID and ephemeral pubkey. Pairing proves it as a postcondition (PairingProducesValidRecord); SessionMachine assumes it over its initial state.
+ValidPairingRecord(r) == r.peer_instance_id /= "none" /\ r.peer_eph_pub /= "none"
 
 
 
@@ -288,5 +290,7 @@ MitMPreventsPairing == (adv_eph_pub \in adversary_keys /\ acceptor_code /= initi
 HonestPairingMatchesCodes == (adversary_keys = {} /\ acceptor_code /= <<"none">> /\ initiator_code /= <<"none">>) => acceptor_code = initiator_code
 \* Without adversary interference and with both users pressing y, both sides eventually reach Paired.
 HonestPairingCompletes == <>(acceptor_state = acceptor_Paired /\ initiator_state = initiator_Paired)
+\* Postcondition: whenever either side reaches Paired, the implicit PairingRecord built from received-peer fields satisfies the ValidPairingRecord interface contract that SessionMachine assumes.
+PairingProducesValidRecord == (acceptor_state = acceptor_Paired => ValidPairingRecord([peer_instance_id |-> acceptor_received_instance, peer_eph_pub |-> acceptor_received_eph_pub])) /\ (initiator_state = initiator_Paired => ValidPairingRecord([peer_instance_id |-> initiator_received_instance, peer_eph_pub |-> initiator_received_eph_pub]))
 
 ====

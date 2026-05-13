@@ -972,20 +972,57 @@ static int init_quic(pigeon_ngtcp2_transport *t)
     return 0;
 }
 
-// Send the pigeon handshake ("connect:<instance-id>") as a
-// length-prefixed message on the established bidi stream.
-static int send_pigeon_handshake(pigeon_ngtcp2_transport *t)
+// Build the pigeon handshake string for this transport's role.
+//
+// CONNECT:        "connect:<instance_id>"
+// REGISTER_MUX:   "register-mux"                      (no token, no id)
+//                 "register-mux::<instance_id>"       (id only)
+//                 "register-mux:<token>:"             (token only)
+//                 "register-mux:<token>:<instance_id>" (both)
+//
+// Returns the message length on success, or -1 on overflow.
+static int build_handshake(const pigeon_ngtcp2_transport *t,
+                           char *out, size_t out_len)
 {
-    // Build "connect:<instance-id>".
-    char msg[80];
-    int msg_len = snprintf(msg, sizeof(msg), "connect:%s", t->instance_id);
-    if (msg_len < 0 || (size_t)msg_len >= sizeof(msg)) {
-        set_error(t, "instance_id too long");
+    bool have_token = t->token[0] != '\0';
+    bool have_id    = t->instance_id[0] != '\0';
+    int n;
+
+    switch (t->role) {
+    case PIGEON_ROLE_CONNECT:
+        n = snprintf(out, out_len, "connect:%s", t->instance_id);
+        break;
+    case PIGEON_ROLE_REGISTER_MUX:
+        if (have_token && have_id) {
+            n = snprintf(out, out_len, "register-mux:%s:%s", t->token, t->instance_id);
+        } else if (have_id) {
+            n = snprintf(out, out_len, "register-mux::%s", t->instance_id);
+        } else if (have_token) {
+            n = snprintf(out, out_len, "register-mux:%s:", t->token);
+        } else {
+            n = snprintf(out, out_len, "register-mux");
+        }
+        break;
+    default:
         return -1;
     }
 
-    // Frame: 4-byte BE length + payload (matches Go writeMessage).
-    uint8_t frame[4 + 80];
+    if (n < 0 || (size_t)n >= out_len) return -1;
+    return n;
+}
+
+// Send the pigeon handshake as a length-prefixed message on the established
+// bidi stream. Frame: 4-byte BE length + payload (matches Go writeMessage).
+static int send_pigeon_handshake(pigeon_ngtcp2_transport *t)
+{
+    char msg[256];
+    int msg_len = build_handshake(t, msg, sizeof(msg));
+    if (msg_len < 0) {
+        set_error(t, "handshake too long");
+        return -1;
+    }
+
+    uint8_t frame[4 + sizeof(msg)];
     size_t payload_len = (size_t)msg_len;
     frame[0] = (uint8_t)(payload_len >> 24);
     frame[1] = (uint8_t)(payload_len >> 16);
@@ -1001,8 +1038,14 @@ static int send_pigeon_handshake(pigeon_ngtcp2_transport *t)
 int pigeon_ngtcp2_transport_init(pigeon_ngtcp2_transport *t,
                                   const pigeon_ngtcp2_config *cfg)
 {
-    if (!t || !cfg || !cfg->host || !cfg->port || !cfg->instance_id) {
+    if (!t || !cfg || !cfg->host || !cfg->port) {
         if (t) set_error(t, "invalid arguments");
+        return -1;
+    }
+    // CONNECT requires a peer instance_id; REGISTER_MUX accepts NULL/"".
+    if (cfg->role == PIGEON_ROLE_CONNECT &&
+        (!cfg->instance_id || cfg->instance_id[0] == '\0')) {
+        if (t) set_error(t, "instance_id required for CONNECT role");
         return -1;
     }
 
@@ -1011,10 +1054,16 @@ int pigeon_ngtcp2_transport_init(pigeon_ngtcp2_transport *t,
     t->stream_id  = -1;
 
     // Retain config strings.
-    snprintf(t->host,        sizeof(t->host),        "%s", cfg->host);
-    snprintf(t->port,        sizeof(t->port),        "%s", cfg->port);
-    snprintf(t->instance_id, sizeof(t->instance_id), "%s", cfg->instance_id);
+    snprintf(t->host, sizeof(t->host), "%s", cfg->host);
+    snprintf(t->port, sizeof(t->port), "%s", cfg->port);
+    if (cfg->instance_id) {
+        snprintf(t->instance_id, sizeof(t->instance_id), "%s", cfg->instance_id);
+    }
+    if (cfg->token) {
+        snprintf(t->token, sizeof(t->token), "%s", cfg->token);
+    }
     t->verify_peer = cfg->verify_peer;
+    t->role        = cfg->role;
 
     // 1. UDP socket.
     if (make_udp_socket(t, cfg->host, cfg->port) != 0) return -1;

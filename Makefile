@@ -1,7 +1,7 @@
 # Copyright 2026 Marcelo Cantos
 # SPDX-License-Identifier: Apache-2.0
 
-JDK21 ?= /opt/homebrew/Cellar/openjdk@21/21.0.10/libexec/openjdk.jdk/Contents/Home
+JDK21 ?= /opt/homebrew/Cellar/openjdk@21/21.0.11/libexec/openjdk.jdk/Contents/Home
 
 .PHONY: all build test test-go test-swift test-kotlin test-web \
         e2e e2e-go e2e-swift e2e-kotlin \
@@ -246,10 +246,14 @@ bullseye: bullseye-prereq
 	 ( $(MAKE) test-c-only > /tmp/bullseye/test-c.log 2>&1 \
 	   && echo ok > /tmp/bullseye/test-c.status \
 	   || echo fail > /tmp/bullseye/test-c.status ) & \
-	 ( cd formal && ./tlc PairingCeremony > /tmp/bullseye/tlc.log 2>&1; \
-	   grep -q "Model checking completed. No error has been found" /tmp/bullseye/tlc.log \
-	   && echo ok > /tmp/bullseye/tlc.status \
-	   || echo fail > /tmp/bullseye/tlc.status ) & \
+	 ( cd formal && ./tlc PairingCeremony > /tmp/bullseye/tlc.log 2>&1 \
+	     && ./tlc SessionMachine >> /tmp/bullseye/tlc.log 2>&1; \
+	   completed=$$(grep -c "Model checking completed. No error has been found" /tmp/bullseye/tlc.log); \
+	   if [ "$$completed" = "2" ]; then \
+	     echo ok > /tmp/bullseye/tlc.status; \
+	   else \
+	     echo fail > /tmp/bullseye/tlc.status; \
+	   fi ) & \
 	 wait
 	@fail=0; \
 	 for step in gofmt govet gobuild gotest swift-test kotlin web test-c tlc; do \

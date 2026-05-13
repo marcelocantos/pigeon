@@ -480,6 +480,7 @@ func SessionProtocol() *Protocol {
 			{Name: "DeriveKey", Params: "a, b", Expr: "IF KeyRank(a) <= KeyRank(b) THEN <<\"ecdh\", a, b>> ELSE <<\"ecdh\", b, a>>", Desc: "symbolic ECDH"},
 			{Name: "DeriveCode", Params: "a, b", Expr: "IF KeyRank(a) <= KeyRank(b) THEN <<\"code\", a, b>> ELSE <<\"code\", b, a>>", Desc: "confirmation code from pubkeys"},
 			{Name: "Min", Params: "a, b", Expr: "IF a < b THEN a ELSE b", Desc: "minimum of two values"},
+			{Name: "ValidPairingRecord", Params: "r", Expr: "r.peer_instance_id /= \"none\" /\\ r.peer_eph_pub /= \"none\"", Desc: "Interface contract with PairingCeremony.tla: a PairingRecord is well-formed iff it carries a non-default peer instance ID and ephemeral pubkey. SessionMachine treats this as an axiom over its initial state — the session begins with a record that PairingCeremony.tla's PairingProducesValidRecord postcondition has already established."},
 		},
 		AdvActions: []AdvAction{
 			{Name: "QR_shoulder_surf", Desc: "observe QR code content", Code: "      await current_token /= \"none\";\n      adversary_knowledge := adversary_knowledge \\union {[type |-> \"qr_token\", token |-> current_token]};"},

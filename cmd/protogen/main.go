@@ -87,13 +87,23 @@ func main() {
 			}(),
 		},
 		{
+			// The composed (cross-phase) TLA+ spec is suppressed for the
+			// Session protocol: a composed pairing+session spec exploded
+			// TLC's state space and was abandoned in favour of two
+			// independent specs joined by a ValidPairingRecord interface
+			// contract — see docs/session-protocol.md and 🎯T39.2.
 			path: filepath.Join("formal", p.Name+".tla"),
-			gen: func() error {
-				return writeFile(
-					filepath.Join("formal", p.Name+".tla"),
-					func(f *os.File) error { return p.ExportTLA(f) },
-				)
-			},
+			gen: func() func() error {
+				if p.Name == "Session" {
+					return nil
+				}
+				return func() error {
+					return writeFile(
+						filepath.Join("formal", p.Name+".tla"),
+						func(f *os.File) error { return p.ExportTLA(f) },
+					)
+				}
+			}(),
 		},
 		{
 			path: filepath.Join("docs", "transport.puml"),
@@ -205,9 +215,24 @@ func main() {
 		fmt.Printf("wrote %s\n", g.path)
 	}
 
-	// Phase-specific TLA+ specs.
+	// Phase-specific TLA+ specs. Two pieces of phase-export policy
+	// for the Session protocol live here (🎯T39.2):
+	//   * The Pairing phase is *not* exported. PairingCeremony.tla
+	//     (generated separately from protocol/pairing.yaml) is the
+	//     authoritative pairing spec; emitting Session_Pairing.tla
+	//     alongside it would just duplicate that work.
+	//   * The Transport phase exports as SessionMachine.tla, the
+	//     canonical name for the post-pairing transport state
+	//     machine. Other protocols keep the default <Name>_<Phase>.tla
+	//     scheme.
 	for _, ph := range p.Phases {
+		if p.Name == "Session" && ph.Name == "Pairing" {
+			continue
+		}
 		name := p.Name + "_" + strings.ReplaceAll(ph.Name, " ", "_")
+		if p.Name == "Session" && ph.Name == "Transport" {
+			name = "SessionMachine"
+		}
 		path := filepath.Join("formal", name+".tla")
 		if err := writeFile(path, func(f *os.File) error {
 			return p.ExportTLAPhase(f, ph.Name)

@@ -840,18 +840,9 @@ targets:
     - C pairing ceremony drives the regenerated c/src/pairingceremony_gen.c executor (matches pairing/pairing.go's structure).
     - 'An in-process raw-QUIC test against the Go relay drives the C peer through: single-client chat round-trip, multi-stream + multi-datagram in one Session, two concurrent C clients sharing one C backend.'
     - All of the above linked into c/test/test_pigeon and runnable via `make test-c-ngtcp2`.
-    context: |-
-      Status: foundation landed. The pure wire-format helpers (varint, stream-header, AEAD-channel-id datagram framing) are implemented in C and locked to Go byte vectors via wire_vectors_test.go ↔ c/test/test_pigeon.c. 23/23 C tests pass; cross-language byte-vector parity verified by construction.
-
-      Remaining work for T32 — substantive, multi-day:
-      1. Extend c/src/ngtcp2_transport.c to support multiple QUIC streams: open new bidirectional streams on demand, accept incoming streams, per-stream send/recv buffers. Currently single-stream-only.
-      2. Add register-mux handshake variant (today only `connect:` is wired in the ngtcp2 transport; `register` and `register-mux` need the matching code paths).
-      3. Implement the higher-level Listener / Session / Stream / Datagram C ABI on top of the multi-stream transport. Multi-client backend with clientTag demux; per-Session pairing-FSM driver hooked to the regenerated pairingceremony_gen.c.
-      4. Tests: live round-trip against an in-process Go relay (mirroring what e2e_test.go does for Go).
-
-      The vendored ngtcp2 build (`make build-vendor-deps`) is currently broken because the `c/vendor/` source tree isn't initialised — quictls / ngtcp2 sources aren't present. Whoever picks up step 1 above will need to fix the vendor build first (likely git-clone the upstream ngtcp2 + quictls into the expected paths, or rewrite `c/vendor/build.sh` to fetch them).
-
-      Until the multi-stream transport lands, the existing single-channel C SDK keeps working as it does today. Swift / Kotlin downstream ports (T29/T30) and the cgo-wrap of Go (T34) are all blocked on this.
+    context: 'Status as of 2026-05-02 after the docs/DESIGN.md design pass: scope reshaped. Originally framed as ''hand-roll C-side listener / session / connect-hello-ack JSON / demux''. Per docs/DESIGN.md section 4, that scope is wrong - the wire-bearing logic in the listener and session-open is part of the session machine, which lands as protogen YAML (T39) and generates a C executor. T32''s remaining C-side work after T39 lands is materially smaller. Already shipped as part of T32 foundation: multi-stream transport vtable in c/src/ngtcp2_transport.c (open_stream / accept_stream / send_on_stream / recv_on_stream / close_stream); pigeon_session API; wire framing (varint, stream-header, AEAD-channel-id datagram); pigeon_pair_acceptor / pigeon_pair_initiator (T34b.2, v0.22.0); pigeon_pairing_record serialisation; heap-scratch refactor (T38); register-mux handshake variant (commit 4f0faf0); vendored ngtcp2 + quictls build operational. Remaining for T32 (much shrunk after T39 lands): wire the generated session-machine executor from T39 into the C side; add the small clientTag-demux hash table that the listener needs (this is data-structure plumbing, not a state machine); add the high-level pigeon_register / pigeon_connect entry points that bring up the transport with the right role and produce a Listener / Session; live round-trip tests against an in-process Go relay (single-client chat, multi-stream + multi-datagram in one Session, two concurrent C clients sharing one C backend) linked into make test-c-ngtcp2. Estimate after T39 lands: half a day to a day. Until T39 lands, T32 should be parked - hand-rolling the C session-open exchange now is exactly the design regression docs/DESIGN.md prohibits.'
+    depends_on:
+    - T39
     origin: discovered while making the architectural decision to consolidate peer libraries into one C implementation
     discovered: 2026-04-30
   T33:
@@ -899,6 +890,8 @@ targets:
         T34d: delete the native Go peer-library implementation files (api.go, transport.go, conn.go, pigeon.go, pairing/pairing.go, executor.go, etc.) once T34a/b/c provide full coverage. Verify e2e_test.go and pairing/pairing_test.go still pass; verify examples/echo and examples/demo still build and run.
 
       Today's session retired T31, achieved T32 step 1+2+3, started T33 (wire-byte parity across four implementations is locked), and seeded T34 starter (cwire/). The remaining T34a..T34d work is multi-session.
+    depends_on:
+    - T32
     origin: final step in the C-as-canonical consolidation
     discovered: 2026-04-30
   T34a:
@@ -929,10 +922,11 @@ targets:
     achieved: 2026-04-30
   T34b.2:
     name: 'cgo wrap full pairing driver: hello/welcome/confirm wire round-trips via libpigeon'
-    status: identified
+    status: achieved
     value: 0.0
     cost: 0.0
     showcase: true
+    demonstration: Released v0.22.0 (https://github.com/marcelocantos/pigeon/releases/tag/v0.22.0). The C-side pigeon_pair_acceptor / pigeon_pair_initiator drivers run the full hello/welcome/confirm exchange end-to-end; cwire.RunAcceptor / cwire.RunInitiator expose them from Go. Wire-byte parity demonstrated by TestWireParityGoAcceptorCInitiator and TestWireParityCAcceptorGoInitiator both passing — both halves of the same handshake (Go-driver ↔ C-driver and C-driver ↔ Go-driver) derive matching confirmation codes over an in-process blocking chanTransport. Verified locally via `brew upgrade marcelocantos/tap/pigeon` → `pigeon --version` → `v0.22.0`.
     acceptance:
     - A C-side pigeon_pair_acceptor / pigeon_pair_initiator function in c/src/ runs the hello/welcome/confirm exchange against a pigeon_transport and produces a pigeon_pairing_record (peer pubkey + confirmation code).
     - cwire/ exposes that driver from Go; pairing/pairing_test.go's runAcceptor/runInitiator paths can be redirected through the cgo wrapper without changing test semantics.
@@ -940,6 +934,7 @@ targets:
     context: T34b.1 (commit f499b17) wraps the FSM and ECDH primitives but leaves the wire-driver layer (the loop that exchanges JSON-ish hello/welcome/confirm frames over a transport) in Go. T34b.2 folds that loop into C so the Go side becomes a pure cgo call.
     origin: subdivision of T34b
     discovered: 2026-04-30
+    achieved: 2026-05-02
   T34c.1:
     name: Go-callback bridge for pigeon_transport vtable
     status: achieved
@@ -1020,6 +1015,194 @@ targets:
     origin: discovered when both T29 (Swift) and T30 (Kotlin) first slices needed identical stack-size workarounds
     discovered: 2026-04-30
     achieved: 2026-04-30
+  T39:
+    name: Session machine specified in protocol/session.yaml; independent TLA+ verification; per-language executors generated
+    status: achieved
+    value: 0.0
+    cost: 0.0
+    showcase: true
+    demonstration: 'T39 retires with all sub-targets achieved: T39.1 (activation through generated SessionMachine) + T39.2 (formal/SessionMachine.tla canonical, ValidPairingRecord interface contract) + T39.3 (TestSessionExecutorShowcase end-to-end test) + T39.4 (Session owns post-activation machine through graceful close) + T39.5 (L2 pairing-mode + pairing.go migrated off legacy Conn) + T39.6 (Conn deletion via T39.6.1 cross-language fixture migration + T39.6.2 mechanical Conn ecosystem deletion). The session machine specified in protocol/session.yaml is fully wired through the modern API, formally verified independently under TLC alongside the pairing spec via the ValidPairingRecord(r) interface contract, and the showcase test (TestSessionExecutorShowcase) drives the executor end-to-end through activation → relay-only path selection → graceful close on a real in-process relay. The spec-level relay-keepalive gap (LAN ping/pong only today) is documented and tracked under T45.'
+    acceptance:
+    - 'protocol/session.yaml exists and describes the full session state machine: activation (replacing the current connectHello/connectAck JSON), path selection sub-FSM (candidate gathering, exchange, connectivity checks, nomination, swap, fallback), health monitoring (ping/pong, 3-failure to degraded to backoff schedule, prefer-back-on-recovery).'
+    - cmd/protogen regenerates Go / Swift / Kotlin / C / TS / TLA+ outputs for the session machine; make bullseye stays green.
+    - formal/SessionMachine.tla independently verifies the session machine's invariants (path consistency, backoff bounded, fallback liveness, etc. - see docs/session-protocol.md for the property list). No composed pairing+session TLA+ spec exists; cross-machine reasoning uses an interface contract ValidPairingRecord(r) that pairing's spec proves and session's spec assumes.
+    - Go's hand-rolled session activation (api.go::connectHello / connectAck) is removed and replaced by the generated executor.
+    - 'Showcase: a Go-only end-to-end test drives the generated session executor through activation, path selection (relay only since LAN-direct is its own future implementation), health monitor, and graceful close, all green.'
+    context: 'The largest pending architectural target. docs/session-protocol.md fully specifies the session machine prosaically (state hierarchy, transition table, TLA+ properties); this target translates that into protogen YAML so the executor is generated rather than hand-written in each SDK. Per docs/DESIGN.md section 4, this is binding policy: anything on the wire is a protogen spec, never hand-rolled. Verification strategy is explicit: each machine verified independently. A prior attempt to compose pairing+session in one TLA+ spec blew up TLC state space - do not repeat. Cross-machine properties decompose into per-machine local proofs joined by an interface contract. Decompose if/when the YAML draft makes natural sub-targets clear (likely activation, path selection, health monitor as sub-targets). Until then this is one whole. Unblocks the C-side listener (T32), the cgo wrap (T34), the Swift Ngtcp2Transport (T37), and any future Kotlin or web peer-library work.'
+    depends_on:
+    - T39.1
+    - T39.2
+    - T39.3
+    origin: docs/DESIGN.md sections 4 and 8; docs/session-protocol.md is the deep spec
+    discovered: 2026-05-02
+    achieved: 2026-05-10
+  T39.1:
+    name: Session activation moves from hand-rolled connectHello/connectAck JSON to generated executor driving session.yaml's auth flow
+    status: achieved
+    value: 0.0
+    cost: 0.0
+    acceptance:
+    - protocol/session.yaml's pairing-phase activation transitions (Paired → AuthCheck → SessionActive on the backend; Reconnect → SendAuth → SessionActive on the client) are wired through the per-client generated SessionMachine on both sides (api.go::Connect and api.go::Listener.acceptPrimary). Each client connection instantiates its own SessionMachine pre-seeded at the appropriate state for that side.
+    - auth_request and auth_ok messages have a defined binary wire format (declared in one place, not duplicated). For T39.1 the encoders/decoders live in the pigeon package alongside api.go; migration of these into the protogen generator is left to T40 (one-shot byte-format specs). The wire format replaces the JSON envelope used today.
+    - api.go::connectHello and api.go::connectAck struct types and their JSON marshal/unmarshal sites are deleted; activation flows through the executor-driven event loop, with the machine’s state advancing through the pairing-phase auth states.
+    - make bullseye stays green; existing Go-Go pairing + reconnect flows continue to work end-to-end (pairing/pairing.go acceptance + e2e_test.go).
+    - A new test (root-package or pairing-package) exercises activation through the generated executor against a stub backend, asserting the machine state advances Paired → AuthCheck → SessionActive on a valid auth_request and Paired → AuthCheck → Idle on an unknown device.
+    context: |-
+      The pre-T22 connectHello/connectAck flow is the last hand-rolled wire-protocol piece in api.go (lines 222-261 backend, 311-385 client, 298-309 type defs). The session.yaml spec already names the formal version (auth_request / auth_ok messages plus Paired → AuthCheck → SessionActive transitions on backend, Reconnect → SendAuth → SessionActive on client), and session_gen.go already emits those event/command/state IDs — what's missing is the wire-format encoders and the api.go wiring that swaps the JSON exchange for an executor-driven event loop.
+
+      Design (chosen 2026-05-04 by user): the SessionMachine is strictly per-client. Each client connection on the backend instantiates its own SessionMachine pre-seeded at SessionBackendPaired with the looked-up device_id from args.Pairing(deviceID). The lookup itself stays outside the spec — it's a backend-runtime concern, not a protocol-state-machine concern.
+
+      Wire-encoder scope is hand-rolled in the pigeon package for T39.1 to avoid coupling to T40's not-yet-designed protogen one-shot byte-format framework. T40 will later move these into protogen alongside the stream-name binding header, datagram channel-id framing, and relay greeting formats.
+
+      This is the smallest leaf of T39 and the only one that touches the wire protocol; finishing it unblocks the showcase (T39.3) and makes the cross-language wire targets (T25 Swift, T32 C, T37 ngtcp2) describe-once in the spec rather than re-derive from api.go.
+    depends_on:
+    - T22
+    origin: manual
+    discovered: 2026-05-02
+    achieved: 2026-05-04
+  T39.2:
+    name: formal/SessionMachine.tla is the canonical transport-phase spec; pairing and session TLA+ specs join via a ValidPairingRecord(r) interface contract
+    status: achieved
+    value: 0.0
+    cost: 0.0
+    acceptance:
+    - formal/SessionMachine.tla exists as the canonical transport-phase TLA+ spec generated from protocol/session.yaml's Transport phase. (Renamed/restructured from the current Session_Transport.tla; if the rename is a no-op, document that in the commit message.)
+    - No composed pairing+session TLA+ spec exists in formal/. Session.tla and Session_Pairing.tla are removed (or proven obsolete and deleted) — only formal/PairingCeremony.tla and formal/SessionMachine.tla remain as authoritative model-checked specs.
+    - 'A ValidPairingRecord(r) operator is defined in both specs: PairingCeremony.tla proves it as a postcondition of successful pairing (i.e. all paired_devices entries satisfy ValidPairingRecord); SessionMachine.tla assumes it as an axiom over its initial state (the session starts with a valid PairingRecord in hand).'
+    - TLC verifies SessionMachine.tla independently in well under 10 seconds, all transport invariants from docs/session-protocol.md §Transport Properties (PathConsistency, BackoffBounded, BackoffResetsOnSuccess, DispatcherAlwaysBound, BackendDispatcherMatchesActive, ClientDispatcherMatchesActive, MonitorOnlyWhenLAN) and leads-to properties (FallbackLeadsToReadvertise, DegradedLeadsToResolutionOrFallback) pass.
+    - make bullseye's tlc step continues to model-check both PairingCeremony and SessionMachine and stays green.
+    context: 'docs/session-protocol.md is explicit that cross-machine reasoning must decompose into per-machine local proofs joined by an interface contract — a prior attempt to verify a composed pairing+session spec blew up TLC''s state space and did not finish. The bones are in place: the YAML phases (Pairing / Transport) already split the variables and the TLA+ generator already emits Session_Pairing.tla and Session_Transport.tla as separate phase exports. The remaining work is mostly naming, deleting the obsolete composed Session.tla, and adding the ValidPairingRecord(r) operator on both sides so the interface is explicit in the model rather than implicit in the YAML structure. This sub-target is independent of T39.1 (activation wire-format) and T39.3 (Go showcase test); they can converge in any order.'
+    origin: manual
+    discovered: 2026-05-02
+    achieved: 2026-05-06
+  T39.3:
+    name: Go-only end-to-end test drives the generated session executor through activation, relay-only path selection, health monitor, and graceful close
+    status: achieved
+    value: 0.0
+    cost: 0.0
+    demonstration: 'TestSessionExecutorShowcase passes (e2e_test.go): drives the per-Session SessionMachine end-to-end against an in-process relay. Asserts MachineState()=="RelayConnected" on both sides post-activation; performs a "chat" named-stream round-trip ("hello backend" / "hello client") and a pre-declared datagram channel round-trip ("ping" / "pong") on the relay path; reasserts state stayed at RelayConnected (no LAN states reached); asserts MachineState()=="Paired" on both sides post-Session.Close (RelayConnected → Paired transition fired). The relay-keepalive gap (spec only models LAN-path ping/pong) is documented in the test comment and tracked under T45 — relay liveness is implicitly verified by the round-trips. make bullseye green across all nine SDK steps.'
+    acceptance:
+    - A new Go test (e.g. TestSessionExecutorLifecycle in e2e_test.go or a sibling file) wires a real executor on each side of an in-process pigeon relay and exercises the full session lifecycle end-to-end with no hand-written state-machine code on either side.
+    - 'Activation phase: the client''s call into pigeon.Connect drives the generated executor through Paired → AuthCheck → SessionActive → RelayConnected; the test asserts the SessionMachine reached RelayConnected on both sides before app I/O begins.'
+    - 'Path selection (relay-only): app_send / app_recv (and at least one app_send_datagram / app_recv_datagram round-trip) succeed over the relay path; the test asserts the machine never leaves the relay-only branch (no LAN states entered).'
+    - 'Health monitor: the test verifies the executor''s relay liveness mechanism (ping/pong on the path-monitor sub-FSM, or — if the spec only models LAN ping/pong today — a deliberately scoped relay-keepalive transition added to session.yaml under this sub-target) actually fires and is observable from the test.'
+    - 'Graceful close: app_close on either side drives the machine through the cleanup transitions and the corresponding commands (stop_monitor, close_lan_path skipped if no LAN, etc.); both sides observe the close cleanly without leaked goroutines (verified by goleak or an equivalent assertion).'
+    - 'Showcase demonstration recorded with bullseye_retire: a paste of the green test output and a one-line summary of how it crosses the four lifecycle phases.'
+    context: |-
+      This is the showcase that retires T39 itself once T39.1 (activation through executor), T39.4 (executor on Session), T39.5 (pairing off Conn), and T39.6 (Conn deleted) all land. With Conn gone, "drives the generated session executor" becomes unambiguous — Session is the only transport abstraction and it's executor-driven.
+
+      The test must drive the Session executor end-to-end — no calls into pairing/pairing.go's hand-rolled driver from inside the showcase, no JSON-shaped activation, no mocking of the machine. If the spec doesn't model relay-only health monitoring (current ping/pong is LAN-path only), this sub-target either (a) extends session.yaml with a minimal relay-keepalive transition or (b) narrows the showcase scope to "health monitor exercised in its current LAN form against a synthetic LAN path"; the choice is documented in the commit. Originally framed as depending only on T39.1 (2026-05-02); rescoped 2026-05-06 to depend on the full Conn-strip chain after the user directed the legacy approach be removed entirely.
+    depends_on:
+    - T39.1
+    - T39.4
+    - T39.5
+    - T39.6
+    origin: manual
+    discovered: 2026-05-02
+    achieved: 2026-05-10
+  T39.4:
+    name: pigeon.Session adopts the SessionMachine executor for all transport ops; the per-Session executor replaces hand-rolled clientAcceptLoop / clientDatagramLoop / inline Send / Recv
+    status: achieved
+    value: 0.0
+    cost: 0.0
+    acceptance:
+    - pigeon.Session owns the per-instance SessionMachine produced by activation (T39.1's runBackendActivation / runClientActivation no longer discard the machine they build). The machine is advanced through SessionEstablished so the post-activation state on the Session is SessionProtocol{Backend,Client}RelayConnected.
+    - Session.Close fires SessionProtocolEventDisconnect through the machine (the spec's RelayConnected → Paired transition) before tearing down the QUIC primary; this gives the spec model a defined post-close state instead of the current 'state freezes at RelayConnected and goroutines wind down' shape.
+    - The hand-rolled per-stream sub-stream demux (clientAcceptLoop) stays above the machine — docs/session-protocol.md §Boundaries explicitly puts StreamChannel I/O above the executor. Datagram routing (clientDatagramLoop) migrates onto the executor's per-channel datagram surface so the relay_datagram → deliver_recv_datagram path actually fires through HandleEvent. Replace the channel-based dg.rx queue on *Datagram with the executor's chanDgWaiters / chanDgBuffers semantics, or document why the channel form is kept.
+    - All existing root-package tests pass (TestE2ESingleClientChat, TestE2EMultiStreamMultiDatagram, TestE2EMultiClient, TestActivation_*). New activation_test assertions verify the machine on the Session is at RelayConnected post-Connect / post-Accept and at Paired post-Close.
+    - Conn keeps its own executor field for now — pairing.go and pigeon-bridge still consume it; full Conn removal is T39.5 → T39.6 territory. make bullseye stays green.
+    context: |-
+      Discovered while scoping T39.3 (2026-05-06): the executor (executor.go, ~1000 lines) and the path-switching / LAN upgrade machinery were never ported across when T22 introduced the multi-tenant Session/Listener API. The post-T22 Session re-implemented transport-side responsibilities as hand-rolled goroutines that bypass the SessionMachine entirely.
+
+      User direction (2026-05-06): "Do the port. I want the entire legacy approach stripped out." This sub-target is the first phase of that strip.
+
+      **Architectural finding (2026-05-06)**: the SessionMachine spec was written around Conn's single-primary-stream model (events like app_send / relay_stream_data presume one ongoing stream of mixed-type messages). Session uses per-named-sub-stream I/O instead, which docs/session-protocol.md §Boundaries explicitly puts ABOVE the machine. So an honest port doesn't replace clientAcceptLoop — that loop's per-stream demux is already correct-by-spec. What the executor genuinely owns on Session: (a) persisting the activation machine; (b) disconnect on Close; (c) datagram demux (the one I/O path the spec puts through the loop); (d) future health monitor / LAN.
+
+      Non-goal: this sub-target does NOT yet wire LAN upgrade into Session. The current Session is relay-only in production; LAN upgrade is gated on T37 (Swift Ngtcp2Transport) and T43 (STUN-reflexive) on the codepath side.
+    depends_on:
+    - T39.1
+    origin: manual
+    discovered: 2026-05-06
+    achieved: 2026-05-06
+  T39.5:
+    name: pairing/pairing.go migrated off pigeon.Conn onto a 1:1 mode of the modern pigeon.Listener / pigeon.Connect API (or an equivalent ceremony-shaped helper)
+    status: achieved
+    value: 0.0
+    cost: 0.0
+    acceptance:
+    - pigeon.RegisterArgs.Pairing and pigeon.ConnectArgs.Record become optional. When both are nil/absent, the modern Register / Connect path skips the auth_request / auth_ok activation handshake and hands back a Session whose `channel` is nil — a raw L1 pipe with no AEAD context. Per docs/DESIGN.md §3 this is L2 pairing-mode (the no-PairingRecord entry condition).
+    - pairing/pairing.go no longer imports pigeon.Conn, pigeon.DialRelayAcceptor, pigeon.DialRelayInitiator, or pigeon.Config. The ceremony driver uses pigeon.Register (acceptor) and pigeon.Connect (initiator) with no Pairing callback / no Record, and runs hello / welcome / confirm_to_initiator / confirm_to_acceptor over a single named ceremony stream on the resulting Session.
+    - All pairing tests pass unchanged (the pairing.yaml contract under TLC, plus pairing_test.go's Go-side ceremony driver). The wire format of the pairing ceremony itself does not change — only the transport plumbing under it.
+    - make bullseye stays green.
+    - 'cmd/crypto-peer and cmd/pigeon-bridge cleanup is deferred to T39.6: they still consume the legacy pigeon.DialRelayAcceptor / Initiator entry points which remain in place until Conn deletion. T39.6''s acceptance already covers their migrate-or-delete decision.'
+    context: pairing.go is the primary remaining consumer of Conn (~600 lines deeply entangled with Conn.OpenChannel / RecvMessage / etc.). Stripping Conn requires giving pairing a substitute transport. The relay already supports two greeting modes (connect:<id> for 1:1 bridge, register-mux for multi-client); the modern API only exposes register-mux today. Adding 1:1 to the modern API surface makes pairing migrate-able without losing the existing relay-side behaviour. Discovered alongside T39.4 while scoping the Conn strip.
+    depends_on:
+    - T39.4
+    origin: manual
+    discovered: 2026-05-06
+    achieved: 2026-05-10
+  T39.6:
+    name: pigeon.Conn and the legacy 1:1 transport surface (channel.go's Conn methods, pigeon.go's Dial* factories, lan.go's Conn entanglement) are deleted
+    status: achieved
+    value: 0.0
+    cost: 0.0
+    acceptance:
+    - The Conn type and its constructor newConn are deleted from the pigeon package.
+    - channel.go's Conn-shaped OpenChannel / AcceptChannel / DatagramChannel methods are deleted (the modern Session.OpenStream / AcceptStream / Datagram surface replaces them).
+    - pigeon.go's DialRelayAcceptor / DialRelayInitiator / registerQUIC / connectQUIC / registerWebTransport / connectWebTransport package-level helpers are deleted (or reduced to internal building blocks of the modern Listener/Connect path).
+    - lan.go's LANServer.registerConn / handleConn entanglement with Conn is deleted; the LAN-direct codepath is parked behind T39.x or a future L3 target rather than ported under T39.6.
+    - cmd/pigeon-bridge and cmd/crypto-peer delete or migrate per T39.5; this sub-target verifies that nothing in cmd/, examples/, or pairing/ imports the deleted symbols.
+    - The relay's bridgeClientPair function and the legacy `connect:<id>` greeting parser go away (no consumer once Conn is gone). bridgeClientMux and the register-mux greeting remain untouched — the relay's L1 collapse to the remote-Listen model is T41 territory, not T39.6.
+    - make bullseye stays green; net code change is hundreds of lines deleted with zero functional regression.
+    context: |-
+      Final removal of the parallel legacy transport abstraction. Strictly downstream of T39.5 (pairing migrated). Once Conn has no consumers, this sub-target deletes the type and its surrounding helpers in one mechanical pass. Net should be hundreds of lines deleted with zero functional change.
+
+      The L1 layer's full collapse to the remote-Listen model from docs/DESIGN.md §3 L1 is a separate, larger epic tracked under T41 — T39.6 deletes the legacy pair-mode codepath but leaves the modern register-mux + clientTag plumbing in place.
+    depends_on:
+    - T39.5
+    - T39.6.1
+    - T39.6.2
+    origin: manual
+    discovered: 2026-05-06
+    achieved: 2026-05-10
+  T39.6.1:
+    name: cmd/pigeon-bridge and cmd/crypto-peer migrate to the modern API; the Swift / Kotlin / Web cross-language test consumers update to the modern wire
+    status: achieved
+    value: 0.0
+    cost: 0.0
+    acceptance:
+    - cmd/pigeon-bridge no longer imports pigeon.Conn / pigeon.DialRelayAcceptor / pigeon.DialRelayInitiator. The bridge uses pigeon.Register (pairing-mode) on the acceptor side and pigeon.Connect (pairing-mode) on the initiator side, with a single named stream (e.g. "bridge") carrying the stdin/stdout-pumped messages.
+    - cmd/crypto-peer no longer imports pigeon.Conn / pigeon.DialRelayAcceptor. crypto-peer uses pigeon.Register (pairing-mode) and exposes a named stream (e.g. "crypto") for the cross-language confirmation-code exchange.
+    - Tests/PigeonRelayE2ETests/RelayE2ETests.swift::testCrossLanguageConfirmationCode is updated to talk to crypto-peer via the modern wire — either by switching its raw-NWConnection / `connect:<id>` greeting code to the register-mux + clientTag + stream-name-header shape, or (cleaner) by routing through the high-level Sources/Pigeon/PigeonRelay.swift API.
+    - android/pigeon/src/test/kotlin/.../BridgeQuicTransport.kt and any consumers in android/.../PigeonConnE2ETest.kt update to the modern wire similarly. The cross-language confirmation-code agreement assertions still pass.
+    - web/src/test-helpers/GoRelayProcess.ts updates (or its now-dead BRIDGE_BIN / CRYPTO_PEER_BIN scaffolding is removed if it has no live web-side consumers).
+    - make bullseye stays green across all nine SDK steps. Cross-language confirmation-code interop coverage (audit-log.md §T27) is preserved — same property, new wire.
+    context: 'Discovered while scoping T39.6 (2026-05-10): cmd/pigeon-bridge and cmd/crypto-peer aren''t standalone tools, they''re cross-language test fixtures consumed by Swift''s testCrossLanguageConfirmationCode (raw NWConnection talking the legacy connect:<id> greeting), Kotlin''s BridgeQuicTransport (a QUIC-transport-substitute built on the bridge binary), and web/src/test-helpers/GoRelayProcess.ts (declares BRIDGE_BIN/CRYPTO_PEER_BIN; the spawnBridge function appears unused in web/src today). Both Go binaries currently consume pigeon.DialRelayAcceptor / DialRelayInitiator + the legacy bridgeClientPair 1:1 wire — and the Swift/Kotlin tests are tightly coupled to that wire shape (hand-written greeting + length-prefixed framing, not the high-level per-language relay API). Migrating just the Go binaries breaks the Swift/Kotlin tests; migrating the Swift/Kotlin tests to the modern wire is real per-language work. T39.6.1 carries that cross-language migration; T39.6.2 (Conn deletion proper) is then mechanical.'
+    depends_on:
+    - T39.5
+    origin: manual
+    discovered: 2026-05-10
+    achieved: 2026-05-10
+  T39.6.2:
+    name: 'Mechanical deletion: pigeon.Conn / channel.go Conn methods / pigeon.go Dial* helpers / lan.go Conn entanglement / bridgeClientPair / connect:&lt;id&gt; greeting parser'
+    status: achieved
+    value: 0.0
+    cost: 0.0
+    acceptance:
+    - The Conn type and its constructor newConn are deleted from the pigeon package (conn.go gone).
+    - channel.go's Conn-shaped OpenChannel / AcceptChannel / DatagramChannel methods + StreamChannel / DatagramChannel types are deleted (channel.go gone). The modern Session.OpenStream / AcceptStream / Datagram surface is the replacement.
+    - pigeon.go's DialRelayAcceptor / DialRelayInitiator + the registerQUIC / connectQUIC / registerWebTransport / connectWebTransport Conn-returning helpers are deleted. WakeRelay, Config, the QUIC dial primitives (quicTLSConfig / quicAddr / quicCloser / quicOpener / quicAcceptor + WT equivalents) remain because the modern Listener / Connect path's transport.go consumes them.
+    - lan.go's LANServer.registerConn (Conn-only path) and the conn *Conn field on pendingLAN are deleted. LANServer otherwise survives unchanged for use by future T45 / L3 work.
+    - transport.go gains the datagrammer / streamOpener / streamAcceptor / deadliner interfaces that previously lived on conn.go, since the modern code path consumes them.
+    - make bullseye stays green; nothing in cmd/, examples/, pairing/, Tests/, android/, or web/ imports the deleted symbols.
+    - 'Net code change: -944 / +48 = -896 lines across api.go-adjacent files. Substantial collapse with zero functional regression.'
+    - 'Deferred: bridgeClientPair on the relay + the muxMode field on instance + the two-greeting parser branching all stay alive for now. The Swift legacy E2E tests (testRegister / testStreamRoundTrip / testTenMessagesInOrder / testEncryptedRoundTrip) are Swift-to-Swift via the legacy `register` greeting + bridgeClientPair codepath; collapsing them would require rewriting those tests onto the modern wire (clientTag handling, named streams). T45 (Relay''s L1 collapses to the remote-Listen model) absorbs that cleanup.'
+    context: The mechanical pass that retires Conn once T39.6.1 has unblocked it. Acceptance is the same as the original T39.6 minus the cross-language test fixture migration that T39.6.1 carries.
+    depends_on:
+    - T39.6.1
+    origin: manual
+    discovered: 2026-05-10
+    achieved: 2026-05-10
   T4:
     name: Investigate STUN/NAT hole-punching as a transport
     status: achieved
@@ -1035,6 +1218,106 @@ targets:
     origin: bootstrap from targets.md (T6)
     discovered: 2026-04-08
     achieved: 2026-04-15
+  T40:
+    name: Hand-rolled wire-format helpers migrate into protogen one-shot byte-format specs
+    status: identified
+    value: 0.0
+    cost: 0.0
+    showcase: true
+    acceptance:
+    - 'protocol/ contains protogen specs for the three currently-hand-rolled one-shot byte formats: stream-name binding header (backend variant: [4-byte clientTag][varint name-len][name]; client variant: [varint name-len][name]); datagram channel-id framing ([varint channel-id][payload], optionally prefixed with 4-byte clientTag on backend side); relay greeting variants (connect:<id>, register-mux[:token[:id]]).'
+    - cmd/protogen generates encoder + decoder for each format in Go / Swift / Kotlin / C / TS.
+    - 'Per-language hand-rolled encoders/decoders deleted: api.go::encodeStreamHeader / decodeBackendStreamHeader / decodeClientStreamHeader; c/src/pigeon.c::pigeon_encode_stream_header / pigeon_decode_*; equivalents in Sources/Pigeon/ and android/pigeon/.'
+    - wire_vectors_test.go and the cross-language byte-vector tests still pass (now testing the generated code, not hand-rolled).
+    context: 'Per docs/DESIGN.md section 4, the wire-protocol principle is binding: anything on the wire is a protogen spec, never hand-rolled per language. The pairing FSM and the session FSM (T39) cover interactive protocols; this target covers one-shot byte formats. These are not state machines (a single emission, no transitions) but they still belong in protogen so they get the same multi-language consistency guarantee and so future ports never have to hand-roll them. Smaller scope than T39 and parallelisable with it - this target doesn''t depend on T39 and vice versa.'
+    origin: docs/DESIGN.md section 4 (wire principle); docs/DESIGN.md section 9 (largest open architectural gaps, item 1)
+    discovered: 2026-05-02
+  T41:
+    name: 'Local backchannel: Unix-socket IPC between CLI and daemon during pairing ceremony'
+    status: identified
+    value: 0.0
+    cost: 0.0
+    showcase: true
+    acceptance:
+    - A Unix-socket transport at $XDG_RUNTIME_DIR/pigeon/<app-name>.sock (Linux) or ~/Library/Application Support/pigeon/<app-name>.sock (macOS) carries pairing-ceremony events between the CLI and a local daemon.
+    - Wire framing matches relay streams (uint32 BE length-prefix + JSON), with the five typed messages described in docs/local-backchannel.md.
+    - The pairing executor treats backchannel messages identically to relay events - the machine does not know the transport.
+    - Existing CLI and daemon binaries use this path in place of any ad-hoc REST/file/pipe arrangement they currently rely on.
+    - Windows (named pipes) explicitly out of scope for this target; track separately if it becomes needed.
+    context: docs/local-backchannel.md is a fully-formed proposal; this target tracks moving it from proposal to shipping code. Not on the critical path for any other target - this is platform-side ergonomics for the pairing flow, not a wire-protocol concern.
+    origin: docs/DESIGN.md section 5; docs/local-backchannel.md is the deep spec
+    discovered: 2026-05-02
+  T42:
+    name: Relay authentication moves from bearer-in-greeting to QUIC/TLS-layer (mTLS or token-at-handshake)
+    status: identified
+    value: 0.0
+    cost: 0.0
+    showcase: true
+    acceptance:
+    - Relay authentication is performed at the QUIC/TLS handshake layer (server-side validation of a client cert, or a token presented as a TLS extension / ALPN-negotiated parameter) rather than in the application-level register-mux greeting.
+    - The register-mux greeting either drops its token field entirely, or retains it only for backwards compatibility with older clients during a transition period documented in docs/audit-log.md.
+    - The Go relay (cmd/pigeon) and the per-SDK clients (Go, Swift, Kotlin, C) all use the new mechanism. make bullseye stays green.
+    - docs/DESIGN.md section 2 'Authentication to the relay' is updated to describe the chosen mechanism and remove the placeholder framing.
+    context: Per docs/DESIGN.md section 2, the current bearer-in-greeting form is a provisional placeholder - relay auth is a connection-level concern that should ride on QUIC/TLS, not appear in pigeon's application greeting. This target is bounded once the relay's QUIC config grows a TLS verify hook. Orthogonal to AEAD security between peers (a relay that authenticates an impersonator still cannot decrypt session data, because the AEAD channel is keyed from the PairingRecord). Not blocking any other current target.
+    origin: docs/DESIGN.md section 2 (Authentication to the relay) and section 9 (gap 5)
+    discovered: 2026-05-02
+  T43:
+    name: STUN-reflexive candidate gathering as a third path-tier between LAN-direct and relay (Phase 1)
+    status: identified
+    value: 0.0
+    cost: 0.0
+    showcase: true
+    acceptance:
+    - The path-selection sub-FSM in protocol/session.yaml (T39) emits STUN-reflexive candidates alongside relay and LAN-host candidates.
+    - Each peer probes its own NAT-mapped public address via a STUN binding request to a configurable STUN server (or the pigeon relay if it offers a STUN endpoint).
+    - Connectivity checks against STUN-reflexive candidate pairs use the same candidate-pair handshake as LAN-direct; nomination and fallback work identically.
+    - An end-to-end test demonstrates a STUN-reflexive carrier swap when both peers are behind cone-NAT (covers the ~70-80% Wi-Fi case per docs/investigations/stun-hole-punching.md).
+    - Symmetric NAT / cellular CGNAT case is acknowledged as deferred to a Phase 2 ICE+TURN target.
+    context: docs/investigations/stun-hole-punching.md analyses NAT distribution and library options. Phase 1 (this target) gives ~70-80% Wi-Fi coverage with simple STUN; Phase 2 (full ICE+TURN, separate future target) would cover symmetric NAT / cellular CGNAT. Depends on the path-selection sub-FSM in T39; do not start until T39 has a working candidate-exchange protocol.
+    depends_on:
+    - T39
+    origin: docs/DESIGN.md section 8; docs/investigations/stun-hole-punching.md is the deep analysis
+    discovered: 2026-05-02
+  T44:
+    name: 'Cascading relay topology: a local relay simultaneously acts as a public-relay backend and a relay for game servers'
+    status: identified
+    value: 0.0
+    cost: 0.0
+    showcase: true
+    acceptance:
+    - Backend and client APIs accept a MultiClient option that disables the existing 1:1 occupied flag in handleClient.
+    - A local relay can register with a public pigeon relay as a backend AND simultaneously act as a relay for one or more downstream game servers.
+    - Player streams are multiplexed via named sub-streams (route:<id>) over a single primary connection; the local relay bridges them per-game-server.
+    - Datagrams use a 2-byte routing prefix for demultiplexing.
+    - 'Auth boundary holds: a player authenticates once to the local relay; downstream game servers never see player credentials.'
+    - An end-to-end test drives one player through one local relay to two distinct game servers concurrently.
+    context: docs/cascading-relay.md is an architecture exploration (no code yet). Future topology extension - explicitly not on the critical path for any current target. Captured here so it is not lost.
+    origin: docs/DESIGN.md section 9 (future explorations); docs/cascading-relay.md is the deep exploration
+    discovered: 2026-05-02
+  T45:
+    name: 'Relay''s L1 collapses to the remote-Listen model: register / listen / accept / connect with per-client end-to-end QUIC pipes, replacing the register-mux greeting and the clientTag prefix scheme'
+    status: identified
+    value: 0.0
+    cost: 0.0
+    showcase: true
+    acceptance:
+    - 'The relay''s wire greeting set becomes one verb family: `register:<id>` (backend control), `listen:<id>` (backend opens a slot), `connect:<id>` (client requests a backend). The legacy `register-mux[:token[:id]]` greeting and the legacy bare `connect:<id>` 1:1 form (already removed under T39.6) are gone. New greetings are protogen-specified per docs/DESIGN.md §4.'
+    - Per accepted client, the backend has its own end-to-end QUIC connection to the relay (each `listen` is a parked backend-side QUIC connection that becomes a client-bridge once matched). The 4-byte clientTag prefix on streams and datagrams is deleted across the codebase — the per-client demux moves out of the application layer because each client has its own QUIC pipe.
+    - The `acceptPrimary` machinery (which exists today only because mux needed a way to bind a tag to a Session via a first message on the primary) is deleted. The activation handshake T39.1 landed runs on the per-client QUIC pipe directly, not on a tag-prefixed sub-stream.
+    - All SDKs (Go, Swift, Kotlin, C, TS) update to the new greetings. wire_vectors_test.go and the cross-language byte-vector tests in audit-log.md §T27 either pass against the new wire or are explicitly retired.
+    - Authentication of the backend identity (currently the bearer token on register-mux greeting, tracked separately under T42) is preserved on the new register greeting.
+    - make bullseye stays green; the relay loses the demux dispatcher / instance.clients map / dispatchStreams / dispatchDatagrams machinery; net delete is substantial.
+    context: |-
+      Captures docs/DESIGN.md §3 L1's "Current state vs. target" gap: the modern API still uses the multi-tenant register-mux + per-client tag prefix scheme, even though the four-layer model says L1 should be a remote-Listen primitive that gives each accepted client its own end-to-end QUIC pipe. Discovered during the T39 design discussion (2026-05-06); deferred to its own epic because it's wire-protocol-breaking across all SDKs and substantially larger than the per-leaf T39.x work.
+
+      Depends on: T39.6 (Conn deletion) so that there's only one bridging mode left to collapse from; T40 (one-shot byte-format protogen specs) so that the new greeting set can ride that infrastructure rather than hand-roll it again.
+
+      Knock-on cleanups when this lands: the per-client demux tables, the clientTag concept, the entire §5 "Demux tables and queues" line about per-client tag mapping, and the asymmetric primary-stream concept all evaporate from the codebase.
+    depends_on:
+    - T39.6
+    - T40
+    origin: manual
+    discovered: 2026-05-10
   T5:
     name: Investigate Bluetooth as proximity oracle
     status: achieved

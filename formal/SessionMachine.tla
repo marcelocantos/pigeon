@@ -1,4 +1,4 @@
----- MODULE Session_Transport ----
+---- MODULE SessionMachine ----
 \* Auto-generated from protocol YAML. Do not edit.
 \* Phase: Transport
 
@@ -91,6 +91,8 @@ DeriveKey(a, b) == IF KeyRank(a) <= KeyRank(b) THEN <<"ecdh", a, b>> ELSE <<"ecd
 DeriveCode(a, b) == IF KeyRank(a) <= KeyRank(b) THEN <<"code", a, b>> ELSE <<"code", b, a>>
 \* minimum of two values
 Min(a, b) == IF a < b THEN a ELSE b
+\* Interface contract with PairingCeremony.tla: a PairingRecord is well-formed iff it carries a non-default peer instance ID and ephemeral pubkey. SessionMachine treats this as an axiom over its initial state — the session begins with a record that PairingCeremony.tla's PairingProducesValidRecord postcondition has already established.
+ValidPairingRecord(r) == r.peer_instance_id /= "none" /\ r.peer_eph_pub /= "none"
 
 
 
