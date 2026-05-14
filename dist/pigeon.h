@@ -39,41 +39,41 @@ typedef enum {
 
 // PairingCeremony message types.
 typedef enum {
-	PIGEON_MSG_HELLO = 0,
-	PIGEON_MSG_WELCOME,
-	PIGEON_MSG_CONFIRM_TO_INITIATOR,
-	PIGEON_MSG_CONFIRM_TO_ACCEPTOR,
-	PIGEON_MSG_COUNT
+	PIGEON_PAIRINGCEREMONY_MSG_HELLO = 0,
+	PIGEON_PAIRINGCEREMONY_MSG_WELCOME,
+	PIGEON_PAIRINGCEREMONY_MSG_CONFIRM_TO_INITIATOR,
+	PIGEON_PAIRINGCEREMONY_MSG_CONFIRM_TO_ACCEPTOR,
+	PIGEON_PAIRINGCEREMONY_MSG_COUNT
 } pairing_ceremony_msg_type;
 
 // PairingCeremony actions.
 typedef enum {
-	PIGEON_ACTION_GEN_EPHEMERAL = 0,
-	PIGEON_ACTION_REGISTER_RELAY,
-	PIGEON_ACTION_EMIT_TOKEN,
-	PIGEON_ACTION_DERIVE_CODE,
-	PIGEON_ACTION_STORE_RECORD,
-	PIGEON_ACTION_DECODE_TOKEN,
-	PIGEON_ACTION_DIAL_RELAY,
-	PIGEON_ACTION_COUNT
+	PIGEON_PAIRINGCEREMONY_ACTION_GEN_EPHEMERAL = 0,
+	PIGEON_PAIRINGCEREMONY_ACTION_REGISTER_RELAY,
+	PIGEON_PAIRINGCEREMONY_ACTION_EMIT_TOKEN,
+	PIGEON_PAIRINGCEREMONY_ACTION_DERIVE_CODE,
+	PIGEON_PAIRINGCEREMONY_ACTION_STORE_RECORD,
+	PIGEON_PAIRINGCEREMONY_ACTION_DECODE_TOKEN,
+	PIGEON_PAIRINGCEREMONY_ACTION_DIAL_RELAY,
+	PIGEON_PAIRINGCEREMONY_ACTION_COUNT
 } pairing_ceremony_action_id;
 
 // PairingCeremony events.
 typedef enum {
-	PIGEON_EVENT_PAIR_BEGIN = 0,
-	PIGEON_EVENT_EPHEMERAL_READY,
-	PIGEON_EVENT_RELAY_REGISTERED,
-	PIGEON_EVENT_CODE_READY,
-	PIGEON_EVENT_USER_CONFIRM,
-	PIGEON_EVENT_USER_CANCEL,
-	PIGEON_EVENT_TOKEN_RECEIVED,
-	PIGEON_EVENT_TOKEN_DECODED,
-	PIGEON_EVENT_RELAY_CONNECTED,
-	PIGEON_EVENT_RECV_HELLO,
-	PIGEON_EVENT_RECV_CONFIRM_TO_ACCEPTOR,
-	PIGEON_EVENT_RECV_WELCOME,
-	PIGEON_EVENT_RECV_CONFIRM_TO_INITIATOR,
-	PIGEON_EVENT_COUNT
+	PIGEON_PAIRINGCEREMONY_EVENT_PAIR_BEGIN = 0,
+	PIGEON_PAIRINGCEREMONY_EVENT_EPHEMERAL_READY,
+	PIGEON_PAIRINGCEREMONY_EVENT_RELAY_REGISTERED,
+	PIGEON_PAIRINGCEREMONY_EVENT_CODE_READY,
+	PIGEON_PAIRINGCEREMONY_EVENT_USER_CONFIRM,
+	PIGEON_PAIRINGCEREMONY_EVENT_USER_CANCEL,
+	PIGEON_PAIRINGCEREMONY_EVENT_TOKEN_RECEIVED,
+	PIGEON_PAIRINGCEREMONY_EVENT_TOKEN_DECODED,
+	PIGEON_PAIRINGCEREMONY_EVENT_RELAY_CONNECTED,
+	PIGEON_PAIRINGCEREMONY_EVENT_RECV_HELLO,
+	PIGEON_PAIRINGCEREMONY_EVENT_RECV_CONFIRM_TO_ACCEPTOR,
+	PIGEON_PAIRINGCEREMONY_EVENT_RECV_WELCOME,
+	PIGEON_PAIRINGCEREMONY_EVENT_RECV_CONFIRM_TO_INITIATOR,
+	PIGEON_PAIRINGCEREMONY_EVENT_COUNT
 } pairing_ceremony_event_id;
 
 // Guard and action callback types.
@@ -91,7 +91,7 @@ typedef struct {
 	const char * acceptor_code; // confirmation code acceptor derived from its (ephA, ephB) view
 	const char * acceptor_user_confirmed; // has the acceptor's local human pressed y?
 	const char * acceptor_received_confirm; // has the acceptor received initiator's confirm message?
-	pigeon_action_fn actions[PIGEON_ACTION_COUNT];
+	pigeon_action_fn actions[PIGEON_PAIRINGCEREMONY_ACTION_COUNT];
 	pigeon_change_fn on_change;
 	void *userdata;
 } pigeon_acceptor_machine;
@@ -113,7 +113,7 @@ typedef struct {
 	const char * initiator_code; // confirmation code initiator derived from its (ephA, ephB) view
 	const char * initiator_user_confirmed; // has the initiator's local human pressed y?
 	const char * initiator_received_confirm; // has the initiator received acceptor's confirm message?
-	pigeon_action_fn actions[PIGEON_ACTION_COUNT];
+	pigeon_action_fn actions[PIGEON_PAIRINGCEREMONY_ACTION_COUNT];
 	pigeon_change_fn on_change;
 	void *userdata;
 } pigeon_initiator_machine;
@@ -596,3 +596,455 @@ int pigeon_pairing_record_deserialize(pigeon_pairing_record *rec,
                                       const uint8_t *buf, size_t buf_len);
 
 #endif // PIGEON_H
+
+#ifndef PIGEON_H_AMALGAMATED_EXTRAS
+#define PIGEON_H_AMALGAMATED_EXTRAS
+
+// --- SessionMachine declarations (from session_gen.h) ---
+
+
+
+
+
+// Session backend states.
+typedef enum {
+	PIGEON_BACKEND_IDLE = 0,
+	PIGEON_BACKEND_GENERATE_TOKEN,
+	PIGEON_BACKEND_REGISTER_RELAY,
+	PIGEON_BACKEND_WAITING_FOR_CLIENT,
+	PIGEON_BACKEND_DERIVE_SECRET,
+	PIGEON_BACKEND_SEND_ACK,
+	PIGEON_BACKEND_WAITING_FOR_CODE,
+	PIGEON_BACKEND_VALIDATE_CODE,
+	PIGEON_BACKEND_STORE_PAIRED,
+	PIGEON_BACKEND_PAIRED,
+	PIGEON_BACKEND_AUTH_CHECK,
+	PIGEON_BACKEND_SESSION_ACTIVE,
+	PIGEON_BACKEND_RELAY_CONNECTED,
+	PIGEON_BACKEND_LAN_OFFERED,
+	PIGEON_BACKEND_LAN_ACTIVE,
+	PIGEON_BACKEND_RELAY_BACKOFF,
+	PIGEON_BACKEND_LAN_DEGRADED,
+	PIGEON_BACKEND_STATE_COUNT
+} pigeon_backend_state;
+
+// Session client states.
+typedef enum {
+	PIGEON_CLIENT_IDLE = 0,
+	PIGEON_CLIENT_OBTAIN_BACKCHANNEL_SECRET,
+	PIGEON_CLIENT_CONNECT_RELAY,
+	PIGEON_CLIENT_GEN_KEY_PAIR,
+	PIGEON_CLIENT_WAIT_ACK,
+	PIGEON_CLIENT_E2E_READY,
+	PIGEON_CLIENT_SHOW_CODE,
+	PIGEON_CLIENT_WAIT_PAIR_COMPLETE,
+	PIGEON_CLIENT_PAIRED,
+	PIGEON_CLIENT_RECONNECT,
+	PIGEON_CLIENT_SEND_AUTH,
+	PIGEON_CLIENT_SESSION_ACTIVE,
+	PIGEON_CLIENT_RELAY_CONNECTED,
+	PIGEON_CLIENT_LAN_CONNECTING,
+	PIGEON_CLIENT_LAN_VERIFYING,
+	PIGEON_CLIENT_LAN_ACTIVE,
+	PIGEON_CLIENT_RELAY_FALLBACK,
+	PIGEON_CLIENT_STATE_COUNT
+} pigeon_client_state;
+
+// Session relay states.
+typedef enum {
+	PIGEON_RELAY_IDLE = 0,
+	PIGEON_RELAY_BACKEND_REGISTERED,
+	PIGEON_RELAY_BRIDGED,
+	PIGEON_RELAY_STATE_COUNT
+} pigeon_relay_state;
+
+// Session message types.
+typedef enum {
+	PIGEON_SESSION_MSG_PAIR_HELLO = 0,
+	PIGEON_SESSION_MSG_PAIR_HELLO_ACK,
+	PIGEON_SESSION_MSG_PAIR_CONFIRM,
+	PIGEON_SESSION_MSG_PAIR_COMPLETE,
+	PIGEON_SESSION_MSG_AUTH_REQUEST,
+	PIGEON_SESSION_MSG_AUTH_OK,
+	PIGEON_SESSION_MSG_LAN_OFFER,
+	PIGEON_SESSION_MSG_LAN_VERIFY,
+	PIGEON_SESSION_MSG_LAN_CONFIRM,
+	PIGEON_SESSION_MSG_PATH_PING,
+	PIGEON_SESSION_MSG_PATH_PONG,
+	PIGEON_SESSION_MSG_COUNT
+} session_msg_type;
+
+// Session guards.
+typedef enum {
+	PIGEON_SESSION_GUARD_TOKEN_VALID = 0,
+	PIGEON_SESSION_GUARD_TOKEN_INVALID,
+	PIGEON_SESSION_GUARD_CODE_CORRECT,
+	PIGEON_SESSION_GUARD_CODE_WRONG,
+	PIGEON_SESSION_GUARD_DEVICE_KNOWN,
+	PIGEON_SESSION_GUARD_DEVICE_UNKNOWN,
+	PIGEON_SESSION_GUARD_NONCE_FRESH,
+	PIGEON_SESSION_GUARD_CHALLENGE_VALID,
+	PIGEON_SESSION_GUARD_CHALLENGE_INVALID,
+	PIGEON_SESSION_GUARD_LAN_ENABLED,
+	PIGEON_SESSION_GUARD_LAN_DISABLED,
+	PIGEON_SESSION_GUARD_LAN_SERVER_AVAILABLE,
+	PIGEON_SESSION_GUARD_UNDER_MAX_FAILURES,
+	PIGEON_SESSION_GUARD_AT_MAX_FAILURES,
+	PIGEON_SESSION_GUARD_COUNT
+} session_guard_id;
+
+// Session actions.
+typedef enum {
+	PIGEON_SESSION_ACTION_GENERATE_TOKEN = 0,
+	PIGEON_SESSION_ACTION_REGISTER_RELAY,
+	PIGEON_SESSION_ACTION_DERIVE_SECRET,
+	PIGEON_SESSION_ACTION_STORE_DEVICE,
+	PIGEON_SESSION_ACTION_VERIFY_DEVICE,
+	PIGEON_SESSION_ACTION_ACTIVATE_LAN,
+	PIGEON_SESSION_ACTION_FALLBACK_TO_RELAY,
+	PIGEON_SESSION_ACTION_RESET_FAILURES,
+	PIGEON_SESSION_ACTION_SEND_PAIR_HELLO,
+	PIGEON_SESSION_ACTION_STORE_SECRET,
+	PIGEON_SESSION_ACTION_DIAL_LAN,
+	PIGEON_SESSION_ACTION_BRIDGE_STREAMS,
+	PIGEON_SESSION_ACTION_UNBRIDGE,
+	PIGEON_SESSION_ACTION_COUNT
+} session_action_id;
+
+// Session events.
+typedef enum {
+	PIGEON_SESSION_EVENT_APP_SEND = 0,
+	PIGEON_SESSION_EVENT_APP_RECV,
+	PIGEON_SESSION_EVENT_APP_SEND_DATAGRAM,
+	PIGEON_SESSION_EVENT_APP_RECV_DATAGRAM,
+	PIGEON_SESSION_EVENT_APP_CLOSE,
+	PIGEON_SESSION_EVENT_APP_FORCE_FALLBACK,
+	PIGEON_SESSION_EVENT_RELAY_STREAM_DATA,
+	PIGEON_SESSION_EVENT_RELAY_STREAM_ERROR,
+	PIGEON_SESSION_EVENT_RELAY_DATAGRAM,
+	PIGEON_SESSION_EVENT_LAN_STREAM_DATA,
+	PIGEON_SESSION_EVENT_LAN_STREAM_ERROR,
+	PIGEON_SESSION_EVENT_LAN_DATAGRAM,
+	PIGEON_SESSION_EVENT_LAN_DIAL_OK,
+	PIGEON_SESSION_EVENT_LAN_DIAL_FAILED,
+	PIGEON_SESSION_EVENT_LAN_VERIFY_OK,
+	PIGEON_SESSION_EVENT_PING_TIMEOUT,
+	PIGEON_SESSION_EVENT_PING_TICK,
+	PIGEON_SESSION_EVENT_BACKOFF_EXPIRED,
+	PIGEON_SESSION_EVENT_OFFER_TIMEOUT,
+	PIGEON_SESSION_EVENT_CLI_INIT_PAIR,
+	PIGEON_SESSION_EVENT_TOKEN_CREATED,
+	PIGEON_SESSION_EVENT_RELAY_REGISTERED,
+	PIGEON_SESSION_EVENT_ECDH_COMPLETE,
+	PIGEON_SESSION_EVENT_SIGNAL_CODE_DISPLAY,
+	PIGEON_SESSION_EVENT_CLI_CODE_ENTERED,
+	PIGEON_SESSION_EVENT_CHECK_CODE,
+	PIGEON_SESSION_EVENT_FINALISE,
+	PIGEON_SESSION_EVENT_VERIFY,
+	PIGEON_SESSION_EVENT_SESSION_ESTABLISHED,
+	PIGEON_SESSION_EVENT_LAN_SERVER_READY,
+	PIGEON_SESSION_EVENT_LAN_SERVER_CHANGED,
+	PIGEON_SESSION_EVENT_READVERTISE_TICK,
+	PIGEON_SESSION_EVENT_DISCONNECT,
+	PIGEON_SESSION_EVENT_BACKCHANNEL_RECEIVED,
+	PIGEON_SESSION_EVENT_SECRET_PARSED,
+	PIGEON_SESSION_EVENT_RELAY_CONNECTED,
+	PIGEON_SESSION_EVENT_KEY_PAIR_GENERATED,
+	PIGEON_SESSION_EVENT_CODE_DISPLAYED,
+	PIGEON_SESSION_EVENT_APP_LAUNCH,
+	PIGEON_SESSION_EVENT_VERIFY_TIMEOUT,
+	PIGEON_SESSION_EVENT_LAN_ERROR,
+	PIGEON_SESSION_EVENT_RELAY_OK,
+	PIGEON_SESSION_EVENT_BACKEND_REGISTER,
+	PIGEON_SESSION_EVENT_CLIENT_CONNECT,
+	PIGEON_SESSION_EVENT_CLIENT_DISCONNECT,
+	PIGEON_SESSION_EVENT_BACKEND_DISCONNECT,
+	PIGEON_SESSION_EVENT_RECV_PAIR_HELLO,
+	PIGEON_SESSION_EVENT_RECV_AUTH_REQUEST,
+	PIGEON_SESSION_EVENT_RECV_LAN_VERIFY,
+	PIGEON_SESSION_EVENT_RECV_PATH_PONG,
+	PIGEON_SESSION_EVENT_RECV_PAIR_HELLO_ACK,
+	PIGEON_SESSION_EVENT_RECV_PAIR_CONFIRM,
+	PIGEON_SESSION_EVENT_RECV_PAIR_COMPLETE,
+	PIGEON_SESSION_EVENT_RECV_AUTH_OK,
+	PIGEON_SESSION_EVENT_RECV_LAN_OFFER,
+	PIGEON_SESSION_EVENT_RECV_LAN_CONFIRM,
+	PIGEON_SESSION_EVENT_RECV_PATH_PING,
+	PIGEON_SESSION_EVENT_COUNT
+} session_event_id;
+
+// Session commands.
+typedef enum {
+	PIGEON_SESSION_CMD_WRITE_ACTIVE_STREAM = 0,
+	PIGEON_SESSION_CMD_SEND_ACTIVE_DATAGRAM,
+	PIGEON_SESSION_CMD_SEND_PATH_PING,
+	PIGEON_SESSION_CMD_SEND_PATH_PONG,
+	PIGEON_SESSION_CMD_SEND_LAN_OFFER,
+	PIGEON_SESSION_CMD_SEND_LAN_VERIFY,
+	PIGEON_SESSION_CMD_SEND_LAN_CONFIRM,
+	PIGEON_SESSION_CMD_DIAL_LAN,
+	PIGEON_SESSION_CMD_DELIVER_RECV,
+	PIGEON_SESSION_CMD_DELIVER_RECV_ERROR,
+	PIGEON_SESSION_CMD_DELIVER_RECV_DATAGRAM,
+	PIGEON_SESSION_CMD_START_LAN_STREAM_READER,
+	PIGEON_SESSION_CMD_STOP_LAN_STREAM_READER,
+	PIGEON_SESSION_CMD_START_LAN_DG_READER,
+	PIGEON_SESSION_CMD_STOP_LAN_DG_READER,
+	PIGEON_SESSION_CMD_START_MONITOR,
+	PIGEON_SESSION_CMD_STOP_MONITOR,
+	PIGEON_SESSION_CMD_START_PONG_TIMEOUT,
+	PIGEON_SESSION_CMD_CANCEL_PONG_TIMEOUT,
+	PIGEON_SESSION_CMD_START_BACKOFF_TIMER,
+	PIGEON_SESSION_CMD_CLOSE_LAN_PATH,
+	PIGEON_SESSION_CMD_SIGNAL_LAN_READY,
+	PIGEON_SESSION_CMD_RESET_LAN_READY,
+	PIGEON_SESSION_CMD_SET_CRYPTO_DATAGRAM,
+	PIGEON_SESSION_CMD_COUNT
+} session_cmd_id;
+
+// Wire constants.
+#define PIGEON_WIRE_DG_CONN_WHOLE ((uint8_t)0x00) // conn-level single-frame datagram
+#define PIGEON_WIRE_DG_PING ((uint8_t)0x10) // health ping on direct path
+#define PIGEON_WIRE_DG_PONG ((uint8_t)0x11) // health pong on direct path
+#define PIGEON_WIRE_DG_CONN_FRAGMENT ((uint8_t)0x40) // conn-level multi-frame datagram
+#define PIGEON_WIRE_DG_CHAN_WHOLE ((uint8_t)0x80) // channel single-frame datagram
+#define PIGEON_WIRE_DG_CHAN_FRAGMENT ((uint8_t)0xC0) // channel multi-frame datagram
+#define PIGEON_WIRE_FRAG_HEADER_SIZE 8 // fragment header: msgID(4) + fragIdx(2) + totalFrags(2)
+#define PIGEON_WIRE_CHAN_ID_SIZE 2 // channel ID prefix size in bytes
+#define PIGEON_WIRE_MAX_DATAGRAM_PAYLOAD 1200 // max payload per QUIC datagram (bytes)
+#define PIGEON_WIRE_FRAGMENT_TIMEOUT_MS 5000 /* ms */ // fragment reassembly timeout
+#define PIGEON_WIRE_FRAME_APP ((uint8_t)0x00) // application data
+#define PIGEON_WIRE_FRAME_LAN_OFFER ((uint8_t)0x01) // LAN address exchange
+#define PIGEON_WIRE_FRAME_CUTOVER ((uint8_t)0x02) // transport cutover marker
+#define PIGEON_WIRE_MAX_MESSAGE_SIZE 1048576 // max stream message size (1 MiB)
+#define PIGEON_WIRE_LENGTH_PREFIX_SIZE 4 // big-endian length prefix size
+#define PIGEON_WIRE_PING_INTERVAL_MS 5000 /* ms */ // health ping interval
+#define PIGEON_WIRE_PONG_TIMEOUT_MS 4000 /* ms */ // pong reply timeout
+#define PIGEON_WIRE_MAX_PING_FAILURES 3 // consecutive failures before fallback
+#define PIGEON_WIRE_MAX_BACKOFF_LEVEL 5 // exponential backoff cap
+#define PIGEON_WIRE_STREAM_CHANNEL_OPENER_SUFFIX ":o2a" // HKDF info suffix for opener→acceptor stream key
+#define PIGEON_WIRE_STREAM_CHANNEL_ACCEPT_SUFFIX ":a2o" // HKDF info suffix for acceptor→opener stream key
+#define PIGEON_WIRE_DG_CHANNEL_SEND_SUFFIX ":dg:send" // HKDF info suffix for datagram send key
+#define PIGEON_WIRE_DG_CHANNEL_RECV_SUFFIX ":dg:recv" // HKDF info suffix for datagram recv key
+#define PIGEON_WIRE_CHANNEL_ID_HASH_MULTIPLIER 31 // hash multiplier for channel name → uint16 ID
+
+// Guard and action callback types.
+typedef bool (*pigeon_guard_fn)(void *ctx);
+typedef int  (*pigeon_action_fn)(void *ctx);
+typedef void (*pigeon_change_fn)(const char *var_name, void *ctx);
+
+// Session backend state machine.
+typedef struct {
+	pigeon_backend_state state;
+	const char * current_token; // pairing token currently in play
+	const char * backend_ecdh_pub; // backend ECDH public key
+	const char * received_client_pub; // pubkey backend received in pair_hello
+	const char * backend_shared_key; // ECDH key derived by backend
+	const char * backend_code; // code computed by backend
+	const char * received_code; // code entered via CLI
+	int code_attempts; // failed code submission attempts
+	const char * device_secret; // persistent device secret
+	const char * received_device_id; // device_id from auth_request
+	const char * received_auth_nonce; // nonce from auth_request
+	bool secret_published; // whether token has been published via backchannel
+	int ping_failures; // consecutive failed pings
+	int backoff_level; // exponential backoff level
+	const char * b_active_path; // backend active path
+	const char * b_dispatcher_path; // backend datagram dispatcher binding
+	const char * monitor_target; // health monitor target
+	const char * lan_signal; // LANReady notification state
+	pigeon_guard_fn guards[PIGEON_SESSION_GUARD_COUNT];
+	pigeon_action_fn actions[PIGEON_SESSION_ACTION_COUNT];
+	pigeon_change_fn on_change;
+	void *userdata;
+} pigeon_backend_machine;
+
+void pigeon_backend_machine_init(pigeon_backend_machine *m);
+int  pigeon_backend_handle_message(pigeon_backend_machine *m, session_msg_type msg);
+int  pigeon_backend_step(pigeon_backend_machine *m, session_event_id event);
+
+// Session client state machine.
+typedef struct {
+	pigeon_client_state state;
+	const char * received_backend_pub; // pubkey client received in pair_hello_ack
+	const char * client_shared_key; // ECDH key derived by client
+	const char * client_code; // code computed by client
+	const char * c_active_path; // client active path
+	const char * c_dispatcher_path; // client datagram dispatcher binding
+	const char * lan_signal; // LANReady notification state
+	pigeon_guard_fn guards[PIGEON_SESSION_GUARD_COUNT];
+	pigeon_action_fn actions[PIGEON_SESSION_ACTION_COUNT];
+	pigeon_change_fn on_change;
+	void *userdata;
+} pigeon_client_machine;
+
+void pigeon_client_machine_init(pigeon_client_machine *m);
+int  pigeon_client_handle_message(pigeon_client_machine *m, session_msg_type msg);
+int  pigeon_client_step(pigeon_client_machine *m, session_event_id event);
+
+// Session relay state machine.
+typedef struct {
+	pigeon_relay_state state;
+	const char * relay_bridge; // relay bridge state
+	pigeon_guard_fn guards[PIGEON_SESSION_GUARD_COUNT];
+	pigeon_action_fn actions[PIGEON_SESSION_ACTION_COUNT];
+	pigeon_change_fn on_change;
+	void *userdata;
+} pigeon_relay_machine;
+
+void pigeon_relay_machine_init(pigeon_relay_machine *m);
+int  pigeon_relay_handle_message(pigeon_relay_machine *m, session_msg_type msg);
+int  pigeon_relay_step(pigeon_relay_machine *m, session_event_id event);
+
+
+// --- Activation handshake driver (from activation.h) ---
+
+//
+// Activation drives the session.yaml pairing-phase auth states
+// (Paired -> AuthCheck -> SessionActive on the backend; Reconnect ->
+// SendAuth -> SessionActive on the client) on a per-client
+// SessionMachine. The machine instance is exclusive to this client
+// connection -- no shared state between clients on the backend side.
+//
+// The exchange is two messages on the relay's primary stream,
+// immediately after the stream-name binding header:
+//
+//	client  -> backend: auth_request{device_id}
+//	backend -> client:  auth_ok{ok, reason?}
+//
+// Both messages are sent via the transport's send_on_stream /
+// recv_on_stream callbacks (which handle the 4-byte big-endian
+// length prefix). The wire format below is byte-for-byte identical
+// to the Go-side activation.go shipped under T39.1.
+
+
+
+// Activation's API surface only needs opaque pointers, so keep this
+// header dependency-light — implementation files include the right
+// generated headers for their TU.
+
+#ifdef __cplusplus
+extern "C" {
+#endif
+
+// Opaque type aliases. The driver functions take void* for the
+// machine arguments so this header doesn't need to include
+// session_gen.h. Caller passes a real `pigeon_backend_machine *` /
+// `pigeon_client_machine *` (zero-initialised); activation.c casts
+// internally. Same shape for the transport / stream / pairing-
+// record types defined in pigeon.h.
+
+// --- Wire constants (mirror activation.go) ---
+
+// authMsgTagAuthRequest tags an auth_request payload.
+#define PIGEON_AUTH_MSG_TAG_AUTH_REQUEST ((uint8_t)0x01)
+// authMsgTagAuthOk tags an auth_ok payload.
+#define PIGEON_AUTH_MSG_TAG_AUTH_OK      ((uint8_t)0x02)
+// authOkAccepted is the ok flag value for an accepted activation.
+#define PIGEON_AUTH_OK_ACCEPTED          ((uint8_t)0x01)
+// authOkRejected is the ok flag value for a rejected activation
+// (carries a reason string).
+#define PIGEON_AUTH_OK_REJECTED          ((uint8_t)0x00)
+
+// PIGEON_AUTH_MAX_DEVICE_ID is a hard cap on the device-id string we
+// accept on the wire. Mirrors the Go side's implicit bound (device
+// IDs in pigeon are 32-byte hex strings = 64 chars + NUL).
+#define PIGEON_AUTH_MAX_DEVICE_ID 128
+
+// PIGEON_AUTH_MAX_REASON is a hard cap on the reason string in a
+// rejected auth_ok. Keeps wire decode bounded.
+#define PIGEON_AUTH_MAX_REASON    256
+
+// --- Wire encoders / decoders ---
+
+// pigeon_encode_auth_request builds the binary payload for the
+// client's auth_request message: [tag][uvarint device-id len][device-id].
+// Returns the encoded length on success, or -1 if buf_len is too
+// small.
+int pigeon_encode_auth_request(const char *device_id,
+                               uint8_t *buf, size_t buf_len);
+
+// pigeon_decode_auth_request parses an auth_request payload and
+// copies the device ID (NUL-terminated) into out_device_id.
+// Returns 0 on success, -1 on malformed payload or oversized device
+// id.
+int pigeon_decode_auth_request(const uint8_t *payload, size_t payload_len,
+                               char *out_device_id, size_t out_cap);
+
+// pigeon_encode_auth_ok builds the binary payload for the backend's
+// auth_ok reply. ok=true: [tag][0x01]; ok=false: [tag][0x00][uvarint
+// reason len][reason]. Returns encoded length or -1 on overflow.
+int pigeon_encode_auth_ok(bool ok, const char *reason,
+                          uint8_t *buf, size_t buf_len);
+
+// pigeon_decode_auth_ok parses an auth_ok payload. Sets *out_ok and
+// (on rejection) copies the reason into out_reason. Returns 0 on
+// success, -1 on malformed payload.
+int pigeon_decode_auth_ok(const uint8_t *payload, size_t payload_len,
+                          bool *out_ok,
+                          char *out_reason, size_t out_reason_cap);
+
+// --- Per-side drive helpers ---
+
+// pigeon_resolve_device_fn is invoked by pigeon_run_backend_activation
+// to look up a connecting client's PairingRecord by its device ID.
+// The callback owns the record memory; the activation driver only
+// reads it for the duration of the call.
+//
+// Return values: 0 on success (out_record populated), -1 if the
+// device is unknown or the lookup fails. Mirrors Go's
+// runBackendActivation's `resolve(deviceID) (*crypto.PairingRecord,
+// error)` shape.
+// out_record is a `pigeon_pairing_record *` (cast from void *). The
+// callback writes the resolved record into *out_record.
+typedef int (*pigeon_resolve_device_fn)(void *userdata,
+                                        const char *device_id,
+                                        void *out_record);
+
+// pigeon_run_backend_activation drives the backend's per-client
+// SessionMachine through Paired -> AuthCheck -> SessionActive on a
+// valid auth_request, or Paired -> AuthCheck -> Idle on an unknown
+// device.
+//
+// Reads the auth_request from `stream`, looks up the PairingRecord
+// via `resolve`, writes the auth_ok reply, populates `out_machine`
+// with the post-activation backend machine state, copies the
+// resolved device ID into `out_device_id`, and (on success) writes
+// the looked-up PairingRecord into `out_record`.
+//
+// Returns 0 on success. Returns -1 on wire / transition failure
+// (out_device_id empty); returns 1 when the device ID was decoded
+// but the lookup rejected the client (out_device_id populated, no
+// record). Mirrors Go's runBackendActivation's tri-valued return.
+// transport / stream / out_machine / out_record are all opaque
+// pointer types here — see the comment block above. Pass real
+// pigeon_transport* / pigeon_stream_handle* / pigeon_backend_machine*
+// / pigeon_pairing_record* values (cast happens internally).
+int pigeon_run_backend_activation(const void *transport,
+                                  void *stream,
+                                  pigeon_resolve_device_fn resolve,
+                                  void *resolve_userdata,
+                                  void *out_machine,
+                                  char *out_device_id, size_t out_device_id_cap,
+                                  void *out_record);
+
+// pigeon_run_client_activation drives the client's per-client
+// SessionMachine through Reconnect -> SendAuth -> SessionActive.
+// Writes auth_request{device_id} to `stream`, reads the auth_ok
+// reply, and on acceptance populates `out_machine`. On rejection
+// returns -1 and (if out_reason is non-NULL) copies the backend's
+// reason into out_reason.
+//
+// Returns 0 on success, -1 on transport / decode / rejection.
+int pigeon_run_client_activation(const void *transport,
+                                 void *stream,
+                                 const char *device_id,
+                                 void *out_machine,
+                                 char *out_reason, size_t out_reason_cap);
+
+#ifdef __cplusplus
+}
+#endif
+
+
+#endif // PIGEON_H_AMALGAMATED_EXTRAS

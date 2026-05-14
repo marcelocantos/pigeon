@@ -36,6 +36,48 @@ sed '/#include "pairingceremony_gen.h"/r '"$OUTDIR/.gen_fragment.h" \
     | sed '/^\/\/ Include the generated protocol header\.$/d' \
     > "$OUTDIR/pigeon.h"
 
+# Append session_gen.h (post-T39 SessionMachine declarations) and the
+# activation driver header. Both protogen-generated headers can coexist
+# in one TU now that PIGEON_<protocol>_<KIND>_<NAME> per-protocol
+# prefixes resolve the namespace collision (T32.1).
+#
+# These are appended OUTSIDE pigeon.h's PIGEON_H header guard, so wrap
+# them in their own guard to keep re-inclusion (e.g. from loopback.h
+# re-including pigeon.h) idempotent.
+{
+    echo ""
+    echo "#ifndef PIGEON_H_AMALGAMATED_EXTRAS"
+    echo "#define PIGEON_H_AMALGAMATED_EXTRAS"
+    echo ""
+    echo "// --- SessionMachine declarations (from session_gen.h) ---"
+    echo ""
+    sed -e '/#ifndef PIGEON_SESSION_GEN_H/d' \
+        -e '/#define PIGEON_SESSION_GEN_H/d' \
+        -e '/#endif.*PIGEON_SESSION_GEN_H/d' \
+        -e '/#include <stdbool.h>/d' \
+        -e '/#include <stdint.h>/d' \
+        -e '/^\/\/ Copyright/d' \
+        -e '/^\/\/ SPDX/d' \
+        -e '/^\/\/ Code generated/d' \
+        "$SRCDIR/include/pigeon/session_gen.h"
+    echo ""
+    echo "// --- Activation handshake driver (from activation.h) ---"
+    echo ""
+    sed -e '/#ifndef PIGEON_ACTIVATION_H/d' \
+        -e '/#define PIGEON_ACTIVATION_H/d' \
+        -e '/#endif.*PIGEON_ACTIVATION_H/d' \
+        -e '/#include <stdbool.h>/d' \
+        -e '/#include <stddef.h>/d' \
+        -e '/#include <stdint.h>/d' \
+        -e '/#include "pigeon.h"/d' \
+        -e '/#include "session_gen.h"/d' \
+        -e '/^\/\/ Copyright/d' \
+        -e '/^\/\/ SPDX/d' \
+        "$SRCDIR/include/pigeon/activation.h"
+    echo ""
+    echo "#endif // PIGEON_H_AMALGAMATED_EXTRAS"
+} >> "$OUTDIR/pigeon.h"
+
 # Also emit dist/loopback.h alongside dist/pigeon.h so language wrappers
 # (cwire, SwiftPM CPigeon, JNI shim) can pull in the in-process test
 # harness via a single extra include.
@@ -60,15 +102,32 @@ rm -f "$OUTDIR/.gen_fragment.h"
 #include <string.h>
 HEADER
 
-    # Generated state machine implementation (strip includes + copyright).
+    # Generated state machine implementations (strip includes + copyright).
     echo ""
-    echo "// --- Generated state machine ---"
+    echo "// --- Generated pairing-ceremony state machine ---"
     echo ""
     sed -e '/^#include/d' \
         -e '/^\/\/ Copyright/d' \
         -e '/^\/\/ SPDX/d' \
         -e '/^\/\/ Code generated/d' \
         "$SRCDIR/src/pairingceremony_gen.c"
+
+    echo ""
+    echo "// --- Generated session state machine ---"
+    echo ""
+    sed -e '/^#include/d' \
+        -e '/^\/\/ Copyright/d' \
+        -e '/^\/\/ SPDX/d' \
+        -e '/^\/\/ Code generated/d' \
+        "$SRCDIR/src/session_gen.c"
+
+    echo ""
+    echo "// --- Activation handshake driver ---"
+    echo ""
+    sed -e '/^#include/d' \
+        -e '/^\/\/ Copyright/d' \
+        -e '/^\/\/ SPDX/d' \
+        "$SRCDIR/src/activation.c"
 
     # Crypto implementation (strip includes + copyright, keep #if guards).
     echo ""
