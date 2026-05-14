@@ -1,4 +1,4 @@
-schema_version: 3
+schema_version: 4
 targets:
   T1:
     name: Pigeon is a complete library for opaque authenticated relay
@@ -34,7 +34,6 @@ targets:
     status: achieved
     value: 0.0
     cost: 0.0
-    showcase: true
     acceptance:
     - A typed PairingArtifact (instance ID, relay URL, bearer token, key material, issued-at, expires-at) has canonical encode/decode in Go, Swift, and Kotlin, with round-trip tests
     - PairingArtifact has both a canonical JSON encoding and a canonical text (base64url) encoding, and the two are interconvertible across all three SDKs — so an artifact can be transported as a QR payload, a launch argument, an environment variable, or a file with no transcoding glue
@@ -52,7 +51,6 @@ targets:
     status: achieved
     value: 0.0
     cost: 0.0
-    showcase: true
     acceptance:
     - 'docs/ contains a top-level guide walking through the full lifecycle: server mints artifact via PairingHost -> deliver -> client decodes -> CredentialStore persists -> Connect() succeeds -> 30 days later expiry triggers ErrPairingExpired -> re-pair flow'
     - 'The guide covers two pairing-delivery flows side by side using the same PairingArtifact primitive: (1) QR scan from a paired-screen UX, and (2) developer-deploy via xcrun (mint on laptop, inject into iOS app container or via launch argument during install)'
@@ -145,7 +143,6 @@ targets:
     status: achieved
     value: 5.0
     cost: 8.0
-    showcase: true
     acceptance:
     - pigeon_ctx struct contains all state — keypair, session keys, nonce counters, state machine, pairing record, conn, message buffers
     - Library makes zero heap allocations — user owns the pigeon_ctx however they want (stack, static, embedded)
@@ -248,7 +245,6 @@ targets:
     status: achieved
     value: 8.0
     cost: 8.0
-    showcase: true
     acceptance:
     - 'YAML schema supports machines: section under each actor with per-machine initial state, transitions, reports (events emitted upward), and accepts (events received from other machines)'
     - 'YAML schema supports a routes: section declaring inter-machine event wiring with from qualifier and guard conditions'
@@ -267,7 +263,6 @@ targets:
     status: achieved
     value: 5.0
     cost: 3.0
-    showcase: true
     acceptance:
     - 'pairing.yaml uses machines: with two sub-machines: pairing (QR→ECDH→confirmation→store) and auth (present credential→session established)'
     - Routes wire pairing completion into auth (pairing reports paired, auth accepts credential_ready)
@@ -305,7 +300,6 @@ targets:
     status: achieved
     value: 0.0
     cost: 0.0
-    showcase: true
     actual_cost: 2.0
     acceptance:
     - Tests/PigeonTests/PairingCeremonyMachineTests.swift compiles under swift test
@@ -320,7 +314,6 @@ targets:
     status: achieved
     value: 0.0
     cost: 0.0
-    showcase: true
     actual_cost: 3.0
     acceptance:
     - swift test --filter testCrossLanguageConfirmationCode passes on macos-latest in GitHub Actions
@@ -335,7 +328,6 @@ targets:
     status: achieved
     value: 0.0
     cost: 0.0
-    showcase: true
     acceptance:
     - '`go test -count=1 -short ./.` (root package only) passes across 10 consecutive runs with no context-deadline or `no recent network activity` failures'
     - The suite completes in under 300s wall-clock on M4 Max
@@ -349,8 +341,6 @@ targets:
     status: achieved
     value: 0.0
     cost: 0.0
-    showcase: true
-    demonstration: 'PR #21 merged on master with CI green; ran `:pigeon:test --tests ''*PairingCeremony*''` locally on master post-merge — all PairingCeremony test classes (server pairing, server auth, ios pairing, ios auth, cli) compile and pass. Source-set exclude removed from android/pigeon/build.gradle.kts.'
     acceptance:
     - android/pigeon/src/test/kotlin/com/marcelocantos/pigeon/crypto/PairingCeremonyMachineTest.kt compiles against the current generated PairingCeremonyMachine.kt without unresolved references
     - compileTestKotlin succeeds without source-set exclusions in build.gradle.kts
@@ -412,8 +402,6 @@ targets:
     status: achieved
     value: 0.0
     cost: 0.0
-    showcase: true
-    demonstration: 'PR #20 merged on master with CI green; agent verified 10/10 consecutive passes of `cross-language confirmation code via relay` before merge; ran the test once locally on master post-merge — green, no `recv pubkey: context deadline exceeded` in logs. Root cause was reading instance ID from stderr instead of stdout.'
     acceptance:
     - The Kotlin test `cross-language confirmation code via relay` in PigeonConnE2ETest passes reliably (10 consecutive runs)
     - 'Failure mode `recv pubkey: context deadline exceeded` no longer appears in the relay logs during this test'
@@ -460,8 +448,6 @@ targets:
     status: achieved
     value: 0.0
     cost: 0.0
-    showcase: true
-    demonstration: 'Wrote three e2e_test.go integration tests proving the new API end-to-end: TestE2ESingleClientChat (chat round-trip), TestE2EMultiStreamMultiDatagram (chat + control streams + ping + metric datagram channels in one Session), and TestE2EMultiClient (two concurrent clients to the same backend, each with their own chat, no cross-talk). All three pass against the in-process raw-QUIC relay. Tagged-stream demux + bridgeClientMux at the relay layer, executor-bypassing transport.go on the client/backend, AEAD-encrypted Datagram channels with varint channel IDs. examples/echo backend & client also rewritten to use the new API with all four channels live.'
     acceptance:
     - The four files examples/echo/{backend,client}/{main,pair}.go build with no `//go:build ignore` tag and no diagnostic errors.
     - Running `./backend pair` followed by `./client pair --token <…>` on a fresh keystore produces matching PairingRecords (one entry per side) and matching 6-digit confirmation codes.
@@ -634,7 +620,6 @@ targets:
     status: identified
     value: 0.0
     cost: 0.0
-    showcase: true
     acceptance:
     - A `crypto.Identity` implementation backed by the macOS Keychain exists (likely as `examples/echo/backend/keychain_identity_darwin.go` with `//go:build darwin && cgo`, or a small platform subpackage if shared between demos).
     - The implementation stores the X25519 + Ed25519 private bytes as a single Keychain generic-password item (kSecClassGenericPassword), with kSecAttrAccessible=kSecAttrAccessibleWhenUnlocked and kSecAttrSynchronizable=false.
@@ -665,8 +650,6 @@ targets:
     status: achieved
     value: 0.0
     cost: 0.0
-    showcase: true
-    demonstration: 'Restored protocol/pairing.yaml as the single source of truth for the pairing ceremony. Regenerated all six language outputs (Go, Swift, Kotlin, TS, C, TLA+) plus PlantUML diagrams via cmd/protogen. Refactored pairing/pairing.go so runAcceptor / runInitiator drive the generated PairingCeremonyProtocol*Machine — every state transition is dispatched through Step() / HandleMessage() with runtime audit assertions that the spec accepts the event. Fixed two protogen bugs along the way: Swift codegen now skips the GuardID typealias and guards dictionary when no guards are declared, and protogen got a new --root-out flag so the Go runtime machine can be written into the consumer package''s directory (pairing/pairingceremony_gen.go) rather than only the repo root. TLA+ model-checking under TLC: 80 states, 50 distinct, three safety invariants verified (MitMDetectedByCodeMismatch, MitMPreventsPairing, HonestPairingMatchesCodes) — "Model checking completed. No error has been found." A new pairing/pairing_test.go::TestCeremonyEndToEnd drives the full ceremony in-process through the YAML-generated runtime and verifies (a) both sides arrive at the same 6-digit code, (b) PairingRecords reference the correct peer instance IDs, and (c) DeriveChannel on both records produces interoperable AEAD channels (round-trip ciphertext decrypts correctly cross-side). Swift, Kotlin, and TypeScript builds pass with the regenerated machine code; C amalgamation succeeds. The Swift cross-language E2E (mirroring the pre-T22 testCrossLanguageConfirmationCode) is recorded as 🎯T25 since it requires a fresh Swift-side ceremony driver — out of scope for restoring the YAML abstraction itself.'
     acceptance:
     - protocol/pairing.yaml exists and describes the current pairing ceremony (token-based rendezvous, ECDH + 6-digit confirm-code derivation, hello/welcome/confirm wire messages, Code-mismatch abort).
     - Running `go run ./cmd/protogen protocol/pairing.yaml` regenerates protocol/pairingceremony_gen.go, the Swift PairingCeremonyMachine.swift, the Kotlin PairingCeremonyMachine.kt, the C pairingceremony_gen.c, the TypeScript PairingCeremonyMachine.ts, and formal/PairingCeremony.tla — and `make build` passes after regeneration.
@@ -687,7 +670,6 @@ targets:
     status: identified
     value: 0.0
     cost: 0.0
-    showcase: true
     acceptance:
     - A Swift test (or a Swift binary driven from a Go test) drives the new pairing ceremony as the initiator side, using the regenerated Sources/Pigeon/PairingCeremonyMachine.swift and a fresh Swift-side ceremony driver that mirrors pairing/pairing.go.
     - The Go acceptor side and Swift initiator side derive identical 6-digit confirmation codes from each other's ephemeral pubkeys.
@@ -711,8 +693,6 @@ targets:
     status: achieved
     value: 0.0
     cost: 0.0
-    showcase: true
-    demonstration: 'Rewrote Tests/PigeonTests/PairingCeremonyMachineTests.swift and android/pigeon/.../PairingCeremonyMachineTest.kt against the regenerated PairingCeremony{Acceptor,Initiator}Machine surfaces. Each suite now has 10 tests covering: initial state, full happy path with action-firing-order assertions, user_cancel from both AwaitingUserConfirm and AwaitingPeerConfirm, action-throws propagation, and wire-string round-trips for MessageType / ActionID. swift test --filter PairingCeremonyMachineTests: 10/10 pass; gradle :pigeon:test --tests PairingCeremonyMachineTest: build successful with all tests passing.'
     acceptance:
     - Tests/PigeonTests/PairingCeremonyMachineTests.swift compiles and exercises PairingCeremonyAcceptorMachine and PairingCeremonyInitiatorMachine (instead of the old PairingCeremonyServerPairingMachine / IosPairingMachine / CliMachine).
     - android/pigeon/src/test/kotlin/com/marcelocantos/pigeon/crypto/PairingCeremonyMachineTest.kt compiles and exercises the new Acceptor / Initiator machines.
@@ -726,8 +706,6 @@ targets:
     status: achieved
     value: 0.0
     cost: 0.0
-    showcase: true
-    demonstration: 'Audited every cross-language test that talks to a relay. Outcome: zero quarantines required. The relay still supports the legacy `register`/`connect:` wire via bridgeClientPair, so all Swift / Kotlin / TS SDKs continue to work at the single-channel level (they don''t speak register-mux yet, but they don''t need to for their existing test scope). The only real failures were the two cross-language confirmation-code tests (Tests/PigeonRelayE2ETests/RelayE2ETests.swift::testCrossLanguageConfirmationCode and android/.../PigeonConnE2ETest.kt::cross-language confirmation code via relay) which both depend on cmd/crypto-peer/main.go. That binary was //go:build ignored and used the deprecated pigeon.Register signature. Switched it to pigeon.DialRelayAcceptor (the lower-level helper that''s still exported and stable) and dropped the build tag. After the fix, the full sweep is green: Go (6 packages, all pass), Swift (49 tests, 0 failures), Kotlin (BUILD SUCCESSFUL), TypeScript (30 tests, 0 failures), TLC (Model checking completed, no error). The deeper structural ports (T29/T30/T31, where each SDK gains the new multi-channel wire features) remain on the roadmap but are no longer gating a clean test bill of health — they unlock new functionality rather than fix breakage.'
     acceptance:
     - Every Swift/Kotlin/TypeScript/C test that talks to a real relay is either (a) ported to the post-T22 wire protocol, (b) gated behind PIGEON_LEGACY_API=1 (with a clear comment explaining why), or (c) deleted with a commit message documenting why it's no longer relevant.
     - Default `swift test`, `:pigeon:test`, and `make test-web` runs do not invoke any quarantined tests and pass cleanly.
@@ -741,8 +719,6 @@ targets:
     status: achieved
     value: 0.0
     cost: 0.0
-    showcase: true
-    demonstration: '`make bullseye` now runs the full validation across every active suite: gofmt → go vet → go build → go test (all packages, -short -count=1) → swift build → swift test → kotlin :pigeon:test → web (tsx --test crypto.test.ts + PairingCeremonyMachine.test.ts) → TLC PairingCeremony. Final output on master HEAD: every line green ("✓"). Also fixed cmd/protogen so writeFile auto-runs gofmt on .go outputs after writing — the previous behaviour was for fresh regenerations to leave gofmt-dirty generated files in the tree, which would have made `make bullseye` fail right after running `make generate`. Now: regen → gofmt clean → bullseye green.'
     acceptance:
     - 'The bullseye target invokes: gofmt/vet/build/test (existing), swift test, android/gradlew :pigeon:test, make test-web, make amalgamate (and ideally test-c when libsodium is present), and formal/tlc PairingCeremony / Session / PathSwitch.'
     - All invocations exit zero on master HEAD.
@@ -760,7 +736,6 @@ targets:
     status: achieved
     value: 0.0
     cost: 0.0
-    showcase: true
     acceptance:
     - Sources/Pigeon/PigeonRelay.swift (and friends) are reimplemented as a SwiftPM C-target wrapper over libpigeon.a.
     - 'Idiomatic Swift API: async/await on top of the C ABI''s callback shape; AsyncSequence for streams; structured concurrency for cancellation.'
@@ -803,7 +778,6 @@ targets:
     status: achieved
     value: 0.0
     cost: 0.0
-    showcase: true
     acceptance:
     - android/pigeon/ ships a JNI module wrapping libpigeon.a; Android NDK builds for arm64-v8a, x86_64; JVM builds for desktop.
     - 'Idiomatic Kotlin API: suspend functions, Flow for streams, structured cancellation.'
@@ -817,8 +791,6 @@ targets:
     status: achieved
     value: 0.0
     cost: 0.0
-    showcase: true
-    demonstration: 'TypeScript browser SDK rebuilt on the native WebTransport API, dropping Node-side e2e tests (relay.e2e.ts and relay.local.e2e.ts deleted; Node SDK reserved for a future, possibly-different implementation per D3). web/src/relay.ts now exposes Session/Stream/Datagram matching the Go shape: register-mux client wire (empty-name primary, named sub-streams), AEAD-encrypted application messages, AEAD([varint channel-id][payload]) datagrams. New web/src/relay.test.ts adds 26 wire-format unit tests pinning the same byte vectors as c/test/test_pigeon.c::test_stream_header and ::test_datagram_framing — three independent implementations (Go native, C, TS) all agree on the same bytes by construction. tsconfig.json gains "DOM" lib so WebTransport types resolve. Makefile (test-web target and bullseye web step) updated to include relay.test.ts. make test-web: 56/56 pass; make bullseye: 9/9 green ~10s.'
     acceptance:
     - web/src/relay.ts speaks register-mux + named streams + tagged datagrams over WebTransport.
     - web/src/relay.e2e.ts (or relay.local.e2e.ts) is in the default `make test-web` run and passes against an in-process Go relay.
@@ -833,7 +805,6 @@ targets:
     status: identified
     value: 0.0
     cost: 0.0
-    showcase: true
     acceptance:
     - 'c/src/ implements the post-T22 wire end-to-end: register-mux handshake, 4-byte clientTag prefix on backend-side streams + datagrams, length-prefixed first-message [varint name-len][name] handshake on every stream, AEAD-encrypted [varint channel-id][payload] datagrams.'
     - C peer library exposes Register/Listener/Accept (backend), Connect/Session (client), Session.OpenStream(name), Session.AcceptStream(name), Session.Datagram(name) as a stable C ABI in c/include/pigeon/pigeon.h.
@@ -843,14 +814,80 @@ targets:
     context: 'Status as of 2026-05-02 after the docs/DESIGN.md design pass: scope reshaped. Originally framed as ''hand-roll C-side listener / session / connect-hello-ack JSON / demux''. Per docs/DESIGN.md section 4, that scope is wrong - the wire-bearing logic in the listener and session-open is part of the session machine, which lands as protogen YAML (T39) and generates a C executor. T32''s remaining C-side work after T39 lands is materially smaller. Already shipped as part of T32 foundation: multi-stream transport vtable in c/src/ngtcp2_transport.c (open_stream / accept_stream / send_on_stream / recv_on_stream / close_stream); pigeon_session API; wire framing (varint, stream-header, AEAD-channel-id datagram); pigeon_pair_acceptor / pigeon_pair_initiator (T34b.2, v0.22.0); pigeon_pairing_record serialisation; heap-scratch refactor (T38); register-mux handshake variant (commit 4f0faf0); vendored ngtcp2 + quictls build operational. Remaining for T32 (much shrunk after T39 lands): wire the generated session-machine executor from T39 into the C side; add the small clientTag-demux hash table that the listener needs (this is data-structure plumbing, not a state machine); add the high-level pigeon_register / pigeon_connect entry points that bring up the transport with the right role and produce a Listener / Session; live round-trip tests against an in-process Go relay (single-client chat, multi-stream + multi-datagram in one Session, two concurrent C clients sharing one C backend) linked into make test-c-ngtcp2. Estimate after T39 lands: half a day to a day. Until T39 lands, T32 should be parked - hand-rolling the C session-open exchange now is exactly the design regression docs/DESIGN.md prohibits.'
     depends_on:
     - T39
+    - T32.1
+    - T32.2
+    - T32.3
+    - T32.4
     origin: discovered while making the architectural decision to consolidate peer libraries into one C implementation
     discovered: 2026-04-30
+  T32.1:
+    name: 'C activation handshake driver: auth_request / auth_ok wire encoders + per-side SessionMachine drive helpers (mirror of Go''s activation.go)'
+    status: identified
+    value: 0.0
+    cost: 0.0
+    acceptance:
+    - 'c/src/activation.c (or folded into c/src/pigeon.c) implements the auth_request / auth_ok binary wire format byte-for-byte identical to Go''s activation.go: tag byte 0x01 / 0x02, uvarint device-id length, uvarint reason length on rejection.'
+    - 'Two driver functions mirror Go''s runBackendActivation / runClientActivation: take a stream handle + a resolve callback (backend) or a device_id (client), drive the protogen-generated session_gen.c machine through Paired → AuthCheck → SessionActive (backend) or Reconnect → SendAuth → SessionActive (client), and return the post-activation machine + (on backend) the resolved PairingRecord pointer.'
+    - 'c/test/test_pigeon gains an in-process activation test: a memory-pipe transport (loopback variant) drives the C backend driver against the C client driver and asserts both machines reach the post-activation state and the wire bytes match the Go-side TestActivation_WireRoundtrip vectors.'
+    - make test-c stays green; the new tests run via the existing test-c-only or test-c-ngtcp2 path.
+    context: 'First leaf of T32 (decomposed 2026-05-14 after T39 landed). Activation is the precondition for both pigeon_register and pigeon_connect — without it, neither side can complete the L2 handshake. The Go-side equivalent (activation.go from T39.1) is ~230 lines and largely mechanical; the C version should be similar shape, reusing c/src/session_gen.c''s already-generated state machine + event constants. The wire format is byte-for-byte locked by T39.1''s encoders — this is purely a translation exercise to C, not a design exercise. Memory model: heap-allocated SessionMachine on both sides, freed after activation completes (machine state will be persisted on a per-connection struct under T32.2''s listener / session work).'
+    depends_on:
+    - T39
+    origin: manual
+    discovered: 2026-05-14
+  T32.2:
+    name: C Listener type (multi-client demux) + pigeon_register entry point + pigeon_accept
+    status: identified
+    value: 0.0
+    cost: 0.0
+    acceptance:
+    - 'pigeon_listener type defined in c/include/pigeon/pigeon.h: holds the registered backend''s transport, an instance ID buffer, a clientTag → *pigeon_session hash table (small fixed-size, e.g. 16 slots, since pigeon''s target is small N), and an accept loop goroutine-equivalent (a thread or an explicit pump function the caller drives).'
+    - 'pigeon_register(relay_url, identity, pairing_callback, datagrams[], &out_listener, out_instance_id) entry point: brings up the ngtcp2 transport with PIGEON_ROLE_REGISTER_MUX, returns the relay-assigned ID and a Listener.'
+    - pigeon_listener_accept(listener, &out_session) blocks until the next client primary arrives, runs T32.1's runBackendActivation against the supplied pairing_callback, registers the resulting Session under its clientTag in the demux table, and returns it. Sub-streams that arrive for an existing tag get routed to the matching Session's incoming-stream queue.
+    - Memory model is documented (caller owns sessions returned by Accept; pigeon_listener_close tears down all child sessions) and respects the Go side's race-free ordering (Session is registered in the tag map before accept returns, so a sub-stream arriving immediately after the primary doesn't race).
+    - test-c stays green; an in-process loopback test exercises the listener with two concurrent clients on one backend.
+    context: 'Mirrors Go''s pigeon.Register / pigeon.Listener.Accept (api.go) on the C side. The clientTag demux is data-structure plumbing — same pattern as Go''s l.sessions[tag] map. Threading model is the open question: either the listener runs an internal accept-loop thread (matches Go''s goroutine), or pigeon_listener_accept does the demux work synchronously inline (simpler memory model, blocks the caller). Pick the latter for v1 — simpler ABI, no thread interop with host languages, matches the C ABI''s general "single-threaded, caller-owns-concurrency" stance documented in docs/DESIGN.md §5.'
+    depends_on:
+    - T32.1
+    origin: manual
+    discovered: 2026-05-14
+  T32.3:
+    name: 'C pigeon_connect entry point: transport bring-up in CONNECT role + activation handshake + Session construction'
+    status: identified
+    value: 0.0
+    cost: 0.0
+    acceptance:
+    - 'pigeon_connect(relay_url, instance_id, identity, pairing_record, datagrams[], &out_session) entry point: brings up the ngtcp2 transport with PIGEON_ROLE_CONNECT, sends the empty-name primary stream header, runs T32.1''s runClientActivation against the supplied identity, derives the AEAD channel from pairing_record, returns a fully-initialised pigeon_session.'
+    - 'Pairing-mode variant: when pairing_record is NULL, activation is skipped (matching Go''s L2 pairing-mode from T39.5); the Session is returned with a NULL channel and the caller is expected to drive the pairing ceremony over Session.Primary().'
+    - pigeon_session_primary(session, &out_stream) accessor exposes the primary stream as a pigeon_stream wrapper (mirror of Go's Session.Primary() from T39.6.1) so cross-language single-stream consumers and pairing.c can use it.
+    - test-c stays green; an in-process loopback test exercises pigeon_connect against pigeon_register from T32.2.
+    context: 'Mirrors Go''s pigeon.Connect (api.go). Smaller than T32.2 since it''s single-session: dial transport, send header, run activation, build Session. The pairing-mode branch matches T39.5''s no-PairingRecord rule.'
+    depends_on:
+    - T32.1
+    origin: manual
+    discovered: 2026-05-14
+  T32.4:
+    name: 'Live round-trip tests against an in-process Go relay: single-client chat, multi-stream + multi-datagram in one Session, two concurrent C clients sharing one C backend'
+    status: identified
+    value: 0.0
+    cost: 0.0
+    acceptance:
+    - c/test/test_ngtcp2 (or sibling) spins up an in-process Go relay (via cgo into the existing pigeon.NewQUICServer) and drives three live tests through pigeon_register / pigeon_connect / pigeon_listener_accept end-to-end.
+    - 'Test 1: single C client (pigeon_connect) talks to a single C backend (pigeon_register + pigeon_listener_accept) over the relay; OpenStream("chat") + Send/Recv round-trip both ways succeeds.'
+    - 'Test 2: one C Session opens two named streams ("chat" and "control") + two pre-declared datagram channels ("ping" and "metric"); all four channels round-trip data without crosstalk.'
+    - 'Test 3: one C backend''s Listener accepts two concurrent C client Sessions; each client opens its own named stream and exchanges messages; the backend demultiplexes by clientTag correctly.'
+    - All three tests run via `make test-c-ngtcp2`. make bullseye stays green.
+    context: The showcase demonstration that the C SDK is at full post-T22 wire parity. Mirrors the Go-side TestE2E* coverage. Depends on T32.2 (Listener) and T32.3 (Connect) so both roles are usable.
+    depends_on:
+    - T32.2
+    - T32.3
+    origin: manual
+    discovered: 2026-05-14
   T33:
     name: 'Cross-language wire interop: Go relay ↔ C peer at full multi-channel parity (backend + client roles, all four channels)'
     status: identified
     value: 0.0
     cost: 0.0
-    showcase: true
     acceptance:
     - 'A test driver (probably in Go, controlling a C peer subprocess via stdio or via the relay''s wire) exercises: C-as-backend ↔ Go-acceptor-test ↔ Go-as-client (round-trip via relay).'
     - 'Same in reverse: Go-as-backend ↔ relay ↔ C-as-client.'
@@ -870,7 +907,6 @@ targets:
     status: identified
     value: 0.0
     cost: 0.0
-    showcase: true
     acceptance:
     - pigeon.Register, pigeon.Connect, *Listener, *Session, *Stream, *Datagram, and the pairing package are reimplemented as cgo wrappers calling into libpigeon.a.
     - The native Go peer-library implementation files (api.go, pairing/pairing.go, transport.go, et al.) are deleted.
@@ -925,8 +961,6 @@ targets:
     status: achieved
     value: 0.0
     cost: 0.0
-    showcase: true
-    demonstration: Released v0.22.0 (https://github.com/marcelocantos/pigeon/releases/tag/v0.22.0). The C-side pigeon_pair_acceptor / pigeon_pair_initiator drivers run the full hello/welcome/confirm exchange end-to-end; cwire.RunAcceptor / cwire.RunInitiator expose them from Go. Wire-byte parity demonstrated by TestWireParityGoAcceptorCInitiator and TestWireParityCAcceptorGoInitiator both passing — both halves of the same handshake (Go-driver ↔ C-driver and C-driver ↔ Go-driver) derive matching confirmation codes over an in-process blocking chanTransport. Verified locally via `brew upgrade marcelocantos/tap/pigeon` → `pigeon --version` → `v0.22.0`.
     acceptance:
     - A C-side pigeon_pair_acceptor / pigeon_pair_initiator function in c/src/ runs the hello/welcome/confirm exchange against a pigeon_transport and produces a pigeon_pairing_record (peer pubkey + confirmation code).
     - cwire/ exposes that driver from Go; pairing/pairing_test.go's runAcceptor/runInitiator paths can be redirected through the cgo wrapper without changing test semantics.
@@ -953,7 +987,6 @@ targets:
     status: identified
     value: 0.0
     cost: 0.0
-    showcase: true
     acceptance:
     - android/pigeon Gradle module produces an AAR containing libpigeon-jni.so for arm64-v8a and x86_64 Android targets, plus matching libsodium static lib (vendored or fetched via Android NDK ports).
     - An Android instrumented test (or at least a verifiable cross-compile run) confirms the .so loads and the JNI binding is callable.
@@ -966,7 +999,6 @@ targets:
     status: identified
     value: 0.0
     cost: 0.0
-    showcase: true
     acceptance:
     - A C -> Java callback path lets c/jni/pigeon_jni.c invoke a Kotlin-implemented QuicTransport (open_stream / accept_stream / send_on_stream / recv_on_stream / close_stream / send_datagram / recv_datagram). Symmetric with the existing C -> Java direction.
     - The existing Kotlin Kwik/Bridge transport implementations can plug into this callback shape (or at least one of them, e.g. Kwik), and a Kotlin Session can drive a real QUIC connection through a JVM-implemented transport.
@@ -981,7 +1013,6 @@ targets:
     status: identified
     value: 0.0
     cost: 0.0
-    showcase: true
     acceptance:
     - Sources/Pigeon/ ships an Ngtcp2Transport conforming to PigeonTransport that wraps the C ngtcp2 transport struct and drives it through the multi-stream callbacks added in T32 step 3.
     - PigeonSession can be created against an Ngtcp2Transport pointed at a real Go relay; round-trip tests in Tests/PigeonRelayE2ETests verify against the in-process Go relay.
@@ -997,7 +1028,6 @@ targets:
     status: achieved
     value: 0.0
     cost: 0.0
-    showcase: true
     acceptance:
     - pigeon_stream_send/recv and pigeon_datagram_send/recv no longer stack-allocate buffers larger than ~16 KiB.
     - Each pigeon_session carries (or is configured with) a single scratch buffer pair (encrypted + plaintext) that's pooled across send/recv calls.
@@ -1020,8 +1050,6 @@ targets:
     status: achieved
     value: 0.0
     cost: 0.0
-    showcase: true
-    demonstration: 'T39 retires with all sub-targets achieved: T39.1 (activation through generated SessionMachine) + T39.2 (formal/SessionMachine.tla canonical, ValidPairingRecord interface contract) + T39.3 (TestSessionExecutorShowcase end-to-end test) + T39.4 (Session owns post-activation machine through graceful close) + T39.5 (L2 pairing-mode + pairing.go migrated off legacy Conn) + T39.6 (Conn deletion via T39.6.1 cross-language fixture migration + T39.6.2 mechanical Conn ecosystem deletion). The session machine specified in protocol/session.yaml is fully wired through the modern API, formally verified independently under TLC alongside the pairing spec via the ValidPairingRecord(r) interface contract, and the showcase test (TestSessionExecutorShowcase) drives the executor end-to-end through activation → relay-only path selection → graceful close on a real in-process relay. The spec-level relay-keepalive gap (LAN ping/pong only today) is documented and tracked under T45.'
     acceptance:
     - 'protocol/session.yaml exists and describes the full session state machine: activation (replacing the current connectHello/connectAck JSON), path selection sub-FSM (candidate gathering, exchange, connectivity checks, nomination, swap, fallback), health monitoring (ping/pong, 3-failure to degraded to backoff schedule, prefer-back-on-recovery).'
     - cmd/protogen regenerates Go / Swift / Kotlin / C / TS / TLA+ outputs for the session machine; make bullseye stays green.
@@ -1080,7 +1108,6 @@ targets:
     status: achieved
     value: 0.0
     cost: 0.0
-    demonstration: 'TestSessionExecutorShowcase passes (e2e_test.go): drives the per-Session SessionMachine end-to-end against an in-process relay. Asserts MachineState()=="RelayConnected" on both sides post-activation; performs a "chat" named-stream round-trip ("hello backend" / "hello client") and a pre-declared datagram channel round-trip ("ping" / "pong") on the relay path; reasserts state stayed at RelayConnected (no LAN states reached); asserts MachineState()=="Paired" on both sides post-Session.Close (RelayConnected → Paired transition fired). The relay-keepalive gap (spec only models LAN-path ping/pong) is documented in the test comment and tracked under T45 — relay liveness is implicitly verified by the round-trips. make bullseye green across all nine SDK steps.'
     acceptance:
     - A new Go test (e.g. TestSessionExecutorLifecycle in e2e_test.go or a sibling file) wires a real executor on each side of an in-process pigeon relay and exercises the full session lifecycle end-to-end with no hand-written state-machine code on either side.
     - 'Activation phase: the client''s call into pigeon.Connect drives the generated executor through Paired → AuthCheck → SessionActive → RelayConnected; the test asserts the SessionMachine reached RelayConnected on both sides before app I/O begins.'
@@ -1223,7 +1250,6 @@ targets:
     status: identified
     value: 0.0
     cost: 0.0
-    showcase: true
     acceptance:
     - 'protocol/ contains protogen specs for the three currently-hand-rolled one-shot byte formats: stream-name binding header (backend variant: [4-byte clientTag][varint name-len][name]; client variant: [varint name-len][name]); datagram channel-id framing ([varint channel-id][payload], optionally prefixed with 4-byte clientTag on backend side); relay greeting variants (connect:<id>, register-mux[:token[:id]]).'
     - cmd/protogen generates encoder + decoder for each format in Go / Swift / Kotlin / C / TS.
@@ -1237,7 +1263,6 @@ targets:
     status: identified
     value: 0.0
     cost: 0.0
-    showcase: true
     acceptance:
     - A Unix-socket transport at $XDG_RUNTIME_DIR/pigeon/<app-name>.sock (Linux) or ~/Library/Application Support/pigeon/<app-name>.sock (macOS) carries pairing-ceremony events between the CLI and a local daemon.
     - Wire framing matches relay streams (uint32 BE length-prefix + JSON), with the five typed messages described in docs/local-backchannel.md.
@@ -1252,7 +1277,6 @@ targets:
     status: identified
     value: 0.0
     cost: 0.0
-    showcase: true
     acceptance:
     - Relay authentication is performed at the QUIC/TLS handshake layer (server-side validation of a client cert, or a token presented as a TLS extension / ALPN-negotiated parameter) rather than in the application-level register-mux greeting.
     - The register-mux greeting either drops its token field entirely, or retains it only for backwards compatibility with older clients during a transition period documented in docs/audit-log.md.
@@ -1266,7 +1290,6 @@ targets:
     status: identified
     value: 0.0
     cost: 0.0
-    showcase: true
     acceptance:
     - The path-selection sub-FSM in protocol/session.yaml (T39) emits STUN-reflexive candidates alongside relay and LAN-host candidates.
     - Each peer probes its own NAT-mapped public address via a STUN binding request to a configurable STUN server (or the pigeon relay if it offers a STUN endpoint).
@@ -1283,7 +1306,6 @@ targets:
     status: identified
     value: 0.0
     cost: 0.0
-    showcase: true
     acceptance:
     - Backend and client APIs accept a MultiClient option that disables the existing 1:1 occupied flag in handleClient.
     - A local relay can register with a public pigeon relay as a backend AND simultaneously act as a relay for one or more downstream game servers.
@@ -1299,7 +1321,6 @@ targets:
     status: identified
     value: 0.0
     cost: 0.0
-    showcase: true
     acceptance:
     - 'The relay''s wire greeting set becomes one verb family: `register:<id>` (backend control), `listen:<id>` (backend opens a slot), `connect:<id>` (client requests a backend). The legacy `register-mux[:token[:id]]` greeting and the legacy bare `connect:<id>` 1:1 form (already removed under T39.6) are gone. New greetings are protogen-specified per docs/DESIGN.md §4.'
     - Per accepted client, the backend has its own end-to-end QUIC connection to the relay (each `listen` is a parked backend-side QUIC connection that becomes a client-bridge once matched). The 4-byte clientTag prefix on streams and datagrams is deleted across the codebase — the per-client demux moves out of the application layer because each client has its own QUIC pipe.
