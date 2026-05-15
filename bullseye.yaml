@@ -822,7 +822,7 @@ targets:
     discovered: 2026-04-30
   T32.1:
     name: 'C activation handshake driver: auth_request / auth_ok wire encoders + per-side SessionMachine drive helpers (mirror of Go''s activation.go)'
-    status: identified
+    status: achieved
     value: 0.0
     cost: 0.0
     acceptance:
@@ -835,6 +835,7 @@ targets:
     - T39
     origin: manual
     discovered: 2026-05-14
+    achieved: 2026-05-15
   T32.2:
     name: C Listener type (multi-client demux) + pigeon_register entry point + pigeon_accept
     status: identified
