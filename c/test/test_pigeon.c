@@ -3,9 +3,11 @@
 
 #include "pigeon.h"
 #include <assert.h>
+#include <pthread.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <unistd.h>
 #include <sodium.h>
 
 static int tests_run = 0;
@@ -1263,6 +1265,13 @@ static int loop_recv_on_stream(void *ud, pigeon_stream_handle *h,
     (void)ud;
     loopback_stream *me = (loopback_stream *)h;
     if (!me->in_use) return -1;
+    // Blocking spin-wait so multi-threaded tests (activation, etc.)
+    // can drive backend and client concurrently. Caps at ~5s. Single-
+    // threaded tests are unaffected — they always send before recv.
+    for (int waited_us = 0; me->msg_count == 0 && waited_us < 5000000; waited_us += 1000) {
+        if (!me->in_use) return -1;
+        usleep(1000);
+    }
     if (me->msg_count == 0) return -1;
     size_t n = me->msg_lens[me->msg_head];
     if (n > buf_len) return -1;
@@ -1468,21 +1477,28 @@ static int activation_resolve(void *ud, const char *device_id, void *out_record)
     return -1;
 }
 
+// loopback_endpoint is huge (~288 MiB per instance: an
+// LOOP_MAX_STREAMS × LOOP_MAX_PENDING × PIGEON_MAX_MSG matrix). Share
+// one pair across both activation tests as static globals — adding
+// fresh per-test pairs pushes total BSS over ~1 GiB and breaks
+// dyld_shared_cache mapping on macOS at binary load. The other tests
+// (test_session_stream_roundtrip, test_session_datagram_roundtrip)
+// already follow this pattern with their own static pair.
+static loopback_endpoint activation_eb, activation_ec;
+
 // Spawn a transport pair and a single stream on each side that maps
 // to the peer. Used by both activation tests below.
-static void activation_pair_setup(loopback_endpoint *eb,
-                                  loopback_endpoint *ec,
-                                  pigeon_transport *tb,
+static void activation_pair_setup(pigeon_transport *tb,
                                   pigeon_transport *tc,
                                   pigeon_stream_handle **out_backend_stream,
                                   pigeon_stream_handle **out_client_stream)
 {
-    memset(eb, 0, sizeof(*eb));
-    memset(ec, 0, sizeof(*ec));
-    eb->peer = ec;
-    ec->peer = eb;
-    loopback_make_transport(tb, eb);
-    loopback_make_transport(tc, ec);
+    memset(&activation_eb, 0, sizeof(activation_eb));
+    memset(&activation_ec, 0, sizeof(activation_ec));
+    activation_eb.peer = &activation_ec;
+    activation_ec.peer = &activation_eb;
+    loopback_make_transport(tb, &activation_eb);
+    loopback_make_transport(tc, &activation_ec);
     // Client opens the activation stream; backend accepts.
     pigeon_stream_handle *cs = NULL;
     if (tc->open_stream(tc->userdata, &cs) != 0) {
@@ -1496,13 +1512,39 @@ static void activation_pair_setup(loopback_endpoint *eb,
     *out_backend_stream = bs;
 }
 
+// Backend-side thread argument bundle. The loopback transport's
+// recv_on_stream returns -1 immediately on empty (no blocking
+// semantics), so the activation tests have to drive backend and
+// client concurrently. The backend runs in its own thread; the
+// main thread runs the client.
+typedef struct {
+    pigeon_transport       *transport;
+    pigeon_stream_handle   *stream;
+    activation_resolve_ctx *rctx;
+    pigeon_backend_machine *machine;
+    char                   *device_id_seen;
+    size_t                  device_id_cap;
+    pigeon_pairing_record  *record;
+    int                     rc;
+} backend_thread_args;
+
+static void *run_backend_thread(void *p)
+{
+    backend_thread_args *a = (backend_thread_args *)p;
+    a->rc = pigeon_run_backend_activation(a->transport, a->stream,
+                                          activation_resolve, a->rctx,
+                                          a->machine,
+                                          a->device_id_seen, a->device_id_cap,
+                                          a->record);
+    return NULL;
+}
+
 static void test_activation_known_device(void)
 {
     TEST("activation: known device → SessionActive on both sides");
-    static loopback_endpoint eb, ec;
     pigeon_transport tb, tc;
     pigeon_stream_handle *bs = NULL, *cs = NULL;
-    activation_pair_setup(&eb, &ec, &tb, &tc, &bs, &cs);
+    activation_pair_setup(&tb, &tc, &bs, &cs);
     if (cs == NULL || bs == NULL) return;
 
     activation_resolve_ctx rctx = { .match = true, .want_id = "device-known-1" };
@@ -1512,25 +1554,23 @@ static void test_activation_known_device(void)
     char device_id_seen[PIGEON_AUTH_MAX_DEVICE_ID + 1];
     pigeon_pairing_record record;
 
-    // Drive both sides; backend reads the request the client sends.
-    // Order: client send → backend recv. Our loopback completes the
-    // open immediately, so just call backend then client back-to-back
-    // (the in-memory queue holds the pending message until backend
-    // recvs it).
+    backend_thread_args args = {
+        .transport = &tb, .stream = bs, .rctx = &rctx,
+        .machine = &bm,
+        .device_id_seen = device_id_seen, .device_id_cap = sizeof(device_id_seen),
+        .record = &record, .rc = 0,
+    };
+    pthread_t tid;
+    if (pthread_create(&tid, NULL, run_backend_thread, &args) != 0) {
+        FAIL("pthread_create"); return;
+    }
+
     int crc = pigeon_run_client_activation(&tc, cs, "device-known-1",
                                            &cm, NULL, 0);
-    if (crc != 0) {
-        // Client may report -1 if backend hasn't replied yet — drive
-        // the backend first if so. With our loopback, a client that
-        // recv-blocks on auth_ok would hang. Reorder: backend first.
-    }
-    int brc = pigeon_run_backend_activation(&tb, bs,
-                                            activation_resolve, &rctx,
-                                            &bm,
-                                            device_id_seen, sizeof(device_id_seen),
-                                            &record);
-    if (brc != 0) { FAIL("backend activation"); return; }
-    if (crc != 0) { FAIL("client activation"); return; }
+    pthread_join(tid, NULL);
+
+    if (args.rc != 0) { FAIL("backend activation"); return; }
+    if (crc != 0)     { FAIL("client activation"); return; }
     if (strcmp(device_id_seen, "device-known-1") != 0) {
         FAIL("backend received wrong device id"); return;
     }
@@ -1546,10 +1586,9 @@ static void test_activation_known_device(void)
 static void test_activation_unknown_device(void)
 {
     TEST("activation: unknown device → backend at Idle");
-    static loopback_endpoint eb, ec;
     pigeon_transport tb, tc;
     pigeon_stream_handle *bs = NULL, *cs = NULL;
-    activation_pair_setup(&eb, &ec, &tb, &tc, &bs, &cs);
+    activation_pair_setup(&tb, &tc, &bs, &cs);
     if (cs == NULL || bs == NULL) return;
 
     activation_resolve_ctx rctx = { .match = false, .want_id = NULL };
@@ -1560,14 +1599,22 @@ static void test_activation_unknown_device(void)
     pigeon_pairing_record record;
     char client_reason[PIGEON_AUTH_MAX_REASON];
 
+    backend_thread_args args = {
+        .transport = &tb, .stream = bs, .rctx = &rctx,
+        .machine = &bm,
+        .device_id_seen = device_id_seen, .device_id_cap = sizeof(device_id_seen),
+        .record = &record, .rc = 0,
+    };
+    pthread_t tid;
+    if (pthread_create(&tid, NULL, run_backend_thread, &args) != 0) {
+        FAIL("pthread_create"); return;
+    }
+
     int crc = pigeon_run_client_activation(&tc, cs, "device-stranger",
                                            &cm, client_reason, sizeof(client_reason));
-    int brc = pigeon_run_backend_activation(&tb, bs,
-                                            activation_resolve, &rctx,
-                                            &bm,
-                                            device_id_seen, sizeof(device_id_seen),
-                                            &record);
-    if (brc != 1) { FAIL("backend should report tri-value 1 (rejected)"); return; }
+    pthread_join(tid, NULL);
+
+    if (args.rc != 1) { FAIL("backend should report tri-value 1 (rejected)"); return; }
     if (crc != -1) { FAIL("client should report rejection (-1)"); return; }
     if (bm.state != PIGEON_BACKEND_IDLE) {
         FAIL("backend machine not at Idle after device_unknown branch"); return;

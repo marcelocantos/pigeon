@@ -1213,8 +1213,10 @@ int pigeon_run_backend_activation(const void *transport_v,
     machine->guards[PIGEON_SESSION_GUARD_DEVICE_UNKNOWN] = backend_device_unknown;
     machine->userdata = &auth_ctx;
 
-    // Drive recv_auth_request → AuthCheck.
-    if (pigeon_backend_step(machine, PIGEON_SESSION_EVENT_RECV_AUTH_REQUEST) <= 0) {
+    // Drive recv auth_request → AuthCheck. The C generator routes
+    // `recv`-trigger transitions through handle_message (matched on
+    // msg_type); only `internal`-trigger transitions go through step.
+    if (pigeon_backend_handle_message(machine, PIGEON_SESSION_MSG_AUTH_REQUEST) <= 0) {
         return -1;
     }
     if (machine->state != PIGEON_BACKEND_AUTH_CHECK) {
@@ -1294,7 +1296,8 @@ int pigeon_run_client_activation(const void *transport_v,
     }
     if (!ok) return -1;
 
-    if (pigeon_client_step(machine, PIGEON_SESSION_EVENT_RECV_AUTH_OK) <= 0) {
+    // recv auth_ok → SessionActive (recv-triggered, so handle_message).
+    if (pigeon_client_handle_message(machine, PIGEON_SESSION_MSG_AUTH_OK) <= 0) {
         return -1;
     }
     if (machine->state != PIGEON_CLIENT_SESSION_ACTIVE) return -1;
