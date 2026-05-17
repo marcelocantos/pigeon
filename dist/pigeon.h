@@ -403,6 +403,12 @@ int pigeon_decode_datagram(pigeon_channel *ch,
 #define PIGEON_MAX_DATAGRAM_CHANNELS 16
 #define PIGEON_MAX_NAME_LEN 64
 
+// Maximum number of pre-arrived sub-streams buffered per session
+// while the application hasn't yet called accept_incoming_stream.
+// Declared up here (rather than next to the listener API below) so
+// the pigeon_session struct can size its incoming-stream array.
+#define PIGEON_SESSION_MAX_INCOMING 8
+
 typedef struct {
     char     name[PIGEON_MAX_NAME_LEN];
     uint64_t channel_id;
@@ -442,6 +448,18 @@ typedef struct {
     uint8_t      *scratch_a;
     uint8_t      *scratch_b;
     size_t        scratch_size;
+
+    // Sub-streams that arrived for this session's clientTag while the
+    // listener was pumping the demux for another client. Populated by
+    // pigeon_listener_accept; drained by
+    // pigeon_session_accept_incoming_stream. The C ABI is single-
+    // threaded so no lock is needed — the listener's pump and the
+    // caller's accept are sequential on the same thread.
+    struct {
+        pigeon_stream_handle *handle;
+        char                  name[PIGEON_MAX_NAME_LEN];
+        bool                  in_use;
+    } incoming[PIGEON_SESSION_MAX_INCOMING];
 } pigeon_session;
 
 typedef struct {
@@ -594,6 +612,138 @@ int pigeon_pairing_record_serialize(const pigeon_pairing_record *rec,
 // or -1 if buf_len < PIGEON_PAIRING_RECORD_SIZE or the header is malformed.
 int pigeon_pairing_record_deserialize(pigeon_pairing_record *rec,
                                       const uint8_t *buf, size_t buf_len);
+
+// --- Multi-client Listener (post-T32.2) ---
+//
+// The Listener mirrors Go's pigeon.Register / Listener.Accept. A
+// backend registers once with the relay (PIGEON_ROLE_REGISTER_MUX);
+// thereafter every paired client that connects produces a fresh
+// pigeon_session that the Listener hands back to the caller via
+// pigeon_listener_accept.
+//
+// Threading: per docs/DESIGN.md §5, the C ABI is "single-threaded,
+// caller-owns-concurrency". pigeon_listener_accept does its work
+// synchronously on the calling thread — there is no internal accept-
+// loop thread. The caller drives the pump by re-entering
+// pigeon_listener_accept; sub-streams that arrive for an already-
+// accepted client are buffered into that session's per-session
+// incoming-stream queue (see pigeon_session_accept_incoming_stream
+// below) so the demux is race-free without locks.
+//
+// Memory: the Listener owns every pigeon_session it returns. Calling
+// pigeon_listener_close tears down all child sessions (their scratch
+// buffers and any buffered incoming sub-streams) before freeing the
+// listener itself. Application code therefore must not call
+// pigeon_session_close on a Listener-returned session — the listener
+// will do that when it shuts down.
+
+// Maximum number of concurrent paired clients per listener. The C
+// SDK targets small N (pigeon's normal deployment shape: a small
+// number of personal devices reaching a backend), so a fixed 16-slot
+// hash table is plenty and keeps the data structure simple.
+#define PIGEON_LISTENER_MAX_CLIENTS 16
+
+// Opaque listener handle. Definition lives in c/src/listener.c.
+typedef struct pigeon_listener pigeon_listener;
+
+// pigeon_resolve_device_fn looks up a connecting client's
+// PairingRecord by its device ID. Identical to the typedef of the
+// same name in activation.h — repeated here (C11 allows redundant
+// typedefs of the same shape) so the listener API doesn't require
+// the activation header. Return 0 on success (out_record populated
+// as a pigeon_pairing_record*), -1 to reject the client.
+typedef int (*pigeon_resolve_device_fn)(void *userdata,
+                                        const char *device_id,
+                                        void *out_record);
+
+// Initialise a listener over an externally-built backend transport.
+// The transport must already be registered with the relay
+// (PIGEON_ROLE_REGISTER_MUX completed). `instance_id` is the relay-
+// assigned (or self-assigned) instance ID this listener advertises;
+// the caller passes it through verbatim.
+//
+// `pairing` is the per-client device-id → PairingRecord lookup. It
+// is invoked synchronously on the listener-accept thread (= the
+// caller's thread) whenever a new client primary arrives. Returns 0
+// on success (out_record populated), -1 to reject the client.
+// `pairing_userdata` is passed through opaquely.
+//
+// `datagrams` declares the named datagram channels available on
+// each accepted session. Both peers must declare the same map.
+// Returns 0 on success and writes the listener handle into *out;
+// the listener is heap-allocated and must be released with
+// pigeon_listener_close. Returns -1 on validation failure.
+int pigeon_listener_init(pigeon_listener **out,
+                         const pigeon_transport *transport,
+                         const char *instance_id,
+                         pigeon_resolve_device_fn pairing,
+                         void *pairing_userdata,
+                         const pigeon_dgchannel_def *datagrams,
+                         size_t datagram_count);
+
+// Return the listener's relay-assigned instance ID. The pointer
+// remains valid for the listener's lifetime.
+const char *pigeon_listener_instance_id(const pigeon_listener *l);
+
+// Block on the listener's transport until the next paired client
+// connects, run the auth_request / auth_ok activation handshake
+// against the resolver supplied to pigeon_listener_init, and return
+// the resulting session. Sub-streams that arrive for already-
+// accepted clients during this pump are dispatched to the matching
+// session's incoming-stream queue (see
+// pigeon_session_accept_incoming_stream).
+//
+// Returns 0 on success and writes the session pointer into
+// *out_session (owned by the listener — do not call
+// pigeon_session_close on it). Returns -1 on transport failure or
+// listener shutdown.
+int pigeon_listener_accept(pigeon_listener *l, pigeon_session **out_session);
+
+// Tear down the listener: close every child session (free their
+// scratch buffers and any buffered incoming sub-streams) and free
+// the listener struct itself. Idempotent on NULL. The underlying
+// transport is NOT closed — the caller built it and owns it.
+void pigeon_listener_close(pigeon_listener *l);
+
+// Pull the next buffered peer-opened sub-stream from a session's
+// incoming-stream queue. Sub-streams are placed in the queue by the
+// listener's accept pump as they arrive for known client tags.
+//
+// Matches the requested name: returns 0 on success and populates
+// out_stream. Returns -1 if no buffered sub-stream with that name
+// is currently queued. This is a non-blocking poll — application
+// code that wants to wait for a peer-opened stream should call
+// pigeon_listener_accept (which advances the demux) and re-try.
+int pigeon_session_accept_incoming_stream(pigeon_session *s,
+                                          const char *name,
+                                          pigeon_stream *out_stream);
+
+// --- pigeon_register convenience (high-level) ---
+//
+// `pigeon_register` is a thin wrapper that brings up an ngtcp2
+// transport (PIGEON_ROLE_REGISTER_MUX) and hands it off to
+// pigeon_listener_init. It lives in a separate compilation unit
+// (c/src/listener_ngtcp2.c) because it depends on ngtcp2 + quictls
+// (vendored under c/vendor/), which the amalgamated build does not
+// link. Builds that need this entry point link c/src/listener.c +
+// c/src/listener_ngtcp2.c + c/src/ngtcp2_transport.c against the
+// vendored libs (see test-c-ngtcp2 in the Makefile).
+//
+// On success, writes the listener handle into *out_listener, the
+// relay-assigned instance ID into out_instance_id (NUL-terminated;
+// truncated if the buffer is too small), and returns 0. The
+// listener owns the ngtcp2 transport from this point on —
+// pigeon_listener_close tears it down.
+int pigeon_register(const char *relay_host,
+                    const char *relay_port,
+                    const char *self_instance_id,  // may be NULL
+                    const char *token,             // may be NULL
+                    pigeon_resolve_device_fn pairing,
+                    void *pairing_userdata,
+                    const pigeon_dgchannel_def *datagrams,
+                    size_t datagram_count,
+                    pigeon_listener **out_listener,
+                    char *out_instance_id, size_t out_instance_id_cap);
 
 #endif // PIGEON_H
 

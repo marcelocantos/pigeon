@@ -157,6 +157,17 @@ HEADER
         -e '/^\/\/ SPDX/d' \
         "$SRCDIR/src/pairing.c"
 
+    # Multi-client Listener (T32.2). Pull in after activation +
+    # session_gen so the activation driver and the SessionMachine
+    # state constants are visible at this point in the TU.
+    echo ""
+    echo "// --- Multi-client listener ---"
+    echo ""
+    sed -e '/^#include/d' \
+        -e '/^\/\/ Copyright/d' \
+        -e '/^\/\/ SPDX/d' \
+        "$SRCDIR/src/listener.c"
+
     # Loopback transport (rewrite the header include from
     # "pigeon/loopback.h" to "loopback.h" so dist/loopback.h resolves
     # via the consumer's -I flag, strip system + copyright lines).

@@ -13,6 +13,9 @@ add_library(pigeon STATIC
     src/pigeon.c
     src/crypto.c
     src/pairingceremony_gen.c
+    src/session_gen.c
+    src/activation.c
+    src/listener.c
 )
 
 target_include_directories(pigeon PUBLIC include)

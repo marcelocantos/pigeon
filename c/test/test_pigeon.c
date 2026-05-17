@@ -1230,6 +1230,13 @@ static int loop_open_stream(void *ud, pigeon_stream_handle **out)
 static int loop_accept_stream(void *ud, pigeon_stream_handle **out)
 {
     loopback_endpoint *e = (loopback_endpoint *)ud;
+    // Blocking spin-wait so multi-threaded listener tests (T32.2) can
+    // park on accept while client threads open streams. Caps at ~5s.
+    // Same shape and rationale as loop_recv_on_stream above; single-
+    // threaded tests are unaffected — they always open before accept.
+    for (int waited_us = 0; e->accept_count == 0 && waited_us < 5000000; waited_us += 1000) {
+        usleep(1000);
+    }
     if (e->accept_count == 0) return -1;
     int id = e->accept_queue[e->accept_head];
     e->accept_head = (e->accept_head + 1) % LOOP_MAX_STREAMS;
@@ -1625,6 +1632,266 @@ static void test_activation_unknown_device(void)
     PASS();
 }
 
+// --- Multi-client listener (T32.2) ---
+//
+// Stand up the pigeon_listener over the in-test loopback transport
+// and drive two client threads through activation concurrently. The
+// listener has to demux by clientTag and hand back one
+// pigeon_session per client.
+//
+// The test loopback doesn't simulate the relay's tag-prepending, so
+// each "client" writes a backend-style stream header itself: tag is
+// chosen by the test driver to give the listener something to demux
+// on.
+
+// Reuse one loopback endpoint pair across the listener tests for the
+// same reason the activation tests do — loopback_endpoint is huge
+// (~288 MiB) and adding fresh per-test instances tips total BSS past
+// dyld_shared_cache mapping on macOS.
+static loopback_endpoint listener_eb, listener_ec;
+
+// Listener resolver: accept any device id matching one of two
+// expected values. PairingRecord is zeroed (the listener test
+// exercises demux + activation flow, not the AEAD round-trip;
+// derived keys land on a degenerate but deterministic value).
+typedef struct {
+    const char *want_id_1;
+    const char *want_id_2;
+} listener_resolve_ctx;
+
+static int listener_resolve(void *ud, const char *device_id, void *out_record)
+{
+    listener_resolve_ctx *r = (listener_resolve_ctx *)ud;
+    if (strcmp(device_id, r->want_id_1) != 0
+            && strcmp(device_id, r->want_id_2) != 0) {
+        return -1;
+    }
+    memset(out_record, 0, sizeof(pigeon_pairing_record));
+    return 0;
+}
+
+typedef struct {
+    pigeon_transport *transport;
+    uint32_t          tag;
+    const char       *device_id;
+    int               rc;
+} listener_client_args;
+
+// Drive one client through activation: open a stream, write the
+// backend-style stream header with our chosen tag, then run the
+// client activation driver.
+static void *run_listener_client(void *p)
+{
+    listener_client_args *a = (listener_client_args *)p;
+    pigeon_stream_handle *h = NULL;
+    if (a->transport->open_stream(a->transport->userdata, &h) != 0) {
+        a->rc = -1;
+        return NULL;
+    }
+    uint8_t hdr[PIGEON_MAX_STREAM_HEADER];
+    int hn = pigeon_encode_stream_header(true, a->tag, NULL, 0,
+                                         hdr, sizeof(hdr));
+    if (hn < 0) { a->rc = -1; return NULL; }
+    if (a->transport->send_on_stream(a->transport->userdata, h,
+                                     hdr, (size_t)hn) != 0) {
+        a->rc = -1;
+        return NULL;
+    }
+    pigeon_client_machine cm;
+    a->rc = pigeon_run_client_activation(a->transport, h, a->device_id,
+                                         &cm, NULL, 0);
+    return NULL;
+}
+
+typedef struct {
+    pigeon_listener  *listener;
+    pigeon_session  **out_sessions;
+    int               n;
+    int               rc;
+} listener_accept_args;
+
+static void *run_listener_accept_loop(void *p)
+{
+    listener_accept_args *a = (listener_accept_args *)p;
+    for (int i = 0; i < a->n; i++) {
+        if (pigeon_listener_accept(a->listener, &a->out_sessions[i]) != 0) {
+            a->rc = -1;
+            return NULL;
+        }
+    }
+    a->rc = 0;
+    return NULL;
+}
+
+static void test_listener_two_clients(void)
+{
+    TEST("listener: two concurrent clients through activation");
+    memset(&listener_eb, 0, sizeof(listener_eb));
+    memset(&listener_ec, 0, sizeof(listener_ec));
+    listener_eb.peer = &listener_ec;
+    listener_ec.peer = &listener_eb;
+
+    pigeon_transport tb, tc;
+    loopback_make_transport(&tb, &listener_eb);
+    loopback_make_transport(&tc, &listener_ec);
+
+    listener_resolve_ctx rctx = {
+        .want_id_1 = "device-a",
+        .want_id_2 = "device-b",
+    };
+    pigeon_listener *l = NULL;
+    if (pigeon_listener_init(&l, &tb, "backend-instance",
+                             listener_resolve, &rctx,
+                             NULL, 0) != 0) {
+        FAIL("listener_init"); return;
+    }
+    if (strcmp(pigeon_listener_instance_id(l), "backend-instance") != 0) {
+        FAIL("instance id mismatch"); return;
+    }
+
+    pigeon_session *sessions[2] = { NULL, NULL };
+    listener_accept_args lacc = {
+        .listener = l, .out_sessions = sessions, .n = 2, .rc = 0,
+    };
+    pthread_t tid_listener;
+    if (pthread_create(&tid_listener, NULL,
+                       run_listener_accept_loop, &lacc) != 0) {
+        FAIL("pthread_create listener"); return;
+    }
+
+    listener_client_args ca = { &tc, 0xa1a1a1a1u, "device-a", 0 };
+    listener_client_args cb = { &tc, 0xb2b2b2b2u, "device-b", 0 };
+    pthread_t tid_a, tid_b;
+    if (pthread_create(&tid_a, NULL, run_listener_client, &ca) != 0) {
+        FAIL("pthread_create A"); return;
+    }
+    if (pthread_create(&tid_b, NULL, run_listener_client, &cb) != 0) {
+        FAIL("pthread_create B"); return;
+    }
+    pthread_join(tid_a, NULL);
+    pthread_join(tid_b, NULL);
+    pthread_join(tid_listener, NULL);
+
+    if (lacc.rc != 0) { FAIL("listener accept failed"); return; }
+    if (ca.rc != 0)   { FAIL("client A activation failed"); return; }
+    if (cb.rc != 0)   { FAIL("client B activation failed"); return; }
+    if (!sessions[0] || !sessions[1]) { FAIL("missing session"); return; }
+    if (sessions[0] == sessions[1])    { FAIL("same session twice"); return; }
+
+    // Demux contract: each accepted session is keyed by the
+    // client-supplied tag; the two tags A used (0xa1...) and B used
+    // (0xb2...) should end up in two different slots.
+    uint32_t tags[2] = { sessions[0]->client_tag, sessions[1]->client_tag };
+    bool seen_a = (tags[0] == 0xa1a1a1a1u || tags[1] == 0xa1a1a1a1u);
+    bool seen_b = (tags[0] == 0xb2b2b2b2u || tags[1] == 0xb2b2b2b2u);
+    if (!seen_a || !seen_b) { FAIL("tag demux mismatch"); return; }
+
+    pigeon_listener_close(l);
+    PASS();
+}
+
+// Verify a sub-stream that lands for an already-accepted client is
+// dispatched into that session's incoming-stream queue, and
+// pigeon_session_accept_incoming_stream drains it by name. The
+// listener pump only returns when a *new primary* arrives, so the
+// test queues sub-streams between two primary connections and
+// expects the second accept to surface a queue containing the
+// dispatched sub-stream.
+static void test_listener_substream_demux(void)
+{
+    TEST("listener: sub-stream between primaries lands in session queue");
+    memset(&listener_eb, 0, sizeof(listener_eb));
+    memset(&listener_ec, 0, sizeof(listener_ec));
+    listener_eb.peer = &listener_ec;
+    listener_ec.peer = &listener_eb;
+
+    pigeon_transport tb, tc;
+    loopback_make_transport(&tb, &listener_eb);
+    loopback_make_transport(&tc, &listener_ec);
+
+    listener_resolve_ctx rctx = {
+        .want_id_1 = "device-first",
+        .want_id_2 = "device-second",
+    };
+    pigeon_listener *l = NULL;
+    if (pigeon_listener_init(&l, &tb, "demux-listener",
+                             listener_resolve, &rctx,
+                             NULL, 0) != 0) {
+        FAIL("listener_init"); return;
+    }
+
+    // Pre-stage everything the listener pump will consume in order:
+    //   1. client A primary  (tag 0xa1...)
+    //   2. client A sub-stream "logs" (tag 0xa1..., name="logs")
+    //   3. client B primary  (tag 0xb2...)
+    //
+    // The listener accept call returns after each primary; sub-
+    // streams that arrive between them are dispatched into the
+    // matching session's incoming queue.
+    pigeon_session *sessions[2] = { NULL, NULL };
+    listener_accept_args lacc = {
+        .listener = l, .out_sessions = sessions, .n = 2, .rc = 0,
+    };
+    pthread_t tid_listener;
+    if (pthread_create(&tid_listener, NULL,
+                       run_listener_accept_loop, &lacc) != 0) {
+        FAIL("pthread_create listener"); return;
+    }
+
+    listener_client_args ca = { &tc, 0xa1a1a1a1u, "device-first", 0 };
+    pthread_t tid_a;
+    if (pthread_create(&tid_a, NULL, run_listener_client, &ca) != 0) {
+        FAIL("pthread_create A"); return;
+    }
+    pthread_join(tid_a, NULL);
+    if (ca.rc != 0) { FAIL("client A activation"); return; }
+
+    // Now interleave: client A opens a sub-stream "logs", then
+    // client B kicks off its primary.
+    pigeon_stream_handle *sub = NULL;
+    if (tc.open_stream(tc.userdata, &sub) != 0) { FAIL("open sub"); return; }
+    uint8_t hdr[PIGEON_MAX_STREAM_HEADER];
+    int hn = pigeon_encode_stream_header(true, 0xa1a1a1a1u,
+                                         "logs", strlen("logs"),
+                                         hdr, sizeof(hdr));
+    if (hn < 0) { FAIL("encode sub header"); return; }
+    if (tc.send_on_stream(tc.userdata, sub, hdr, (size_t)hn) != 0) {
+        FAIL("send sub header"); return;
+    }
+
+    listener_client_args cb = { &tc, 0xb2b2b2b2u, "device-second", 0 };
+    pthread_t tid_b;
+    if (pthread_create(&tid_b, NULL, run_listener_client, &cb) != 0) {
+        FAIL("pthread_create B"); return;
+    }
+    pthread_join(tid_b, NULL);
+    pthread_join(tid_listener, NULL);
+    if (cb.rc != 0)   { FAIL("client B activation"); return; }
+    if (lacc.rc != 0) { FAIL("listener accept failed"); return; }
+
+    // sessions[0] is the device-first session (tag 0xa1...). Its
+    // incoming queue should hold the "logs" sub-stream.
+    pigeon_session *sess_a = NULL;
+    for (int i = 0; i < 2; i++) {
+        if (sessions[i] != NULL && sessions[i]->client_tag == 0xa1a1a1a1u) {
+            sess_a = sessions[i];
+            break;
+        }
+    }
+    if (!sess_a) { FAIL("device-first session missing"); return; }
+
+    pigeon_stream out_stream;
+    if (pigeon_session_accept_incoming_stream(sess_a, "logs", &out_stream) != 0) {
+        FAIL("sub-stream not delivered"); return;
+    }
+    if (strcmp(out_stream.name, "logs") != 0) {
+        FAIL("sub-stream wrong name"); return;
+    }
+
+    pigeon_listener_close(l);
+    PASS();
+}
+
 static void test_activation_wire_roundtrip(void)
 {
     TEST("activation: wire roundtrip (auth_request + auth_ok variants)");
@@ -1702,6 +1969,8 @@ int main(void)
     test_activation_wire_roundtrip();
     test_activation_known_device();
     test_activation_unknown_device();
+    test_listener_two_clients();
+    test_listener_substream_demux();
 
     printf("\n%d/%d tests passed\n", tests_passed, tests_run);
     return tests_passed == tests_run ? 0 : 1;
