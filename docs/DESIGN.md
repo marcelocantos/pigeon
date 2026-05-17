@@ -373,9 +373,9 @@ sub-states are listed for clarity but they are not separate FSMs.
 | &nbsp;&nbsp;⊢ path selection / LAN candidate exchange | Sub-state — designed; not implemented |
 | &nbsp;&nbsp;⊢ health monitor ping/pong | Sub-state — designed; not implemented |
 | Cross-machine properties     | Interface contract (`ValidPairingRecord`) + local proofs in each spec; **no composed TLA+ spec** (state space explodes) |
-| Relay greeting variants      | One-shot byte format — hand-rolled (`pigeon.go`, `transport.go`, `c/src/ngtcp2_transport.c`) |
-| Stream-name binding header   | One-shot byte format — hand-rolled (`api.go::encodeStreamHeader`, `c/src/pigeon.c::pigeon_encode_stream_header`) |
-| Datagram channel-id framing  | One-shot byte format — hand-rolled (encoder helpers in same files) |
+| Relay greeting variants      | `protocol/wireformats.yaml::relay_greeting` ✓ (protogen-generated encoder/decoder in every SDK; T40) |
+| Stream-name binding header   | `protocol/wireformats.yaml::stream_header` ✓ (protogen-generated; T40) |
+| Datagram channel-id framing  | `protocol/wireformats.yaml::datagram_plaintext` ✓ (protogen-generated plaintext; AEAD wrapping stays hand-rolled per language — see §5) |
 
 **Current state vs. target.** The pairing ceremony is the only wire
 interaction currently flowing through protogen. Everything else is
@@ -610,10 +610,12 @@ separated L3. STUN-reflexive is a third tier deferred behind LAN-direct.
    implementations on the cleanly-layered surface.
 4. **Pipe-swap semantics undecided.** §8 lists the three candidate
    strategies; v1 needs to commit to one before L3 ships.
-5. **Wire interactions not yet protogen specs.** Stream-name binding
-   header, datagram channel-id framing, relay greeting variants. Each
-   is a class of drift bugs eliminated by moving it into protogen.
-   Tracked under T40.
+5. **Wire interactions not yet protogen specs.** ~~Stream-name binding
+   header, datagram channel-id framing, relay greeting variants.~~
+   T40 retired these into `protocol/wireformats.yaml` (the one-shot
+   byte-format pipeline alongside the FSM pipeline). The remaining
+   gap is the session activation hello/ack (sub-state of T39's
+   session machine), tracked under that target.
 6. **Cross-language API parity.** Swift / Kotlin / C are all behind Go
    on at least one application-API edge (Swift's `setChannel`
    asymmetry is the documented case; others may exist).

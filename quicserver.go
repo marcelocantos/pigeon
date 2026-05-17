@@ -174,34 +174,43 @@ func (s *QUICServer) handleConnection(conn *quic.Conn) {
 
 	msg := string(handshake)
 	switch {
-	case msg == "register" || strings.HasPrefix(msg, "register:") || strings.HasPrefix(msg, "register-mux"):
-		s.handleRegister(conn, stream, msg)
+	case strings.HasPrefix(msg, "register-mux"):
+		dec, err := DecodeRelayGreeting(handshake)
+		if err != nil {
+			slog.Error("quic: bad register-mux handshake", "err", err)
+			conn.CloseWithError(1, "bad handshake")
+			return
+		}
+		s.handleRegister(conn, stream, dec.Token, dec.InstanceId, true)
+	case msg == "register" || strings.HasPrefix(msg, "register:"):
+		// Legacy pair-mode "register[:TOKEN[:INSTANCE_ID]]" wire — not
+		// part of the post-T40 protogen union (which only covers the
+		// mux-mode register-mux variant). Parse inline.
+		var token, requestedID string
+		body := msg
+		if strings.HasPrefix(body, "register:") {
+			parts := strings.SplitN(body[len("register:"):], ":", 2)
+			token = parts[0]
+			if len(parts) > 1 {
+				requestedID = parts[1]
+			}
+		}
+		s.handleRegister(conn, stream, token, requestedID, false)
 	case strings.HasPrefix(msg, "connect:"):
-		s.handleConnect(conn, stream, msg)
+		dec, err := DecodeRelayGreeting(handshake)
+		if err != nil {
+			slog.Error("quic: bad connect handshake", "err", err)
+			conn.CloseWithError(1, "bad handshake")
+			return
+		}
+		s.handleConnect(conn, stream, dec.InstanceId)
 	default:
 		slog.Error("quic: unknown handshake", "msg", msg)
 		conn.CloseWithError(1, "unknown handshake")
 	}
 }
 
-func (s *QUICServer) handleRegister(conn *quic.Conn, stream *quic.Stream, msg string) {
-	// Parse handshake:
-	//   "register[:TOKEN[:INSTANCE_ID]]"      → pair-mode (1:1, no tag)
-	//   "register-mux[:TOKEN[:INSTANCE_ID]]"  → mux-mode (multi-client, tag prefix)
-	var token, requestedID string
-	muxMode := false
-	body := msg
-	if strings.HasPrefix(body, "register-mux") {
-		muxMode = true
-		body = "register" + strings.TrimPrefix(body, "register-mux")
-	}
-	if strings.HasPrefix(body, "register:") {
-		parts := strings.SplitN(body[len("register:"):], ":", 2)
-		token = parts[0]
-		if len(parts) > 1 {
-			requestedID = parts[1]
-		}
-	}
+func (s *QUICServer) handleRegister(conn *quic.Conn, stream *quic.Stream, token, requestedID string, muxMode bool) {
 
 	if s.token != "" {
 		if subtle.ConstantTimeCompare([]byte(token), []byte(s.token)) != 1 {
@@ -235,8 +244,7 @@ func (s *QUICServer) handleRegister(conn *quic.Conn, stream *quic.Stream, msg st
 	slog.Info("instance disconnected", "id", id)
 }
 
-func (s *QUICServer) handleConnect(conn *quic.Conn, stream *quic.Stream, msg string) {
-	instanceID := msg[len("connect:"):]
+func (s *QUICServer) handleConnect(conn *quic.Conn, stream *quic.Stream, instanceID string) {
 	if len(instanceID) == 0 || len(instanceID) > 64 {
 		slog.Error("quic connect: invalid instance ID", "id", instanceID)
 		conn.CloseWithError(1, "invalid instance ID")

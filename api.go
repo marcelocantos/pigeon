@@ -203,7 +203,7 @@ func (l *Listener) acceptLoop() {
 			_ = stream.Close()
 			continue
 		}
-		tag, name, err := decodeBackendStreamHeader(header)
+		tag, name, err := DecodeStreamHeaderBackend(header)
 		if err != nil {
 			slog.Warn("listener: parse stream header", "err", err)
 			_ = stream.Close()
@@ -370,7 +370,7 @@ func Connect(ctx context.Context, args *ConnectArgs) (*Session, error) {
 	// Primary stream is the one the relay handshake already used. The
 	// header carries an empty name, which (after the relay prepends the
 	// clientTag) tells the backend "this is a new client primary".
-	if err := writeMessage(tr.primary, encodeStreamHeader(false, 0, "")); err != nil {
+	if err := writeMessage(tr.primary, EncodeStreamHeader(false, 0, "")); err != nil {
 		_ = tr.Close()
 		return nil, fmt.Errorf("write primary header: %w", err)
 	}
@@ -512,7 +512,7 @@ func (s *Session) OpenStream(ctx context.Context, name string) (*Stream, error) 
 	if err != nil {
 		return nil, fmt.Errorf("open quic stream: %w", err)
 	}
-	if err := writeMessage(rwc, encodeStreamHeader(s.isBackend, s.clientTag, name)); err != nil {
+	if err := writeMessage(rwc, EncodeStreamHeader(s.isBackend, s.clientTag, name)); err != nil {
 		_ = rwc.Close()
 		return nil, fmt.Errorf("write stream header: %w", err)
 	}
@@ -629,9 +629,9 @@ func (s *Session) deliverIncomingDatagram(payload []byte) {
 		slog.Debug("session: datagram decrypt", "peer", s.peerID, "err", err)
 		return
 	}
-	id, n := binary.Uvarint(plain)
-	if n <= 0 {
-		slog.Debug("session: datagram channel id parse")
+	id, body, err := DecodeDatagramPlaintext(plain)
+	if err != nil {
+		slog.Debug("session: datagram channel id parse", "err", err)
 		return
 	}
 	dg, ok := s.datagrams[id]
@@ -639,7 +639,6 @@ func (s *Session) deliverIncomingDatagram(payload []byte) {
 		slog.Debug("session: datagram for unknown channel id", "id", id)
 		return
 	}
-	body := plain[n:]
 	cp := make([]byte, len(body))
 	copy(cp, body)
 	select {
@@ -667,7 +666,7 @@ func (s *Session) clientAcceptLoop() {
 			_ = rwc.Close()
 			continue
 		}
-		name, err := decodeClientStreamHeader(header)
+		name, err := DecodeStreamHeaderClient(header)
 		if err != nil {
 			slog.Warn("session: parse sub-stream header", "err", err)
 			_ = rwc.Close()
@@ -792,12 +791,8 @@ type Datagram struct {
 // AEAD([varint channel-id][payload]); on the backend side a 4-byte
 // clientTag prefix is added by the Session for relay routing.
 func (d *Datagram) Send(payload []byte) error {
-	buf := make([]byte, 0, binary.MaxVarintLen64+len(payload))
-	var idBuf [binary.MaxVarintLen64]byte
-	n := binary.PutUvarint(idBuf[:], d.id)
-	buf = append(buf, idBuf[:n]...)
-	buf = append(buf, payload...)
-	ct := d.session.channel.Encrypt(buf)
+	plain := EncodeDatagramPlaintext(d.id, payload)
+	ct := d.session.channel.Encrypt(plain)
 	if d.session.isBackend {
 		framed := make([]byte, 4+len(ct))
 		binary.BigEndian.PutUint32(framed[:4], d.session.clientTag)
@@ -825,56 +820,9 @@ func (d *Datagram) Recv(ctx context.Context) ([]byte, error) {
 // Name returns the channel name supplied to Args.Datagrams.
 func (d *Datagram) Name() string { return d.name }
 
-// --- wire helpers ---
-
-// encodeStreamHeader builds the per-stream first-message header.
-//
-//	Backend side: [4-byte clientTag-BE][varint name-len][name].
-//	Client side:                       [varint name-len][name].
-//
-// The whole thing is sent as one length-prefixed message via writeMessage,
-// so the relay (which only exposes ReadMessage / WriteMessage on its
-// stream wrappers) can prepend the 4-byte tag without raw-byte access.
-func encodeStreamHeader(isBackend bool, tag uint32, name string) []byte {
-	const tagSize = 4
-	cap := binary.MaxVarintLen64 + len(name)
-	if isBackend {
-		cap += tagSize
-	}
-	buf := make([]byte, 0, cap)
-	if isBackend {
-		var tagBuf [tagSize]byte
-		binary.BigEndian.PutUint32(tagBuf[:], tag)
-		buf = append(buf, tagBuf[:]...)
-	}
-	var lenBuf [binary.MaxVarintLen64]byte
-	n := binary.PutUvarint(lenBuf[:], uint64(len(name)))
-	buf = append(buf, lenBuf[:n]...)
-	buf = append(buf, []byte(name)...)
-	return buf
-}
-
-// decodeBackendStreamHeader parses [4-byte tag][varint name-len][name].
-func decodeBackendStreamHeader(b []byte) (uint32, string, error) {
-	if len(b) < 4 {
-		return 0, "", errors.New("header too short for tag")
-	}
-	tag := binary.BigEndian.Uint32(b[:4])
-	name, err := decodeClientStreamHeader(b[4:])
-	if err != nil {
-		return 0, "", err
-	}
-	return tag, name, nil
-}
-
-// decodeClientStreamHeader parses [varint name-len][name].
-func decodeClientStreamHeader(b []byte) (string, error) {
-	nameLen, n := binary.Uvarint(b)
-	if n <= 0 {
-		return "", errors.New("bad name varint")
-	}
-	if uint64(len(b)-n) < nameLen {
-		return "", errors.New("name truncated")
-	}
-	return string(b[n : n+int(nameLen)]), nil
-}
+// Wire helpers are protogen-generated in wire_gen.go from
+// protocol/wireformats.yaml — EncodeStreamHeader,
+// DecodeStreamHeaderBackend, DecodeStreamHeaderClient,
+// EncodeDatagramPlaintext, DecodeDatagramPlaintext,
+// EncodeRelayGreetingConnect/RegisterMux, DecodeRelayGreeting. Do
+// not add hand-rolled equivalents here — extend the YAML instead.

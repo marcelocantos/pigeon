@@ -39,6 +39,19 @@ import {
   PairingRecord,
   deriveChannelFromRecord,
 } from "./crypto.js";
+import {
+  encodeStreamHeader as wireEncodeStreamHeader,
+  decodeStreamHeaderClient as wireDecodeStreamHeaderClient,
+  encodeDatagramPlaintext as wireEncodeDatagramPlaintext,
+  decodeDatagramPlaintext as wireDecodeDatagramPlaintext,
+} from "./wireGen.js";
+
+// Re-export generated wire helpers under the names tests / consumers
+// have used historically.
+export {
+  encodeUvarint,
+  decodeUvarint,
+} from "./wireGen.js";
 
 // --- Public API types ----------------------------------------------
 
@@ -88,93 +101,46 @@ export interface ConnectArgs {
  */
 const MAX_MESSAGE_SIZE = 1 << 20; // 1 MiB
 
-/** Encode a non-negative bigint as Go-style uvarint into a Uint8Array. */
-export function encodeUvarint(value: bigint): Uint8Array {
-  if (value < 0n) throw new Error("uvarint: negative value");
-  const out: number[] = [];
-  let v = value;
-  while (v >= 0x80n) {
-    out.push(Number((v & 0x7fn) | 0x80n));
-    v >>= 7n;
-  }
-  out.push(Number(v));
-  return new Uint8Array(out);
-}
-
-/**
- * Decode a uvarint at offset 0. Returns [value, bytesConsumed].
- * Throws on overflow (>10 bytes) and returns bytesConsumed=0 on
- * truncated input (need-more-bytes).
- */
-export function decodeUvarint(buf: Uint8Array): [bigint, number] {
-  let v = 0n;
-  let shift = 0n;
-  for (let i = 0; i < buf.length; i++) {
-    if (i >= 10) throw new Error("uvarint: too many bytes");
-    const b = buf[i];
-    if ((b & 0x80) === 0) {
-      v |= BigInt(b) << shift;
-      return [v, i + 1];
-    }
-    v |= BigInt(b & 0x7f) << shift;
-    shift += 7n;
-  }
-  return [0n, 0]; // truncated
-}
-
 /**
  * Encode a client-side stream-header: [varint name-len][name-bytes].
  * Empty name → just [0x00] (the per-client primary stream marker).
- * Backend headers (with a 4-byte tag prefix) are not produced here —
- * the browser only ever speaks the client side of the wire.
+ * Thin shim over the generated `encodeStreamHeader` that pins the
+ * is_backend=false / client_tag=0 client-side variant the browser
+ * always speaks.
  */
 export function encodeStreamHeader(name: string): Uint8Array {
-  const nameBytes = new TextEncoder().encode(name);
-  const lenBytes = encodeUvarint(BigInt(nameBytes.length));
-  const out = new Uint8Array(lenBytes.length + nameBytes.length);
-  out.set(lenBytes, 0);
-  out.set(nameBytes, lenBytes.length);
-  return out;
+  return wireEncodeStreamHeader(false, 0, name);
 }
 
 /** Decode a client-side stream-header. Returns [name, bytesConsumed]. */
 export function decodeStreamHeader(buf: Uint8Array): [string, number] {
-  const [nameLen, n] = decodeUvarint(buf);
-  if (n === 0) throw new Error("stream header: truncated varint");
-  const total = n + Number(nameLen);
-  if (buf.length < total) throw new Error("stream header: truncated name");
-  const name = new TextDecoder().decode(buf.subarray(n, total));
-  return [name, total];
+  const d = wireDecodeStreamHeaderClient(buf);
+  return [d.name, d.consumed];
 }
 
 /**
  * Encode a client-side datagram payload: AEAD([varint channel-id][payload]).
- * Returns the ciphertext to put on the wire.
+ * The protogen-generated `encodeDatagramPlaintext` produces the
+ * pre-AEAD bytes; the wrapper layers `channel.encrypt` on top.
  */
 export async function encodeDatagram(
   channel: E2EChannel,
   channelId: bigint,
   payload: Uint8Array,
 ): Promise<Uint8Array> {
-  const idBytes = encodeUvarint(channelId);
-  const plain = new Uint8Array(idBytes.length + payload.length);
-  plain.set(idBytes, 0);
-  plain.set(payload, idBytes.length);
-  return channel.encrypt(plain);
+  return channel.encrypt(wireEncodeDatagramPlaintext(channelId, payload));
 }
 
 /**
- * Decode a client-side datagram from the wire.
- * Returns [channelId, payload].
+ * Decode a client-side datagram from the wire. Returns [channelId, payload].
  */
 export async function decodeDatagram(
   channel: E2EChannel,
   wire: Uint8Array,
 ): Promise<[bigint, Uint8Array]> {
   const plain = await channel.decrypt(wire);
-  const [id, n] = decodeUvarint(plain);
-  if (n === 0) throw new Error("datagram: truncated channel-id varint");
-  return [id, plain.subarray(n)];
+  const d = wireDecodeDatagramPlaintext(plain);
+  return [d.channelId, d.payload];
 }
 
 // --- Length-prefixed frame I/O on a single stream ------------------

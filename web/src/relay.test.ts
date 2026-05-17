@@ -58,9 +58,11 @@ describe("uvarint", () => {
     });
   }
 
-  it("returns 0 bytes consumed on truncated input", () => {
-    const [, n] = decodeUvarint(new Uint8Array([0x80]));
-    assert.equal(n, 0);
+  it("throws on truncated input", () => {
+    // Post-T40 protogen contract: truncated input is an error, not
+    // a sentinel return. The Go side returns n <= 0; Kotlin / Swift
+    // throw a typed exception. Mirror that here.
+    assert.throws(() => decodeUvarint(new Uint8Array([0x80])));
   });
 
   it("rejects negative values", () => {

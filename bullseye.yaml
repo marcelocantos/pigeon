@@ -1250,7 +1250,7 @@ targets:
     achieved: 2026-04-15
   T40:
     name: Hand-rolled wire-format helpers migrate into protogen one-shot byte-format specs
-    status: identified
+    status: achieved
     value: 0.0
     cost: 0.0
     acceptance:
@@ -1261,6 +1261,8 @@ targets:
     context: 'Per docs/DESIGN.md section 4, the wire-protocol principle is binding: anything on the wire is a protogen spec, never hand-rolled per language. The pairing FSM and the session FSM (T39) cover interactive protocols; this target covers one-shot byte formats. These are not state machines (a single emission, no transitions) but they still belong in protogen so they get the same multi-language consistency guarantee and so future ports never have to hand-roll them. Smaller scope than T39 and parallelisable with it - this target doesn''t depend on T39 and vice versa.'
     origin: docs/DESIGN.md section 4 (wire principle); docs/DESIGN.md section 9 (largest open architectural gaps, item 1)
     discovered: 2026-05-02
+    achieved: 2026-05-17
+    notes: 'Three protogen-driven YAML formats live in protocol/wireformats.yaml (stream_header variants, datagram_plaintext, relay_greeting prefix-dispatched union). cmd/protogen --wireformats fans out to wire_gen.go (root), c/{include,src}/wire_gen.{h,c}, Sources/Pigeon/WireGen.swift, android/pigeon/.../crypto/WireGen.kt, web/src/wireGen.ts. The hand-rolled encodeStreamHeader / decodeBackendStreamHeader / decodeClientStreamHeader in api.go and their pigeon_encode_stream_header / pigeon_decode_{backend,client}_stream_header C counterparts (plus Sources/Pigeon/Wire.swift) are deleted; pigeon_encode_datagram / pigeon_decode_datagram now build on the generated plaintext encoder while keeping their AEAD-wrapping shape. Cross-language byte-vector tests pass against the generated code unchanged.'
   T41:
     name: 'Local backchannel: Unix-socket IPC between CLI and daemon during pairing ceremony'
     status: identified

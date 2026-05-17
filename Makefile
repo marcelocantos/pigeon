@@ -107,6 +107,7 @@ demo:
 
 generate:
 	go run ./cmd/protogen protocol/pairing.yaml
+	go run ./cmd/protogen --wireformats protocol/wireformats.yaml
 
 # --- C library ---
 

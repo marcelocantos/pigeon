@@ -243,13 +243,19 @@ func (s *WebTransportServer) handleRegister(w http.ResponseWriter, r *http.Reque
 
 	muxMode := false
 	msg := string(handshake)
+	var id string
 	if strings.HasPrefix(msg, "register-mux") {
 		muxMode = true
-		msg = "register" + strings.TrimPrefix(msg, "register-mux")
-	}
-
-	var id string
-	if strings.HasPrefix(msg, "register::") {
+		dec, err := DecodeRelayGreeting(handshake)
+		if err != nil {
+			slog.Error("register: bad register-mux handshake", "err", err)
+			session.CloseWithError(0, "bad handshake")
+			return
+		}
+		id = dec.InstanceId
+	} else if strings.HasPrefix(msg, "register::") {
+		// Legacy pair-mode form (no token); not part of the protogen
+		// union (which covers register-mux only).
 		id = msg[len("register::"):]
 	}
 	if id == "" {

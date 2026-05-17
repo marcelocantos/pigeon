@@ -11,6 +11,11 @@
 // Include the generated protocol header.
 #include "pairingceremony_gen.h"
 
+// Include the protogen-generated wire-format helpers (stream_header,
+// datagram_plaintext, relay_greeting). Generated from
+// protocol/wireformats.yaml.
+#include "wire_gen.h"
+
 #ifndef PIGEON_MAX_MSG
 #define PIGEON_MAX_MSG 1048576
 #endif
@@ -219,32 +224,11 @@ int pigeon_uvarint_encode(uint64_t v, uint8_t *buf, size_t buf_len);
 // Returns 0 if buf is too short, -1 if the encoding overflows uint64.
 int pigeon_uvarint_decode(const uint8_t *buf, size_t buf_len, uint64_t *out);
 
-// Encode the per-stream first-message header in the post-T22 wire:
-//   backend side: [4-byte clientTag-BE][varint name-len][name]
-//   client  side:                       [varint name-len][name]
-//
-// Returns the number of bytes written, or -1 if out_len is insufficient.
-// `name` may be NULL iff name_len == 0 (legitimate for the client primary
-// stream, which uses an empty name).
-int pigeon_encode_stream_header(bool is_backend, uint32_t client_tag,
-                                const char *name, size_t name_len,
-                                uint8_t *out, size_t out_len);
-
-// Decode a backend-side stream header: extracts the 4-byte clientTag and
-// then the varint-prefixed name. The name is copied into `name_buf` (NUL-
-// terminated; truncated and an error returned if name_buf_len is too
-// small). Writes the decoded name length to *name_len_out (excluding NUL).
-// Returns the total number of bytes consumed, or -1 on error.
-int pigeon_decode_backend_stream_header(const uint8_t *buf, size_t buf_len,
-                                        uint32_t *client_tag,
-                                        char *name_buf, size_t name_buf_len,
-                                        size_t *name_len_out);
-
-// Decode a client-side stream header (no clientTag).
-// Returns the total number of bytes consumed, or -1 on error.
-int pigeon_decode_client_stream_header(const uint8_t *buf, size_t buf_len,
-                                       char *name_buf, size_t name_buf_len,
-                                       size_t *name_len_out);
+// Stream-header encoders/decoders moved to wire_gen.h (protogen-
+// generated from protocol/wireformats.yaml): see
+// pigeon_wire_stream_header_encode,
+// pigeon_wire_stream_header_decode_backend,
+// pigeon_wire_stream_header_decode_client.
 
 // Compose a datagram payload for a named channel:
 //   plain    = [varint channel-id][payload]

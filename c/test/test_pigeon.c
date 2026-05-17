@@ -1026,7 +1026,7 @@ static void test_stream_header(void)
     // Expected wire: 01 02 03 04 04 'c' 'h' 'a' 't' = 9 bytes.
     {
         uint8_t out[32];
-        int n = pigeon_encode_stream_header(true, 0x01020304u, "chat", 4,
+        int n = pigeon_wire_stream_header_encode(true, 0x01020304u, "chat", 4,
                                             out, sizeof(out));
         if (n != 9) { FAIL("backend encode wrong length"); return; }
         const uint8_t want[] = {0x01,0x02,0x03,0x04, 0x04, 'c','h','a','t'};
@@ -1034,7 +1034,7 @@ static void test_stream_header(void)
 
         uint32_t tag = 0;
         char name[32]; size_t name_len = 0;
-        int consumed = pigeon_decode_backend_stream_header(out, (size_t)n,
+        int consumed = pigeon_wire_stream_header_decode_backend(out, (size_t)n,
                                                            &tag, name, sizeof(name),
                                                            &name_len);
         if (consumed != 9) { FAIL("backend decode consumed wrong"); return; }
@@ -1045,12 +1045,12 @@ static void test_stream_header(void)
     // Client primary: empty name -> [0x00] (just the varint 0).
     {
         uint8_t out[32];
-        int n = pigeon_encode_stream_header(false, 0, NULL, 0, out, sizeof(out));
+        int n = pigeon_wire_stream_header_encode(false, 0, NULL, 0, out, sizeof(out));
         if (n != 1) { FAIL("client empty encode wrong length"); return; }
         if (out[0] != 0x00) { FAIL("client empty encode byte"); return; }
 
         char name[8]; size_t name_len = 1;
-        int consumed = pigeon_decode_client_stream_header(out, (size_t)n,
+        int consumed = pigeon_wire_stream_header_decode_client(out, (size_t)n,
                                                           name, sizeof(name),
                                                           &name_len);
         if (consumed != 1) { FAIL("client empty decode consumed"); return; }
@@ -1060,13 +1060,13 @@ static void test_stream_header(void)
     // Client named: "control" (length 7 -> varint 0x07).
     {
         uint8_t out[32];
-        int n = pigeon_encode_stream_header(false, 0, "control", 7, out, sizeof(out));
+        int n = pigeon_wire_stream_header_encode(false, 0, "control", 7, out, sizeof(out));
         if (n != 8) { FAIL("client named encode wrong length"); return; }
         const uint8_t want[] = {0x07, 'c','o','n','t','r','o','l'};
         if (memcmp(out, want, 8) != 0) { FAIL("client named encode bytes"); return; }
 
         char name[16]; size_t name_len = 0;
-        int consumed = pigeon_decode_client_stream_header(out, (size_t)n,
+        int consumed = pigeon_wire_stream_header_decode_client(out, (size_t)n,
                                                           name, sizeof(name),
                                                           &name_len);
         if (consumed != 8) { FAIL("client named decode consumed"); return; }
@@ -1077,7 +1077,7 @@ static void test_stream_header(void)
     {
         uint8_t buf[3] = {0,0,0};
         uint32_t tag = 0; char name[8]; size_t nl = 0;
-        if (pigeon_decode_backend_stream_header(buf, 3, &tag, name, sizeof(name), &nl) >= 0) {
+        if (pigeon_wire_stream_header_decode_backend(buf, 3, &tag, name, sizeof(name), &nl) >= 0) {
             FAIL("backend decode should reject buf<4"); return;
         }
     }
@@ -1085,10 +1085,10 @@ static void test_stream_header(void)
     // Decode rejects a name longer than name_buf (must leave room for NUL).
     {
         uint8_t out[32];
-        int n = pigeon_encode_stream_header(false, 0, "abcdef", 6, out, sizeof(out));
+        int n = pigeon_wire_stream_header_encode(false, 0, "abcdef", 6, out, sizeof(out));
         if (n != 7) { FAIL("setup"); return; }
         char small[6]; size_t nl = 0;
-        if (pigeon_decode_client_stream_header(out, (size_t)n, small, sizeof(small), &nl) >= 0) {
+        if (pigeon_wire_stream_header_decode_client(out, (size_t)n, small, sizeof(small), &nl) >= 0) {
             FAIL("decode should fail when name_buf too small for NUL"); return;
         }
     }
@@ -1372,7 +1372,7 @@ static void test_session_stream_roundtrip(void)
     uint8_t hdr[PIGEON_MAX_STREAM_HEADER]; size_t hn = 0;
     if (tb.recv_on_stream(tb.userdata, bh, hdr, sizeof(hdr), &hn) != 0) { FAIL("B recv header"); return; }
     uint32_t tag = 0; char name[32]; size_t nl = 0;
-    if (pigeon_decode_backend_stream_header(hdr, hn, &tag, name, sizeof(name), &nl) < 0) {
+    if (pigeon_wire_stream_header_decode_backend(hdr, hn, &tag, name, sizeof(name), &nl) < 0) {
         FAIL("B decode header"); return;
     }
     if (tag != 0xcafef00du) { FAIL("tag mismatch"); return; }
@@ -1689,7 +1689,7 @@ static void *run_listener_client(void *p)
         return NULL;
     }
     uint8_t hdr[PIGEON_MAX_STREAM_HEADER];
-    int hn = pigeon_encode_stream_header(true, a->tag, NULL, 0,
+    int hn = pigeon_wire_stream_header_encode(true, a->tag, NULL, 0,
                                          hdr, sizeof(hdr));
     if (hn < 0) { a->rc = -1; return NULL; }
     if (a->transport->send_on_stream(a->transport->userdata, h,
@@ -1851,7 +1851,7 @@ static void test_listener_substream_demux(void)
     pigeon_stream_handle *sub = NULL;
     if (tc.open_stream(tc.userdata, &sub) != 0) { FAIL("open sub"); return; }
     uint8_t hdr[PIGEON_MAX_STREAM_HEADER];
-    int hn = pigeon_encode_stream_header(true, 0xa1a1a1a1u,
+    int hn = pigeon_wire_stream_header_encode(true, 0xa1a1a1a1u,
                                          "logs", strlen("logs"),
                                          hdr, sizeof(hdr));
     if (hn < 0) { FAIL("encode sub header"); return; }
@@ -1938,7 +1938,7 @@ static void *run_backend_connect_thread(void *p)
     }
     char name[PIGEON_MAX_NAME_LEN];
     size_t name_len = 0;
-    if (pigeon_decode_client_stream_header(hdr, hn, name, sizeof(name), &name_len) < 0) {
+    if (pigeon_wire_stream_header_decode_client(hdr, hn, name, sizeof(name), &name_len) < 0) {
         a->header_rc = -1;
         return NULL;
     }
@@ -2084,7 +2084,7 @@ static void test_pigeon_connect_loopback(void)
     }
     // Client side ⇒ header has no tag prefix.
     char chat_name[PIGEON_MAX_NAME_LEN]; size_t cnl = 0;
-    if (pigeon_decode_client_stream_header(hbuf, hlen, chat_name, sizeof(chat_name), &cnl) < 0) {
+    if (pigeon_wire_stream_header_decode_client(hbuf, hlen, chat_name, sizeof(chat_name), &cnl) < 0) {
         FAIL("backend decode chat header"); return;
     }
     if (cnl != 4 || strcmp(chat_name, "chat") != 0) { FAIL("chat name mismatch"); return; }
@@ -2140,7 +2140,7 @@ static void test_pigeon_connect_pairing_mode(void)
         FAIL("backend read primary header"); return;
     }
     char name[PIGEON_MAX_NAME_LEN]; size_t nl = 0;
-    if (pigeon_decode_client_stream_header(hdr, hn, name, sizeof(name), &nl) < 0) {
+    if (pigeon_wire_stream_header_decode_client(hdr, hn, name, sizeof(name), &nl) < 0) {
         FAIL("backend decode primary header"); return;
     }
     if (nl != 0) { FAIL("primary header should be empty-name"); return; }

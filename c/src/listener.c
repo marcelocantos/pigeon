@@ -179,7 +179,7 @@ static int read_backend_header(pigeon_listener *l,
                                     hdr, sizeof(hdr), &hdr_len) != 0) {
         return -1;
     }
-    return pigeon_decode_backend_stream_header(hdr, hdr_len,
+    return pigeon_wire_stream_header_decode_backend(hdr, hdr_len,
                                                out_tag,
                                                out_name, out_name_cap,
                                                out_name_len);
