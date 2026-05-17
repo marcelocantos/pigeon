@@ -1,4 +1,4 @@
-schema_version: 4
+schema_version: 5
 targets:
   T1:
     name: Pigeon is a complete library for opaque authenticated relay
@@ -838,7 +838,7 @@ targets:
     achieved: 2026-05-15
   T32.2:
     name: C Listener type (multi-client demux) + pigeon_register entry point + pigeon_accept
-    status: identified
+    status: achieved
     value: 0.0
     cost: 0.0
     acceptance:
@@ -852,9 +852,10 @@ targets:
     - T32.1
     origin: manual
     discovered: 2026-05-14
+    achieved: 2026-05-17
   T32.3:
     name: 'C pigeon_connect entry point: transport bring-up in CONNECT role + activation handshake + Session construction'
-    status: identified
+    status: achieved
     value: 0.0
     cost: 0.0
     acceptance:
@@ -867,6 +868,7 @@ targets:
     - T32.1
     origin: manual
     discovered: 2026-05-14
+    achieved: 2026-05-17
   T32.4:
     name: 'Live round-trip tests against an in-process Go relay: single-client chat, multi-stream + multi-datagram in one Session, two concurrent C clients sharing one C backend'
     status: identified
