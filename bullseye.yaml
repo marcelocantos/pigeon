@@ -802,7 +802,7 @@ targets:
     achieved: 2026-04-30
   T32:
     name: 'C SDK at full post-T22 wire parity: register-mux, multi-client Listener, named streams, AEAD-channel-id datagrams, pairing ceremony driven from generated FSM'
-    status: identified
+    status: achieved
     value: 0.0
     cost: 0.0
     acceptance:
@@ -820,6 +820,7 @@ targets:
     - T32.4
     origin: discovered while making the architectural decision to consolidate peer libraries into one C implementation
     discovered: 2026-04-30
+    achieved: 2026-05-17
   T32.1:
     name: 'C activation handshake driver: auth_request / auth_ok wire encoders + per-side SessionMachine drive helpers (mirror of Go''s activation.go)'
     status: achieved
@@ -871,7 +872,7 @@ targets:
     achieved: 2026-05-17
   T32.4:
     name: 'Live round-trip tests against an in-process Go relay: single-client chat, multi-stream + multi-datagram in one Session, two concurrent C clients sharing one C backend'
-    status: identified
+    status: achieved
     value: 0.0
     cost: 0.0
     acceptance:
@@ -886,6 +887,7 @@ targets:
     - T32.3
     origin: manual
     discovered: 2026-05-14
+    achieved: 2026-05-17
   T33:
     name: 'Cross-language wire interop: Go relay ↔ C peer at full multi-channel parity (backend + client roles, all four channels)'
     status: identified
@@ -1262,7 +1264,6 @@ targets:
     origin: docs/DESIGN.md section 4 (wire principle); docs/DESIGN.md section 9 (largest open architectural gaps, item 1)
     discovered: 2026-05-02
     achieved: 2026-05-17
-    notes: 'Three protogen-driven YAML formats live in protocol/wireformats.yaml (stream_header variants, datagram_plaintext, relay_greeting prefix-dispatched union). cmd/protogen --wireformats fans out to wire_gen.go (root), c/{include,src}/wire_gen.{h,c}, Sources/Pigeon/WireGen.swift, android/pigeon/.../crypto/WireGen.kt, web/src/wireGen.ts. The hand-rolled encodeStreamHeader / decodeBackendStreamHeader / decodeClientStreamHeader in api.go and their pigeon_encode_stream_header / pigeon_decode_{backend,client}_stream_header C counterparts (plus Sources/Pigeon/Wire.swift) are deleted; pigeon_encode_datagram / pigeon_decode_datagram now build on the generated plaintext encoder while keeping their AEAD-wrapping shape. Cross-language byte-vector tests pass against the generated code unchanged.'
   T41:
     name: 'Local backchannel: Unix-socket IPC between CLI and daemon during pairing ceremony'
     status: identified
