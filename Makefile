@@ -197,6 +197,14 @@ test-c-ngtcp2: build-vendor-deps amalgamate
 		$(NGTCP2_LDFLAGS) \
 		-o c/test/test_ngtcp2
 	./c/test/test_ngtcp2
+	@# 🎯T32.4: cgo-driven live round-trips through the C SDK
+	@# (pigeon_register / pigeon_connect / pigeon_listener_accept)
+	@# against an in-process Go relay (pigeon.NewQUICServer). Build
+	@# tag csdke2e keeps the package out of the default Go build —
+	@# only callers with the vendored ngtcp2 + quictls static libs
+	@# already built (which `build-vendor-deps` above guarantees)
+	@# can link it.
+	go test -tags csdke2e -count=1 -timeout=120s ./c/test/csdke2e/
 
 # --- Standing invariants (for bullseye_convergence) ---
 

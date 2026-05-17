@@ -516,6 +516,7 @@ int pigeon_datagram_recv(pigeon_datagram *d,
                                       sess->scratch_a, sess->scratch_size, &got) != 0) {
         return -1;
     }
+    if (got == 0) return -1; // recv timed out with no datagram available
     uint64_t cid = 0;
     int pn = pigeon_decode_datagram(&sess->channel, sess->is_backend,
                                     sess->scratch_a, got, NULL, &cid,

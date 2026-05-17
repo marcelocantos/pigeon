@@ -643,6 +643,21 @@ const char *pigeon_listener_instance_id(const pigeon_listener *l);
 // listener shutdown.
 int pigeon_listener_accept(pigeon_listener *l, pigeon_session **out_session);
 
+// Single-step variant of pigeon_listener_accept. Consumes exactly one
+// inbound stream from the transport and dispatches it according to
+// the listener's demux rules. Useful when the caller wants to drive
+// the pump in a loop and observe sub-stream dispatches between new-
+// primary arrivals (e.g. live tests that need the pump to advance
+// while waiting for a peer-opened sub-stream to land in an existing
+// session's incoming-stream queue).
+//
+// Returns 1 and writes the new session into *out_session when a new
+// client primary completes activation; returns 0 (with
+// *out_session = NULL) when the step dispatched a sub-stream, dropped
+// a malformed header, or rejected a primary; returns -1 on transport
+// failure or listener shutdown.
+int pigeon_listener_step(pigeon_listener *l, pigeon_session **out_session);
+
 // Tear down the listener: close every child session (free their
 // scratch buffers and any buffered incoming sub-streams) and free
 // the listener struct itself. Idempotent on NULL. The underlying
@@ -688,5 +703,43 @@ int pigeon_register(const char *relay_host,
                     size_t datagram_count,
                     pigeon_listener **out_listener,
                     char *out_instance_id, size_t out_instance_id_cap);
+
+// --- pigeon_connect convenience (high-level, T32.4) ---
+//
+// `pigeon_connect` is the client-side mirror of `pigeon_register`:
+// brings up an ngtcp2 transport (PIGEON_ROLE_CONNECT), binds the
+// primary QUIC stream as a multi-channel slot, and runs the empty-
+// name primary header + auth_request / auth_ok activation handshake
+// via pigeon_connect_on_transport. Lives in the same compilation
+// unit as pigeon_register because both depend on the ngtcp2 transport.
+//
+// On success, *out_conn points to a freshly allocated pigeon_connection
+// that owns the underlying ngtcp2 transport and the resulting
+// pigeon_session. Use pigeon_connect_session() to obtain the session
+// pointer (suitable for pigeon_session_open_stream et al), and call
+// pigeon_connect_close() when finished — it tears down the session,
+// closes the ngtcp2 transport, and frees the connection struct.
+
+// Opaque connection handle. Owns one ngtcp2 transport + one session.
+typedef struct pigeon_connection pigeon_connection;
+
+int pigeon_connect(const char *relay_host,
+                   const char *relay_port,
+                   const char *peer_instance_id,
+                   const char *device_id,
+                   const char *token, // may be NULL
+                   const pigeon_pairing_record *record,
+                   const pigeon_dgchannel_def *datagrams,
+                   size_t datagram_count,
+                   pigeon_connection **out_conn);
+
+// Return the connection's session pointer. The session is owned by
+// the connection; do NOT call pigeon_session_close on it. Stays valid
+// until pigeon_connect_close().
+pigeon_session *pigeon_connect_session(pigeon_connection *c);
+
+// Tear down the connection: close the session, close the underlying
+// ngtcp2 transport, free the connection struct. Idempotent on NULL.
+void pigeon_connect_close(pigeon_connection *c);
 
 #endif // PIGEON_H

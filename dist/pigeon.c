@@ -2215,6 +2215,7 @@ int pigeon_datagram_recv(pigeon_datagram *d,
                                       sess->scratch_a, sess->scratch_size, &got) != 0) {
         return -1;
     }
+    if (got == 0) return -1; // recv timed out with no datagram available
     uint64_t cid = 0;
     int pn = pigeon_decode_datagram(&sess->channel, sess->is_backend,
                                     sess->scratch_a, got, NULL, &cid,
@@ -2822,6 +2823,16 @@ struct pigeon_listener {
     // probing; sized to PIGEON_LISTENER_MAX_CLIENTS slots.
     listener_slot             slots[PIGEON_LISTENER_MAX_CLIENTS];
 
+    // Optional owned-transport closer. When the high-level
+    // pigeon_register wires up an ngtcp2 transport on behalf of the
+    // caller, it parks a closer + free callback here so
+    // pigeon_listener_close tears the transport down. NULL when the
+    // caller owns the transport (the low-level pigeon_listener_init
+    // path).
+    void  (*owned_transport_close)(void *t);
+    void  (*owned_transport_free)(void *t);
+    void   *owned_transport;
+
     bool                      closed;
 };
 
@@ -3020,109 +3031,121 @@ const char *pigeon_listener_instance_id(const pigeon_listener *l)
     return l->instance_id;
 }
 
-int pigeon_listener_accept(pigeon_listener *l, pigeon_session **out_session)
+int pigeon_listener_step(pigeon_listener *l, pigeon_session **out_session)
 {
     if (!l || !out_session) return -1;
     if (l->closed) return -1;
 
-    // Pump until a new client primary completes activation. Each
-    // iteration consumes one inbound stream from the transport.
-    while (!l->closed) {
-        pigeon_stream_handle *handle = NULL;
-        if (l->transport.accept_stream(l->transport.userdata, &handle) != 0) {
-            return -1;
-        }
+    *out_session = NULL;
 
-        uint32_t tag = 0;
-        char     name[PIGEON_MAX_NAME_LEN] = {0};
-        size_t   name_len = 0;
-        if (read_backend_header(l, handle, &tag, name, sizeof(name), &name_len) < 0) {
-            if (l->transport.close_stream) {
-                l->transport.close_stream(l->transport.userdata, handle);
-            }
-            continue; // stay in the loop — malformed header from one
-                      // client shouldn't sink the whole listener.
-        }
+    pigeon_stream_handle *handle = NULL;
+    if (l->transport.accept_stream(l->transport.userdata, &handle) != 0) {
+        return -1;
+    }
 
-        listener_slot *existing = slot_lookup(l, tag);
-        if (existing != NULL) {
-            if (name_len == 0) {
-                // Duplicate primary for a tag we already activated:
-                // protocol error, drop.
-                if (l->transport.close_stream) {
-                    l->transport.close_stream(l->transport.userdata, handle);
-                }
-                continue;
-            }
-            queue_substream(existing->session, handle, name);
-            continue;
-        }
-
-        if (name_len != 0) {
-            // First-seen tag with a named sub-stream — no Session to
-            // route to. Drop the stream and keep pumping.
-            if (l->transport.close_stream) {
-                l->transport.close_stream(l->transport.userdata, handle);
-            }
-            continue;
-        }
-
-        // New client primary: run the activation handshake on this
-        // stream against the listener's resolver.
-        pigeon_backend_machine machine;
-        char     device_id[PIGEON_AUTH_MAX_DEVICE_ID + 1] = {0};
-        pigeon_pairing_record  record;
-        int rc = pigeon_run_backend_activation(&l->transport, handle,
-                                               l->resolve,
-                                               l->resolve_userdata,
-                                               &machine,
-                                               device_id, sizeof(device_id),
-                                               &record);
-        if (rc != 0) {
-            // -1 (wire failure) or 1 (decoded but rejected): close
-            // the primary and keep accepting. Matches the Go-side
-            // behaviour: rejected clients don't materialise a Session.
-            if (l->transport.close_stream) {
-                l->transport.close_stream(l->transport.userdata, handle);
-            }
-            continue;
-        }
-
-        // Allocate the session, derive the AEAD channel, register it
-        // in the demux table BEFORE returning so any sub-stream the
-        // client opens immediately after activation finds the tag in
-        // the map when the next accept-pump iteration lands.
-        listener_slot *slot = slot_insert(l, tag);
-        if (!slot) {
-            // Table full: cap reached.
-            if (l->transport.close_stream) {
-                l->transport.close_stream(l->transport.userdata, handle);
-            }
-            return -1;
-        }
-        pigeon_session *sess = make_session(l, tag, &record);
-        if (!sess) {
-            if (l->transport.close_stream) {
-                l->transport.close_stream(l->transport.userdata, handle);
-            }
-            return -1;
-        }
-        slot->in_use     = true;
-        slot->client_tag = tag;
-        slot->session    = sess;
-
-        // The activation primary itself is consumed (the auth_request /
-        // auth_ok exchange is done). Close it now so future I/O on this
-        // session goes through fresh sub-streams. Matches Go's
-        // acceptPrimary lifetime: the primary stream is held by
-        // Session.primary purely for pairing-mode use; activation-mode
-        // doesn't read from it again.
+    uint32_t tag = 0;
+    char     name[PIGEON_MAX_NAME_LEN] = {0};
+    size_t   name_len = 0;
+    if (read_backend_header(l, handle, &tag, name, sizeof(name), &name_len) < 0) {
         if (l->transport.close_stream) {
             l->transport.close_stream(l->transport.userdata, handle);
         }
+        return 0; // malformed header from one client shouldn't sink the
+                  // whole listener — caller can loop again.
+    }
 
-        *out_session = sess;
+    listener_slot *existing = slot_lookup(l, tag);
+    if (existing != NULL) {
+        if (name_len == 0) {
+            // Duplicate primary for a tag we already activated:
+            // protocol error, drop.
+            if (l->transport.close_stream) {
+                l->transport.close_stream(l->transport.userdata, handle);
+            }
+            return 0;
+        }
+        queue_substream(existing->session, handle, name);
         return 0;
+    }
+
+    if (name_len != 0) {
+        // First-seen tag with a named sub-stream — no Session to
+        // route to. Drop the stream.
+        if (l->transport.close_stream) {
+            l->transport.close_stream(l->transport.userdata, handle);
+        }
+        return 0;
+    }
+
+    // New client primary: run the activation handshake on this
+    // stream against the listener's resolver.
+    pigeon_backend_machine machine;
+    char     device_id[PIGEON_AUTH_MAX_DEVICE_ID + 1] = {0};
+    pigeon_pairing_record  record;
+    int rc = pigeon_run_backend_activation(&l->transport, handle,
+                                           l->resolve,
+                                           l->resolve_userdata,
+                                           &machine,
+                                           device_id, sizeof(device_id),
+                                           &record);
+    if (rc != 0) {
+        // -1 (wire failure) or 1 (decoded but rejected): close
+        // the primary and keep accepting. Matches the Go-side
+        // behaviour: rejected clients don't materialise a Session.
+        if (l->transport.close_stream) {
+            l->transport.close_stream(l->transport.userdata, handle);
+        }
+        return 0;
+    }
+
+    // Allocate the session, derive the AEAD channel, register it
+    // in the demux table BEFORE returning so any sub-stream the
+    // client opens immediately after activation finds the tag in
+    // the map when the next pump iteration lands.
+    listener_slot *slot = slot_insert(l, tag);
+    if (!slot) {
+        // Table full: cap reached.
+        if (l->transport.close_stream) {
+            l->transport.close_stream(l->transport.userdata, handle);
+        }
+        return -1;
+    }
+    pigeon_session *sess = make_session(l, tag, &record);
+    if (!sess) {
+        if (l->transport.close_stream) {
+            l->transport.close_stream(l->transport.userdata, handle);
+        }
+        return -1;
+    }
+    slot->in_use     = true;
+    slot->client_tag = tag;
+    slot->session    = sess;
+
+    // Bind (don't close) the activation primary. Matches Go's
+    // Listener.acceptPrimary: the primary is kept open so the relay
+    // bridge's per-client primary forwarding goroutine stays alive
+    // — closing it here tears the whole client connection down on
+    // the relay side. The primary stream is owned by the transport;
+    // pigeon_listener_close drops the transport which closes all
+    // its streams as a unit.
+    sess->primary = handle;
+
+    *out_session = sess;
+    return 1;
+}
+
+int pigeon_listener_accept(pigeon_listener *l, pigeon_session **out_session)
+{
+    if (!l || !out_session) return -1;
+    while (!l->closed) {
+        pigeon_session *s = NULL;
+        int rc = pigeon_listener_step(l, &s);
+        if (rc < 0) return rc;
+        if (rc == 1) {
+            *out_session = s;
+            return 0;
+        }
+        // rc == 0: sub-stream dispatched or malformed header — keep pumping.
     }
     return -1;
 }
@@ -3138,7 +3161,32 @@ void pigeon_listener_close(pigeon_listener *l)
             l->slots[i].session = NULL;
         }
     }
+    if (l->owned_transport != NULL) {
+        if (l->owned_transport_close != NULL) {
+            l->owned_transport_close(l->owned_transport);
+        }
+        if (l->owned_transport_free != NULL) {
+            l->owned_transport_free(l->owned_transport);
+        }
+        l->owned_transport = NULL;
+    }
     free(l);
+}
+
+// Internal hook for pigeon_register (and any other transport-owning
+// wrapper) to park the underlying transport so pigeon_listener_close
+// tears it down. Not declared in the public header — wrappers in this
+// library forward-declare it.
+void pigeon_listener_set_owned_transport(
+        pigeon_listener *l,
+        void *transport,
+        void (*close_fn)(void *),
+        void (*free_fn)(void *))
+{
+    if (!l) return;
+    l->owned_transport       = transport;
+    l->owned_transport_close = close_fn;
+    l->owned_transport_free  = free_fn;
 }
 
 // --- Session-level: drain a buffered incoming sub-stream ---
