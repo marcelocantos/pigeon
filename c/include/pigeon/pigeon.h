@@ -306,6 +306,12 @@ typedef struct {
     // PairingRecord-derived AEAD channel. Encrypts every stream message
     // (after the unencrypted name-binding header) and every datagram
     // payload (before the optional clientTag prefix).
+    //
+    // In pairing mode (no PairingRecord; pre-pairing handshake), the
+    // channel's `established` flag is false and stream/datagram APIs
+    // that rely on AEAD will refuse to operate. Callers drive the
+    // pairing ceremony over Session.Primary() directly, then derive
+    // a channel and re-init the session for the post-pairing wire.
     pigeon_channel channel;
 
     // Role discriminator. is_backend == true means this Session is the
@@ -316,6 +322,17 @@ typedef struct {
 
     // Transport vtable + opaque userdata.
     pigeon_transport transport;
+
+    // Primary stream handle, populated by pigeon_connect_on_transport /
+    // (T32.2) pigeon_listener_accept. NULL when the session was built
+    // via the lower-level pigeon_session_init path and no primary has
+    // been bound. pigeon_session_primary() wraps this as a *pigeon_stream*.
+    //
+    // Lifetime: owned by the transport (the transport's open_stream /
+    // accept_stream produced it). The session does not close it on
+    // pigeon_session_close — the caller closes the transport, which
+    // tears down all streams it owns.
+    pigeon_stream_handle *primary;
 
     // Pre-declared datagram channels.
     pigeon_dgchannel_def datagrams[PIGEON_MAX_DATAGRAM_CHANNELS];
@@ -390,6 +407,61 @@ int pigeon_session_open_stream(pigeon_session *s,
 int pigeon_session_get_datagram(pigeon_session *s,
                                 const char *name,
                                 pigeon_datagram *out);
+
+// Wrap the session's primary stream (bound at pigeon_connect /
+// pigeon_listener_accept time) as a *pigeon_stream*. Mirrors Go's
+// Session.Primary() (T39.6.1).
+//
+// Meaningful in pairing-mode where the activation handshake is
+// skipped and the primary is otherwise unused — pairing.c and the
+// cross-language crypto-peer fixtures use this to talk on the
+// primary stream without opening a sub-stream (the modern client
+// side might not support multi-stream QUIC, e.g. Swift NWConnection).
+//
+// In activation-mode the primary is consumed by pigeon_run_*_activation
+// during session construction; reading from it after activation will
+// block. pigeon_session_primary() is safe to call regardless, but only
+// useful in pairing-mode.
+//
+// Returns 0 on success and populates *out_stream. Returns -1 if no
+// primary handle is bound on this session (legacy session_init path,
+// or session never went through pigeon_connect / pigeon_listener_accept).
+int pigeon_session_primary(pigeon_session *s, pigeon_stream *out_stream);
+
+// --- pigeon_connect (T32.3) ---
+//
+// Bring up a client-side session against a paired backend. Two modes,
+// distinguished by whether `record` is supplied (mirrors Go's
+// pigeon.Connect from api.go):
+//
+//   * Activation mode (record != NULL, device_id != NULL): runs the
+//     auth_request / auth_ok handshake against the device id; on
+//     success the returned session carries an AEAD channel derived
+//     from `record`.
+//   * Pairing mode (record == NULL, device_id == NULL): activation
+//     is skipped and the session is returned with channel.established
+//     == false. The caller drives the pairing ceremony over
+//     pigeon_session_primary() and re-derives the channel from the
+//     resulting PairingRecord (docs/DESIGN.md §3 L2).
+//
+// pigeon_connect_on_transport is the transport-agnostic core: write
+// the empty-name primary header, run client activation (or skip in
+// pairing mode), derive the AEAD channel from `record`, init the
+// session with the supplied datagram channel set, and bind the
+// primary handle. The caller owns `transport` (and `primary_handle`)
+// — pigeon_session_close does NOT close them. This factoring lets the
+// in-process loopback tests exercise the full handshake against
+// pigeon_run_backend_activation without bringing up a live relay.
+//
+// Returns 0 on success.
+int pigeon_connect_on_transport(const pigeon_transport *transport,
+                                pigeon_stream_handle *primary_handle,
+                                const char *peer_instance_id,
+                                const char *device_id,
+                                const pigeon_pairing_record *record,
+                                const pigeon_dgchannel_def *datagrams,
+                                size_t datagram_count,
+                                pigeon_session *out_session);
 
 // AEAD-encrypt and send one application-level message on the stream.
 // Returns 0 on success, -1 on transport or encryption error.

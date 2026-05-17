@@ -1892,6 +1892,277 @@ static void test_listener_substream_demux(void)
     PASS();
 }
 
+// --- pigeon_connect / pigeon_session_primary (T32.3) ---
+//
+// Fake-backend in-process loopback test. Mirrors the T32.1 activation
+// test plumbing: pair two loopback endpoints, client opens the primary
+// stream, backend accepts. The backend thread reads the empty-name
+// primary header that pigeon_connect_on_transport will write, then runs
+// pigeon_run_backend_activation; the client thread calls
+// pigeon_connect_on_transport, which writes the header + runs the
+// client activation handshake + derives the AEAD channel + initialises
+// the pigeon_session. After both sides complete, we exercise the
+// resulting session end-to-end by opening a named sub-stream and
+// sending an AEAD-encrypted application message.
+//
+// This test does NOT depend on T32.2's pigeon_register / Listener — the
+// backend half is open-coded here so T32.3 lands testable on its own
+// worktree. Once T32.2 lands, a follow-up will switch this to drive
+// pigeon_register on the backend side.
+
+typedef struct {
+    pigeon_transport       *transport;
+    pigeon_stream_handle   *stream;
+    activation_resolve_ctx *rctx;
+    pigeon_backend_machine *machine;
+    char                   *device_id_seen;
+    size_t                  device_id_cap;
+    pigeon_pairing_record  *record;
+    int                     rc;
+    int                     header_rc;     // result of reading the empty-name header
+    bool                    header_empty;  // whether the header decoded as empty-name
+} backend_connect_thread_args;
+
+static void *run_backend_connect_thread(void *p)
+{
+    backend_connect_thread_args *a = (backend_connect_thread_args *)p;
+
+    // Read and validate the empty-name primary stream header that
+    // pigeon_connect_on_transport writes before running activation.
+    uint8_t hdr[PIGEON_MAX_STREAM_HEADER];
+    size_t  hn = 0;
+    if (a->transport->recv_on_stream(a->transport->userdata, a->stream,
+                                     hdr, sizeof(hdr), &hn) != 0) {
+        a->header_rc = -1;
+        return NULL;
+    }
+    char name[PIGEON_MAX_NAME_LEN];
+    size_t name_len = 0;
+    if (pigeon_decode_client_stream_header(hdr, hn, name, sizeof(name), &name_len) < 0) {
+        a->header_rc = -1;
+        return NULL;
+    }
+    a->header_rc = 0;
+    a->header_empty = (name_len == 0);
+
+    // Now run the activation handshake.
+    a->rc = pigeon_run_backend_activation(a->transport, a->stream,
+                                          activation_resolve, a->rctx,
+                                          a->machine,
+                                          a->device_id_seen, a->device_id_cap,
+                                          a->record);
+    return NULL;
+}
+
+// Build a pigeon_pairing_record pair (backend + client) with matching
+// X25519 keys so DeriveChannel produces identical send/recv keys on
+// both sides. Returns 0 on success.
+static int build_paired_records(pigeon_pairing_record *backend_rec,
+                                pigeon_pairing_record *client_rec)
+{
+    memset(backend_rec, 0, sizeof(*backend_rec));
+    memset(client_rec,  0, sizeof(*client_rec));
+    pigeon_keypair kb, kc;
+    if (pigeon_generate_keypair(&kb) != 0) return -1;
+    if (pigeon_generate_keypair(&kc) != 0) return -1;
+    memcpy(backend_rec->local_private_key, kb.private_key, 32);
+    memcpy(backend_rec->local_public_key,  kb.public_key,  32);
+    memcpy(backend_rec->peer_public_key,   kc.public_key,  32);
+    memcpy(client_rec->local_private_key,  kc.private_key, 32);
+    memcpy(client_rec->local_public_key,   kc.public_key,  32);
+    memcpy(client_rec->peer_public_key,    kb.public_key,  32);
+    snprintf(backend_rec->peer_instance_id, sizeof(backend_rec->peer_instance_id),
+             "client-device-1");
+    snprintf(client_rec->peer_instance_id,  sizeof(client_rec->peer_instance_id),
+             "backend-1");
+    snprintf(backend_rec->relay_url, sizeof(backend_rec->relay_url), "test://relay");
+    snprintf(client_rec->relay_url,  sizeof(client_rec->relay_url),  "test://relay");
+    return 0;
+}
+
+static void test_pigeon_connect_loopback(void)
+{
+    TEST("pigeon_connect_on_transport: client ↔ fake-backend round-trip");
+
+    // 1. Loopback transport pair + primary stream.
+    pigeon_transport tb, tc;
+    pigeon_stream_handle *bs = NULL, *cs = NULL;
+    activation_pair_setup(&tb, &tc, &bs, &cs);
+    if (cs == NULL || bs == NULL) return;
+
+    // 2. Matching pairing records on both sides.
+    pigeon_pairing_record backend_rec, client_rec;
+    if (build_paired_records(&backend_rec, &client_rec) != 0) {
+        FAIL("build paired records"); return;
+    }
+
+    activation_resolve_ctx rctx = { .match = true, .want_id = "client-device-1" };
+    pigeon_backend_machine bm;
+    char device_id_seen[PIGEON_AUTH_MAX_DEVICE_ID + 1] = {0};
+
+    backend_connect_thread_args bargs = {
+        .transport      = &tb,
+        .stream         = bs,
+        .rctx           = &rctx,
+        .machine        = &bm,
+        .device_id_seen = device_id_seen,
+        .device_id_cap  = sizeof(device_id_seen),
+        .record         = &backend_rec,
+        .rc             = 0,
+        .header_rc      = 0,
+        .header_empty   = false,
+    };
+    pthread_t tid;
+    if (pthread_create(&tid, NULL, run_backend_connect_thread, &bargs) != 0) {
+        FAIL("pthread_create"); return;
+    }
+
+    // 3. Client side: pigeon_connect_on_transport drives the empty-name
+    //    header + client activation + channel derive + session init.
+    pigeon_dgchannel_def dgs[] = { { "ping", 1 } };
+    pigeon_session csess;
+    int crc = pigeon_connect_on_transport(&tc, cs,
+                                          /*peer_instance_id=*/"backend-1",
+                                          /*device_id=*/"client-device-1",
+                                          &client_rec,
+                                          dgs, 1,
+                                          &csess);
+    pthread_join(tid, NULL);
+
+    if (bargs.header_rc != 0)   { FAIL("backend: read primary header"); return; }
+    if (!bargs.header_empty)    { FAIL("backend: primary header not empty-name"); return; }
+    if (bargs.rc != 0)          { FAIL("backend: activation"); return; }
+    if (crc != 0)               { FAIL("client: pigeon_connect_on_transport"); return; }
+    if (strcmp(device_id_seen, "client-device-1") != 0) {
+        FAIL("backend: wrong device id seen"); return;
+    }
+    if (csess.primary != cs)    { FAIL("session.primary not bound"); return; }
+    if (!csess.channel.established) { FAIL("session.channel not established"); return; }
+
+    // 4. pigeon_session_primary smoke test.
+    pigeon_stream prim;
+    if (pigeon_session_primary(&csess, &prim) != 0) { FAIL("session_primary"); return; }
+    if (prim.handle != cs) { FAIL("session_primary handle mismatch"); return; }
+    if (prim.name[0] != '\0') { FAIL("session_primary name should be empty"); return; }
+
+    // 5. End-to-end: open a sub-stream "chat", send AEAD-encrypted msg.
+    //    We open the stream on the client side, then accept + decode the
+    //    header on the backend side, then read & decrypt one application
+    //    message using a transient pigeon_session anchored on the
+    //    backend's (matching) AEAD channel.
+    pigeon_stream chat;
+    if (pigeon_session_open_stream(&csess, "chat", &chat) != 0) {
+        FAIL("open chat"); return;
+    }
+
+    // Backend-side mirror: derive backend channel (send=backend->client,
+    // recv=client->backend; reverse of the client side's labels) and
+    // wrap it as a pigeon_session for the recv path.
+    uint8_t b_send[32], b_recv[32];
+    if (pigeon_derive_session_key(backend_rec.local_private_key,
+                                  backend_rec.peer_public_key,
+                                  (const uint8_t *)"backend->client", 15,
+                                  b_send) != 0) { FAIL("derive b_send"); return; }
+    if (pigeon_derive_session_key(backend_rec.local_private_key,
+                                  backend_rec.peer_public_key,
+                                  (const uint8_t *)"client->backend", 15,
+                                  b_recv) != 0) { FAIL("derive b_recv"); return; }
+    pigeon_channel b_chan;
+    pigeon_channel_init(&b_chan, b_send, b_recv, PIGEON_MODE_STRICT);
+
+    pigeon_session bsess;
+    if (pigeon_session_init(&bsess, &tb, &b_chan,
+                            /*is_backend=*/true, /*client_tag=*/0,
+                            dgs, 1) != 0) { FAIL("backend session_init"); return; }
+
+    // Accept the chat stream the client opened, read and decode its header.
+    pigeon_stream_handle *b_chat = NULL;
+    if (tb.accept_stream(tb.userdata, &b_chat) != 0) { FAIL("backend accept chat"); return; }
+    uint8_t hbuf[PIGEON_MAX_STREAM_HEADER]; size_t hlen = 0;
+    if (tb.recv_on_stream(tb.userdata, b_chat, hbuf, sizeof(hbuf), &hlen) != 0) {
+        FAIL("backend read chat header"); return;
+    }
+    // Client side ⇒ header has no tag prefix.
+    char chat_name[PIGEON_MAX_NAME_LEN]; size_t cnl = 0;
+    if (pigeon_decode_client_stream_header(hbuf, hlen, chat_name, sizeof(chat_name), &cnl) < 0) {
+        FAIL("backend decode chat header"); return;
+    }
+    if (cnl != 4 || strcmp(chat_name, "chat") != 0) { FAIL("chat name mismatch"); return; }
+
+    // Client sends "hello", backend reads decrypted.
+    if (pigeon_stream_send(&chat, (const uint8_t *)"hello", 5) != 0) {
+        FAIL("client chat send"); return;
+    }
+    pigeon_stream b_chat_wrap = { .session = &bsess, .handle = b_chat };
+    strcpy(b_chat_wrap.name, "chat");
+    uint8_t buf[32];
+    int got = pigeon_stream_recv(&b_chat_wrap, buf, sizeof(buf));
+    if (got != 5 || memcmp(buf, "hello", 5) != 0) { FAIL("backend chat recv"); return; }
+
+    pigeon_stream_close(&chat);
+    pigeon_session_close(&csess);
+    pigeon_session_close(&bsess);
+
+    PASS();
+}
+
+static void test_pigeon_connect_pairing_mode(void)
+{
+    TEST("pigeon_connect_on_transport: pairing mode (no record, no activation)");
+
+    pigeon_transport tb, tc;
+    pigeon_stream_handle *bs = NULL, *cs = NULL;
+    activation_pair_setup(&tb, &tc, &bs, &cs);
+    if (cs == NULL || bs == NULL) return;
+
+    // In pairing mode the client passes record=NULL, device_id=NULL.
+    // No activation handshake runs; channel.established stays false.
+    // The backend side wouldn't run pigeon_run_backend_activation either
+    // (caller switches to ceremony mode), so for this test we only
+    // verify the client-side post-state and that Session.Primary() can
+    // round-trip plaintext (the pairing ceremony does its own crypto).
+    pigeon_session csess;
+    if (pigeon_connect_on_transport(&tc, cs,
+                                    /*peer_instance_id=*/"backend-1",
+                                    /*device_id=*/NULL,
+                                    /*record=*/NULL,
+                                    NULL, 0,
+                                    &csess) != 0) {
+        FAIL("pigeon_connect_on_transport(pairing-mode)"); return;
+    }
+    if (csess.channel.established) { FAIL("channel should NOT be established"); return; }
+    if (csess.primary != cs)       { FAIL("primary handle not bound"); return; }
+
+    // Verify the empty-name primary header was written. Read it on the
+    // backend side and decode.
+    uint8_t hdr[PIGEON_MAX_STREAM_HEADER]; size_t hn = 0;
+    if (tb.recv_on_stream(tb.userdata, bs, hdr, sizeof(hdr), &hn) != 0) {
+        FAIL("backend read primary header"); return;
+    }
+    char name[PIGEON_MAX_NAME_LEN]; size_t nl = 0;
+    if (pigeon_decode_client_stream_header(hdr, hn, name, sizeof(name), &nl) < 0) {
+        FAIL("backend decode primary header"); return;
+    }
+    if (nl != 0) { FAIL("primary header should be empty-name"); return; }
+
+    // Drive plaintext over the primary via Session.Primary() (pairing-
+    // ceremony idiom). Backend stays raw — read straight off the
+    // transport with no AEAD.
+    pigeon_stream prim;
+    if (pigeon_session_primary(&csess, &prim) != 0) { FAIL("session_primary"); return; }
+    if (pigeon_stream_send(&prim, (const uint8_t *)"hi", 2) != 0) {
+        FAIL("primary plaintext send"); return;
+    }
+    uint8_t buf[32]; size_t got = 0;
+    if (tb.recv_on_stream(tb.userdata, bs, buf, sizeof(buf), &got) != 0) {
+        FAIL("backend raw recv on primary"); return;
+    }
+    if (got != 2 || memcmp(buf, "hi", 2) != 0) { FAIL("primary plaintext mismatch"); return; }
+
+    pigeon_session_close(&csess);
+    PASS();
+}
+
 static void test_activation_wire_roundtrip(void)
 {
     TEST("activation: wire roundtrip (auth_request + auth_ok variants)");
@@ -1971,6 +2242,8 @@ int main(void)
     test_activation_unknown_device();
     test_listener_two_clients();
     test_listener_substream_demux();
+    test_pigeon_connect_loopback();
+    test_pigeon_connect_pairing_mode();
 
     printf("\n%d/%d tests passed\n", tests_passed, tests_run);
     return tests_passed == tests_run ? 0 : 1;
