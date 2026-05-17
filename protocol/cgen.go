@@ -66,13 +66,13 @@ func (p *Protocol) ExportCHeader(w io.Writer) error {
 	fmt.Fprintf(&b, "// %s message types.\n", p.Name)
 	b.WriteString("typedef enum {\n")
 	for i, m := range p.Messages {
-		fmt.Fprintf(&b, "\tPIGEON_MSG_%s", cConstName(string(m.Type)))
+		fmt.Fprintf(&b, "\tPIGEON_%s_MSG_%s", upper, cConstName(string(m.Type)))
 		if i == 0 {
 			b.WriteString(" = 0")
 		}
 		b.WriteString(",\n")
 	}
-	b.WriteString("\tPIGEON_MSG_COUNT\n")
+	fmt.Fprintf(&b, "\tPIGEON_%s_MSG_COUNT\n", upper)
 	fmt.Fprintf(&b, "} %s_msg_type;\n\n", prefix)
 
 	// --- Guard ID enum ---
@@ -80,13 +80,13 @@ func (p *Protocol) ExportCHeader(w io.Writer) error {
 		fmt.Fprintf(&b, "// %s guards.\n", p.Name)
 		b.WriteString("typedef enum {\n")
 		for i, g := range p.Guards {
-			fmt.Fprintf(&b, "\tPIGEON_GUARD_%s", cConstName(string(g.ID)))
+			fmt.Fprintf(&b, "\tPIGEON_%s_GUARD_%s", upper, cConstName(string(g.ID)))
 			if i == 0 {
 				b.WriteString(" = 0")
 			}
 			b.WriteString(",\n")
 		}
-		b.WriteString("\tPIGEON_GUARD_COUNT\n")
+		fmt.Fprintf(&b, "\tPIGEON_%s_GUARD_COUNT\n", upper)
 		fmt.Fprintf(&b, "} %s_guard_id;\n\n", prefix)
 	}
 
@@ -96,13 +96,13 @@ func (p *Protocol) ExportCHeader(w io.Writer) error {
 		fmt.Fprintf(&b, "// %s actions.\n", p.Name)
 		b.WriteString("typedef enum {\n")
 		for i, id := range actions {
-			fmt.Fprintf(&b, "\tPIGEON_ACTION_%s", cConstName(id))
+			fmt.Fprintf(&b, "\tPIGEON_%s_ACTION_%s", upper, cConstName(id))
 			if i == 0 {
 				b.WriteString(" = 0")
 			}
 			b.WriteString(",\n")
 		}
-		b.WriteString("\tPIGEON_ACTION_COUNT\n")
+		fmt.Fprintf(&b, "\tPIGEON_%s_ACTION_COUNT\n", upper)
 		fmt.Fprintf(&b, "} %s_action_id;\n\n", prefix)
 	}
 
@@ -112,13 +112,13 @@ func (p *Protocol) ExportCHeader(w io.Writer) error {
 		fmt.Fprintf(&b, "// %s events.\n", p.Name)
 		b.WriteString("typedef enum {\n")
 		for i, id := range events {
-			fmt.Fprintf(&b, "\tPIGEON_EVENT_%s", cConstName(id))
+			fmt.Fprintf(&b, "\tPIGEON_%s_EVENT_%s", upper, cConstName(id))
 			if i == 0 {
 				b.WriteString(" = 0")
 			}
 			b.WriteString(",\n")
 		}
-		b.WriteString("\tPIGEON_EVENT_COUNT\n")
+		fmt.Fprintf(&b, "\tPIGEON_%s_EVENT_COUNT\n", upper)
 		fmt.Fprintf(&b, "} %s_event_id;\n\n", prefix)
 	}
 
@@ -127,13 +127,13 @@ func (p *Protocol) ExportCHeader(w io.Writer) error {
 		fmt.Fprintf(&b, "// %s commands.\n", p.Name)
 		b.WriteString("typedef enum {\n")
 		for i, c := range p.Commands {
-			fmt.Fprintf(&b, "\tPIGEON_CMD_%s", cConstName(string(c.ID)))
+			fmt.Fprintf(&b, "\tPIGEON_%s_CMD_%s", upper, cConstName(string(c.ID)))
 			if i == 0 {
 				b.WriteString(" = 0")
 			}
 			b.WriteString(",\n")
 		}
-		b.WriteString("\tPIGEON_CMD_COUNT\n")
+		fmt.Fprintf(&b, "\tPIGEON_%s_CMD_COUNT\n", upper)
 		fmt.Fprintf(&b, "} %s_cmd_id;\n\n", prefix)
 	}
 
@@ -172,8 +172,8 @@ func (p *Protocol) ExportCHeader(w io.Writer) error {
 		actorUpper := cConstPrefix(a.Name)
 
 		if a.IsComposed() {
-			guardCount := "PIGEON_GUARD_COUNT"
-			actionCount := "PIGEON_ACTION_COUNT"
+			guardCount := "PIGEON_" + upper + "_GUARD_COUNT"
+			actionCount := "PIGEON_" + upper + "_ACTION_COUNT"
 
 			// Per-sub-machine structs and function declarations.
 			for _, m := range a.Machines {
@@ -275,8 +275,8 @@ func (p *Protocol) ExportCHeader(w io.Writer) error {
 				b.WriteString("\n")
 			}
 
-			guardCount := "PIGEON_GUARD_COUNT"
-			actionCount := "PIGEON_ACTION_COUNT"
+			guardCount := "PIGEON_" + upper + "_GUARD_COUNT"
+			actionCount := "PIGEON_" + upper + "_ACTION_COUNT"
 			if len(p.Guards) > 0 {
 				fmt.Fprintf(&b, "\tpigeon_guard_fn guards[%s];\n", guardCount)
 			}
@@ -310,6 +310,7 @@ func (p *Protocol) ExportCImpl(w io.Writer) error {
 	var b strings.Builder
 	prefix := cSnakePrefix(p.Name)
 	lowerName := strings.ToLower(p.Name)
+	upper := strings.ToUpper(p.Name)
 
 	b.WriteString("// Copyright 2026 Marcelo Cantos\n")
 	b.WriteString("// SPDX-License-Identifier: Apache-2.0\n\n")
@@ -322,7 +323,7 @@ func (p *Protocol) ExportCImpl(w io.Writer) error {
 		actorUpper := cConstPrefix(a.Name)
 
 		if a.IsComposed() {
-			writeCComposedActorImpl(&b, p, a, prefix, actorSnake, actorUpper)
+			writeCComposedActorImpl(&b, p, a, prefix, actorSnake, actorUpper, upper)
 			continue
 		}
 
@@ -373,14 +374,15 @@ func (p *Protocol) ExportCImpl(w io.Writer) error {
 				}
 				guard := ""
 				if t.Guard != "" {
-					guard = fmt.Sprintf(" && m->guards[PIGEON_GUARD_%s] && m->guards[PIGEON_GUARD_%s](m->userdata)",
-						cConstName(string(t.Guard)), cConstName(string(t.Guard)))
+					guard = fmt.Sprintf(" && m->guards[PIGEON_%s_GUARD_%s] && m->guards[PIGEON_%s_GUARD_%s](m->userdata)",
+						upper, cConstName(string(t.Guard)),
+						upper, cConstName(string(t.Guard)))
 				}
-				fmt.Fprintf(&b, "\tif (m->state == PIGEON_%s_%s && msg == PIGEON_MSG_%s%s) {\n",
+				fmt.Fprintf(&b, "\tif (m->state == PIGEON_%s_%s && msg == PIGEON_%s_MSG_%s%s) {\n",
 					actorUpper, cConstName(string(t.From)),
-					cConstName(string(t.On.Msg)), guard)
+					upper, cConstName(string(t.On.Msg)), guard)
 
-				writeCTransitionBody(&b, t, actorUpper)
+				writeCTransitionBody(&b, t, actorUpper, upper)
 				b.WriteString("\t\treturn 1;\n")
 				b.WriteString("\t}\n")
 			}
@@ -407,14 +409,15 @@ func (p *Protocol) ExportCImpl(w io.Writer) error {
 				}
 				guard := ""
 				if t.Guard != "" {
-					guard = fmt.Sprintf(" && m->guards[PIGEON_GUARD_%s] && m->guards[PIGEON_GUARD_%s](m->userdata)",
-						cConstName(string(t.Guard)), cConstName(string(t.Guard)))
+					guard = fmt.Sprintf(" && m->guards[PIGEON_%s_GUARD_%s] && m->guards[PIGEON_%s_GUARD_%s](m->userdata)",
+						upper, cConstName(string(t.Guard)),
+						upper, cConstName(string(t.Guard)))
 				}
-				fmt.Fprintf(&b, "\tif (m->state == PIGEON_%s_%s && event == PIGEON_EVENT_%s%s) {\n",
+				fmt.Fprintf(&b, "\tif (m->state == PIGEON_%s_%s && event == PIGEON_%s_EVENT_%s%s) {\n",
 					actorUpper, cConstName(string(t.From)),
-					cConstName(t.On.Desc), guard)
+					upper, cConstName(t.On.Desc), guard)
 
-				writeCTransitionBody(&b, t, actorUpper)
+				writeCTransitionBody(&b, t, actorUpper, upper)
 				b.WriteString("\t\treturn 1;\n")
 				b.WriteString("\t}\n")
 			}
@@ -429,7 +432,7 @@ func (p *Protocol) ExportCImpl(w io.Writer) error {
 
 // writeCComposedActorImpl emits init/handle_message/step for each sub-machine,
 // a composite init, and a route dispatcher for a composed actor.
-func writeCComposedActorImpl(b *strings.Builder, p *Protocol, a Actor, prefix, actorSnake, actorUpper string) {
+func writeCComposedActorImpl(b *strings.Builder, p *Protocol, a Actor, prefix, actorSnake, actorUpper, upper string) {
 	compositeType := fmt.Sprintf("pigeon_%s_composite", actorSnake)
 
 	for _, m := range a.Machines {
@@ -481,13 +484,14 @@ func writeCComposedActorImpl(b *strings.Builder, p *Protocol, a Actor, prefix, a
 				}
 				guard := ""
 				if t.Guard != "" {
-					guard = fmt.Sprintf(" && m->guards[PIGEON_GUARD_%s] && m->guards[PIGEON_GUARD_%s](m->userdata)",
-						cConstName(string(t.Guard)), cConstName(string(t.Guard)))
+					guard = fmt.Sprintf(" && m->guards[PIGEON_%s_GUARD_%s] && m->guards[PIGEON_%s_GUARD_%s](m->userdata)",
+						upper, cConstName(string(t.Guard)),
+						upper, cConstName(string(t.Guard)))
 				}
-				fmt.Fprintf(b, "\tif (m->state == PIGEON_%s_%s && msg == PIGEON_MSG_%s%s) {\n",
+				fmt.Fprintf(b, "\tif (m->state == PIGEON_%s_%s && msg == PIGEON_%s_MSG_%s%s) {\n",
 					statePrefix, cConstName(string(t.From)),
-					cConstName(string(t.On.Msg)), guard)
-				writeCSubTransitionBody(b, t, statePrefix)
+					upper, cConstName(string(t.On.Msg)), guard)
+				writeCSubTransitionBody(b, t, statePrefix, upper)
 				b.WriteString("\t\treturn 1;\n")
 				b.WriteString("\t}\n")
 			}
@@ -512,13 +516,14 @@ func writeCComposedActorImpl(b *strings.Builder, p *Protocol, a Actor, prefix, a
 				}
 				guard := ""
 				if t.Guard != "" {
-					guard = fmt.Sprintf(" && m->guards[PIGEON_GUARD_%s] && m->guards[PIGEON_GUARD_%s](m->userdata)",
-						cConstName(string(t.Guard)), cConstName(string(t.Guard)))
+					guard = fmt.Sprintf(" && m->guards[PIGEON_%s_GUARD_%s] && m->guards[PIGEON_%s_GUARD_%s](m->userdata)",
+						upper, cConstName(string(t.Guard)),
+						upper, cConstName(string(t.Guard)))
 				}
-				fmt.Fprintf(b, "\tif (m->state == PIGEON_%s_%s && event == PIGEON_EVENT_%s%s) {\n",
+				fmt.Fprintf(b, "\tif (m->state == PIGEON_%s_%s && event == PIGEON_%s_EVENT_%s%s) {\n",
 					statePrefix, cConstName(string(t.From)),
-					cConstName(t.On.Desc), guard)
-				writeCSubTransitionBody(b, t, statePrefix)
+					upper, cConstName(t.On.Desc), guard)
+				writeCSubTransitionBody(b, t, statePrefix, upper)
 				b.WriteString("\t\treturn 1;\n")
 				b.WriteString("\t}\n")
 			}
@@ -543,20 +548,21 @@ func writeCComposedActorImpl(b *strings.Builder, p *Protocol, a Actor, prefix, a
 		for _, r := range a.Routes {
 			guard := ""
 			if r.Guard != "" {
-				guard = fmt.Sprintf(" && c->route_guards[PIGEON_GUARD_%s] && c->route_guards[PIGEON_GUARD_%s](c->userdata)",
-					cConstName(string(r.Guard)), cConstName(string(r.Guard)))
+				guard = fmt.Sprintf(" && c->route_guards[PIGEON_%s_GUARD_%s] && c->route_guards[PIGEON_%s_GUARD_%s](c->userdata)",
+					upper, cConstName(string(r.Guard)),
+					upper, cConstName(string(r.Guard)))
 			}
 			ifKw := "if"
 			if !first {
 				ifKw = "else if"
 			}
 			first = false
-			fmt.Fprintf(b, "\t%s (strcmp(from, %q) == 0 && event == PIGEON_EVENT_%s%s) {\n",
-				ifKw, r.From, cConstName(string(r.On)), guard)
+			fmt.Fprintf(b, "\t%s (strcmp(from, %q) == 0 && event == PIGEON_%s_EVENT_%s%s) {\n",
+				ifKw, r.From, upper, cConstName(string(r.On)), guard)
 			for _, s := range r.Sends {
 				machSnake := cSnake(s.To)
-				fmt.Fprintf(b, "\t\tpigeon_%s_%s_step(&c->%s, PIGEON_EVENT_%s);\n",
-					actorSnake, machSnake, machSnake, cConstName(string(s.Event)))
+				fmt.Fprintf(b, "\t\tpigeon_%s_%s_step(&c->%s, PIGEON_%s_EVENT_%s);\n",
+					actorSnake, machSnake, machSnake, upper, cConstName(string(s.Event)))
 			}
 			b.WriteString("\t}\n")
 		}
@@ -566,10 +572,10 @@ func writeCComposedActorImpl(b *strings.Builder, p *Protocol, a Actor, prefix, a
 
 // writeCSubTransitionBody is like writeCTransitionBody but uses a
 // pre-composed statePrefix (e.g. "BACKEND_RELAY") instead of an actorUpper.
-func writeCSubTransitionBody(b *strings.Builder, t Transition, statePrefix string) {
+func writeCSubTransitionBody(b *strings.Builder, t Transition, statePrefix, upper string) {
 	if t.Do != "" {
-		fmt.Fprintf(b, "\t\tif (m->actions[PIGEON_ACTION_%s]) {\n", cConstName(string(t.Do)))
-		fmt.Fprintf(b, "\t\t\tint err = m->actions[PIGEON_ACTION_%s](m->userdata);\n", cConstName(string(t.Do)))
+		fmt.Fprintf(b, "\t\tif (m->actions[PIGEON_%s_ACTION_%s]) {\n", upper, cConstName(string(t.Do)))
+		fmt.Fprintf(b, "\t\t\tint err = m->actions[PIGEON_%s_ACTION_%s](m->userdata);\n", upper, cConstName(string(t.Do)))
 		b.WriteString("\t\t\tif (err) return -err;\n")
 		b.WriteString("\t\t}\n")
 	}
@@ -590,11 +596,11 @@ func writeCSubTransitionBody(b *strings.Builder, t Transition, statePrefix strin
 
 // writeCTransitionBody emits the action call, variable updates, and state
 // change for a single transition.
-func writeCTransitionBody(b *strings.Builder, t Transition, actorUpper string) {
+func writeCTransitionBody(b *strings.Builder, t Transition, actorUpper, upper string) {
 	// Action callback.
 	if t.Do != "" {
-		fmt.Fprintf(b, "\t\tif (m->actions[PIGEON_ACTION_%s]) {\n", cConstName(string(t.Do)))
-		fmt.Fprintf(b, "\t\t\tint err = m->actions[PIGEON_ACTION_%s](m->userdata);\n", cConstName(string(t.Do)))
+		fmt.Fprintf(b, "\t\tif (m->actions[PIGEON_%s_ACTION_%s]) {\n", upper, cConstName(string(t.Do)))
+		fmt.Fprintf(b, "\t\t\tint err = m->actions[PIGEON_%s_ACTION_%s](m->userdata);\n", upper, cConstName(string(t.Do)))
 		b.WriteString("\t\t\tif (err) return -err;\n")
 		b.WriteString("\t\t}\n")
 	}

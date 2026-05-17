@@ -252,9 +252,9 @@ int pigeon_pair_acceptor(
     pigeon_acceptor_machine_init(&m);
     // All actions are no-ops: key generation and relay registration happened
     // before this function was called. We just walk the state machine.
-    if (pigeon_acceptor_step(&m, PIGEON_EVENT_PAIR_BEGIN) != 1)        { free(buf); return -1; }
-    if (pigeon_acceptor_step(&m, PIGEON_EVENT_EPHEMERAL_READY) != 1)   { free(buf); return -1; }
-    if (pigeon_acceptor_step(&m, PIGEON_EVENT_RELAY_REGISTERED) != 1)  { free(buf); return -1; }
+    if (pigeon_acceptor_step(&m, PIGEON_PAIRINGCEREMONY_EVENT_PAIR_BEGIN) != 1)        { free(buf); return -1; }
+    if (pigeon_acceptor_step(&m, PIGEON_PAIRINGCEREMONY_EVENT_EPHEMERAL_READY) != 1)   { free(buf); return -1; }
+    if (pigeon_acceptor_step(&m, PIGEON_PAIRINGCEREMONY_EVENT_RELAY_REGISTERED) != 1)  { free(buf); return -1; }
 
     // --- Read hello ---
     size_t got = 0;
@@ -280,8 +280,8 @@ int pigeon_pair_acceptor(
     char peer_instance[64] = "";
     json_find_string_field((char *)buf, got, "instance_id", peer_instance, sizeof(peer_instance));
 
-    if (pigeon_acceptor_handle_message(&m, PIGEON_MSG_HELLO) != 1) { free(buf); return -1; }
-    if (pigeon_acceptor_step(&m, PIGEON_EVENT_CODE_READY) != 1)    { free(buf); return -1; }
+    if (pigeon_acceptor_handle_message(&m, PIGEON_PAIRINGCEREMONY_MSG_HELLO) != 1) { free(buf); return -1; }
+    if (pigeon_acceptor_step(&m, PIGEON_PAIRINGCEREMONY_EVENT_CODE_READY) != 1)    { free(buf); return -1; }
 
     // --- Send welcome ---
     int wlen = build_welcome(local_eph_pub, identity_pub, instance_id, buf, PIGEON_MAX_MSG);
@@ -295,7 +295,7 @@ int pigeon_pair_acceptor(
     // --- Ask local user to confirm ---
     if (confirm_fn(userdata, out_code) != 1) { free(buf); return -1; }
 
-    if (pigeon_acceptor_step(&m, PIGEON_EVENT_USER_CONFIRM) != 1) { free(buf); return -1; }
+    if (pigeon_acceptor_step(&m, PIGEON_PAIRINGCEREMONY_EVENT_USER_CONFIRM) != 1) { free(buf); return -1; }
 
     // --- Send confirm ---
     int clen = build_confirm(buf, PIGEON_MAX_MSG);
@@ -309,7 +309,7 @@ int pigeon_pair_acceptor(
     if (json_find_string_field((char *)buf, got, "kind", kind, sizeof(kind)) < 0
         || strcmp(kind, "confirm") != 0) { free(buf); return -1; }
 
-    if (pigeon_acceptor_handle_message(&m, PIGEON_MSG_CONFIRM_TO_ACCEPTOR) != 1)
+    if (pigeon_acceptor_handle_message(&m, PIGEON_PAIRINGCEREMONY_MSG_CONFIRM_TO_ACCEPTOR) != 1)
         { free(buf); return -1; }
 
     // --- Build output record ---
@@ -357,10 +357,10 @@ int pigeon_pair_initiator(
     // --- Drive FSM through setup phases ---
     pigeon_initiator_machine m;
     pigeon_initiator_machine_init(&m);
-    if (pigeon_initiator_step(&m, PIGEON_EVENT_TOKEN_RECEIVED) != 1)  { free(buf); return -1; }
-    if (pigeon_initiator_step(&m, PIGEON_EVENT_TOKEN_DECODED) != 1)   { free(buf); return -1; }
-    if (pigeon_initiator_step(&m, PIGEON_EVENT_EPHEMERAL_READY) != 1) { free(buf); return -1; }
-    if (pigeon_initiator_step(&m, PIGEON_EVENT_RELAY_CONNECTED) != 1) { free(buf); return -1; }
+    if (pigeon_initiator_step(&m, PIGEON_PAIRINGCEREMONY_EVENT_TOKEN_RECEIVED) != 1)  { free(buf); return -1; }
+    if (pigeon_initiator_step(&m, PIGEON_PAIRINGCEREMONY_EVENT_TOKEN_DECODED) != 1)   { free(buf); return -1; }
+    if (pigeon_initiator_step(&m, PIGEON_PAIRINGCEREMONY_EVENT_EPHEMERAL_READY) != 1) { free(buf); return -1; }
+    if (pigeon_initiator_step(&m, PIGEON_PAIRINGCEREMONY_EVENT_RELAY_CONNECTED) != 1) { free(buf); return -1; }
 
     // --- Send hello ---
     int hlen = build_hello(local_eph_pub, identity_pub, instance_id, buf, PIGEON_MAX_MSG);
@@ -386,8 +386,8 @@ int pigeon_pair_initiator(
     char peer_instance[64] = "";
     json_find_string_field((char *)buf, got, "instance_id", peer_instance, sizeof(peer_instance));
 
-    if (pigeon_initiator_handle_message(&m, PIGEON_MSG_WELCOME) != 1) { free(buf); return -1; }
-    if (pigeon_initiator_step(&m, PIGEON_EVENT_CODE_READY) != 1)      { free(buf); return -1; }
+    if (pigeon_initiator_handle_message(&m, PIGEON_PAIRINGCEREMONY_MSG_WELCOME) != 1) { free(buf); return -1; }
+    if (pigeon_initiator_step(&m, PIGEON_PAIRINGCEREMONY_EVENT_CODE_READY) != 1)      { free(buf); return -1; }
 
     // --- Derive confirmation code ---
     // DeriveConfirmationCode(acc_eph_pub, local_eph_pub) — acceptor's key is
@@ -400,7 +400,7 @@ int pigeon_pair_initiator(
     // --- Ask local user to confirm ---
     if (confirm_fn(userdata, out_code) != 1) { free(buf); return -1; }
 
-    if (pigeon_initiator_step(&m, PIGEON_EVENT_USER_CONFIRM) != 1) { free(buf); return -1; }
+    if (pigeon_initiator_step(&m, PIGEON_PAIRINGCEREMONY_EVENT_USER_CONFIRM) != 1) { free(buf); return -1; }
 
     // --- Send confirm ---
     int clen = build_confirm(buf, PIGEON_MAX_MSG);
@@ -414,7 +414,7 @@ int pigeon_pair_initiator(
     if (json_find_string_field((char *)buf, got, "kind", kind, sizeof(kind)) < 0
         || strcmp(kind, "confirm") != 0) { free(buf); return -1; }
 
-    if (pigeon_initiator_handle_message(&m, PIGEON_MSG_CONFIRM_TO_INITIATOR) != 1)
+    if (pigeon_initiator_handle_message(&m, PIGEON_PAIRINGCEREMONY_MSG_CONFIRM_TO_INITIATOR) != 1)
         { free(buf); return -1; }
 
     // --- Build output record ---
