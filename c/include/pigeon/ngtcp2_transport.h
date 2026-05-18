@@ -147,6 +147,19 @@ typedef struct pigeon_ngtcp2_transport {
     int  accept_queue[PIGEON_NGTCP2_MAX_EXTRA_STREAMS];
     int  accept_head, accept_tail, accept_count;
 
+    // ---- primary-stream-as-slot (multi-channel API on stream 0) ----
+    //
+    // The post-T22 pigeon_session API takes pigeon_stream_handle*
+    // values for both the primary (set by pigeon_connect_on_transport)
+    // and every named sub-stream. Legacy callers reach the primary via
+    // t->stream_id / t->recv_buf; multi-channel callers reach it via
+    // pigeon_ngtcp2_transport_primary_handle(t), which lazily binds the
+    // primary into an extra-streams slot (no separate code path in the
+    // on-stream callbacks). -1 means the primary has not been exposed
+    // as a slot; recv_stream_data_cb then routes primary bytes to the
+    // legacy t->recv_buf as before.
+    int  primary_slot_idx;
+
     // ---- packet I/O buffers (stack-allocated in functions, not here) ----
     // ngtcp2 write functions are called with temporary stack buffers.
 
@@ -191,5 +204,19 @@ pigeon_ngtcp2_as_transport(pigeon_ngtcp2_transport *t)
 {
     return &t->transport;
 }
+
+// Bind the primary QUIC stream (stream 0, opened during init) into the
+// extra-streams slot table and return its pigeon_stream_handle. From
+// this point on, incoming primary-stream bytes are queued on the slot
+// rather than on the legacy t->recv_buf; the legacy transport_send_stream /
+// transport_recv_stream entries continue to work against t->recv_buf
+// only if pigeon_ngtcp2_transport_primary_handle has NOT been called.
+//
+// Required for handing the primary stream off to the post-T22
+// pigeon_session API (pigeon_connect_on_transport, pigeon_session_primary).
+// Returns NULL if the slot table is full or the primary has not been
+// opened yet. Idempotent: subsequent calls return the same handle.
+pigeon_stream_handle *
+pigeon_ngtcp2_transport_primary_handle(pigeon_ngtcp2_transport *t);
 
 #endif // PIGEON_NGTCP2_TRANSPORT_H

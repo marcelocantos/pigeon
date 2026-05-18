@@ -18,35 +18,35 @@ final class SessionTests: XCTestCase {
 
     func testEmptyClientStreamHeader() throws {
         // Empty-name primary client stream encodes to a single 0 byte.
-        let bytes = try PigeonWire.encodeStreamHeader(
+        let bytes = PigeonWire.encodeStreamHeader(
             isBackend: false, clientTag: 0, name: ""
         )
         XCTAssertEqual([UInt8](bytes), [0x00])
-        let decoded = try PigeonWire.decodeClientStreamHeader(bytes)
+        let decoded = try PigeonWire.decodeStreamHeaderClient(bytes)
         XCTAssertEqual(decoded.name, "")
         XCTAssertEqual(decoded.consumed, 1)
     }
 
     func testNamedClientStreamHeader() throws {
         // "control" -> [0x07, 'c','o','n','t','r','o','l']
-        let bytes = try PigeonWire.encodeStreamHeader(
+        let bytes = PigeonWire.encodeStreamHeader(
             isBackend: false, clientTag: 0, name: "control"
         )
         XCTAssertEqual([UInt8](bytes),
                        [0x07, 0x63, 0x6f, 0x6e, 0x74, 0x72, 0x6f, 0x6c])
-        let decoded = try PigeonWire.decodeClientStreamHeader(bytes)
+        let decoded = try PigeonWire.decodeStreamHeaderClient(bytes)
         XCTAssertEqual(decoded.name, "control")
         XCTAssertEqual(decoded.consumed, 8)
     }
 
     func testBackendStreamHeader() throws {
         // tag=0x01020304, name="chat" -> 01 02 03 04 04 'c' 'h' 'a' 't'
-        let bytes = try PigeonWire.encodeStreamHeader(
+        let bytes = PigeonWire.encodeStreamHeader(
             isBackend: true, clientTag: 0x01020304, name: "chat"
         )
         XCTAssertEqual([UInt8](bytes),
                        [0x01, 0x02, 0x03, 0x04, 0x04, 0x63, 0x68, 0x61, 0x74])
-        let decoded = try PigeonWire.decodeBackendStreamHeader(bytes)
+        let decoded = try PigeonWire.decodeStreamHeaderBackend(bytes)
         XCTAssertEqual(decoded.clientTag, 0x01020304)
         XCTAssertEqual(decoded.name, "chat")
         XCTAssertEqual(decoded.consumed, 9)
@@ -96,7 +96,7 @@ final class SessionTests: XCTestCase {
         // its first message. We accept it and adopt it on B.
         let aChat = try await sa.openStream(name: "chat")
         let accepted = try tb.acceptWithHeader()
-        let decoded = try PigeonWire.decodeClientStreamHeader(accepted.header)
+        let decoded = try PigeonWire.decodeStreamHeaderClient(accepted.header)
         XCTAssertEqual(decoded.name, "chat")
         let bChat = sb.adoptAcceptedStream(name: "chat", handle: accepted.handle)
 

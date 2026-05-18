@@ -319,14 +319,14 @@ Java_com_marcelocantos_pigeon_jni_PigeonNative_encodeStreamHeader(
         name_len = strlen(name);
     }
     uint8_t out[PIGEON_MAX_STREAM_HEADER];
-    int n = pigeon_encode_stream_header(
+    int n = pigeon_wire_stream_header_encode(
         isBackend ? true : false,
         (uint32_t)clientTag,
         name, name_len,
         out, sizeof(out));
     if (jname) (*env)->ReleaseStringUTFChars(env, jname, name);
     if (n < 0) {
-        throw_runtime(env, "pigeon_encode_stream_header failed");
+        throw_runtime(env, "pigeon_wire_stream_header_encode failed");
         return NULL;
     }
     return bytes_to_jba(env, out, (size_t)n);
@@ -624,13 +624,13 @@ Java_com_marcelocantos_pigeon_jni_PigeonNative_sessionAcceptStream(
     size_t name_len = 0;
     if (!h->session.is_backend) {
         uint32_t tag = 0;
-        if (pigeon_decode_backend_stream_header(hdr, hn, &tag,
+        if (pigeon_wire_stream_header_decode_backend(hdr, hn, &tag,
                 name, sizeof(name), &name_len) < 0) {
             throw_runtime(env, "decode_backend_stream_header failed");
             return 0;
         }
     } else {
-        if (pigeon_decode_client_stream_header(hdr, hn,
+        if (pigeon_wire_stream_header_decode_client(hdr, hn,
                 name, sizeof(name), &name_len) < 0) {
             throw_runtime(env, "decode_client_stream_header failed");
             return 0;

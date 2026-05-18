@@ -90,7 +90,10 @@ public final class LoopbackTransport: PigeonTransport, @unchecked Sendable {
     /// through that type.
     public func acceptWithHeader() throws -> (handle: OpaquePointer, header: Data) {
         var handle: OpaquePointer? = nil
-        let bufLen = PigeonWire.maxStreamHeader
+        // Matches PIGEON_MAX_STREAM_HEADER from pigeon.h: 4-byte tag
+        // + max varint (10) + max name (256). Hand-encoded because
+        // C macros don't translate through Swift's importer.
+        let bufLen = 4 + 10 + 256
         let buf = UnsafeMutablePointer<UInt8>.allocate(capacity: bufLen)
         defer { buf.deallocate() }
         var hdrLen: Int = 0

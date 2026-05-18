@@ -178,8 +178,17 @@ static int recv_stream_data_cb(ngtcp2_conn *conn, uint32_t flags,
     bool fin = (flags & NGTCP2_STREAM_DATA_FLAG_FIN) != 0;
 
     if (stream_id == t->stream_id) {
-        // Primary stream — legacy single-channel buffer.
-        ringbuf_push(&t->recv_buf, data, datalen);
+        if (t->primary_slot_idx >= 0) {
+            // Primary has been bound as an extra slot for the post-T22
+            // pigeon_session API — route there.
+            pigeon_ngtcp2_stream_slot *s =
+                &t->extra_streams[t->primary_slot_idx];
+            ringbuf_push(&s->recv_buf, data, datalen);
+            if (fin) s->fin_received = true;
+        } else {
+            // Legacy single-channel buffer.
+            ringbuf_push(&t->recv_buf, data, datalen);
+        }
     } else {
         int slot = find_extra_slot(t, stream_id);
         if (slot < 0) {
@@ -333,7 +342,14 @@ static int write_quic(pigeon_ngtcp2_transport *t)
     return 0;
 }
 
-// Send stream data through ngtcp2.
+// Send stream data through ngtcp2. Writes all `datalen` bytes,
+// flushing complete packets as ngtcp2 produces them. Without the
+// MORE flag each writev_stream call finalises whatever packet is
+// in flight, so the bytes don't sit in ngtcp2's queue waiting for
+// a later flush — a common gotcha that caused 🎯T32.4's connect
+// path to silently drop the auth_request because the previous
+// write_quic only flushed coalesced control frames, not the
+// queued stream data.
 static int write_stream(pigeon_ngtcp2_transport *t,
                          int64_t stream_id,
                          const uint8_t *data, size_t datalen,
@@ -346,7 +362,6 @@ static int write_stream(pigeon_ngtcp2_transport *t,
     ngtcp2_ssize wdatalen;
     ngtcp2_vec datav = { .base = (uint8_t *)data, .len = datalen };
     size_t nwritten = 0;
-    uint32_t flags;
 
     ngtcp2_path_storage_zero(&ps);
 
@@ -354,7 +369,7 @@ static int write_stream(pigeon_ngtcp2_transport *t,
         datav.base = (uint8_t *)data + nwritten;
         datav.len  = datalen - nwritten;
 
-        flags = NGTCP2_WRITE_STREAM_FLAG_MORE;
+        uint32_t flags = 0;
         if (fin && nwritten + datav.len >= datalen) {
             flags |= NGTCP2_WRITE_STREAM_FLAG_FIN;
         }
@@ -368,12 +383,6 @@ static int write_stream(pigeon_ngtcp2_transport *t,
                                             &datav, 1,
                                             now_ns());
         if (nwrite < 0) {
-            if (nwrite == NGTCP2_ERR_WRITE_MORE) {
-                if (wdatalen > 0) nwritten += (size_t)wdatalen;
-                // Need to flush before we can write more.
-                if (write_quic(t) != 0) return -1;
-                continue;
-            }
             char msg[128];
             snprintf(msg, sizeof(msg),
                      "ngtcp2_conn_writev_stream: %s", ngtcp2_strerror((int)nwrite));
@@ -381,9 +390,17 @@ static int write_stream(pigeon_ngtcp2_transport *t,
             return -1;
         }
         if (wdatalen > 0) nwritten += (size_t)wdatalen;
-        if (nwrite == 0) break;
-        if (send_packet(t, buf, (size_t)nwrite) != 0) {
-            set_error(t, "send_packet (stream) failed");
+        if (nwrite > 0) {
+            if (send_packet(t, buf, (size_t)nwrite) != 0) {
+                set_error(t, "send_packet (stream) failed");
+                return -1;
+            }
+        }
+        if (wdatalen <= 0 && nwrite == 0) {
+            // ngtcp2 is congestion- or flow-control-blocked. Bail
+            // rather than spinning; subsequent write_quic / recv
+            // cycles will retry once credit returns.
+            set_error(t, "writev_stream: blocked (no progress)");
             return -1;
         }
     }
@@ -636,33 +653,45 @@ static int transport_recv_datagram(void *userdata,
     pigeon_ngtcp2_transport *t = userdata;
     if (t->closed) return -1;
 
-    // If we have buffered datagrams, return the first one.
+    // Drain a buffered datagram immediately if one's queued.
     if (t->dgram_count > 0) {
         *out_len = dgram_dequeue(t, buf, buf_len);
         return 0;
     }
 
-    // Wait for incoming QUIC packets (which may contain datagrams).
-    int r = wait_readable(t->fd, 5000);
-    if (r < 0) { set_error(t, "select() in recv_datagram"); return -1; }
-    if (r > 0) {
-        if (read_quic(t) != 0) return -1;
-        write_quic(t);
-    } else {
-        // Timeout — handle expiry and try once more.
+    // Otherwise pump QUIC I/O until a datagram lands in the queue
+    // or the overall deadline expires. Mirrors slot_read_n's
+    // blocking-pump shape for streams — the higher-level
+    // pigeon_datagram_recv treats a zero-byte read as failure, so a
+    // single wait cycle that wakes spuriously (timer expiry only,
+    // no datagram) must not leak through.
+    uint64_t deadline = now_ns() + 5000ULL * 1000000ULL;
+    while (t->dgram_count == 0) {
+        if (write_quic(t) != 0) return -1;
+        uint64_t ts = now_ns();
+        if (ts >= deadline) {
+            *out_len = 0;
+            return 0; // no datagram within budget — caller retries
+        }
+        uint64_t expiry = ngtcp2_conn_get_expiry2((ngtcp2_conn *)t->conn);
+        int wait_ms;
+        if (expiry <= ts) wait_ms = 1;
+        else {
+            uint64_t diff = (expiry - ts) / 1000000ULL;
+            uint64_t left = (deadline - ts) / 1000000ULL;
+            wait_ms = (int)(diff < left ? diff : left);
+            if (wait_ms <= 0) wait_ms = 1;
+        }
+        int r = wait_readable(t->fd, wait_ms);
+        if (r < 0) { set_error(t, "select() in recv_datagram"); return -1; }
+        if (r > 0 && read_quic(t) != 0) return -1;
         if (ngtcp2_conn_get_expiry2((ngtcp2_conn *)t->conn) <= now_ns()) {
             ngtcp2_conn_handle_expiry((ngtcp2_conn *)t->conn, now_ns());
         }
-        write_quic(t);
     }
 
-    if (t->dgram_count > 0) {
-        *out_len = dgram_dequeue(t, buf, buf_len);
-        return 0;
-    }
-
-    *out_len = 0;
-    return 0;  // no datagram available yet — caller should retry
+    *out_len = dgram_dequeue(t, buf, buf_len);
+    return 0;
 }
 
 // ---- Multi-stream vtable callbacks (post-T22) ----
@@ -741,27 +770,18 @@ static int transport_accept_stream(void *userdata, pigeon_stream_handle **out_ha
     return 0;
 }
 
-static int transport_send_on_stream(void *userdata, pigeon_stream_handle *h,
-                                     const uint8_t *data, size_t len)
+// Drain exactly want bytes from the given slot's recv ringbuf, pumping
+// QUIC I/O until enough bytes arrive or the stream is closed. Used by
+// the framed send/recv on-stream callbacks.
+static int slot_read_n(pigeon_ngtcp2_transport *t,
+                       pigeon_ngtcp2_stream_slot *s,
+                       uint8_t *buf, size_t want)
 {
-    pigeon_ngtcp2_transport *t = userdata;
-    pigeon_ngtcp2_stream_slot *s = (pigeon_ngtcp2_stream_slot *)h;
-    if (!s || !s->in_use || t->closed) return -1;
-    return write_stream(t, s->stream_id, data, len, 0);
-}
-
-static int transport_recv_on_stream(void *userdata, pigeon_stream_handle *h,
-                                     uint8_t *buf, size_t buf_len, size_t *out_len)
-{
-    pigeon_ngtcp2_transport *t = userdata;
-    pigeon_ngtcp2_stream_slot *s = (pigeon_ngtcp2_stream_slot *)h;
-    if (!s || !s->in_use || t->closed) return -1;
-
     size_t total = 0;
-    while (total < buf_len) {
-        size_t got = ringbuf_pop(&s->recv_buf, buf + total, buf_len - total);
+    while (total < want) {
+        size_t got = ringbuf_pop(&s->recv_buf, buf + total, want - total);
         total += got;
-        if (total >= buf_len) break;
+        if (total >= want) break;
         if (write_quic(t) != 0) return -1;
         uint64_t expiry = ngtcp2_conn_get_expiry2((ngtcp2_conn *)t->conn);
         uint64_t ts = now_ns();
@@ -771,17 +791,72 @@ static int transport_recv_on_stream(void *userdata, pigeon_stream_handle *h,
             wait_ms = (int)(diff < 5000 ? diff : 5000);
         }
         int r = wait_readable(t->fd, wait_ms);
-        if (r < 0) { set_error(t, "select on extra stream"); return -1; }
+        if (r < 0) { set_error(t, "select on stream"); return -1; }
         if (r > 0 && read_quic(t) != 0) return -1;
         if (ngtcp2_conn_get_expiry2((ngtcp2_conn *)t->conn) <= now_ns()) {
             ngtcp2_conn_handle_expiry((ngtcp2_conn *)t->conn, now_ns());
         }
-        if (s->fin_received && s->recv_buf.used == 0 && total < buf_len) {
+        if (s->fin_received && s->recv_buf.used == 0 && total < want) {
             // Stream closed before our read could fill the buffer.
             return -1;
         }
     }
-    *out_len = total;
+    return 0;
+}
+
+// transport_send_on_stream wraps the payload in a 4-byte big-endian
+// length prefix before writing. The matching transport_recv_on_stream
+// peels the same prefix. Mirrors the message-oriented semantics of the
+// loopback transport's send_on_stream/recv_on_stream and the Go
+// relay's writeMessage/readMessage. The pigeon_session API expects one
+// whole message per call; layering framing here keeps the higher
+// layers identical between loopback and ngtcp2.
+static int transport_send_on_stream(void *userdata, pigeon_stream_handle *h,
+                                     const uint8_t *data, size_t len)
+{
+    pigeon_ngtcp2_transport *t = userdata;
+    pigeon_ngtcp2_stream_slot *s = (pigeon_ngtcp2_stream_slot *)h;
+    if (!s || !s->in_use || t->closed) return -1;
+    if (len > PIGEON_MAX_MSG) return -1;
+
+    // 4-byte BE length header + payload as one contiguous write —
+    // matches the loopback's message-oriented send_on_stream and
+    // the Go relay's writeMessage.
+    size_t total = 4 + len;
+    uint8_t *buf = (uint8_t *)malloc(total);
+    if (!buf) return -1;
+    buf[0] = (uint8_t)(len >> 24);
+    buf[1] = (uint8_t)(len >> 16);
+    buf[2] = (uint8_t)(len >> 8);
+    buf[3] = (uint8_t)(len);
+    if (len > 0) memcpy(buf + 4, data, len);
+    int rv = write_stream(t, s->stream_id, buf, total, 0);
+    free(buf);
+    return rv;
+}
+
+static int transport_recv_on_stream(void *userdata, pigeon_stream_handle *h,
+                                     uint8_t *buf, size_t buf_len, size_t *out_len)
+{
+    pigeon_ngtcp2_transport *t = userdata;
+    pigeon_ngtcp2_stream_slot *s = (pigeon_ngtcp2_stream_slot *)h;
+    if (!s || !s->in_use || t->closed) return -1;
+
+    // Peel the 4-byte BE length prefix written by transport_send_on_stream
+    // (and by the Go relay's writeMessage), then read exactly that many
+    // payload bytes. Returns one whole message per call.
+    uint8_t hdr[4];
+    if (slot_read_n(t, s, hdr, 4) != 0) return -1;
+    uint32_t payload_len = ((uint32_t)hdr[0] << 24)
+                         | ((uint32_t)hdr[1] << 16)
+                         | ((uint32_t)hdr[2] <<  8)
+                         |  (uint32_t)hdr[3];
+    if (payload_len > PIGEON_MAX_MSG) return -1;
+    if ((size_t)payload_len > buf_len) return -1;
+    if (payload_len > 0) {
+        if (slot_read_n(t, s, buf, payload_len) != 0) return -1;
+    }
+    *out_len = payload_len;
     return 0;
 }
 
@@ -948,9 +1023,15 @@ static int init_quic(pigeon_ngtcp2_transport *t)
 
     ngtcp2_transport_params params;
     ngtcp2_transport_params_default(&params);
-    params.initial_max_streams_bidi      = 0;   // server grants us streams
+    // initial_max_streams_bidi tells the PEER how many bidi streams
+    // it may open toward us. The relay needs to open one backend-
+    // side bidi stream per connecting client (the per-client primary
+    // it bridges) plus one per named sub-stream the client opens.
+    // 64 covers a comfortable headroom over PIGEON_NGTCP2_MAX_EXTRA_STREAMS=16.
+    params.initial_max_streams_bidi      = 64;
     params.initial_max_streams_uni       = 3;
-    params.initial_max_stream_data_bidi_local = 256 * 1024;
+    params.initial_max_stream_data_bidi_local  = 256 * 1024;
+    params.initial_max_stream_data_bidi_remote = 256 * 1024;
     params.initial_max_data              = 1024 * 1024;
     params.max_datagram_frame_size       = 1200;   // enable datagrams
 
@@ -1050,8 +1131,9 @@ int pigeon_ngtcp2_transport_init(pigeon_ngtcp2_transport *t,
     }
 
     memset(t, 0, sizeof(*t));
-    t->fd         = -1;
-    t->stream_id  = -1;
+    t->fd               = -1;
+    t->stream_id        = -1;
+    t->primary_slot_idx = -1;
 
     // Retain config strings.
     snprintf(t->host, sizeof(t->host), "%s", cfg->host);
@@ -1184,4 +1266,33 @@ void pigeon_ngtcp2_transport_close(pigeon_ngtcp2_transport *t)
         t->dgram_data[idx] = NULL;
     }
     t->dgram_count = 0;
+}
+
+pigeon_stream_handle *
+pigeon_ngtcp2_transport_primary_handle(pigeon_ngtcp2_transport *t)
+{
+    if (!t || t->stream_id < 0) return NULL;
+    // Idempotent — return the previously-allocated slot.
+    if (t->primary_slot_idx >= 0) {
+        return (pigeon_stream_handle *)
+               &t->extra_streams[t->primary_slot_idx];
+    }
+    // Bind the primary into an extra-streams slot so the post-T22
+    // session API can treat it uniformly with peer-opened sub-streams.
+    // peer_opened=false because we (the QUIC client) opened it.
+    int slot = alloc_extra_slot(t, t->stream_id, false);
+    if (slot < 0) return NULL;
+    t->primary_slot_idx = slot;
+    // Migrate any bytes already buffered on the legacy primary
+    // recv_buf into the new slot — those bytes arrived before the
+    // primary was promoted to a multi-channel slot and would
+    // otherwise be lost on the first recv_on_stream call.
+    while (t->recv_buf.used > 0) {
+        uint8_t scratch[256];
+        size_t want = sizeof(scratch);
+        if (want > t->recv_buf.used) want = t->recv_buf.used;
+        size_t got = ringbuf_pop(&t->recv_buf, scratch, want);
+        ringbuf_push(&t->extra_streams[slot].recv_buf, scratch, got);
+    }
+    return (pigeon_stream_handle *)&t->extra_streams[slot];
 }

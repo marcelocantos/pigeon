@@ -36,6 +36,33 @@ sed '/#include "pairingceremony_gen.h"/r '"$OUTDIR/.gen_fragment.h" \
     | sed '/^\/\/ Include the generated protocol header\.$/d' \
     > "$OUTDIR/pigeon.h"
 
+# Inline the protogen-generated wire_gen.h declarations (one-shot byte
+# formats: stream_header, datagram_plaintext, relay_greeting). The
+# extern "C" guard pair is dropped; the surrounding pigeon.h is
+# already inside its own.
+cat "$SRCDIR/include/pigeon/wire_gen.h" \
+    | sed '/#ifndef PIGEON_WIRE_GEN_H/d' \
+    | sed '/#define PIGEON_WIRE_GEN_H/d' \
+    | sed '/#endif.*PIGEON_WIRE_GEN_H/d' \
+    | sed '/#include <stdbool.h>/d' \
+    | sed '/#include <stddef.h>/d' \
+    | sed '/#include <stdint.h>/d' \
+    | awk '/^#ifdef __cplusplus$/{skip=1} skip{if (/^#endif$/) skip=0; next} 1' \
+    | sed '/^\/\/ Copyright/d' \
+    | sed '/^\/\/ SPDX/d' \
+    | sed '/^\/\/ Code generated/d' \
+    | awk 'NF{p=1} p' \
+    > "$OUTDIR/.wire_fragment.h"
+# Splice into pigeon.h: replace the `#include "wire_gen.h"` line.
+TMP_H="$OUTDIR/.pigeon_h.tmp"
+sed '/#include "wire_gen.h"/r '"$OUTDIR/.wire_fragment.h" \
+    "$OUTDIR/pigeon.h" \
+    | sed '/#include "wire_gen.h"/d' \
+    | sed '/^\/\/ Include the protogen-generated wire-format helpers .*/,/^\/\/ protocol\/wireformats\.yaml\./d' \
+    > "$TMP_H"
+mv "$TMP_H" "$OUTDIR/pigeon.h"
+rm -f "$OUTDIR/.wire_fragment.h"
+
 # Append session_gen.h (post-T39 SessionMachine declarations) and the
 # activation driver header. Both protogen-generated headers can coexist
 # in one TU now that PIGEON_<protocol>_<KIND>_<NAME> per-protocol
@@ -138,6 +165,17 @@ HEADER
         -e '/^\/\/ Copyright/d' \
         -e '/^\/\/ SPDX/d' \
         "$SRCDIR/src/crypto.c"
+
+    # Wire-format (one-shot) generated implementation. Must appear
+    # before pigeon.c (which calls into pigeon_wire_*).
+    echo ""
+    echo "// --- Generated one-shot wire formats ---"
+    echo ""
+    sed -e '/^#include/d' \
+        -e '/^\/\/ Copyright/d' \
+        -e '/^\/\/ SPDX/d' \
+        -e '/^\/\/ Code generated/d' \
+        "$SRCDIR/src/wire_gen.c"
 
     # Conn/framing implementation (strip includes + copyright).
     echo ""

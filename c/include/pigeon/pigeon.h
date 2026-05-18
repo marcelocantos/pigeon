@@ -11,6 +11,11 @@
 // Include the generated protocol header.
 #include "pairingceremony_gen.h"
 
+// Include the protogen-generated wire-format helpers (stream_header,
+// datagram_plaintext, relay_greeting). Generated from
+// protocol/wireformats.yaml.
+#include "wire_gen.h"
+
 #ifndef PIGEON_MAX_MSG
 #define PIGEON_MAX_MSG 1048576
 #endif
@@ -219,32 +224,11 @@ int pigeon_uvarint_encode(uint64_t v, uint8_t *buf, size_t buf_len);
 // Returns 0 if buf is too short, -1 if the encoding overflows uint64.
 int pigeon_uvarint_decode(const uint8_t *buf, size_t buf_len, uint64_t *out);
 
-// Encode the per-stream first-message header in the post-T22 wire:
-//   backend side: [4-byte clientTag-BE][varint name-len][name]
-//   client  side:                       [varint name-len][name]
-//
-// Returns the number of bytes written, or -1 if out_len is insufficient.
-// `name` may be NULL iff name_len == 0 (legitimate for the client primary
-// stream, which uses an empty name).
-int pigeon_encode_stream_header(bool is_backend, uint32_t client_tag,
-                                const char *name, size_t name_len,
-                                uint8_t *out, size_t out_len);
-
-// Decode a backend-side stream header: extracts the 4-byte clientTag and
-// then the varint-prefixed name. The name is copied into `name_buf` (NUL-
-// terminated; truncated and an error returned if name_buf_len is too
-// small). Writes the decoded name length to *name_len_out (excluding NUL).
-// Returns the total number of bytes consumed, or -1 on error.
-int pigeon_decode_backend_stream_header(const uint8_t *buf, size_t buf_len,
-                                        uint32_t *client_tag,
-                                        char *name_buf, size_t name_buf_len,
-                                        size_t *name_len_out);
-
-// Decode a client-side stream header (no clientTag).
-// Returns the total number of bytes consumed, or -1 on error.
-int pigeon_decode_client_stream_header(const uint8_t *buf, size_t buf_len,
-                                       char *name_buf, size_t name_buf_len,
-                                       size_t *name_len_out);
+// Stream-header encoders/decoders moved to wire_gen.h (protogen-
+// generated from protocol/wireformats.yaml): see
+// pigeon_wire_stream_header_encode,
+// pigeon_wire_stream_header_decode_backend,
+// pigeon_wire_stream_header_decode_client.
 
 // Compose a datagram payload for a named channel:
 //   plain    = [varint channel-id][payload]
@@ -659,6 +643,21 @@ const char *pigeon_listener_instance_id(const pigeon_listener *l);
 // listener shutdown.
 int pigeon_listener_accept(pigeon_listener *l, pigeon_session **out_session);
 
+// Single-step variant of pigeon_listener_accept. Consumes exactly one
+// inbound stream from the transport and dispatches it according to
+// the listener's demux rules. Useful when the caller wants to drive
+// the pump in a loop and observe sub-stream dispatches between new-
+// primary arrivals (e.g. live tests that need the pump to advance
+// while waiting for a peer-opened sub-stream to land in an existing
+// session's incoming-stream queue).
+//
+// Returns 1 and writes the new session into *out_session when a new
+// client primary completes activation; returns 0 (with
+// *out_session = NULL) when the step dispatched a sub-stream, dropped
+// a malformed header, or rejected a primary; returns -1 on transport
+// failure or listener shutdown.
+int pigeon_listener_step(pigeon_listener *l, pigeon_session **out_session);
+
 // Tear down the listener: close every child session (free their
 // scratch buffers and any buffered incoming sub-streams) and free
 // the listener struct itself. Idempotent on NULL. The underlying
@@ -704,5 +703,43 @@ int pigeon_register(const char *relay_host,
                     size_t datagram_count,
                     pigeon_listener **out_listener,
                     char *out_instance_id, size_t out_instance_id_cap);
+
+// --- pigeon_connect convenience (high-level, T32.4) ---
+//
+// `pigeon_connect` is the client-side mirror of `pigeon_register`:
+// brings up an ngtcp2 transport (PIGEON_ROLE_CONNECT), binds the
+// primary QUIC stream as a multi-channel slot, and runs the empty-
+// name primary header + auth_request / auth_ok activation handshake
+// via pigeon_connect_on_transport. Lives in the same compilation
+// unit as pigeon_register because both depend on the ngtcp2 transport.
+//
+// On success, *out_conn points to a freshly allocated pigeon_connection
+// that owns the underlying ngtcp2 transport and the resulting
+// pigeon_session. Use pigeon_connect_session() to obtain the session
+// pointer (suitable for pigeon_session_open_stream et al), and call
+// pigeon_connect_close() when finished — it tears down the session,
+// closes the ngtcp2 transport, and frees the connection struct.
+
+// Opaque connection handle. Owns one ngtcp2 transport + one session.
+typedef struct pigeon_connection pigeon_connection;
+
+int pigeon_connect(const char *relay_host,
+                   const char *relay_port,
+                   const char *peer_instance_id,
+                   const char *device_id,
+                   const char *token, // may be NULL
+                   const pigeon_pairing_record *record,
+                   const pigeon_dgchannel_def *datagrams,
+                   size_t datagram_count,
+                   pigeon_connection **out_conn);
+
+// Return the connection's session pointer. The session is owned by
+// the connection; do NOT call pigeon_session_close on it. Stays valid
+// until pigeon_connect_close().
+pigeon_session *pigeon_connect_session(pigeon_connection *c);
+
+// Tear down the connection: close the session, close the underlying
+// ngtcp2 transport, free the connection struct. Idempotent on NULL.
+void pigeon_connect_close(pigeon_connection *c);
 
 #endif // PIGEON_H

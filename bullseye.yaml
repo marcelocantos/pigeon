@@ -802,7 +802,7 @@ targets:
     achieved: 2026-04-30
   T32:
     name: 'C SDK at full post-T22 wire parity: register-mux, multi-client Listener, named streams, AEAD-channel-id datagrams, pairing ceremony driven from generated FSM'
-    status: identified
+    status: achieved
     value: 0.0
     cost: 0.0
     acceptance:
@@ -820,6 +820,7 @@ targets:
     - T32.4
     origin: discovered while making the architectural decision to consolidate peer libraries into one C implementation
     discovered: 2026-04-30
+    achieved: 2026-05-17
   T32.1:
     name: 'C activation handshake driver: auth_request / auth_ok wire encoders + per-side SessionMachine drive helpers (mirror of Go''s activation.go)'
     status: achieved
@@ -871,7 +872,7 @@ targets:
     achieved: 2026-05-17
   T32.4:
     name: 'Live round-trip tests against an in-process Go relay: single-client chat, multi-stream + multi-datagram in one Session, two concurrent C clients sharing one C backend'
-    status: identified
+    status: achieved
     value: 0.0
     cost: 0.0
     acceptance:
@@ -886,6 +887,7 @@ targets:
     - T32.3
     origin: manual
     discovered: 2026-05-14
+    achieved: 2026-05-17
   T33:
     name: 'Cross-language wire interop: Go relay ↔ C peer at full multi-channel parity (backend + client roles, all four channels)'
     status: identified
@@ -1250,7 +1252,7 @@ targets:
     achieved: 2026-04-15
   T40:
     name: Hand-rolled wire-format helpers migrate into protogen one-shot byte-format specs
-    status: identified
+    status: achieved
     value: 0.0
     cost: 0.0
     acceptance:
@@ -1261,6 +1263,7 @@ targets:
     context: 'Per docs/DESIGN.md section 4, the wire-protocol principle is binding: anything on the wire is a protogen spec, never hand-rolled per language. The pairing FSM and the session FSM (T39) cover interactive protocols; this target covers one-shot byte formats. These are not state machines (a single emission, no transitions) but they still belong in protogen so they get the same multi-language consistency guarantee and so future ports never have to hand-roll them. Smaller scope than T39 and parallelisable with it - this target doesn''t depend on T39 and vice versa.'
     origin: docs/DESIGN.md section 4 (wire principle); docs/DESIGN.md section 9 (largest open architectural gaps, item 1)
     discovered: 2026-05-02
+    achieved: 2026-05-17
   T41:
     name: 'Local backchannel: Unix-socket IPC between CLI and daemon during pairing ceremony'
     status: identified

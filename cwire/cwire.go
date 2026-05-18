@@ -85,7 +85,7 @@ func EncodeStreamHeader(isBackend bool, tag uint32, name string) ([]byte, error)
 	if isBackend {
 		cIsBackend = C.bool(true)
 	}
-	n := C.pigeon_encode_stream_header(
+	n := C.pigeon_wire_stream_header_encode(
 		cIsBackend, C.uint32_t(tag),
 		cName, cNameLen,
 		(*C.uint8_t)(unsafe.Pointer(&out[0])), C.size_t(len(out)))
@@ -107,7 +107,7 @@ func DecodeBackendStreamHeader(buf []byte) (uint32, string, int, error) {
 	var tag C.uint32_t
 	var nameBuf [256]C.char
 	var nameLen C.size_t
-	n := C.pigeon_decode_backend_stream_header(
+	n := C.pigeon_wire_stream_header_decode_backend(
 		(*C.uint8_t)(unsafe.Pointer(&buf[0])),
 		C.size_t(len(buf)),
 		&tag,
@@ -128,7 +128,7 @@ func DecodeClientStreamHeader(buf []byte) (string, int, error) {
 	}
 	var nameBuf [256]C.char
 	var nameLen C.size_t
-	n := C.pigeon_decode_client_stream_header(
+	n := C.pigeon_wire_stream_header_decode_client(
 		(*C.uint8_t)(unsafe.Pointer(&buf[0])),
 		C.size_t(len(buf)),
 		&nameBuf[0], C.size_t(len(nameBuf)),

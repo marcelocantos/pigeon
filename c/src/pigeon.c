@@ -4,6 +4,7 @@
 #include "pigeon/pigeon.h"
 #include "pigeon/activation.h"
 #include "pigeon/session_gen.h"
+#include "pigeon/wire_gen.h"
 #include <stdlib.h>
 #include <string.h>
 
@@ -180,78 +181,15 @@ int pigeon_uvarint_decode(const uint8_t *buf, size_t buf_len, uint64_t *out)
     return 0; // truncated
 }
 
-int pigeon_encode_stream_header(bool is_backend, uint32_t client_tag,
-                                const char *name, size_t name_len,
-                                uint8_t *out, size_t out_len)
-{
-    size_t off = 0;
-    if (is_backend) {
-        if (off + 4 > out_len) return -1;
-        out[off++] = (uint8_t)(client_tag >> 24);
-        out[off++] = (uint8_t)(client_tag >> 16);
-        out[off++] = (uint8_t)(client_tag >> 8);
-        out[off++] = (uint8_t)(client_tag);
-    }
-    int n = pigeon_uvarint_encode((uint64_t)name_len, out + off, out_len - off);
-    if (n < 0) return -1;
-    off += (size_t)n;
-    if (off + name_len > out_len) return -1;
-    if (name_len > 0) {
-        if (!name) return -1;
-        memcpy(out + off, name, name_len);
-        off += name_len;
-    }
-    return (int)off;
-}
+// Stream-header encoder/decoders are protogen-generated in
+// c/src/wire_gen.c — pigeon_wire_stream_header_{encode,decode_backend,
+// decode_client}. Call sites use the generated names directly; we no
+// longer hand-roll them here.
 
-// Internal: shared body of decode_{backend,client}_stream_header.
-// `tag_in` is non-NULL on backend side (consumes 4 leading bytes).
-static int decode_stream_header_inner(const uint8_t *buf, size_t buf_len,
-                                      uint32_t *tag_out,
-                                      char *name_buf, size_t name_buf_len,
-                                      size_t *name_len_out)
-{
-    size_t off = 0;
-    if (tag_out) {
-        if (buf_len < 4) return -1;
-        *tag_out = ((uint32_t)buf[0] << 24)
-                 | ((uint32_t)buf[1] << 16)
-                 | ((uint32_t)buf[2] <<  8)
-                 |  (uint32_t)buf[3];
-        off = 4;
-    }
-    uint64_t name_len = 0;
-    int n = pigeon_uvarint_decode(buf + off, buf_len - off, &name_len);
-    if (n <= 0) return -1;
-    off += (size_t)n;
-    if (name_len > buf_len - off) return -1;
-    // Reserve one byte for the trailing NUL.
-    if (name_len + 1 > name_buf_len) return -1;
-    if (name_len > 0) memcpy(name_buf, buf + off, (size_t)name_len);
-    name_buf[name_len] = '\0';
-    if (name_len_out) *name_len_out = (size_t)name_len;
-    off += (size_t)name_len;
-    return (int)off;
-}
-
-int pigeon_decode_backend_stream_header(const uint8_t *buf, size_t buf_len,
-                                        uint32_t *client_tag,
-                                        char *name_buf, size_t name_buf_len,
-                                        size_t *name_len_out)
-{
-    if (!client_tag) return -1;
-    return decode_stream_header_inner(buf, buf_len, client_tag,
-                                      name_buf, name_buf_len, name_len_out);
-}
-
-int pigeon_decode_client_stream_header(const uint8_t *buf, size_t buf_len,
-                                       char *name_buf, size_t name_buf_len,
-                                       size_t *name_len_out)
-{
-    return decode_stream_header_inner(buf, buf_len, NULL,
-                                      name_buf, name_buf_len, name_len_out);
-}
-
+// AEAD-wrapped datagram (backend side: [4-byte tag][AEAD(plaintext)]).
+// The *plaintext* layout is protogen-generated
+// (pigeon_wire_datagram_plaintext_encode); this wrapper layers AEAD on
+// top and adds the optional clientTag prefix the relay routes by.
 int pigeon_encode_datagram(pigeon_channel *ch,
                            bool is_backend, uint32_t client_tag,
                            uint64_t channel_id,
@@ -261,18 +199,16 @@ int pigeon_encode_datagram(pigeon_channel *ch,
     if (!ch || !ch->established) return -1;
     if (payload_len > PIGEON_MAX_MSG) return -1;
 
-    // Compose the AEAD-plaintext on the heap: [varint channel-id]
-    // [payload]. Heap-allocate so the caller's thread doesn't need
-    // a 1 MiB stack to invoke this — see T38 in the audit log.
+    // Compose the AEAD-plaintext (the protogen byte format) on the
+    // heap: a per-call 1 MiB stack would overflow every host runtime
+    // (see T38 in the audit log).
     size_t plain_cap = PIGEON_MAX_VARINT_LEN + PIGEON_MAX_MSG;
     uint8_t *plain = (uint8_t *)malloc(plain_cap);
     if (!plain) return -1;
-
-    int idn = pigeon_uvarint_encode(channel_id, plain, plain_cap);
-    if (idn < 0) { free(plain); return -1; }
-    if ((size_t)idn + payload_len > plain_cap) { free(plain); return -1; }
-    if (payload_len > 0) memcpy(plain + idn, payload, payload_len);
-    size_t plain_len = (size_t)idn + payload_len;
+    int plain_len = pigeon_wire_datagram_plaintext_encode(channel_id,
+                                                          payload, payload_len,
+                                                          plain, plain_cap);
+    if (plain_len < 0) { free(plain); return -1; }
 
     // Wire = (optional 4-byte tag) ++ AEAD(plain).
     size_t off = 0;
@@ -283,7 +219,7 @@ int pigeon_encode_datagram(pigeon_channel *ch,
         out[off++] = (uint8_t)(client_tag >> 8);
         out[off++] = (uint8_t)(client_tag);
     }
-    int ct = pigeon_channel_encrypt(ch, plain, plain_len,
+    int ct = pigeon_channel_encrypt(ch, plain, (size_t)plain_len,
                                     out + off, out_len - off);
     free(plain);
     if (ct < 0) return -1;
@@ -311,8 +247,8 @@ int pigeon_decode_datagram(pigeon_channel *ch,
         off = 4;
     }
 
-    // AEAD-decrypt into a heap scratch buffer, then peel the
-    // channel-id varint. Heap-allocated for the same reason as
+    // AEAD-decrypt into a heap scratch buffer, then decode the
+    // protogen plaintext format. Heap-allocated for the same reason as
     // pigeon_encode_datagram above (T38).
     uint8_t *plain = (uint8_t *)malloc(PIGEON_MAX_MSG);
     if (!plain) return -1;
@@ -321,14 +257,14 @@ int pigeon_decode_datagram(pigeon_channel *ch,
     if (pn < 0) { free(plain); return -1; }
 
     uint64_t cid = 0;
-    int idn = pigeon_uvarint_decode(plain, (size_t)pn, &cid);
-    if (idn <= 0) { free(plain); return -1; }
-    if (channel_id) *channel_id = cid;
-
-    size_t payload_len = (size_t)pn - (size_t)idn;
-    if (payload_len > payload_buf_len) { free(plain); return -1; }
-    if (payload_len > 0) memcpy(payload_buf, plain + idn, payload_len);
+    size_t payload_len = 0;
+    int dn = pigeon_wire_datagram_plaintext_decode(plain, (size_t)pn,
+                                                   &cid,
+                                                   payload_buf, payload_buf_len,
+                                                   &payload_len);
     free(plain);
+    if (dn < 0) return -1;
+    if (channel_id) *channel_id = cid;
     return (int)payload_len;
 }
 
@@ -451,7 +387,7 @@ int pigeon_session_open_stream(pigeon_session *s,
     // Compose the unencrypted name-binding header and write it as the
     // first message on the stream.
     uint8_t hdr[PIGEON_MAX_STREAM_HEADER];
-    int hn = pigeon_encode_stream_header(s->is_backend, s->client_tag,
+    int hn = pigeon_wire_stream_header_encode(s->is_backend, s->client_tag,
                                          name, name_len, hdr, sizeof(hdr));
     if (hn < 0) {
         if (s->transport.close_stream) s->transport.close_stream(s->transport.userdata, h);
@@ -580,6 +516,7 @@ int pigeon_datagram_recv(pigeon_datagram *d,
                                       sess->scratch_a, sess->scratch_size, &got) != 0) {
         return -1;
     }
+    if (got == 0) return -1; // recv timed out with no datagram available
     uint64_t cid = 0;
     int pn = pigeon_decode_datagram(&sess->channel, sess->is_backend,
                                     sess->scratch_a, got, NULL, &cid,
@@ -649,7 +586,7 @@ int pigeon_connect_on_transport(const pigeon_transport *transport,
     // 1. Write the empty-name primary stream header on the primary stream.
     //    Client side ⇒ no 4-byte clientTag prefix, name length 0.
     uint8_t hdr[PIGEON_MAX_STREAM_HEADER];
-    int hn = pigeon_encode_stream_header(false, 0, NULL, 0, hdr, sizeof(hdr));
+    int hn = pigeon_wire_stream_header_encode(false, 0, NULL, 0, hdr, sizeof(hdr));
     if (hn < 0) return -1;
     if (transport->send_on_stream(transport->userdata, primary_handle,
                                   hdr, (size_t)hn) != 0) {

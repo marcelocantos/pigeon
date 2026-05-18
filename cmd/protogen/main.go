@@ -7,6 +7,7 @@
 // Usage:
 //
 //	protogen [--root-pkg=<pkg>] protocol/session.yaml
+//	protogen --wireformats protocol/wireformats.yaml
 //
 // Outputs (relative to working directory):
 //
@@ -17,6 +18,15 @@
 //	android/pigeon/src/main/kotlin/com.marcelocantos.pigeon/crypto/<Name>Machine.kt
 //	web/src/<Name>Machine.ts
 //	<name>_gen.go           (only when --root-pkg is set)
+//
+// --wireformats mode (one-shot byte formats; no FSM, no TLA+):
+//
+//	wire_gen.go             (root package, default "pigeon")
+//	c/include/pigeon/wire_gen.h
+//	c/src/wire_gen.c
+//	Sources/Pigeon/WireGen.swift
+//	android/pigeon/src/main/kotlin/com/marcelocantos/pigeon/crypto/WireGen.kt
+//	web/src/wireGen.ts
 package main
 
 import (
@@ -31,6 +41,7 @@ import (
 
 func main() {
 	var rootPkg, rootOut string
+	var wireformats bool
 	args := os.Args[1:]
 	for len(args) > 0 && strings.HasPrefix(args[0], "--") {
 		switch {
@@ -38,6 +49,8 @@ func main() {
 			rootPkg = strings.TrimPrefix(args[0], "--root-pkg=")
 		case strings.HasPrefix(args[0], "--root-out="):
 			rootOut = strings.TrimPrefix(args[0], "--root-out=")
+		case args[0] == "--wireformats":
+			wireformats = true
 		default:
 			fmt.Fprintf(os.Stderr, "unknown flag: %s\n", args[0])
 			os.Exit(1)
@@ -47,7 +60,16 @@ func main() {
 
 	if len(args) < 1 {
 		fmt.Fprintln(os.Stderr, "usage: protogen [--root-pkg=<pkg>] <protocol.yaml>")
+		fmt.Fprintln(os.Stderr, "       protogen --wireformats <wireformats.yaml>")
 		os.Exit(1)
+	}
+
+	if wireformats {
+		if err := runWireformats(args[0], rootPkg); err != nil {
+			fmt.Fprintf(os.Stderr, "wireformats: %v\n", err)
+			os.Exit(1)
+		}
+		return
 	}
 
 	p, err := protocol.LoadYAML(args[0])
@@ -242,6 +264,44 @@ func main() {
 		}
 		fmt.Printf("wrote %s\n", path)
 	}
+}
+
+// runWireformats drives the byte-format generator across all 5 SDK targets.
+// Unlike the FSM mode, there is no TLA+ or PlantUML output — these formats
+// don't carry state-machine semantics. The per-language file paths are
+// fixed (one file per language) since the set lives in a single YAML.
+func runWireformats(specPath, rootPkg string) error {
+	set, err := protocol.LoadWireFormatsYAML(specPath)
+	if err != nil {
+		return fmt.Errorf("load: %w", err)
+	}
+	if err := set.Validate(); err != nil {
+		return fmt.Errorf("validate: %w", err)
+	}
+	pkg := rootPkg
+	if pkg == "" {
+		pkg = "pigeon"
+	}
+	targets := []struct {
+		path string
+		gen  func(f *os.File) error
+	}{
+		{"wire_gen.go", func(f *os.File) error { return set.ExportGo(f, pkg) }},
+		{filepath.Join("c", "include", "pigeon", "wire_gen.h"), func(f *os.File) error { return set.ExportCHeader(f) }},
+		{filepath.Join("c", "src", "wire_gen.c"), func(f *os.File) error { return set.ExportCImpl(f) }},
+		{filepath.Join("Sources", "Pigeon", "WireGen.swift"), func(f *os.File) error { return set.ExportSwift(f) }},
+		{filepath.Join("android", "pigeon", "src", "main", "kotlin",
+			"com", "marcelocantos", "pigeon", "crypto", "WireGen.kt"),
+			func(f *os.File) error { return set.ExportKotlin(f, "com.marcelocantos.pigeon.crypto") }},
+		{filepath.Join("web", "src", "wireGen.ts"), func(f *os.File) error { return set.ExportTypeScript(f) }},
+	}
+	for _, t := range targets {
+		if err := writeFile(t.path, t.gen); err != nil {
+			return fmt.Errorf("generate %s: %w", t.path, err)
+		}
+		fmt.Printf("wrote %s\n", t.path)
+	}
+	return nil
 }
 
 func writeFile(path string, fn func(*os.File) error) error {

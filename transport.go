@@ -116,8 +116,8 @@ func dialAcceptorQUIC(ctx context.Context, relayURL string, c Config) (*transpor
 		conn.CloseWithError(0, "open stream")
 		return nil, fmt.Errorf("register: open stream: %w", err)
 	}
-	handshake := "register-mux:" + c.Token + ":" + c.InstanceID
-	if err := writeMessage(stream, []byte(handshake)); err != nil {
+	handshake := EncodeRelayGreetingRegisterMux(c.Token, c.InstanceID)
+	if err := writeMessage(stream, handshake); err != nil {
 		conn.CloseWithError(0, "send handshake")
 		return nil, fmt.Errorf("register: handshake: %w", err)
 	}
@@ -155,7 +155,7 @@ func dialInitiatorQUIC(ctx context.Context, relayURL, instanceID string, c Confi
 		conn.CloseWithError(0, "open stream")
 		return nil, fmt.Errorf("connect: open stream: %w", err)
 	}
-	if err := writeMessage(stream, []byte("connect:"+instanceID)); err != nil {
+	if err := writeMessage(stream, EncodeRelayGreetingConnect(instanceID)); err != nil {
 		conn.CloseWithError(0, "send handshake")
 		return nil, fmt.Errorf("connect: handshake: %w", err)
 	}
@@ -188,11 +188,8 @@ func dialAcceptorWebTransport(ctx context.Context, relayURL string, c Config) (*
 		session.CloseWithError(0, "open stream")
 		return nil, fmt.Errorf("register: open stream: %w", err)
 	}
-	handshake := "register-mux"
-	if c.InstanceID != "" {
-		handshake = "register-mux::" + c.InstanceID
-	}
-	if err := writeMessage(stream, []byte(handshake)); err != nil {
+	handshake := EncodeRelayGreetingRegisterMux("", c.InstanceID)
+	if err := writeMessage(stream, handshake); err != nil {
 		session.CloseWithError(0, "send handshake")
 		return nil, fmt.Errorf("register: handshake: %w", err)
 	}
