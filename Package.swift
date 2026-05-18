@@ -4,28 +4,29 @@ import PackageDescription
 
 // Header / linker settings for libsodium. CPigeon's amalgamated source
 // (dist/pigeon.c) is built with -DPIGEON_CRYPTO_LIBSODIUM and pulls
-// the AEAD primitives from a system libsodium. On the dev box that's
-// the Homebrew formula at /opt/homebrew (Apple Silicon). x86_64 macOS
-// boxes use /usr/local; Linux uses the system search paths.
+// the AEAD primitives from libsodium. We link the static lib built by
+// `c/vendor/build.sh libsodium` (or `make build-vendor-deps`); see
+// c/vendor/github.com/jedisct1/libsodium for the pinned submodule.
 //
-// SwiftPM doesn't have a portable "ask pkg-config for libsodium"
-// knob, so we hard-code the Homebrew layout that the rest of this
-// repo (cwire/cwire.go, c/CMakeLists.txt) already assumes.
+// The vendored static lib is in-tree at a stable path, so we hard-code
+// it rather than asking SwiftPM to discover libsodium dynamically.
+// Callers must run `make build-vendor-deps` (or at minimum
+// `bash c/vendor/build.sh libsodium`) before `swift build`.
 let cpigeonCSettings: [CSetting] = [
     .define("PIGEON_CRYPTO_LIBSODIUM"),
     // dist/pigeon.h is included by cpigeon.c via "../../dist/pigeon.c".
     // The amalgamated header itself self-includes; SwiftPM also needs
     // to find it for the umbrella header, hence the extra search path.
     .headerSearchPath("../../dist"),
-    // Header path for sodium.h on Apple Silicon Homebrew. SwiftPM's
-    // .headerSearchPath insists on relative paths, so route through
-    // -I via .unsafeFlags.
-    .unsafeFlags(["-I/opt/homebrew/include"], .when(platforms: [.macOS])),
+    // Vendored libsodium headers under c/vendor/build/include.
+    // .headerSearchPath paths are relative to the target source dir
+    // (Sources/CPigeon/), so up two levels reaches the package root.
+    .headerSearchPath("../../c/vendor/build/include"),
 ]
 
 let cpigeonLinkerSettings: [LinkerSetting] = [
-    .unsafeFlags(["-L/opt/homebrew/lib"], .when(platforms: [.macOS])),
-    .linkedLibrary("sodium"),
+    // Linker unsafeFlags resolve relative to the package root.
+    .unsafeFlags(["c/vendor/build/lib/libsodium.a"]),
 ]
 
 let package = Package(

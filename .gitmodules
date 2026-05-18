@@ -7,3 +7,6 @@
 [submodule "c/vendor/github.com/ngtcp2/nghttp3"]
 	path = c/vendor/github.com/ngtcp2/nghttp3
 	url = https://github.com/ngtcp2/nghttp3.git
+[submodule "c/vendor/github.com/jedisct1/libsodium"]
+	path = c/vendor/github.com/jedisct1/libsodium
+	url = https://github.com/jedisct1/libsodium.git

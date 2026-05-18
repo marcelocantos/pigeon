@@ -111,6 +111,11 @@ generate:
 
 # --- C library ---
 
+VENDOR_BUILD = c/vendor/build
+SODIUM_SENTINEL = $(VENDOR_BUILD)/lib/libsodium.a
+SODIUM_CFLAGS = -I$(VENDOR_BUILD)/include
+SODIUM_LDFLAGS = $(SODIUM_SENTINEL)
+
 amalgamate: generate
 	./c/amalgamate.sh dist
 
@@ -120,9 +125,10 @@ test-c: amalgamate test-c-only
 # already serialised generate+amalgamate up front and must not re-run
 # them in a parallel branch — the regen would rewrite Swift sources
 # mid-compile and trip "input file was modified during the build".
-test-c-only:
-	clang -DPIGEON_CRYPTO_LIBSODIUM -Idist $$(pkg-config --cflags --libs libsodium) \
-		dist/pigeon.c c/test/test_pigeon.c -o c/test/test_pigeon
+test-c-only: $(SODIUM_SENTINEL)
+	clang -DPIGEON_CRYPTO_LIBSODIUM -Idist $(SODIUM_CFLAGS) \
+		dist/pigeon.c c/test/test_pigeon.c $(SODIUM_LDFLAGS) \
+		-o c/test/test_pigeon
 	./c/test/test_pigeon
 
 # --- Sanitiser-instrumented C tests ---
@@ -134,12 +140,11 @@ test-c-only:
 #
 # UBSan settles for -fno-sanitize=function on Apple silicon where the
 # function-type check trips on libsodium's call-into-C pattern.
-test-c-asan: amalgamate
+test-c-asan: amalgamate $(SODIUM_SENTINEL)
 	clang -O1 -g -fno-omit-frame-pointer \
 		-fsanitize=address,undefined -fno-sanitize=function \
-		-DPIGEON_CRYPTO_LIBSODIUM -Idist \
-		$$(pkg-config --cflags --libs libsodium) \
-		dist/pigeon.c c/test/test_pigeon.c \
+		-DPIGEON_CRYPTO_LIBSODIUM -Idist $(SODIUM_CFLAGS) \
+		dist/pigeon.c c/test/test_pigeon.c $(SODIUM_LDFLAGS) \
 		-o c/test/test_pigeon_asan
 	ASAN_OPTIONS=detect_leaks=1:abort_on_error=1:halt_on_error=1 \
 		UBSAN_OPTIONS=halt_on_error=1:print_stacktrace=1 \
@@ -149,24 +154,32 @@ test-c-asan: amalgamate
 test-go-race:
 	go test -race -count=1 -timeout=120s ./cwire/ ./crypto/ ./
 
-# --- Vendored C dependencies (ngtcp2 + quictls/openssl) ---
+# --- Vendored C dependencies (libsodium + ngtcp2 + quictls/openssl) ---
 #
-# Builds static libs under vendor/build/.
+# Builds static libs under vendor/build/. libsodium is split out
+# because test-c only needs it (not openssl/ngtcp2), so a fast loop
+# can build libsodium alone (~10s) rather than the whole stack.
 # Outputs:
+#   vendor/build/lib/libsodium.a
 #   vendor/build/lib/libssl.a
 #   vendor/build/lib/libcrypto.a
 #   vendor/build/lib/libngtcp2.a
 #   vendor/build/lib/libngtcp2_crypto_quictls.a
 #
-# Requires: cmake, make, perl (for OpenSSL Configure).
+# Requires: cmake, make, perl (for OpenSSL Configure), autoconf +
+# automake + libtool (for libsodium's autogen.sh).
 # Run once; subsequent builds skip if the sentinel file exists.
 
-VENDOR_SENTINEL = c/vendor/build/lib/libngtcp2_crypto_quictls.a
+VENDOR_SENTINEL = $(VENDOR_BUILD)/lib/libngtcp2_crypto_quictls.a
 
-build-vendor-deps: $(VENDOR_SENTINEL)
+build-vendor-deps: $(SODIUM_SENTINEL) $(VENDOR_SENTINEL)
+
+$(SODIUM_SENTINEL):
+	bash c/vendor/build.sh libsodium
 
 $(VENDOR_SENTINEL):
-	bash c/vendor/build.sh all
+	bash c/vendor/build.sh openssl
+	bash c/vendor/build.sh ngtcp2
 
 # --- ngtcp2 QUIC transport test ---
 #
@@ -174,7 +187,6 @@ $(VENDOR_SENTINEL):
 # Unit tests (vtable wiring, struct layout) run without a live relay.
 # Integration test skips gracefully if no relay is running on :4433.
 
-VENDOR_BUILD = c/vendor/build
 NGTCP2_CFLAGS = \
 	-I$(VENDOR_BUILD)/include \
 	-Ic/include \
@@ -188,13 +200,12 @@ NGTCP2_LDFLAGS = \
 	-lpthread -ldl
 
 test-c-ngtcp2: build-vendor-deps amalgamate
-	clang $(NGTCP2_CFLAGS) \
+	clang $(NGTCP2_CFLAGS) $(SODIUM_CFLAGS) \
 		c/src/ngtcp2_transport.c \
 		c/test/test_ngtcp2.c \
 		dist/pigeon.c \
 		-DPIGEON_CRYPTO_LIBSODIUM \
-		$$(pkg-config --cflags --libs libsodium) \
-		$(NGTCP2_LDFLAGS) \
+		$(NGTCP2_LDFLAGS) $(SODIUM_LDFLAGS) \
 		-o c/test/test_ngtcp2
 	./c/test/test_ngtcp2
 	@# 🎯T32.4: cgo-driven live round-trips through the C SDK
@@ -224,7 +235,9 @@ bullseye-strict: bullseye test-c-asan test-go-race
 # happen before the parallel checks fan out, otherwise `make generate`
 # / `make amalgamate` (transitively required by test-c) races against
 # the gofmt and go vet/build/test branches scanning the same files.
-bullseye-prereq:
+# Also build libsodium up front so the test-c branch doesn't race
+# against itself if multiple bullseye-style targets reach it.
+bullseye-prereq: $(SODIUM_SENTINEL)
 	@$(MAKE) -s amalgamate >/dev/null
 
 bullseye: bullseye-prereq

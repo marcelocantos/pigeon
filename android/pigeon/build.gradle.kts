@@ -48,6 +48,9 @@ dependencies {
 val repoRoot = rootProject.projectDir.parentFile  // pigeon/
 val distDir = file("$repoRoot/dist")
 val jniSrcDir = file("$repoRoot/c/jni")
+val vendorBuildDir = file("$repoRoot/c/vendor/build")
+val sodiumIncludeDir = file("$vendorBuildDir/include")
+val sodiumStaticLib = file("$vendorBuildDir/lib/libsodium.a")
 val nativeOutDir = layout.buildDirectory.dir("native").get().asFile
 val nativeLibName = "pigeon-jni"
 
@@ -73,14 +76,25 @@ val amalgamateNative = tasks.register<Exec>("amalgamateNative") {
     isIgnoreExitValue = false
 }
 
+val buildVendoredSodium = tasks.register<Exec>("buildVendoredSodium") {
+    description = "Build the vendored libsodium static lib (c/vendor/build/lib/libsodium.a)."
+    group = "build"
+    workingDir = repoRoot
+    commandLine = listOf("bash", "c/vendor/build.sh", "libsodium")
+    outputs.file(sodiumStaticLib)
+    onlyIf { !sodiumStaticLib.exists() }
+}
+
 val compileNativeLibrary = tasks.register<Exec>("compileNativeLibrary") {
     description = "Build libpigeon-jni for the host platform (macOS .dylib / Linux .so)."
     group = "build"
     dependsOn(amalgamateNative)
+    dependsOn(buildVendoredSodium)
 
     inputs.file("$distDir/pigeon.c")
     inputs.file("$distDir/pigeon.h")
     inputs.file("$jniSrcDir/pigeon_jni.c")
+    inputs.file(sodiumStaticLib)
     outputs.file(nativeLibFile)
 
     doFirst {
@@ -103,19 +117,16 @@ val compileNativeLibrary = tasks.register<Exec>("compileNativeLibrary") {
             "-shared", "-fPIC", "-O2",
             "-DPIGEON_CRYPTO_LIBSODIUM",
             "-I$distDir",
+            "-I$sodiumIncludeDir",
         )
         for (inc in jniInclude) cmd += "-I$inc"
-
-        // libsodium: Homebrew install on macOS dev box; system on Linux.
-        if (OperatingSystem.current().isMacOsX) {
-            cmd += "-I/opt/homebrew/include"
-            cmd += "-L/opt/homebrew/lib"
-        }
-        cmd += "-lsodium"
 
         // Sources.
         cmd += "$distDir/pigeon.c"
         cmd += "$jniSrcDir/pigeon_jni.c"
+
+        // Vendored libsodium static lib.
+        cmd += sodiumStaticLib.absolutePath
 
         // Output.
         cmd += "-o"

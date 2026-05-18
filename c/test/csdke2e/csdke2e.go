@@ -29,13 +29,11 @@ package csdke2e
 // #cgo CFLAGS: -I${SRCDIR}/../../../c/vendor/build/include
 // #cgo CFLAGS: -DPIGEON_CRYPTO_LIBSODIUM
 // #cgo CFLAGS: -DCSDKE2E_BUILD
-// #cgo darwin CFLAGS: -I/opt/homebrew/include
-// #cgo darwin LDFLAGS: -L/opt/homebrew/lib -lsodium
-// #cgo linux  LDFLAGS: -lsodium
 // #cgo LDFLAGS: ${SRCDIR}/../../../c/vendor/build/lib/libngtcp2_crypto_quictls.a
 // #cgo LDFLAGS: ${SRCDIR}/../../../c/vendor/build/lib/libngtcp2.a
 // #cgo LDFLAGS: ${SRCDIR}/../../../c/vendor/build/lib/libssl.a
 // #cgo LDFLAGS: ${SRCDIR}/../../../c/vendor/build/lib/libcrypto.a
+// #cgo LDFLAGS: ${SRCDIR}/../../../c/vendor/build/lib/libsodium.a
 // #cgo LDFLAGS: -lpthread
 //
 // // Forward the resolve-device trampoline that csdke2e_resolve_bridge.go
