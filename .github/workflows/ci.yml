@@ -13,14 +13,18 @@ jobs:
       - uses: actions/setup-go@v5
         with:
           go-version-file: go.mod
-      - name: Init vendored libsodium submodule
-        run: git submodule update --init --depth 1 c/vendor/github.com/jedisct1/libsodium
+      - name: Resolve libsodium pinned SHA
+        id: libsodium-sha
+        run: echo "sha=$(git ls-tree HEAD c/vendor/github.com/jedisct1/libsodium | awk '{print $3}')" >> $GITHUB_OUTPUT
       - name: Cache vendored libsodium build
         id: cache-libsodium
         uses: actions/cache@v4
         with:
           path: c/vendor/build
-          key: libsodium-${{ runner.os }}-${{ hashFiles('c/vendor/github.com/jedisct1/libsodium/.git/HEAD', 'c/vendor/build.sh') }}
+          key: libsodium-${{ runner.os }}-${{ steps.libsodium-sha.outputs.sha }}-${{ hashFiles('c/vendor/build.sh') }}
+      - name: Init vendored libsodium submodule
+        if: steps.cache-libsodium.outputs.cache-hit != 'true'
+        run: git submodule update --init --depth 1 c/vendor/github.com/jedisct1/libsodium
       - name: Build vendored libsodium
         if: steps.cache-libsodium.outputs.cache-hit != 'true'
         run: bash c/vendor/build.sh libsodium
@@ -35,14 +39,18 @@ jobs:
       - uses: actions/setup-go@v5
         with:
           go-version-file: go.mod
-      - name: Init vendored libsodium submodule
-        run: git submodule update --init --depth 1 c/vendor/github.com/jedisct1/libsodium
+      - name: Resolve libsodium pinned SHA
+        id: libsodium-sha
+        run: echo "sha=$(git ls-tree HEAD c/vendor/github.com/jedisct1/libsodium | awk '{print $3}')" >> $GITHUB_OUTPUT
       - name: Cache vendored libsodium build
         id: cache-libsodium
         uses: actions/cache@v4
         with:
           path: c/vendor/build
-          key: libsodium-${{ runner.os }}-${{ hashFiles('c/vendor/github.com/jedisct1/libsodium/.git/HEAD', 'c/vendor/build.sh') }}
+          key: libsodium-${{ runner.os }}-${{ steps.libsodium-sha.outputs.sha }}-${{ hashFiles('c/vendor/build.sh') }}
+      - name: Init vendored libsodium submodule
+        if: steps.cache-libsodium.outputs.cache-hit != 'true'
+        run: git submodule update --init --depth 1 c/vendor/github.com/jedisct1/libsodium
       - name: Build vendored libsodium
         if: steps.cache-libsodium.outputs.cache-hit != 'true'
         run: bash c/vendor/build.sh libsodium
@@ -85,14 +93,18 @@ jobs:
       - uses: actions/setup-go@v5
         with:
           go-version-file: go.mod
-      - name: Init vendored libsodium submodule
-        run: git submodule update --init --depth 1 c/vendor/github.com/jedisct1/libsodium
+      - name: Resolve libsodium pinned SHA
+        id: libsodium-sha
+        run: echo "sha=$(git ls-tree HEAD c/vendor/github.com/jedisct1/libsodium | awk '{print $3}')" >> $GITHUB_OUTPUT
       - name: Cache vendored libsodium build
         id: cache-libsodium
         uses: actions/cache@v4
         with:
           path: c/vendor/build
-          key: libsodium-${{ runner.os }}-${{ hashFiles('c/vendor/github.com/jedisct1/libsodium/.git/HEAD', 'c/vendor/build.sh') }}
+          key: libsodium-${{ runner.os }}-${{ steps.libsodium-sha.outputs.sha }}-${{ hashFiles('c/vendor/build.sh') }}
+      - name: Init vendored libsodium submodule
+        if: steps.cache-libsodium.outputs.cache-hit != 'true'
+        run: git submodule update --init --depth 1 c/vendor/github.com/jedisct1/libsodium
       - name: Build vendored libsodium
         if: steps.cache-libsodium.outputs.cache-hit != 'true'
         run: bash c/vendor/build.sh libsodium
