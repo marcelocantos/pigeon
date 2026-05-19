@@ -25,7 +25,7 @@ type bpipeWire struct {
 	mu      sync.Mutex
 	streams map[unsafe.Pointer]chan []byte // per-stream message queue
 	accept  chan unsafe.Pointer            // stream accept queue
-	dgs     chan []byte                   // datagram queue
+	dgs     chan []byte                    // datagram queue
 }
 
 func newBpipeWire() *bpipeWire {
@@ -116,8 +116,9 @@ func (t *bpipeTransport) RecvDatagram() ([]byte, error) {
 // the resulting sessions.
 //
 // Topology:
-//   client side:  ta (bpipeTransport) → refA → Connect
-//   backend side: tb (bpipeTransport) → refB → RunBackendActivation + NewGoSession
+//
+//	client side:  ta (bpipeTransport) → refA → Connect
+//	backend side: tb (bpipeTransport) → refB → RunBackendActivation + NewGoSession
 //
 // Both activation functions perform blocking I/O so they run concurrently.
 func TestConnectActivationRoundTrip(t *testing.T) {

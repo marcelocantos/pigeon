@@ -101,15 +101,7 @@ int cwire_confirm_trampoline(void *udata, const char *code)
     return cwireGoConfirm(udata, code);
 }
 
-// --- Resolve trampoline for pigeon_run_backend_activation ---
-//
-// pigeon_resolve_device_fn resolves a client device ID to a PairingRecord.
-// We bridge this to Go via a //export'd callback; userdata carries the same
-// cwire_go_udata* box used by the transport and confirm bridges.
-
-extern int cwireGoResolve(void *udata, const char *device_id, void *out_record);
-
-int cwire_resolve_trampoline(void *udata, const char *device_id, void *out_record)
-{
-    return cwireGoResolve(udata, device_id, out_record);
-}
+// cwire_resolve_trampoline (pigeon_resolve_device_fn bridge) lives in
+// cwire_listener.c — both the C trampoline and the //export'd Go side
+// (cwireGoResolve in listener.go) are owned by the Listener slice; the
+// Connect-side RunBackendActivation helper reuses the same bridge.

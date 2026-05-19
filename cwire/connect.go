@@ -18,8 +18,8 @@ package cwire
 // extern cwire_go_udata *cwire_alloc_go_udata(uintptr_t handle);
 // extern void cwire_free_go_udata(cwire_go_udata *u);
 //
-// // cwire_resolve_trampoline is defined in cwire_pigeon.c and bridges
-// // the C pigeon_resolve_device_fn callback to cwireGoResolve (Go export).
+// // cwire_resolve_trampoline is defined in cwire_listener.c (bridges the
+// // pigeon_resolve_device_fn callback to cwireGoResolve in listener.go).
 // extern int cwire_resolve_trampoline(void *udata, const char *device_id,
 //                                     void *out_record);
 //
@@ -43,7 +43,6 @@ import "C"
 import (
 	"errors"
 	"fmt"
-	"runtime/cgo"
 	"unsafe"
 )
 
@@ -253,7 +252,7 @@ func RunBackendActivation(args *RunBackendActivationArgs) (*BackendActivationRes
 	var ct C.pigeon_transport
 	C.cwire_make_go_transport(unsafe.Pointer(args.Ref.cudata), &ct)
 
-	resolveH := newResolveHandle(args.ResolveFn)
+	resolveH := newResolveHandle(PairingResolver(args.ResolveFn))
 	defer resolveH.delete()
 
 	var machine C.pigeon_backend_machine
@@ -287,37 +286,6 @@ func RunBackendActivation(args *RunBackendActivationArgs) (*BackendActivationRes
 		}, nil
 	default:
 		return nil, errors.New("cwire: pigeon_run_backend_activation failed")
-	}
-}
-
-// resolveHandle wraps a Go resolve callback so it can be invoked from C via
-// cwireGoResolve.
-type resolveHandle struct {
-	handle cgo.Handle
-	cudata *C.cwire_go_udata
-}
-
-func newResolveHandle(fn func(deviceID string) (*PairingRecord, bool)) *resolveHandle {
-	h := cgo.NewHandle(fn)
-	cu := C.cwire_alloc_go_udata(C.uintptr_t(h))
-	return &resolveHandle{handle: h, cudata: cu}
-}
-
-func (r *resolveHandle) ptr() unsafe.Pointer {
-	return unsafe.Pointer(r.cudata)
-}
-
-func (r *resolveHandle) delete() {
-	if r == nil {
-		return
-	}
-	if r.cudata != nil {
-		C.cwire_free_go_udata(r.cudata)
-		r.cudata = nil
-	}
-	if r.handle != 0 {
-		r.handle.Delete()
-		r.handle = 0
 	}
 }
 
@@ -403,29 +371,6 @@ func DeriveSessionChannel(rec *PairingRecord, isBackend bool) (*Channel, error) 
 	)
 }
 
-//export cwireGoResolve
-func cwireGoResolve(udata unsafe.Pointer, cDeviceID *C.char, outRecord unsafe.Pointer) C.int {
-	cu := (*C.cwire_go_udata)(udata)
-	h := cgo.Handle(cu.handle)
-	fn := h.Value().(func(deviceID string) (*PairingRecord, bool))
-	rec, ok := fn(C.GoString(cDeviceID))
-	if !ok || rec == nil {
-		return -1
-	}
-	if len(rec.LocalPrivKey) != 32 || len(rec.LocalPubKey) != 32 || len(rec.PeerPubKey) != 32 {
-		return -1
-	}
-	cRec := (*C.pigeon_pairing_record)(outRecord)
-	iid := rec.PeerInstanceID
-	if len(iid) >= 64 {
-		return -1
-	}
-	for i := range iid {
-		cRec.peer_instance_id[i] = C.char(iid[i])
-	}
-	cRec.peer_instance_id[len(iid)] = 0
-	copy((*[32]byte)(unsafe.Pointer(&cRec.local_private_key[0]))[:], rec.LocalPrivKey)
-	copy((*[32]byte)(unsafe.Pointer(&cRec.local_public_key[0]))[:], rec.LocalPubKey)
-	copy((*[32]byte)(unsafe.Pointer(&cRec.peer_public_key[0]))[:], rec.PeerPubKey)
-	return 0
-}
+// cwireGoResolve / resolveHandle / newResolveHandle live in listener.go —
+// both slices share the same pigeon_resolve_device_fn bridge, owned by the
+// Listener side.

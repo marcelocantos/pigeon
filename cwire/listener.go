@@ -44,9 +44,9 @@ type PairingResolver func(deviceID string) (*PairingRecord, bool)
 // Do not call Close on a Listener-returned session; Listener.Close frees
 // them all.
 type Listener struct {
-	c       *C.pigeon_listener
-	ref     *GoTransportRef // keeps the Go transport alive
-	resolveH *resolveHandle // holds the resolve callback
+	c        *C.pigeon_listener
+	ref      *GoTransportRef // keeps the Go transport alive
+	resolveH *resolveHandle  // holds the resolve callback
 }
 
 // NewListener constructs a Listener over a registered Go transport.
@@ -157,7 +157,7 @@ func (l *Listener) Accept() (*Session, error) {
 // dispatches it. Returns:
 //   - (*Session, nil) when a new client primary completes activation
 //   - (nil, nil)      when a sub-stream was dispatched, a malformed header
-//                     was dropped, or a primary was rejected
+//     was dropped, or a primary was rejected
 //   - (nil, err)      on transport failure or listener shutdown
 //
 // The returned session is owned by the Listener — do not call Close on it.
