@@ -17,9 +17,8 @@
 package cwire
 
 // #cgo CFLAGS: -I${SRCDIR}/../dist -DPIGEON_CRYPTO_LIBSODIUM
-// #cgo darwin CFLAGS: -I/opt/homebrew/include
-// #cgo darwin LDFLAGS: -L/opt/homebrew/lib -lsodium
-// #cgo linux  LDFLAGS: -lsodium
+// #cgo CFLAGS: -I${SRCDIR}/../c/vendor/build/include
+// #cgo LDFLAGS: ${SRCDIR}/../c/vendor/build/lib/libsodium.a
 // #include <stdlib.h>
 // #include <string.h>
 // #include "pigeon.h"

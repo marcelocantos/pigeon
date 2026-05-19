@@ -22,9 +22,10 @@
 //
 // Build:
 //   clang -shared -fPIC \
-//     -I${JNI_HEADERS} -Idist -DPIGEON_CRYPTO_LIBSODIUM \
+//     -I${JNI_HEADERS} -Idist -Ic/vendor/build/include \
+//     -DPIGEON_CRYPTO_LIBSODIUM \
 //     dist/pigeon.c c/jni/pigeon_jni.c \
-//     -L/opt/homebrew/lib -lsodium \
+//     c/vendor/build/lib/libsodium.a \
 //     -o libpigeon-jni.dylib
 //
 // All JNI methods follow the canonical naming convention for the

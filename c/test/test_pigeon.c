@@ -1168,15 +1168,22 @@ static void test_datagram_framing(void)
 // needing ngtcp2 or a live relay.
 
 #define LOOP_MAX_STREAMS 8
-#define LOOP_MAX_PENDING 32
+
+// Single in-flight message on a per-stream / per-datagram queue.
+// Allocated on send_*, freed on recv_*; payload sized to the actual
+// message length so the test transport's memory tracks real traffic
+// rather than preallocating the SDK's PIGEON_MAX_MSG ceiling.
+typedef struct loopback_msg {
+    struct loopback_msg *next;
+    size_t  len;
+    uint8_t bytes[];
+} loopback_msg;
 
 typedef struct loopback_stream {
-    int id;                                           // stream identifier (slot index)
-    uint8_t  msgs[LOOP_MAX_PENDING][PIGEON_MAX_MSG];  // pending inbound messages
-    size_t   msg_lens[LOOP_MAX_PENDING];
-    int      msg_head, msg_tail, msg_count;
-    bool     in_use;
-    bool     accepted;                                // matched by accept_stream on the peer
+    int  id;                          // stream identifier (slot index)
+    bool in_use;
+    bool accepted;                    // matched by accept_stream on the peer
+    loopback_msg *msg_head, *msg_tail;
 } loopback_stream;
 
 typedef struct loopback_endpoint {
@@ -1184,9 +1191,7 @@ typedef struct loopback_endpoint {
     int              next_stream_id;
 
     // Datagrams incoming to this endpoint.
-    uint8_t dgrams[LOOP_MAX_PENDING][PIGEON_MAX_MSG + 64];
-    size_t  dgram_lens[LOOP_MAX_PENDING];
-    int     dgram_head, dgram_tail, dgram_count;
+    loopback_msg *dgram_head, *dgram_tail;
 
     // Stream IDs awaiting accept_stream by this endpoint.
     int accept_queue[LOOP_MAX_STREAMS];
@@ -1195,10 +1200,58 @@ typedef struct loopback_endpoint {
     struct loopback_endpoint *peer;
 } loopback_endpoint;
 
+static loopback_msg *loopback_msg_new(const uint8_t *data, size_t len)
+{
+    loopback_msg *m = (loopback_msg *)malloc(sizeof(*m) + len);
+    if (!m) return NULL;
+    m->next = NULL;
+    m->len  = len;
+    memcpy(m->bytes, data, len);
+    return m;
+}
+
+static void loopback_queue_push(loopback_msg **head, loopback_msg **tail,
+                                loopback_msg *m)
+{
+    if (*tail) (*tail)->next = m;
+    else       *head = m;
+    *tail = m;
+}
+
+static loopback_msg *loopback_queue_pop(loopback_msg **head, loopback_msg **tail)
+{
+    loopback_msg *m = *head;
+    if (!m) return NULL;
+    *head = m->next;
+    if (!*head) *tail = NULL;
+    return m;
+}
+
+static void loopback_queue_drain(loopback_msg **head, loopback_msg **tail)
+{
+    loopback_msg *m;
+    while ((m = loopback_queue_pop(head, tail)) != NULL) free(m);
+}
+
+static void loopback_endpoint_init(loopback_endpoint *e, loopback_endpoint *peer)
+{
+    memset(e, 0, sizeof(*e));
+    e->peer = peer;
+}
+
+static void loopback_endpoint_drain(loopback_endpoint *e)
+{
+    for (int i = 0; i < LOOP_MAX_STREAMS; i++) {
+        loopback_queue_drain(&e->streams[i].msg_head, &e->streams[i].msg_tail);
+    }
+    loopback_queue_drain(&e->dgram_head, &e->dgram_tail);
+}
+
 static loopback_stream *loopback_alloc_stream(loopback_endpoint *e)
 {
     for (int i = 0; i < LOOP_MAX_STREAMS; i++) {
         if (!e->streams[i].in_use) {
+            loopback_queue_drain(&e->streams[i].msg_head, &e->streams[i].msg_tail);
             memset(&e->streams[i], 0, sizeof(e->streams[i]));
             e->streams[i].in_use = true;
             e->streams[i].id = i;
@@ -1216,6 +1269,7 @@ static int loop_open_stream(void *ud, pigeon_stream_handle **out)
     // Allocate the matching slot on the peer with the same id (paired).
     loopback_endpoint *p = e->peer;
     if (p->streams[me->id].in_use) return -1;
+    loopback_queue_drain(&p->streams[me->id].msg_head, &p->streams[me->id].msg_tail);
     memset(&p->streams[me->id], 0, sizeof(p->streams[me->id]));
     p->streams[me->id].in_use = true;
     p->streams[me->id].id = me->id;
@@ -1257,12 +1311,9 @@ static int loop_send_on_stream(void *ud, pigeon_stream_handle *h,
     // Route to the peer's mirror slot.
     loopback_stream *peer = &e->peer->streams[me->id];
     if (!peer->in_use) return -1;
-    if (peer->msg_count >= LOOP_MAX_PENDING) return -1;
-    if (len > PIGEON_MAX_MSG) return -1;
-    memcpy(peer->msgs[peer->msg_tail], data, len);
-    peer->msg_lens[peer->msg_tail] = len;
-    peer->msg_tail = (peer->msg_tail + 1) % LOOP_MAX_PENDING;
-    peer->msg_count++;
+    loopback_msg *m = loopback_msg_new(data, len);
+    if (!m) return -1;
+    loopback_queue_push(&peer->msg_head, &peer->msg_tail, m);
     return 0;
 }
 
@@ -1275,17 +1326,16 @@ static int loop_recv_on_stream(void *ud, pigeon_stream_handle *h,
     // Blocking spin-wait so multi-threaded tests (activation, etc.)
     // can drive backend and client concurrently. Caps at ~5s. Single-
     // threaded tests are unaffected — they always send before recv.
-    for (int waited_us = 0; me->msg_count == 0 && waited_us < 5000000; waited_us += 1000) {
+    for (int waited_us = 0; me->msg_head == NULL && waited_us < 5000000; waited_us += 1000) {
         if (!me->in_use) return -1;
         usleep(1000);
     }
-    if (me->msg_count == 0) return -1;
-    size_t n = me->msg_lens[me->msg_head];
-    if (n > buf_len) return -1;
-    memcpy(buf, me->msgs[me->msg_head], n);
-    me->msg_head = (me->msg_head + 1) % LOOP_MAX_PENDING;
-    me->msg_count--;
-    *out_len = n;
+    if (!me->msg_head) return -1;
+    if (me->msg_head->len > buf_len) return -1;  // peek-too-small: leave for retry
+    loopback_msg *m = loopback_queue_pop(&me->msg_head, &me->msg_tail);
+    memcpy(buf, m->bytes, m->len);
+    *out_len = m->len;
+    free(m);
     return 0;
 }
 
@@ -1293,6 +1343,7 @@ static int loop_close_stream(void *ud, pigeon_stream_handle *h)
 {
     (void)ud;
     loopback_stream *me = (loopback_stream *)h;
+    loopback_queue_drain(&me->msg_head, &me->msg_tail);
     me->in_use = false;
     return 0;
 }
@@ -1301,25 +1352,21 @@ static int loop_send_datagram(void *ud, const uint8_t *data, size_t len)
 {
     loopback_endpoint *e = (loopback_endpoint *)ud;
     loopback_endpoint *p = e->peer;
-    if (p->dgram_count >= LOOP_MAX_PENDING) return -1;
-    if (len > sizeof(p->dgrams[0])) return -1;
-    memcpy(p->dgrams[p->dgram_tail], data, len);
-    p->dgram_lens[p->dgram_tail] = len;
-    p->dgram_tail = (p->dgram_tail + 1) % LOOP_MAX_PENDING;
-    p->dgram_count++;
+    loopback_msg *m = loopback_msg_new(data, len);
+    if (!m) return -1;
+    loopback_queue_push(&p->dgram_head, &p->dgram_tail, m);
     return 0;
 }
 
 static int loop_recv_datagram(void *ud, uint8_t *buf, size_t buf_len, size_t *out_len)
 {
     loopback_endpoint *e = (loopback_endpoint *)ud;
-    if (e->dgram_count == 0) return -1;
-    size_t n = e->dgram_lens[e->dgram_head];
-    if (n > buf_len) return -1;
-    memcpy(buf, e->dgrams[e->dgram_head], n);
-    e->dgram_head = (e->dgram_head + 1) % LOOP_MAX_PENDING;
-    e->dgram_count--;
-    *out_len = n;
+    if (!e->dgram_head) return -1;
+    if (e->dgram_head->len > buf_len) return -1;  // peek-too-small: leave for retry
+    loopback_msg *m = loopback_queue_pop(&e->dgram_head, &e->dgram_tail);
+    memcpy(buf, m->bytes, m->len);
+    *out_len = m->len;
+    free(m);
     return 0;
 }
 
@@ -1346,9 +1393,9 @@ static void test_session_stream_roundtrip(void)
     pigeon_channel_init(&ch_a, key, key, PIGEON_MODE_STRICT);
     pigeon_channel_init(&ch_b, key, key, PIGEON_MODE_STRICT);
 
-    static loopback_endpoint ea, eb;
-    memset(&ea, 0, sizeof(ea)); memset(&eb, 0, sizeof(eb));
-    ea.peer = &eb; eb.peer = &ea;
+    loopback_endpoint ea, eb;
+    loopback_endpoint_init(&ea, &eb);
+    loopback_endpoint_init(&eb, &ea);
 
     pigeon_transport ta, tb;
     loopback_make_transport(&ta, &ea);
@@ -1398,6 +1445,9 @@ static void test_session_stream_roundtrip(void)
     pigeon_session_close(&sa);
     pigeon_session_close(&sb);
 
+    loopback_endpoint_drain(&ea);
+    loopback_endpoint_drain(&eb);
+
     PASS();
 }
 
@@ -1410,9 +1460,9 @@ static void test_session_datagram_roundtrip(void)
     pigeon_channel_init(&ch_a, key, key, PIGEON_MODE_DATAGRAMS);
     pigeon_channel_init(&ch_b, key, key, PIGEON_MODE_DATAGRAMS);
 
-    static loopback_endpoint ea, eb;
-    memset(&ea, 0, sizeof(ea)); memset(&eb, 0, sizeof(eb));
-    ea.peer = &eb; eb.peer = &ea;
+    loopback_endpoint ea, eb;
+    loopback_endpoint_init(&ea, &eb);
+    loopback_endpoint_init(&eb, &ea);
 
     pigeon_transport ta, tb;
     loopback_make_transport(&ta, &ea);
@@ -1451,6 +1501,9 @@ static void test_session_datagram_roundtrip(void)
     pigeon_session_close(&sa);
     pigeon_session_close(&sb);
 
+    loopback_endpoint_drain(&ea);
+    loopback_endpoint_drain(&eb);
+
     PASS();
 }
 
@@ -1484,28 +1537,19 @@ static int activation_resolve(void *ud, const char *device_id, void *out_record)
     return -1;
 }
 
-// loopback_endpoint is huge (~288 MiB per instance: an
-// LOOP_MAX_STREAMS × LOOP_MAX_PENDING × PIGEON_MAX_MSG matrix). Share
-// one pair across both activation tests as static globals — adding
-// fresh per-test pairs pushes total BSS over ~1 GiB and breaks
-// dyld_shared_cache mapping on macOS at binary load. The other tests
-// (test_session_stream_roundtrip, test_session_datagram_roundtrip)
-// already follow this pattern with their own static pair.
-static loopback_endpoint activation_eb, activation_ec;
-
 // Spawn a transport pair and a single stream on each side that maps
 // to the peer. Used by both activation tests below.
-static void activation_pair_setup(pigeon_transport *tb,
+static void activation_pair_setup(loopback_endpoint *eb,
+                                  loopback_endpoint *ec,
+                                  pigeon_transport *tb,
                                   pigeon_transport *tc,
                                   pigeon_stream_handle **out_backend_stream,
                                   pigeon_stream_handle **out_client_stream)
 {
-    memset(&activation_eb, 0, sizeof(activation_eb));
-    memset(&activation_ec, 0, sizeof(activation_ec));
-    activation_eb.peer = &activation_ec;
-    activation_ec.peer = &activation_eb;
-    loopback_make_transport(tb, &activation_eb);
-    loopback_make_transport(tc, &activation_ec);
+    loopback_endpoint_init(eb, ec);
+    loopback_endpoint_init(ec, eb);
+    loopback_make_transport(tb, eb);
+    loopback_make_transport(tc, ec);
     // Client opens the activation stream; backend accepts.
     pigeon_stream_handle *cs = NULL;
     if (tc->open_stream(tc->userdata, &cs) != 0) {
@@ -1549,10 +1593,11 @@ static void *run_backend_thread(void *p)
 static void test_activation_known_device(void)
 {
     TEST("activation: known device → SessionActive on both sides");
+    loopback_endpoint eb, ec;
     pigeon_transport tb, tc;
     pigeon_stream_handle *bs = NULL, *cs = NULL;
-    activation_pair_setup(&tb, &tc, &bs, &cs);
-    if (cs == NULL || bs == NULL) return;
+    activation_pair_setup(&eb, &ec, &tb, &tc, &bs, &cs);
+    if (cs == NULL || bs == NULL) { loopback_endpoint_drain(&eb); loopback_endpoint_drain(&ec); return; }
 
     activation_resolve_ctx rctx = { .match = true, .want_id = "device-known-1" };
 
@@ -1587,16 +1632,19 @@ static void test_activation_known_device(void)
     if (cm.state != PIGEON_CLIENT_SESSION_ACTIVE) {
         FAIL("client machine not at SessionActive"); return;
     }
+    loopback_endpoint_drain(&eb);
+    loopback_endpoint_drain(&ec);
     PASS();
 }
 
 static void test_activation_unknown_device(void)
 {
     TEST("activation: unknown device → backend at Idle");
+    loopback_endpoint eb, ec;
     pigeon_transport tb, tc;
     pigeon_stream_handle *bs = NULL, *cs = NULL;
-    activation_pair_setup(&tb, &tc, &bs, &cs);
-    if (cs == NULL || bs == NULL) return;
+    activation_pair_setup(&eb, &ec, &tb, &tc, &bs, &cs);
+    if (cs == NULL || bs == NULL) { loopback_endpoint_drain(&eb); loopback_endpoint_drain(&ec); return; }
 
     activation_resolve_ctx rctx = { .match = false, .want_id = NULL };
 
@@ -1629,6 +1677,8 @@ static void test_activation_unknown_device(void)
     if (strcmp(client_reason, "unknown client") != 0) {
         FAIL("client reason mismatch"); return;
     }
+    loopback_endpoint_drain(&eb);
+    loopback_endpoint_drain(&ec);
     PASS();
 }
 
@@ -1644,19 +1694,16 @@ static void test_activation_unknown_device(void)
 // chosen by the test driver to give the listener something to demux
 // on.
 
-// Reuse one loopback endpoint pair across the listener tests for the
-// same reason the activation tests do — loopback_endpoint is huge
-// (~288 MiB) and adding fresh per-test instances tips total BSS past
-// dyld_shared_cache mapping on macOS.
-static loopback_endpoint listener_eb, listener_ec;
-
 // Listener resolver: accept any device id matching one of two
-// expected values. PairingRecord is zeroed (the listener test
-// exercises demux + activation flow, not the AEAD round-trip;
-// derived keys land on a degenerate but deterministic value).
+// expected values. PairingRecord uses a real generated keypair so
+// make_session can run X25519 ECDH (libsodium's crypto_scalarmult
+// rejects all-zero inputs). The listener test exercises demux +
+// activation flow, not the AEAD round-trip — the keys just have to
+// be a valid curve point pair.
 typedef struct {
-    const char *want_id_1;
-    const char *want_id_2;
+    const char     *want_id_1;
+    const char     *want_id_2;
+    pigeon_keypair  kp;
 } listener_resolve_ctx;
 
 static int listener_resolve(void *ud, const char *device_id, void *out_record)
@@ -1666,7 +1713,11 @@ static int listener_resolve(void *ud, const char *device_id, void *out_record)
             && strcmp(device_id, r->want_id_2) != 0) {
         return -1;
     }
-    memset(out_record, 0, sizeof(pigeon_pairing_record));
+    pigeon_pairing_record *rec = (pigeon_pairing_record *)out_record;
+    memset(rec, 0, sizeof(*rec));
+    memcpy(rec->local_private_key, r->kp.private_key, 32);
+    memcpy(rec->local_public_key,  r->kp.public_key,  32);
+    memcpy(rec->peer_public_key,   r->kp.public_key,  32);
     return 0;
 }
 
@@ -1726,10 +1777,9 @@ static void *run_listener_accept_loop(void *p)
 static void test_listener_two_clients(void)
 {
     TEST("listener: two concurrent clients through activation");
-    memset(&listener_eb, 0, sizeof(listener_eb));
-    memset(&listener_ec, 0, sizeof(listener_ec));
-    listener_eb.peer = &listener_ec;
-    listener_ec.peer = &listener_eb;
+    loopback_endpoint listener_eb, listener_ec;
+    loopback_endpoint_init(&listener_eb, &listener_ec);
+    loopback_endpoint_init(&listener_ec, &listener_eb);
 
     pigeon_transport tb, tc;
     loopback_make_transport(&tb, &listener_eb);
@@ -1739,6 +1789,7 @@ static void test_listener_two_clients(void)
         .want_id_1 = "device-a",
         .want_id_2 = "device-b",
     };
+    if (pigeon_generate_keypair(&rctx.kp) != 0) { FAIL("keypair"); return; }
     pigeon_listener *l = NULL;
     if (pigeon_listener_init(&l, &tb, "backend-instance",
                              listener_resolve, &rctx,
@@ -1787,6 +1838,8 @@ static void test_listener_two_clients(void)
     if (!seen_a || !seen_b) { FAIL("tag demux mismatch"); return; }
 
     pigeon_listener_close(l);
+    loopback_endpoint_drain(&listener_eb);
+    loopback_endpoint_drain(&listener_ec);
     PASS();
 }
 
@@ -1800,10 +1853,9 @@ static void test_listener_two_clients(void)
 static void test_listener_substream_demux(void)
 {
     TEST("listener: sub-stream between primaries lands in session queue");
-    memset(&listener_eb, 0, sizeof(listener_eb));
-    memset(&listener_ec, 0, sizeof(listener_ec));
-    listener_eb.peer = &listener_ec;
-    listener_ec.peer = &listener_eb;
+    loopback_endpoint listener_eb, listener_ec;
+    loopback_endpoint_init(&listener_eb, &listener_ec);
+    loopback_endpoint_init(&listener_ec, &listener_eb);
 
     pigeon_transport tb, tc;
     loopback_make_transport(&tb, &listener_eb);
@@ -1813,6 +1865,7 @@ static void test_listener_substream_demux(void)
         .want_id_1 = "device-first",
         .want_id_2 = "device-second",
     };
+    if (pigeon_generate_keypair(&rctx.kp) != 0) { FAIL("keypair"); return; }
     pigeon_listener *l = NULL;
     if (pigeon_listener_init(&l, &tb, "demux-listener",
                              listener_resolve, &rctx,
@@ -1889,6 +1942,8 @@ static void test_listener_substream_demux(void)
     }
 
     pigeon_listener_close(l);
+    loopback_endpoint_drain(&listener_eb);
+    loopback_endpoint_drain(&listener_ec);
     PASS();
 }
 
@@ -1985,10 +2040,11 @@ static void test_pigeon_connect_loopback(void)
     TEST("pigeon_connect_on_transport: client ↔ fake-backend round-trip");
 
     // 1. Loopback transport pair + primary stream.
+    loopback_endpoint eb, ec;
     pigeon_transport tb, tc;
     pigeon_stream_handle *bs = NULL, *cs = NULL;
-    activation_pair_setup(&tb, &tc, &bs, &cs);
-    if (cs == NULL || bs == NULL) return;
+    activation_pair_setup(&eb, &ec, &tb, &tc, &bs, &cs);
+    if (cs == NULL || bs == NULL) { loopback_endpoint_drain(&eb); loopback_endpoint_drain(&ec); return; }
 
     // 2. Matching pairing records on both sides.
     pigeon_pairing_record backend_rec, client_rec;
@@ -2103,6 +2159,8 @@ static void test_pigeon_connect_loopback(void)
     pigeon_session_close(&csess);
     pigeon_session_close(&bsess);
 
+    loopback_endpoint_drain(&eb);
+    loopback_endpoint_drain(&ec);
     PASS();
 }
 
@@ -2110,10 +2168,11 @@ static void test_pigeon_connect_pairing_mode(void)
 {
     TEST("pigeon_connect_on_transport: pairing mode (no record, no activation)");
 
+    loopback_endpoint eb, ec;
     pigeon_transport tb, tc;
     pigeon_stream_handle *bs = NULL, *cs = NULL;
-    activation_pair_setup(&tb, &tc, &bs, &cs);
-    if (cs == NULL || bs == NULL) return;
+    activation_pair_setup(&eb, &ec, &tb, &tc, &bs, &cs);
+    if (cs == NULL || bs == NULL) { loopback_endpoint_drain(&eb); loopback_endpoint_drain(&ec); return; }
 
     // In pairing mode the client passes record=NULL, device_id=NULL.
     // No activation handshake runs; channel.established stays false.
@@ -2160,6 +2219,8 @@ static void test_pigeon_connect_pairing_mode(void)
     if (got != 2 || memcmp(buf, "hi", 2) != 0) { FAIL("primary plaintext mismatch"); return; }
 
     pigeon_session_close(&csess);
+    loopback_endpoint_drain(&eb);
+    loopback_endpoint_drain(&ec);
     PASS();
 }
 
