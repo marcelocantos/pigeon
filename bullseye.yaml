@@ -1009,14 +1009,74 @@ targets:
     cost: 0.0
     acceptance:
     - api.go's public Register, Connect, Listener, Session, Stream, Datagram surface is reimplemented as thin shims over cwire.Listener / cwire.Connect / cwire.Session / cwire.Stream / cwire.Datagram.
-    - executor.go, activation.go, path.go, transport.go (the native Go session-machine and Go-side QUIC plumbing) are deleted once api.go no longer references them; the relay (cmd/pigeon) is unaffected.
+    - executor.go, activation.go, path.go, fragment.go, session_machine.go, pairing/pairing.go (the native Go session-machine and Go-side activation/demux plumbing) are deleted once api.go no longer references them; the relay (cmd/pigeon) is unaffected and transport.go stays as the quic-go-backed transport implementation wrapped via cgo_transport.go.
     - e2e_test.go and pairing/pairing_test.go pass against the cgo-wrapped surface.
     - examples/echo and examples/demo build and run unchanged from the user's perspective.
-    context: The big fold. Lives in its own PR after T34c.2 ships the cwire wrappers needed to do this without touching libpigeon. T34d (delete native Go peer files) collapses into this target — once api.go is folded, the deletions follow in the same diff.
+    context: The big fold. Lives in its own PR after T34c.2 ships the cwire wrappers needed to do this without touching libpigeon. Decomposed into T34c.3a / b / c / d below — leaf-first ordering minimises blast radius (adapter first, then Connect, then Register/Listener, then the deletions).
     depends_on:
     - T34c.2
     origin: subdivision of T34c
     discovered: 2026-05-19
+  T34c.3a:
+    name: GoTransport adapter in the root pigeon package wrapping *transport for cwire
+    status: identified
+    value: 0.0
+    cost: 0.0
+    acceptance:
+    - cgo_transport.go in the root package exposes goTransportAdapter, a cwire.GoTransport implementation wrapping the existing *transport (quic-go / WebTransport).
+    - Per-stream handles minted as C-malloc'd 1-byte stubs keyed into a package-level Go map; CloseStream frees both.
+    - adoptPrimary helper registers an already-opened primary stream under a fresh handle (Connect/Register dial the primary as part of the relay greeting).
+    - "`go build ./...` and `go vet ./...` clean; no api.go changes yet."
+    context: Bridge work for T34c.3b/c. Pure addition — does not touch api.go or any existing tests. Branch t34c.3-api-fold (sits on top of #35 / t34c.2).
+    depends_on:
+    - T34c.2
+    origin: subdivision of T34c.3
+    discovered: 2026-05-20
+  T34c.3b:
+    name: pigeon.Connect rewired through cwire.Connect via the GoTransport adapter
+    status: identified
+    value: 0.0
+    cost: 0.0
+    acceptance:
+    - api.go's Connect function dials the relay (Go-side, unchanged), wraps the *transport in a goTransportAdapter, and hands off to cwire.Connect with the primary stream adopted.
+    - The returned pigeon.Session backs its activation-mode AEAD + demux by the *cwire.Session under the hood, but preserves the public Session/Stream/Datagram surface (OpenStream/AcceptStream/Datagram/Recv/Send) so e2e tests still compile.
+    - The runClientActivation Go-native path is no longer reachable from Connect (the C side runs activation via pigeon_connect_on_transport).
+    - e2e_test.go's TestE2ESingleClientChat and TestE2EMultiStreamMultiDatagram client paths still pass against a real Go relay.
+    context: First half of the fold. Backend side (Register/Listener) still uses native Go path until T34c.3c.
+    depends_on:
+    - T34c.3a
+    origin: subdivision of T34c.3
+    discovered: 2026-05-20
+  T34c.3c:
+    name: pigeon.Register / Listener rewired through cwire.NewListener via the GoTransport adapter
+    status: identified
+    value: 0.0
+    cost: 0.0
+    acceptance:
+    - api.go's Register dials the relay (Go-side, unchanged), wraps the *transport in a goTransportAdapter, and hands off to cwire.NewListener with the pairing-resolver callback mapped to args.Pairing.
+    - pigeon.Listener's Accept returns sessions backed by *cwire.Session; sub-stream / datagram demux lives entirely on the C side.
+    - runBackendActivation Go-native path is no longer reachable from Register.
+    - e2e_test.go (all four tests including TestE2EMultiClient) pass against a real Go relay.
+    context: Second half of the fold. Once this lands, executor.go / activation.go / session_machine.go are unreferenced and can be deleted in T34c.3d.
+    depends_on:
+    - T34c.3b
+    origin: subdivision of T34c.3
+    discovered: 2026-05-20
+  T34c.3d:
+    name: Delete native Go session-machine / activation / demux files and retire T34
+    status: identified
+    value: 0.0
+    cost: 0.0
+    acceptance:
+    - executor.go, activation.go, session_machine.go, path.go, fragment.go, pairing/pairing.go deleted.
+    - protocol/session.yaml's Go-side codegen either removed or made a no-op (the C side via session_gen.c is now canonical).
+    - "`make bullseye` green; examples/echo and examples/demo still build and run."
+    - bullseye.yaml retires T34c.2 (achieved by #35 merge), T34c.3a/b/c, T34c.3, and T34 itself.
+    context: The final clean-up pass. Branches off T34c.3c's branch; opens once the parent PR has merged.
+    depends_on:
+    - T34c.3c
+    origin: subdivision of T34c.3
+    discovered: 2026-05-20
   T35:
     name: 'Kotlin JNI: Android NDK build matrix (arm64-v8a + x86_64) with vendored libsodium AAR'
     status: identified
