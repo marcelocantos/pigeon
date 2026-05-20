@@ -840,6 +840,22 @@ func (s *Stream) Name() string { return s.name }
 // Close closes the underlying QUIC stream.
 func (s *Stream) Close() error { return s.rwc.Close() }
 
+// UnderlyingPairingRWC returns the raw bidirectional byte pipe behind a
+// pairing-mode stream (one where the Session has no AEAD channel yet,
+// because the pairing ceremony itself is what derives the channel). The
+// pairing package uses this to hand the stream to libpigeon's
+// pigeon_pair_acceptor / pigeon_pair_initiator via a single-stream
+// cwire.GoTransport adapter.
+//
+// Returns nil if the stream is in activation-mode (s.channel != nil), so
+// callers can't accidentally bypass AEAD on a live session.
+func (s *Stream) UnderlyingPairingRWC() io.ReadWriteCloser {
+	if s.channel != nil {
+		return nil
+	}
+	return s.rwc
+}
+
 // Datagram is an unreliable, unordered message channel keyed by a
 // pre-agreed varint channel ID.
 type Datagram struct {

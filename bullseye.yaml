@@ -1105,18 +1105,22 @@ targets:
     achieved: 2026-05-20
   T34f:
     name: pigeon/pairing package reimplemented as a cwire wrapper around pigeon_pair_acceptor / pigeon_pair_initiator
-    status: identified
+    status: achieved
     value: 0.0
     cost: 0.0
     acceptance:
-    - pairing/pairing.go's runAcceptor / runInitiator delegate to cwire.RunAcceptor / cwire.RunInitiator; the Go-side pairing FSM driver and its dependencies on protocol/pairing.yaml's Go output go away (the C side is canonical).
+    - pairing/pairing.go's runAcceptor / runInitiator delegate to cwire.RunAcceptor / cwire.RunInitiator; the Go-side pairing FSM driver and its dependencies on protocol/pairing.yaml's Go output go away from this package (the C side is canonical for the wire driver).
     - examples/echo/backend/pair.go and examples/demo/main.go continue to compile and run unchanged from the consumer's perspective.
     - pairing/pairing_test.go still passes (or is updated to drive the cwire-backed implementation directly).
-    context: Final piece of the libpigeon migration. Carved from T34's acceptance during T34c.3 retirement so the architectural pivot (activation / wire protocol in libpigeon) could retire without holding it hostage to a pairing-package refactor. T34b.1 + T34b.2 already shipped the cwire-side pairing driver primitives; this target wires them into the public pairing-package API.
+    context: |-
+      Final piece of the libpigeon migration. runAcceptorOnStream / runInitiatorOnStream now hand the already-opened pigeon.Stream to libpigeon's pigeon_pair_acceptor / pigeon_pair_initiator via cwire.RunAcceptor / cwire.RunInitiator (a single-stream cwire.GoTransport adapter wraps the stream's underlying rwc). The Go-side pairingMessage / msg* constants / acceptorStep / acceptorRecv / initiatorStep / initiatorRecv / exchangeConfirm machinery and the per-ceremony PairingCeremonyProtocol*Machine driving is deleted (~300 lines).
+
+      pairing/pairingceremony_gen.go (591 lines of generated state-machine code) stays put — it's still consumed by cwire/pairing_test.go's FSM-equivalence tests (cwire-side C FSM ↔ Go-side reference FSM). That test discipline survives the data-path migration.
     depends_on:
     - T34c.3
     origin: carved from T34 acceptance during retirement (2026-05-20)
     discovered: 2026-05-20
+    achieved: 2026-05-20
   T35:
     name: 'Kotlin JNI: Android NDK build matrix (arm64-v8a + x86_64) with vendored libsodium AAR'
     status: identified

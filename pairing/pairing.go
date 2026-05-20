@@ -42,11 +42,13 @@ import (
 	"crypto/tls"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"sync"
 
 	"github.com/marcelocantos/pigeon"
 	"github.com/marcelocantos/pigeon/crypto"
+	"github.com/marcelocantos/pigeon/cwire"
 )
 
 // Args configures the acceptor side of pairing.
@@ -194,20 +196,6 @@ type tokenPayload struct {
 	AcceptorInstance string `json:"acceptor_instance"`
 }
 
-// pairingMessage flows over the relay session during the ceremony.
-type pairingMessage struct {
-	Kind        string `json:"kind"`
-	EphPub      []byte `json:"eph_pub,omitempty"`
-	IdentityPub []byte `json:"identity_pub,omitempty"`
-	InstanceID  string `json:"instance_id,omitempty"`
-}
-
-const (
-	msgHello   = "hello"
-	msgWelcome = "welcome"
-	msgConfirm = "confirm"
-)
-
 // Ceremony is a single in-flight pairing exchange.
 //
 // Always defer Close. Pre-Confirm Close cancels (peer sees abort);
@@ -349,93 +337,49 @@ func runAcceptor(ctx context.Context, listener *pigeon.Listener, eph *ecdh.Priva
 	runAcceptorOnStream(ctx, stream, eph, identity, relayURL, cer)
 }
 
-// runAcceptorOnStream is the original ceremony driver, parameterised
-// over a *pigeon.Stream rather than the legacy *pigeon.Conn primary.
+// runAcceptorOnStream drives the acceptor side of the ceremony through
+// libpigeon's pigeon_pair_acceptor via cwire.RunAcceptor. The wire
+// exchange (hello / welcome / confirm) runs in C; the Go side wraps the
+// already-opened pigeon.Stream as a single-stream GoTransport, supplies
+// the ephemeral / identity material, and translates the cwire callback
+// into the Ceremony's Code() / Confirm() rendezvous.
 func runAcceptorOnStream(ctx context.Context, stream *pigeon.Stream, eph *ecdh.PrivateKey, identity crypto.Identity, relayURL string, cer *Ceremony) {
-	m := NewPairingCeremonyProtocolAcceptorMachine()
-
-	// Setup-phase actions are no-ops: the orchestration above already
-	// generated ephemeral keys and registered with the relay before
-	// runAcceptor was invoked. The machine still sequences through the
-	// states so a runtime audit confirms the protocol shape.
-	m.Actions[PairingCeremonyProtocolActionGenEphemeral] = func() error { return nil }
-	m.Actions[PairingCeremonyProtocolActionRegisterRelay] = func() error { return nil }
-	m.Actions[PairingCeremonyProtocolActionEmitToken] = func() error { return nil }
-	m.Actions[PairingCeremonyProtocolActionDeriveCode] = func() error { return nil }
-	m.Actions[PairingCeremonyProtocolActionStoreRecord] = func() error { return nil }
-
-	if err := acceptorStep(m, PairingCeremonyProtocolEventPairBegin); err != nil {
-		cer.deliverResult(nil, err)
+	rwc := stream.UnderlyingPairingRWC()
+	if rwc == nil {
+		cer.deliverResult(nil, errors.New("acceptor: stream not in pairing mode"))
 		return
 	}
-	if err := acceptorStep(m, PairingCeremonyProtocolEventEphemeralReady); err != nil {
-		cer.deliverResult(nil, err)
-		return
-	}
-	if err := acceptorStep(m, PairingCeremonyProtocolEventRelayRegistered); err != nil {
-		cer.deliverResult(nil, err)
-		return
-	}
+	ref := cwire.NewGoTransportRef(&singleStreamTransport{rwc: rwc})
+	defer ref.Close()
 
-	// Read hello.
-	raw, err := stream.Recv(ctx)
+	rec, _, err := cwire.RunAcceptor(&cwire.RunAcceptorArgs{
+		Ref:          ref,
+		LocalEphPriv: eph.Bytes(),
+		LocalEphPub:  eph.PublicKey().Bytes(),
+		IdentityPub:  identity.PublicKey(),
+		InstanceID:   identity.InstanceID(),
+		ConfirmFn: func(code string) bool {
+			cer.signalCode(code, nil)
+			select {
+			case <-cer.confirmCh:
+				return true
+			case <-ctx.Done():
+				return false
+			}
+		},
+	})
 	if err != nil {
-		cer.deliverResult(nil, fmt.Errorf("recv hello: %w", err))
-		return
-	}
-	var hello pairingMessage
-	if err := json.Unmarshal(raw, &hello); err != nil || hello.Kind != msgHello {
-		cer.deliverResult(nil, fmt.Errorf("bad hello: %v", err))
-		return
-	}
-	if err := acceptorRecv(m, PairingCeremonyProtocolMsgHello); err != nil {
-		cer.deliverResult(nil, err)
-		return
-	}
-	initEphPub, err := ecdh.X25519().NewPublicKey(hello.EphPub)
-	if err != nil {
-		cer.deliverResult(nil, fmt.Errorf("parse initiator eph: %w", err))
+		cer.deliverResult(nil, fmt.Errorf("acceptor: %w", err))
 		return
 	}
 
-	if err := acceptorStep(m, PairingCeremonyProtocolEventCodeReady); err != nil {
-		cer.deliverResult(nil, err)
-		return
-	}
-
-	// Send welcome.
-	welcome := pairingMessage{
-		Kind:        msgWelcome,
-		EphPub:      eph.PublicKey().Bytes(),
-		IdentityPub: identity.PublicKey(),
-		InstanceID:  identity.InstanceID(),
-	}
-	welcomeBytes, _ := json.Marshal(welcome)
-	if err := stream.Send(welcomeBytes); err != nil {
-		cer.deliverResult(nil, fmt.Errorf("send welcome: %w", err))
-		return
-	}
-
-	// Compute confirmation code.
-	code, err := crypto.DeriveConfirmationCode(eph.PublicKey(), initEphPub)
-	if err != nil {
-		cer.deliverResult(nil, fmt.Errorf("derive code: %w", err))
-		return
-	}
-	cer.signalCode(code, nil)
-
-	if err := exchangeConfirm(ctx, stream, cer, m, true); err != nil {
-		cer.deliverResult(nil, err)
-		return
-	}
-
-	rec := crypto.NewPairingRecord(
-		hello.InstanceID,
-		relayURL,
-		&crypto.KeyPair{Private: eph, Public: eph.PublicKey()},
-		initEphPub,
-	)
-	cer.deliverResult(rec, nil)
+	cer.deliverResult(&crypto.PairingRecord{
+		PeerInstanceID:  rec.PeerInstanceID,
+		RelayURL:        relayURL,
+		LocalPrivateKey: rec.LocalPrivKey,
+		LocalPublicKey:  rec.LocalPubKey,
+		PeerPublicKey:   rec.PeerPubKey,
+	}, nil)
 }
 
 // runInitiator drives the initiator side via the generated executor.
@@ -449,217 +393,46 @@ func runInitiator(ctx context.Context, sess *pigeon.Session, eph *ecdh.PrivateKe
 	runInitiatorOnStream(ctx, stream, eph, identity, payload, cer)
 }
 
-// runInitiatorOnStream is the original ceremony driver, parameterised
-// over a *pigeon.Stream rather than the legacy *pigeon.Conn primary.
+// runInitiatorOnStream drives the initiator side of the ceremony
+// through libpigeon's pigeon_pair_initiator via cwire.RunInitiator,
+// mirroring runAcceptorOnStream.
 func runInitiatorOnStream(ctx context.Context, stream *pigeon.Stream, eph *ecdh.PrivateKey, identity crypto.Identity, payload *tokenPayload, cer *Ceremony) {
-	m := NewPairingCeremonyProtocolInitiatorMachine()
-
-	m.Actions[PairingCeremonyProtocolActionDecodeToken] = func() error { return nil }
-	m.Actions[PairingCeremonyProtocolActionGenEphemeral] = func() error { return nil }
-	m.Actions[PairingCeremonyProtocolActionDialRelay] = func() error { return nil }
-	m.Actions[PairingCeremonyProtocolActionDeriveCode] = func() error { return nil }
-	m.Actions[PairingCeremonyProtocolActionStoreRecord] = func() error { return nil }
-
-	if err := initiatorStep(m, PairingCeremonyProtocolEventTokenReceived); err != nil {
-		cer.deliverResult(nil, err)
+	rwc := stream.UnderlyingPairingRWC()
+	if rwc == nil {
+		cer.deliverResult(nil, errors.New("initiator: stream not in pairing mode"))
 		return
 	}
-	if err := initiatorStep(m, PairingCeremonyProtocolEventTokenDecoded); err != nil {
-		cer.deliverResult(nil, err)
-		return
-	}
-	if err := initiatorStep(m, PairingCeremonyProtocolEventEphemeralReady); err != nil {
-		cer.deliverResult(nil, err)
-		return
-	}
-	if err := initiatorStep(m, PairingCeremonyProtocolEventRelayConnected); err != nil {
-		cer.deliverResult(nil, err)
-		return
-	}
+	ref := cwire.NewGoTransportRef(&singleStreamTransport{rwc: rwc})
+	defer ref.Close()
 
-	// Send hello.
-	hello := pairingMessage{
-		Kind:        msgHello,
-		EphPub:      eph.PublicKey().Bytes(),
-		IdentityPub: identity.PublicKey(),
-		InstanceID:  identity.InstanceID(),
-	}
-	helloBytes, _ := json.Marshal(hello)
-	if err := stream.Send(helloBytes); err != nil {
-		cer.deliverResult(nil, fmt.Errorf("send hello: %w", err))
-		return
-	}
-
-	// Read welcome.
-	raw, err := stream.Recv(ctx)
-	if err != nil {
-		cer.deliverResult(nil, fmt.Errorf("recv welcome: %w", err))
-		return
-	}
-	var welcome pairingMessage
-	if err := json.Unmarshal(raw, &welcome); err != nil || welcome.Kind != msgWelcome {
-		cer.deliverResult(nil, fmt.Errorf("bad welcome"))
-		return
-	}
-	if err := initiatorRecv(m, PairingCeremonyProtocolMsgWelcome); err != nil {
-		cer.deliverResult(nil, err)
-		return
-	}
-	accEphPub, err := ecdh.X25519().NewPublicKey(welcome.EphPub)
-	if err != nil {
-		cer.deliverResult(nil, fmt.Errorf("parse acc eph: %w", err))
-		return
-	}
-
-	if err := initiatorStep(m, PairingCeremonyProtocolEventCodeReady); err != nil {
-		cer.deliverResult(nil, err)
-		return
-	}
-
-	code, err := crypto.DeriveConfirmationCode(accEphPub, eph.PublicKey())
-	if err != nil {
-		cer.deliverResult(nil, fmt.Errorf("derive code: %w", err))
-		return
-	}
-	cer.signalCode(code, nil)
-
-	if err := exchangeConfirm(ctx, stream, cer, m, false); err != nil {
-		cer.deliverResult(nil, err)
-		return
-	}
-
-	rec := crypto.NewPairingRecord(
-		welcome.InstanceID,
-		payload.Relay,
-		&crypto.KeyPair{Private: eph, Public: eph.PublicKey()},
-		accEphPub,
-	)
-	cer.deliverResult(rec, nil)
-}
-
-// acceptorStep drives the acceptor's machine through one internal
-// event and returns an error if the spec doesn't accept the transition
-// from the current state. Acts as a runtime audit that the YAML and
-// the calling order in pairing.go agree.
-func acceptorStep(m *PairingCeremonyProtocolAcceptorMachine, ev EventID) error {
-	ok, err := m.Step(ev)
-	if err != nil {
-		return fmt.Errorf("acceptor step %s: %w", ev, err)
-	}
-	if !ok {
-		return fmt.Errorf("acceptor: spec rejected event %s in state %s", ev, m.State)
-	}
-	return nil
-}
-
-// acceptorRecv dispatches an inbound wire message through the machine.
-func acceptorRecv(m *PairingCeremonyProtocolAcceptorMachine, msg MsgType) error {
-	ok, err := m.HandleMessage(msg)
-	if err != nil {
-		return fmt.Errorf("acceptor recv %s: %w", msg, err)
-	}
-	if !ok {
-		return fmt.Errorf("acceptor: spec rejected message %s in state %s", msg, m.State)
-	}
-	return nil
-}
-
-func initiatorStep(m *PairingCeremonyProtocolInitiatorMachine, ev EventID) error {
-	ok, err := m.Step(ev)
-	if err != nil {
-		return fmt.Errorf("initiator step %s: %w", ev, err)
-	}
-	if !ok {
-		return fmt.Errorf("initiator: spec rejected event %s in state %s", ev, m.State)
-	}
-	return nil
-}
-
-func initiatorRecv(m *PairingCeremonyProtocolInitiatorMachine, msg MsgType) error {
-	ok, err := m.HandleMessage(msg)
-	if err != nil {
-		return fmt.Errorf("initiator recv %s: %w", msg, err)
-	}
-	if !ok {
-		return fmt.Errorf("initiator: spec rejected message %s in state %s", msg, m.State)
-	}
-	return nil
-}
-
-// exchangeConfirm runs the user-confirmation handshake under the
-// generated machine: wait for local user confirm, send a `confirm`
-// wire message, await the peer's `confirm`, dispatch through the
-// machine. `acceptor` selects which actor's machine drives transitions.
-//
-// The wire message kind is the literal string "confirm" in both
-// directions; the machine side uses two distinct MsgType constants
-// (ConfirmToInitiator and ConfirmToAcceptor) so the FSM can tell
-// where the message is going. The caller passes whichever applies.
-func exchangeConfirm(ctx context.Context, stream *pigeon.Stream, cer *Ceremony, machine any, acceptor bool) error {
-	peerCh := make(chan error, 1)
-	go func() {
-		raw, err := stream.Recv(ctx)
-		if err != nil {
-			peerCh <- err
-			return
-		}
-		var msg pairingMessage
-		if err := json.Unmarshal(raw, &msg); err != nil {
-			peerCh <- fmt.Errorf("bad peer message: %w", err)
-			return
-		}
-		if msg.Kind != msgConfirm {
-			peerCh <- fmt.Errorf("unexpected peer kind: %s", msg.Kind)
-			return
-		}
-		peerCh <- nil
-	}()
-
-	select {
-	case <-cer.confirmCh:
-	case <-ctx.Done():
-		return ctx.Err()
-	}
-
-	// Drive user_confirm through the machine BEFORE sending the wire
-	// message; that way the FSM state mirrors what's been committed.
-	if acceptor {
-		am := machine.(*PairingCeremonyProtocolAcceptorMachine)
-		if err := acceptorStep(am, PairingCeremonyProtocolEventUserConfirm); err != nil {
-			return err
-		}
-	} else {
-		im := machine.(*PairingCeremonyProtocolInitiatorMachine)
-		if err := initiatorStep(im, PairingCeremonyProtocolEventUserConfirm); err != nil {
-			return err
-		}
-	}
-
-	confirmMsg := pairingMessage{Kind: msgConfirm}
-	confirmBytes, _ := json.Marshal(confirmMsg)
-	if err := stream.Send(confirmBytes); err != nil {
-		return fmt.Errorf("send confirm: %w", err)
-	}
-
-	select {
-	case err := <-peerCh:
-		if err != nil {
-			return err
-		}
-		// Dispatch peer's confirm through the machine to reach Paired.
-		if acceptor {
-			am := machine.(*PairingCeremonyProtocolAcceptorMachine)
-			if err := acceptorRecv(am, PairingCeremonyProtocolMsgConfirmToAcceptor); err != nil {
-				return err
+	rec, _, err := cwire.RunInitiator(&cwire.RunInitiatorArgs{
+		Ref:          ref,
+		LocalEphPriv: eph.Bytes(),
+		LocalEphPub:  eph.PublicKey().Bytes(),
+		IdentityPub:  identity.PublicKey(),
+		InstanceID:   identity.InstanceID(),
+		AccEphPub:    payload.AcceptorEphPub,
+		AccInstance:  payload.AcceptorInstance,
+		ConfirmFn: func(code string) bool {
+			cer.signalCode(code, nil)
+			select {
+			case <-cer.confirmCh:
+				return true
+			case <-ctx.Done():
+				return false
 			}
-		} else {
-			im := machine.(*PairingCeremonyProtocolInitiatorMachine)
-			if err := initiatorRecv(im, PairingCeremonyProtocolMsgConfirmToInitiator); err != nil {
-				return err
-			}
-		}
-		return nil
-	case <-ctx.Done():
-		return ctx.Err()
+		},
+	})
+	if err != nil {
+		cer.deliverResult(nil, fmt.Errorf("initiator: %w", err))
+		return
 	}
+
+	cer.deliverResult(&crypto.PairingRecord{
+		PeerInstanceID:  rec.PeerInstanceID,
+		RelayURL:        payload.Relay,
+		LocalPrivateKey: rec.LocalPrivKey,
+		LocalPublicKey:  rec.LocalPubKey,
+		PeerPublicKey:   rec.PeerPubKey,
+	}, nil)
 }
