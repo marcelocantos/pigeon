@@ -100,3 +100,8 @@ int cwire_confirm_trampoline(void *udata, const char *code)
 {
     return cwireGoConfirm(udata, code);
 }
+
+// cwire_resolve_trampoline (pigeon_resolve_device_fn bridge) lives in
+// cwire_listener.c — both the C trampoline and the //export'd Go side
+// (cwireGoResolve in listener.go) are owned by the Listener slice; the
+// Connect-side RunBackendActivation helper reuses the same bridge.

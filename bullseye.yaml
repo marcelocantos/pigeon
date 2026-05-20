@@ -987,6 +987,36 @@ targets:
     origin: subdivision of T34c
     discovered: 2026-04-30
     achieved: 2026-04-30
+  T34c.2:
+    name: cwire wrappers for pigeon_connect_on_transport and pigeon_listener_* (Go-driven transport path)
+    status: identified
+    value: 0.0
+    cost: 0.0
+    acceptance:
+    - cwire/connect.go exposes a Go-friendly cwire.Connect entry point that wraps pigeon_connect_on_transport, taking a GoTransport (T34c.1), a peer instance ID, an optional device ID, a PairingRecord, and a datagram-channel definition, and returns a *cwire.Session ready for stream/datagram I/O.
+    - cwire/listener.go exposes a cwire.Listener type wrapping pigeon_listener_init / pigeon_listener_accept / pigeon_listener_step / pigeon_listener_close, with a Go callback bridge for pigeon_resolve_device_fn (opaque-pointer registry, same shape as cwire_go_udata).
+    - Round-trip tests prove both wrappers work against a paired in-memory GoTransport (Connect side opens streams to Listener side; Listener side accepts and pumps demux).
+    - api.go is NOT yet refactored to use the new cwire pieces — that's deferred to T34c.3 to keep the wrapper-introduction PR self-contained.
+    context: Builds directly on T34c.1's GoTransport bridge. The two wrappers are independent (Connect needs no callback bridge; Listener needs the resolver callback) and can be developed in parallel by separate agents in worktrees, then assembled into one PR.
+    depends_on:
+    - T34c.1
+    origin: subdivision of T34c
+    discovered: 2026-05-19
+  T34c.3:
+    name: Fold pigeon.Register / Connect / Listener / Session / Stream / Datagram in api.go onto cwire wrappers
+    status: identified
+    value: 0.0
+    cost: 0.0
+    acceptance:
+    - api.go's public Register, Connect, Listener, Session, Stream, Datagram surface is reimplemented as thin shims over cwire.Listener / cwire.Connect / cwire.Session / cwire.Stream / cwire.Datagram.
+    - executor.go, activation.go, path.go, transport.go (the native Go session-machine and Go-side QUIC plumbing) are deleted once api.go no longer references them; the relay (cmd/pigeon) is unaffected.
+    - e2e_test.go and pairing/pairing_test.go pass against the cgo-wrapped surface.
+    - examples/echo and examples/demo build and run unchanged from the user's perspective.
+    context: The big fold. Lives in its own PR after T34c.2 ships the cwire wrappers needed to do this without touching libpigeon. T34d (delete native Go peer files) collapses into this target — once api.go is folded, the deletions follow in the same diff.
+    depends_on:
+    - T34c.2
+    origin: subdivision of T34c
+    discovered: 2026-05-19
   T35:
     name: 'Kotlin JNI: Android NDK build matrix (arm64-v8a + x86_64) with vendored libsodium AAR'
     status: identified
