@@ -86,6 +86,49 @@ func NewChannel(sendKey, recvKey []byte, mode string) (*Channel, error) {
 	return ch, nil
 }
 
+// Encrypt AEAD-seals plaintext and returns [8-byte seq LE][ciphertext+tag].
+// Mirrors crypto.Channel.Encrypt's wire format so the two are interchangeable
+// over an existing session.
+func (ch *Channel) Encrypt(plaintext []byte) ([]byte, error) {
+	if ch == nil || ch.c == nil {
+		return nil, errors.New("cwire: Channel.Encrypt: nil channel")
+	}
+	// Output is 8 bytes of seq + plaintext + 16-byte GCM tag.
+	out := make([]byte, 8+len(plaintext)+16)
+	var pPtr *C.uint8_t
+	if len(plaintext) > 0 {
+		pPtr = (*C.uint8_t)(unsafe.Pointer(&plaintext[0]))
+	}
+	n := C.pigeon_channel_encrypt(ch.c,
+		pPtr, C.size_t(len(plaintext)),
+		(*C.uint8_t)(unsafe.Pointer(&out[0])), C.size_t(len(out)))
+	if n < 0 {
+		return nil, errors.New("cwire: pigeon_channel_encrypt failed")
+	}
+	return out[:n], nil
+}
+
+// Decrypt AEAD-opens [8-byte seq LE][ciphertext+tag] and returns the plaintext.
+// Sequence-number checking respects the mode the Channel was constructed with
+// (strict for streams, gap-tolerant for datagrams).
+func (ch *Channel) Decrypt(data []byte) ([]byte, error) {
+	if ch == nil || ch.c == nil {
+		return nil, errors.New("cwire: Channel.Decrypt: nil channel")
+	}
+	if len(data) < 8+16 {
+		return nil, errors.New("cwire: Channel.Decrypt: input too short")
+	}
+	// Plaintext is at most len(data) - 8 (seq) - 16 (tag) bytes.
+	out := make([]byte, len(data))
+	n := C.pigeon_channel_decrypt(ch.c,
+		(*C.uint8_t)(unsafe.Pointer(&data[0])), C.size_t(len(data)),
+		(*C.uint8_t)(unsafe.Pointer(&out[0])), C.size_t(len(out)))
+	if n < 0 {
+		return nil, errors.New("cwire: pigeon_channel_decrypt failed")
+	}
+	return out[:n], nil
+}
+
 // Session wraps a pigeon_session. Stream + datagram I/O routes through
 // the underlying transport (here: a Loopback) and the AEAD channel.
 //

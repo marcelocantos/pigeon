@@ -259,7 +259,7 @@ func (l *Listener) acceptLoop() {
 // ceremony to use directly. See docs/DESIGN.md §3 L2.
 func (l *Listener) acceptPrimary(tag uint32, stream io.ReadWriteCloser) {
 	var (
-		channel      *crypto.Channel
+		channel      *cwire.Channel
 		deviceID     string
 		cwirePrimary unsafe.Pointer
 		rec          *crypto.PairingRecord
@@ -306,7 +306,7 @@ func (l *Listener) acceptPrimary(tag uint32, stream io.ReadWriteCloser) {
 			l.accepted <- acceptResult{err: errors.New("activation succeeded but no record captured")}
 			return
 		}
-		channel, err = rec.DeriveChannel([]byte("backend->client"), []byte("client->backend"))
+		channel, err = cwire.DeriveSessionChannel(pairingRecordToCwire(rec), true)
 		if err != nil {
 			removeStream(cwirePrimary)
 			_ = stream.Close()
@@ -422,7 +422,7 @@ func Connect(ctx context.Context, args *ConnectArgs) (*Session, error) {
 	}
 
 	var (
-		channel      *crypto.Channel
+		channel      *cwire.Channel
 		cwireRef     *cwire.GoTransportRef
 		cwirePrimary unsafe.Pointer
 	)
@@ -440,7 +440,7 @@ func Connect(ctx context.Context, args *ConnectArgs) (*Session, error) {
 			_ = tr.Close()
 			return nil, fmt.Errorf("client activation: %w", err)
 		}
-		channel, err = args.Record.DeriveChannel([]byte("client->backend"), []byte("backend->client"))
+		channel, err = cwire.DeriveSessionChannel(pairingRecordToCwire(args.Record), false)
 		if err != nil {
 			removeStream(cwirePrimary)
 			cwireRef.Close()
@@ -485,7 +485,7 @@ type Session struct {
 	cancel context.CancelFunc
 
 	transport     *transport
-	channel       *crypto.Channel
+	channel       *cwire.Channel
 	peerID        string
 	clientTag     uint32 // 0 on client side; relay-assigned on backend side
 	isBackend     bool
@@ -518,7 +518,7 @@ type Session struct {
 	closeOnce sync.Once
 }
 
-func newSession(ctx context.Context, tr *transport, channel *crypto.Channel, peerID string, tag uint32, dgConfig map[string]uint64, isBackend bool) *Session {
+func newSession(ctx context.Context, tr *transport, channel *cwire.Channel, peerID string, tag uint32, dgConfig map[string]uint64, isBackend bool) *Session {
 	sCtx, cancel := context.WithCancel(ctx)
 	s := &Session{
 		ctx:             sCtx,
@@ -780,7 +780,7 @@ func (s *Session) Close() error {
 type Stream struct {
 	name    string
 	rwc     io.ReadWriteCloser
-	channel *crypto.Channel
+	channel *cwire.Channel
 
 	sendMu sync.Mutex
 }
@@ -794,7 +794,11 @@ type Stream struct {
 func (s *Stream) Send(msg []byte) error {
 	payload := msg
 	if s.channel != nil {
-		payload = s.channel.Encrypt(msg)
+		ct, err := s.channel.Encrypt(msg)
+		if err != nil {
+			return fmt.Errorf("stream: encrypt: %w", err)
+		}
+		payload = ct
 	}
 	s.sendMu.Lock()
 	defer s.sendMu.Unlock()
@@ -850,7 +854,10 @@ type Datagram struct {
 // clientTag prefix is added by the Session for relay routing.
 func (d *Datagram) Send(payload []byte) error {
 	plain := EncodeDatagramPlaintext(d.id, payload)
-	ct := d.session.channel.Encrypt(plain)
+	ct, err := d.session.channel.Encrypt(plain)
+	if err != nil {
+		return fmt.Errorf("datagram: encrypt: %w", err)
+	}
 	if d.session.isBackend {
 		framed := make([]byte, 4+len(ct))
 		binary.BigEndian.PutUint32(framed[:4], d.session.clientTag)
