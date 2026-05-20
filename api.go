@@ -495,15 +495,10 @@ type Session struct {
 
 	primary io.ReadWriteCloser
 
-	// machine is the post-activation SessionMachine for this session.
-	// Set only on backend-side sessions (T34c.3c will rewire those too);
-	// nil on client-side sessions whose activation now runs in libpigeon
-	// via cwireRef + cwirePrimary below (T34c.3b).
-	machine *sessionMachine
-
 	// cwireRef pins the goTransportAdapter against the cgo handle table
 	// for the lifetime of the session. Owned by client-side sessions
-	// (activation mode); nil on pairing-mode and backend-side sessions.
+	// (activation mode); nil on pairing-mode sessions and on backend-side
+	// sessions (the Listener owns the backend ref).
 	cwireRef *cwire.GoTransportRef
 
 	// cwirePrimary is the opaque stream handle adopted by the adapter
@@ -758,11 +753,6 @@ func (s *Session) clientDatagramLoop() {
 // defined post-close state.
 func (s *Session) Close() error {
 	s.closeOnce.Do(func() {
-		if s.machine != nil {
-			if err := s.machine.disconnect(); err != nil {
-				slog.Debug("session: disconnect transition", "peer", s.peerID, "err", err)
-			}
-		}
 		s.cancel()
 		if s.primary != nil {
 			_ = s.primary.Close()
