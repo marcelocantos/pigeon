@@ -75,6 +75,11 @@ type Listener struct {
 	transport  *transport
 	instanceID string
 
+	// cwireRef pins the goTransportAdapter wrapping l.transport for the
+	// lifetime of the Listener. Set only in activation mode (args.Pairing
+	// != nil); nil in pairing mode where no backend activation runs.
+	cwireRef *cwire.GoTransportRef
+
 	ctx    context.Context
 	cancel context.CancelFunc
 
@@ -154,6 +159,13 @@ func Register(ctx context.Context, args *RegisterArgs) (*Listener, string, error
 		sessions:   make(map[uint32]*Session),
 		accepted:   make(chan acceptResult, 8),
 	}
+	if !pairingMode {
+		// One adapter + ref for the whole Listener; acceptPrimary adopts
+		// each new client primary stream against this ref before handing
+		// it to cwire.RunBackendActivation.
+		adapter := newGoTransportAdapter(lctx, tr)
+		l.cwireRef = cwire.NewGoTransportRef(adapter)
+	}
 	go l.acceptLoop()
 	go l.datagramLoop()
 	return l, tr.instanceID, nil
@@ -182,6 +194,10 @@ func (l *Listener) Close() error {
 	l.closeOnce.Do(func() {
 		l.cancel()
 		_ = l.transport.Close()
+		if l.cwireRef != nil {
+			l.cwireRef.Close()
+			l.cwireRef = nil
+		}
 	})
 	return nil
 }
@@ -243,37 +259,65 @@ func (l *Listener) acceptLoop() {
 // ceremony to use directly. See docs/DESIGN.md §3 L2.
 func (l *Listener) acceptPrimary(tag uint32, stream io.ReadWriteCloser) {
 	var (
-		machine  *sessionMachine
-		channel  *crypto.Channel
-		deviceID string
+		channel      *crypto.Channel
+		deviceID     string
+		cwirePrimary unsafe.Pointer
+		rec          *crypto.PairingRecord
 	)
 	if l.args.Pairing != nil {
-		rawMachine, did, rec, err := runBackendActivation(stream, l.args.Pairing)
+		// Activation runs in libpigeon via cwire — the auth_request /
+		// auth_ok wire exchange uses the persistent cwireRef adapter and
+		// a per-stream handle adopted from this primary. The Go-side
+		// runBackendActivation + sessionMachine plumbing is gone from
+		// this path (T34c.3c).
+		cwirePrimary = registerStream(stream)
+		// Translate the public Pairing func ([id] → *crypto.PairingRecord, error)
+		// to the cwire resolver shape ([id] → *cwire.PairingRecord, bool) and
+		// capture the matched *crypto.PairingRecord for Go-side channel
+		// derivation below.
+		result, err := cwire.RunBackendActivation(&cwire.RunBackendActivationArgs{
+			Ref:    l.cwireRef,
+			Stream: cwirePrimary,
+			ResolveFn: func(deviceID string) (*cwire.PairingRecord, bool) {
+				r, err := l.args.Pairing(deviceID)
+				if err != nil || r == nil {
+					return nil, false
+				}
+				rec = r
+				return pairingRecordToCwire(r), true
+			},
+		})
 		if err != nil {
 			slog.Warn("listener: activation", "err", err)
+			removeStream(cwirePrimary)
 			_ = stream.Close()
-			if did != "" {
-				l.accepted <- acceptResult{err: err}
-			}
+			l.accepted <- acceptResult{err: err}
 			return
 		}
-		machine, err = newBackendSessionMachine(rawMachine)
-		if err != nil {
+		if !result.Accepted {
+			removeStream(cwirePrimary)
 			_ = stream.Close()
-			l.accepted <- acceptResult{err: fmt.Errorf("post-activation transition: %w", err)}
+			l.accepted <- acceptResult{err: fmt.Errorf("activation rejected device %q", result.DeviceID)}
+			return
+		}
+		if rec == nil {
+			removeStream(cwirePrimary)
+			_ = stream.Close()
+			l.accepted <- acceptResult{err: errors.New("activation succeeded but no record captured")}
 			return
 		}
 		channel, err = rec.DeriveChannel([]byte("backend->client"), []byte("client->backend"))
 		if err != nil {
+			removeStream(cwirePrimary)
 			_ = stream.Close()
 			l.accepted <- acceptResult{err: fmt.Errorf("derive session channel: %w", err)}
 			return
 		}
-		deviceID = did
+		deviceID = result.DeviceID
 	}
 
 	sess := newSession(l.ctx, l.transport, channel, deviceID, tag, l.args.Datagrams, true)
-	sess.machine = machine
+	sess.cwirePrimary = cwirePrimary
 	sess.bindPrimary(stream)
 
 	l.mu.Lock()

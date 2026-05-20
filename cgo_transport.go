@@ -12,6 +12,7 @@ import (
 	"sync"
 	"unsafe"
 
+	"github.com/marcelocantos/pigeon/crypto"
 	"github.com/marcelocantos/pigeon/cwire"
 )
 
@@ -115,4 +116,20 @@ func (a *goTransportAdapter) RecvDatagram() ([]byte, error) {
 // the dial flow.
 func (a *goTransportAdapter) adoptPrimary(rwc io.ReadWriteCloser) unsafe.Pointer {
 	return registerStream(rwc)
+}
+
+// pairingRecordToCwire converts the pigeon-package crypto.PairingRecord
+// (used by the public RegisterArgs.Pairing / ConnectArgs.Record surface)
+// to the cwire.PairingRecord shape that libpigeon consumes. Returns nil
+// when the input is nil.
+func pairingRecordToCwire(r *crypto.PairingRecord) *cwire.PairingRecord {
+	if r == nil {
+		return nil
+	}
+	return &cwire.PairingRecord{
+		PeerInstanceID: r.PeerInstanceID,
+		LocalPrivKey:   r.LocalPrivateKey,
+		LocalPubKey:    r.LocalPublicKey,
+		PeerPubKey:     r.PeerPublicKey,
+	}
 }
