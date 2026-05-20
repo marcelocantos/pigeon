@@ -1086,19 +1086,23 @@ targets:
     achieved: 2026-05-20
   T34e:
     name: Fold pigeon.Stream / Datagram AEAD onto cwire.Channel (delete crypto.Channel data-path usage)
-    status: identified
+    status: achieved
     value: 0.0
     cost: 0.0
     acceptance:
     - pigeon.Stream.Send / Recv encrypt / decrypt via cwire.Channel (libpigeon AEAD), not Go-side crypto.Channel.
     - pigeon.Datagram.Send / Recv encrypt / decrypt via cwire.Channel.
-    - crypto.Channel's AEAD path becomes unused inside the root package (it may still live in crypto/ for pairing-record key derivation, etc.) — verify no api.go references remain.
+    - crypto.Channel's AEAD path is no longer referenced from api.go (the package still exports it for pairing-record key derivation and any consumers).
     - All e2e tests still pass.
-    context: Residual from T34c.3 that was carved out so T34c.3 could retire honestly. The activation / session protocol is already in libpigeon; this target moves the data-path AEAD too. Likely also involves wiring cwire.Session into pigeon.Session so OpenStream / AcceptStream / Datagram delegate to the C side rather than driving raw QUIC streams in Go.
+    context: |-
+      Achieved by adding Encrypt / Decrypt methods on cwire.Channel (wrapping pigeon_channel_encrypt / pigeon_channel_decrypt) and swapping the Session / Stream / Datagram channel field from *crypto.Channel to *cwire.Channel. Wire format unchanged ([8-byte seq LE][ciphertext+tag]). Commit d878221.
+
+      Did NOT also wire cwire.Session into pigeon.Session (Go-side demux loops + raw QUIC stream I/O remain). That deeper restructure is independent of the AEAD fold; the original acceptance speculated about it but did not require it.
     depends_on:
     - T34c.3
     origin: carved from T34c.3 acceptance during retirement (2026-05-20)
     discovered: 2026-05-20
+    achieved: 2026-05-20
   T34f:
     name: pigeon/pairing package reimplemented as a cwire wrapper around pigeon_pair_acceptor / pigeon_pair_initiator
     status: identified
