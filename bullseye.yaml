@@ -890,7 +890,7 @@ targets:
     achieved: 2026-05-17
   T33:
     name: 'Cross-language wire interop: Go relay ↔ C peer at full multi-channel parity (backend + client roles, all four channels)'
-    status: identified
+    status: achieved
     value: 0.0
     cost: 0.0
     acceptance:
@@ -900,13 +900,37 @@ targets:
     - 'Multi-client: two C clients connected to one Go backend (and the symmetric form) — independent traffic, no cross-talk.'
     - Test runs as part of `make bullseye`.
     context: |-
-      Once T34 lands the C peer library at parity, this is the discipline that keeps it that way. Without continuous interop tests, C and Go drift silently and the consolidation argument collapses.
+      Achieved 2026-05-21. Four mixed-mode interop tests live in
+      c/test/csdke2e/interop_mixed_test.go:
 
-      The Go relay is the wire's reference (cmd/pigeon is the only relay implementation, in Go). The C peer must speak that wire correctly to qualify as a viable replacement for the Go peer library.
+        TestInteropCBackendGoClient   — C-as-backend ↔ Go-as-client (4 channels)
+        TestInteropGoBackendCClient   — Go-as-backend ↔ C-as-client (4 channels)
+        TestInteropGoBackendTwoCClients — clientTag demux, two C clients
+        TestInteropCBackendTwoGoClients — clientTag demux, two Go clients
+
+      Both peers talk through the same in-process Go relay
+      (pigeon.NewQUICServer). The Go peer uses pigeon.Register /
+      pigeon.Connect (quic-go transport + libpigeon-via-cwire); the C
+      peer uses pigeon_register / pigeon_connect (ngtcp2 transport +
+      libpigeon direct). This is the only configuration that catches
+      drift between the two transport adapters' wire layouts.
+
+      Bullseye integration: a new `interop` step runs the csdke2e
+      package under -tags csdke2e if the vendored ngtcp2/quictls libs
+      are present (sentinel-checked), otherwise reports ok-skipped. A
+      one-time `make build-vendor-deps` enables the test on first
+      bullseye; subsequent runs use the existing static libs (no-op).
+
+      Drive-by fix: csdke2e_pigeon.c was double-including pigeon.c (also
+      compiled by cwire's cgo TU), causing duplicate-symbol link
+      failures whenever csdke2e was invoked in the post-T34 world. Now
+      only the ngtcp2-specific TUs (ngtcp2_transport.c + listener_ngtcp2.c)
+      are compiled in csdke2e; the core symbols resolve via cwire.
     depends_on:
     - T34
     origin: discovered while planning the consolidation
     discovered: 2026-04-30
+    achieved: 2026-05-21
   T34:
     name: Go peer library's session protocol runs through libpigeon (activation, FSM, demux); native Go session-machine implementation removed
     status: achieved

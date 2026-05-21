@@ -1,10 +1,9 @@
 // Copyright 2026 Marcelo Cantos
 // SPDX-License-Identifier: Apache-2.0
 //
-// Wraps the C library into the cgo build of package csdke2e:
+// Wraps the C library's ngtcp2-only pieces into the cgo build of
+// package csdke2e:
 //
-//   * dist/pigeon.c       — amalgamated core (crypto, channel,
-//                           session, listener, activation, loopback).
 //   * c/src/ngtcp2_transport.c — QUIC transport backed by vendored
 //                                ngtcp2 + quictls (linked via
 //                                cgo LDFLAGS to the static .a libs).
@@ -12,10 +11,13 @@
 //                                fused wrappers that bind the ngtcp2
 //                                transport to the high-level API.
 //
-// All three files are compiled into the cgo TU. Build tag csdke2e
-// keeps this file (and the rest of the package) out of the default
-// Go build — the vendored ngtcp2 / quictls static libs are not
-// present unless `make build-vendor-deps` has run.
+// The amalgamated core (dist/pigeon.c) is NOT compiled here — the
+// package transitively imports github.com/marcelocantos/pigeon which
+// imports cwire, and cwire's cgo build already compiles dist/pigeon.c
+// into the same test binary. Duplicating the compilation would emit
+// duplicate symbols at link time. Both .c files included below
+// reference pigeon_* symbols by linkage only; the actual definitions
+// resolve via the cwire compilation unit in the same binary.
 //
 // Cgo build only — guarded by the same csdke2e build tag as the
 // package's .go files so `go vet ./...` / `go build ./...` (which
@@ -23,7 +25,6 @@
 
 #ifdef CSDKE2E_BUILD
 
-#include "pigeon.c"
 #include "ngtcp2_transport.c"
 #include "listener_ngtcp2.c"
 
