@@ -31,6 +31,8 @@ public enum PigeonSessionError: LocalizedError {
     case nameTooLong(String)
     case channelInit
     case bufferTooSmall(Int)
+    case connectFailed(Int32)
+    case noPrimary
 
     public var errorDescription: String? {
         switch self {
@@ -56,6 +58,10 @@ public enum PigeonSessionError: LocalizedError {
             return "pigeon_channel_init_symmetric failed"
         case .bufferTooSmall(let needed):
             return "receive buffer too small (need \(needed) bytes)"
+        case .connectFailed(let rc):
+            return "pigeon_connect_on_transport failed (rc=\(rc))"
+        case .noPrimary:
+            return "session has no primary stream bound"
         }
     }
 }
@@ -207,7 +213,141 @@ public final class PigeonSession: @unchecked Sendable {
         self.transportAnchor = transport
     }
 
+    /// Pairing-mode connect factory. Creates a client-side session against
+    /// a backend reachable via the supplied transport, by running
+    /// `pigeon_connect_on_transport` with `record == nil`: this writes the
+    /// empty-name primary-stream header, skips activation, leaves the AEAD
+    /// channel unestablished (so `pigeon_stream_send/recv` on the primary
+    /// pass plaintext through `send_on_stream/recv_on_stream`), and binds
+    /// the primary handle on the session.
+    ///
+    /// Use this with an `Ngtcp2Transport` in `.connect` role pointed at a
+    /// pigeon relay. The transport must already have its primary QUIC
+    /// stream open and promoted into a multi-channel slot — pass the
+    /// handle returned by `Ngtcp2Transport.primaryHandle()`.
+    ///
+    /// The caller drives the pairing ceremony (or any other plaintext
+    /// exchange) over `PigeonSession.primaryStream()`. After the ceremony
+    /// derives a `PairingRecord`, build a fresh AEAD-enabled session via
+    /// the symmetric-key initialiser using the derived send/recv keys.
+    public static func pairingConnect(
+        transport: PigeonTransport,
+        primaryHandle: OpaquePointer,
+        peerInstanceID: String,
+        datagramChannels: [DatagramChannelDef] = []
+    ) throws -> PigeonSession {
+        if peerInstanceID.utf8.count >= 64 {
+            throw PigeonSessionError.nameTooLong(peerInstanceID)
+        }
+
+        let session = UnsafeMutablePointer<pigeon_session>.allocate(capacity: 1)
+        session.initialize(to: pigeon_session())
+
+        // Datagram channel marshalling matches the symmetric-key
+        // initialiser above — same fixed 64-byte name buffer + uint64
+        // id pairs.
+        var dgArray = [pigeon_dgchannel_def](
+            repeating: pigeon_dgchannel_def(),
+            count: max(1, datagramChannels.count)
+        )
+        for (i, d) in datagramChannels.enumerated() {
+            let bytes = Array(d.name.utf8)
+            if bytes.count >= 64 {
+                session.deinitialize(count: 1); session.deallocate()
+                throw PigeonSessionError.nameTooLong(d.name)
+            }
+            withUnsafeMutableBytes(of: &dgArray[i].name) { rawDest in
+                let dest = rawDest.bindMemory(to: UInt8.self).baseAddress!
+                bytes.withUnsafeBufferPointer { src in
+                    if let s = src.baseAddress { memcpy(dest, s, bytes.count) }
+                }
+            }
+            dgArray[i].channel_id = d.channelID
+        }
+
+        let rc: Int32 = transport.withCTransport { tPtr in
+            peerInstanceID.withCString { peerC -> Int32 in
+                dgArray.withUnsafeBufferPointer { dgBuf -> Int32 in
+                    // record = NULL → pairing mode (activation skipped,
+                    // channel left unestablished).
+                    pigeon_connect_on_transport(
+                        tPtr,
+                        primaryHandle,
+                        peerC,
+                        nil,                              // device_id (activation only)
+                        nil,                              // record    (NULL = pairing mode)
+                        datagramChannels.isEmpty ? nil : dgBuf.baseAddress,
+                        datagramChannels.count,
+                        session
+                    )
+                }
+            }
+        }
+        if rc != 0 {
+            session.deinitialize(count: 1); session.deallocate()
+            throw PigeonSessionError.connectFailed(rc)
+        }
+        return PigeonSession(
+            adoptingSessionPointer: session,
+            isBackend: false,
+            clientTag: 0,
+            transportAnchor: transport
+        )
+    }
+
+    // Internal adopt-pointer initialiser used by `pairingConnect`. The
+    // session was already wired up by pigeon_connect_on_transport (which
+    // also allocated and bound the channel through its internal
+    // `channel` field). We don't need a separate Swift-owned
+    // pigeon_channel storage in that path because the channel lives
+    // inside the session struct itself in pairing mode (unestablished
+    // but valid for pigeon_stream_send/recv to short-circuit through
+    // send_on_stream / recv_on_stream).
+    private init(
+        adoptingSessionPointer sp: UnsafeMutablePointer<pigeon_session>,
+        isBackend: Bool,
+        clientTag: UInt32,
+        transportAnchor: PigeonTransport
+    ) {
+        self.sessionPtr = sp
+        // Allocate a no-op channel storage so deinit's deallocation
+        // matches the other initialiser. The session's own channel
+        // field is owned by libpigeon (populated by
+        // pigeon_connect_on_transport); this scratch slot stays unused.
+        let ch = UnsafeMutablePointer<pigeon_channel>.allocate(capacity: 1)
+        ch.initialize(to: pigeon_channel())
+        self.channelStorage = ch
+        self.isBackend = isBackend
+        self.clientTag = clientTag
+        self.worker = BigStackWorker()
+        self.transportAnchor = transportAnchor
+    }
+
+    /// Wrap the session's primary stream as a `PigeonStream`. The primary
+    /// is bound by `pairingConnect` (and, in the C-side production path,
+    /// by `pigeon_listener_accept`). In pairing mode this is the stream
+    /// the peer uses for the unencrypted key-exchange / confirmation-code
+    /// ceremony; `PigeonStream.send/recv` pass plaintext through
+    /// `transport_send_on_stream / transport_recv_on_stream` because the
+    /// session's AEAD channel hasn't been established yet.
+    public func primaryStream() throws -> PigeonStream {
+        let streamPtr = UnsafeMutablePointer<pigeon_stream>.allocate(capacity: 1)
+        streamPtr.initialize(to: pigeon_stream())
+        let rc = pigeon_session_primary(sessionPtr, streamPtr)
+        if rc != 0 {
+            streamPtr.deinitialize(count: 1)
+            streamPtr.deallocate()
+            throw PigeonSessionError.noPrimary
+        }
+        return PigeonStream(parent: self, ptr: streamPtr, worker: worker)
+    }
+
     deinit {
+        // Free libpigeon's internal scratch buffers (lazily allocated
+        // by pigeon_stream_send/recv on first call). Idempotent —
+        // pigeon_session_close is safe to call on a session that never
+        // allocated any scratch.
+        pigeon_session_close(sessionPtr)
         sessionPtr.deinitialize(count: 1)
         sessionPtr.deallocate()
         channelStorage.deinitialize(count: 1)
