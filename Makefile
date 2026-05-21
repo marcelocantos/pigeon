@@ -3,6 +3,11 @@
 
 JDK21 ?= /opt/homebrew/Cellar/openjdk@21/21.0.11/libexec/openjdk.jdk/Contents/Home
 
+# Android SDK location for AGP (android/pigeon's AAR build).
+# Default to the standard Android Studio install path on macOS.
+ANDROID_HOME ?= $(HOME)/Library/Android/sdk
+export ANDROID_HOME
+
 .PHONY: all build test test-go test-swift test-kotlin test-web \
         e2e e2e-go e2e-swift e2e-kotlin \
         test-live bench clean \
