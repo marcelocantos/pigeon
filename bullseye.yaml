@@ -667,7 +667,7 @@ targets:
     achieved: 2026-04-30
   T25:
     name: 'Swift cross-language pairing E2E: Go acceptor ↔ Swift initiator (or vice versa) with matching confirmation codes via the regenerated PairingCeremonyMachine'
-    status: identified
+    status: achieved
     value: 0.0
     cost: 0.0
     acceptance:
@@ -688,6 +688,7 @@ targets:
     - T24
     origin: discovered while completing T24; cross-language E2E was an aspirational acceptance criterion that proved bigger than the in-scope T24 work.
     discovered: 2026-04-30
+    achieved: 2026-05-21
   T26:
     name: Swift PigeonTests::PairingCeremonyMachineTests and Kotlin PairingCeremonyMachineTest rewritten for the new acceptor/initiator actors
     status: achieved
@@ -941,7 +942,7 @@ targets:
     - The native Go session-machine implementation files (activation.go, session_machine.go, executor.go, fragment.go, path.go) are deleted — net -2566 lines.
     - examples/echo and examples/demo build and run unchanged from the user's perspective.
     - e2e_test.go passes against a real Go relay with activation running entirely in libpigeon.
-    - "The Makefile orchestrates: build-vendor-deps -> amalgamate -> libpigeon static lib -> go build (with cgo). `make demo` still works."
+    - 'The Makefile orchestrates: build-vendor-deps -> amalgamate -> libpigeon static lib -> go build (with cgo). `make demo` still works.'
     - The relay (cmd/pigeon) is unaffected — it doesn't link libpigeon.
     context: |-
       Retired 2026-05-20. The architectural pivot is done: the Go peer library's session protocol (activation, FSM, demux) runs in libpigeon via cwire; the Go-side executor / fragment / path / session-machine machinery is deleted. The fold was decomposed into T34a (Session/Stream/Datagram cgo wrap), T34b.1/b.2 (pairing FSM + driver), T34c.1 (Go-callback transport bridge), T34c.2 (cwire.Connect + Listener wrappers), and T34c.3a/b/c/d (api.go fold + native-file deletions).
@@ -1020,7 +1021,7 @@ targets:
     - cwire/listener.go exposes a cwire.Listener type wrapping pigeon_listener_init / pigeon_listener_accept / pigeon_listener_step / pigeon_listener_close, with a Go callback bridge for pigeon_resolve_device_fn (opaque-pointer registry, same shape as cwire_go_udata).
     - Round-trip tests prove both wrappers work against a paired in-memory GoTransport (Connect side opens streams to Listener side; Listener side accepts and pumps demux).
     - api.go is NOT yet refactored to use the new cwire pieces — that's deferred to T34c.3 to keep the wrapper-introduction PR self-contained.
-    context: Builds directly on T34c.1's GoTransport bridge. The two wrappers were developed in parallel by separate agents in worktrees and assembled in PR #35.
+    context: Builds directly on T34c.1's GoTransport bridge. The two wrappers were developed in parallel by separate agents in worktrees and assembled in PR '#35'.
     depends_on:
     - T34c.1
     origin: subdivision of T34c
@@ -1036,8 +1037,8 @@ targets:
     - Listener / Session no longer carry a Go-side machine; lifecycle is owned by the C side via the cgo.Handle / cwireRef / cwirePrimary plumbing introduced in this PR.
     - e2e_test.go passes against a real Go relay with activation running entirely in libpigeon.
     - examples/echo and examples/demo build and run unchanged.
-    - "Stream / Datagram public API still uses the Go-side crypto.Channel for AEAD on the data path — that is captured as a separate target (T34e) rather than in T34c.3 itself; the spirit of the fold (libpigeon owns the session protocol / activation machine) is met."
-    - "pairing package (pairing/pairing.go) remains Go-native because examples/echo and examples/demo consume it directly; its cwire-backed reimplementation is tracked as T34f."
+    - Stream / Datagram public API still uses the Go-side crypto.Channel for AEAD on the data path — that is captured as a separate target (T34e) rather than in T34c.3 itself; the spirit of the fold (libpigeon owns the session protocol / activation machine) is met.
+    - pairing package (pairing/pairing.go) remains Go-native because examples/echo and examples/demo consume it directly; its cwire-backed reimplementation is tracked as T34f.
     context: The big fold. Subdivided into T34c.3a / b / c / d below — leaf-first ordering kept blast radius small (adapter → Connect → Register → deletions). Carved residual work (Stream/Datagram AEAD, pairing-package refactor) into T34e/T34f so this target can retire honestly.
     depends_on:
     - T34c.2
@@ -1053,7 +1054,7 @@ targets:
     - cgo_transport.go in the root package exposes goTransportAdapter, a cwire.GoTransport implementation wrapping the existing *transport (quic-go / WebTransport).
     - Per-stream handles minted as C-malloc'd 1-byte stubs keyed into a package-level Go map; CloseStream frees both.
     - adoptPrimary helper registers an already-opened primary stream under a fresh handle (Connect/Register dial the primary as part of the relay greeting).
-    - "`go build ./...` and `go vet ./...` clean; no api.go changes yet."
+    - '`go build ./...` and `go vet ./...` clean; no api.go changes yet.'
     context: Bridge work for T34c.3b/c. Pure addition — does not touch api.go or any existing tests. Commit b52c812 on branch t34c.3-api-fold.
     depends_on:
     - T34c.2
@@ -1101,7 +1102,7 @@ targets:
     acceptance:
     - executor.go (1007 lines), activation.go (245), session_machine.go (96), path.go (51), fragment.go (163) deleted — net -2566 lines of native Go peer code (including activation_test.go for the deleted helpers).
     - Session.machine field removed; Close drops the machine.disconnect() call; export_test.go's MachineState() is gone.
-    - "`make bullseye` green; examples/echo and examples/demo still build and run."
+    - '`make bullseye` green; examples/echo and examples/demo still build and run.'
     context: Final clean-up pass in this PR (commit 1bf14dd). pairing/pairing.go intentionally NOT deleted — examples/echo and examples/demo consume it directly; its refactor is tracked as T34f. transport.go intentionally NOT deleted — it stays as the quic-go-backed transport implementation that the adapter wraps.
     depends_on:
     - T34c.3c
@@ -1147,7 +1148,7 @@ targets:
     achieved: 2026-05-20
   T35:
     name: 'Kotlin JNI: Android NDK build matrix (arm64-v8a + x86_64) with vendored libsodium AAR'
-    status: identified
+    status: achieved
     value: 0.0
     cost: 0.0
     acceptance:
@@ -1157,23 +1158,29 @@ targets:
     context: 'T30 step 1 (commit 3362c70) shipped a desktop JVM Kotlin JNI bridge over libpigeon. macOS arm64 builds + 12 new tests pass. Production Android use is gated on this follow-up: the JNI .so needs cross-compiling for Android NDK ABIs, and libsodium needs to be vendored as a static lib for those ABIs (Android doesn''t ship a system libsodium). Probably ~1 day of focused work — Android NDK side-loading + Gradle''s externalNativeBuild + a small CMakeLists for the C source + AAR packaging.'
     origin: discovered when the T30 first slice shipped on desktop JVM only
     discovered: 2026-04-30
+    achieved: 2026-05-21
   T36:
     name: 'Java-callback transport: C side calls back into a JVM/Kotlin QuicTransport via JNI'
-    status: identified
+    status: converging
     value: 0.0
     cost: 0.0
     acceptance:
     - A C -> Java callback path lets c/jni/pigeon_jni.c invoke a Kotlin-implemented QuicTransport (open_stream / accept_stream / send_on_stream / recv_on_stream / close_stream / send_datagram / recv_datagram). Symmetric with the existing C -> Java direction.
     - The existing Kotlin Kwik/Bridge transport implementations can plug into this callback shape (or at least one of them, e.g. Kwik), and a Kotlin Session can drive a real QUIC connection through a JVM-implemented transport.
     - 'Tests verify the callback path: a small in-Kotlin transport (like the C-side loopback, but Kotlin code) exercises Session.openStream → Stream.send → recv with the C peer library doing all the AEAD/wire work.'
-    context: T30 step 1 only wraps the C-side loopback transport — fine for unit tests but useless in production where the QUIC stack lives in JVM-land (Kwik on desktop, possibly Cronet on Android). The C library's pigeon_transport vtable is already abstract enough; this is just JNI callback-binding work. The Swift port (T29) faces the same need. Both should agree on the JNI/Swift -> C -> back-to-host-language callback pattern.
+    context: |-
+      Phase 1 landed 2026-05-21: C→Java JNI callback machinery (jni_transport_udata + 7 vtable thunks in c/jni/pigeon_jni.c, JniQuicTransport Kotlin interface, sessionInitWithJniTransport + sessionAcceptStreamGeneric, JniTransportLoopbackTest verifying stream/datagram round-trips with libpigeon driving AEAD and Kotlin carrying bytes).
+
+      Phase 2 still owed: a real Kwik adapter (com.marcelocantos.pigeon.peer.JniQuicTransport over org.kwik.Connection) and an end-to-end test that runs through a real QUIC connection rather than the in-memory loopback. The vtable shape is right (mechanical adapter), but a real Kwik adapter and live-relay E2E need their own PR.
+
+      🎯T30 step 1 only wraps the C-side loopback transport — fine for unit tests, useless in production where the QUIC stack lives in JVM-land (Kwik on desktop, possibly Cronet on Android). The C library's pigeon_transport vtable is already abstract enough; this is JNI callback-binding work. The Swift port (🎯T29) faces the same need. Both should agree on the JNI/Swift → C → back-to-host-language callback pattern.
     depends_on:
     - T30
     origin: discovered when the T30 first slice shipped a loopback-only JNI bridge
     discovered: 2026-04-30
   T37:
     name: 'Real Swift transport: Ngtcp2Transport: PigeonTransport built on the multi-stream c/src/ngtcp2_transport.c'
-    status: identified
+    status: achieved
     value: 0.0
     cost: 0.0
     acceptance:
@@ -1186,6 +1193,7 @@ targets:
     - T32
     origin: discovered when the T29 first slice shipped a loopback-only Swift wrapper
     discovered: 2026-04-30
+    achieved: 2026-05-21
   T38:
     name: 'C library: move 1 MiB stack buffers in pigeon_stream_*/pigeon_datagram_* to heap-allocated scratch on the pigeon_session'
     status: achieved
@@ -1393,6 +1401,34 @@ targets:
     origin: manual
     discovered: 2026-05-10
     achieved: 2026-05-10
+  T39.7:
+    name: protocol/session.yaml has a generic candidate-pair sub-FSM (Candidate record, candidate-exchange wire format, candidate-pair handshake, nomination over a set) — not the flat LAN-vs-relay scheme it ships with today
+    status: identified
+    value: 0.0
+    cost: 0.0
+    acceptance:
+    - protocol/session.yaml defines a Candidate record (type, address, port, priority) and a candidate-exchange message that carries a set of candidates between peers.
+    - The connectivity-check handshake is a generic candidate-pair operation parameterised by candidate type, not the hard-coded lan_offer / lan_verify / lan_confirm messages currently in the YAML.
+    - Nomination is computed over the full candidate set (priority + connectivity-check outcome), not by checkpointing on a single LAN vs relay choice.
+    - The existing LAN-direct path remains functional under the refactored FSM — the LAN candidate becomes one type among many, with the same wire bytes on the lan-pair handshake.
+    - The session protocol still verifies under `./formal/tlc Session` (or whichever TLA+ entry point T39 wired up); make bullseye stays green.
+    - Documented in docs/session-protocol.md and docs/DESIGN.md §§3, 4, 9 — the three places that today say 'designed; not implemented' for the candidate-pair sub-FSM.
+    context: |-
+      Discovered 2026-05-21 during 🎯T43's fan-out attempt. T43 (STUN-reflexive candidate gathering) requires this generic candidate-pair handshake as its substrate — STUN-reflexive is just one more candidate type in the set — and the agent confirmed the substrate doesn't exist:
+
+        - protocol/session.yaml only models a flat two-state LAN-vs-relay scheme with hard-coded lan_offer / lan_verify / lan_confirm messages.
+        - grep "candidate" returns zero hits across protocol/session.yaml, protocol/pathswitch.yaml, docs/session-protocol.md, session.go.
+        - docs/DESIGN.md §§3, 4, 9 explicitly flag the candidate-pair FSM as "designed; not implemented."
+
+      T39 was retired on the LAN-vs-relay subset of its acceptance; the candidate-pair machinery in its own acceptance text never landed. This sub-target tracks the missing piece without re-opening T39 itself.
+
+      Full blocker analysis lives in docs/investigations/stun-phase1-blocker.md (added by the T43 fan-out unit).
+
+      Knock-on: 🎯T43 stays identified, depending on this sub-target.
+    depends_on:
+    - T39
+    origin: discovered during T43 fan-out attempt
+    discovered: 2026-05-21
   T4:
     name: Investigate STUN/NAT hole-punching as a transport
     status: achieved
@@ -1424,7 +1460,7 @@ targets:
     achieved: 2026-05-17
   T41:
     name: 'Local backchannel: Unix-socket IPC between CLI and daemon during pairing ceremony'
-    status: identified
+    status: achieved
     value: 0.0
     cost: 0.0
     acceptance:
@@ -1436,6 +1472,7 @@ targets:
     context: docs/local-backchannel.md is a fully-formed proposal; this target tracks moving it from proposal to shipping code. Not on the critical path for any other target - this is platform-side ergonomics for the pairing flow, not a wire-protocol concern.
     origin: docs/DESIGN.md section 5; docs/local-backchannel.md is the deep spec
     discovered: 2026-05-02
+    achieved: 2026-05-21
   T42:
     name: Relay authentication moves from bearer-in-greeting to QUIC/TLS-layer (mTLS or token-at-handshake)
     status: identified
@@ -1463,6 +1500,7 @@ targets:
     context: docs/investigations/stun-hole-punching.md analyses NAT distribution and library options. Phase 1 (this target) gives ~70-80% Wi-Fi coverage with simple STUN; Phase 2 (full ICE+TURN, separate future target) would cover symmetric NAT / cellular CGNAT. Depends on the path-selection sub-FSM in T39; do not start until T39 has a working candidate-exchange protocol.
     depends_on:
     - T39
+    - T39.7
     origin: docs/DESIGN.md section 8; docs/investigations/stun-hole-punching.md is the deep analysis
     discovered: 2026-05-02
   T44:
