@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+Copyright 2026 Marcelo Cantos
+SPDX-License-Identifier: Apache-2.0
+
+Empty manifest for the Pigeon Android library. AGP requires the file
+exist; the library has no components, permissions, or features of its
+own — package metadata comes from build.gradle.kts.
+-->
+<manifest />

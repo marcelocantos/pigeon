@@ -21,6 +21,13 @@ web/playwright-report/
 android/.gradle/
 android/pigeon/build/
 android/build/
+android/local.properties
+android/pigeon/.cxx/
+
+# Vendored libsodium cross-build outputs.
+c/vendor/build-android/
+c/vendor/github.com/jedisct1/libsodium/build-android-*/
+c/vendor/github.com/jedisct1/libsodium/libsodium-android-*/
 
 # TLC model checker artifacts
 formal/states/

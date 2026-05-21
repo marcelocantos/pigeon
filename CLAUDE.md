@@ -95,10 +95,18 @@ package dependency.
 
 ### Android/Kotlin Library (`android/pigeon/`)
 
-Kotlin/JVM library (`Pigeon`) containing `E2EKeyPair`, `E2EChannel`,
-`Hkdf`, `PigeonConn`, and the generated `PairingCeremonyMachine.kt`. Consumed via
-JitPack (`com.github.marcelocantos.pigeon:pigeon:<tag>`).
-Requires JDK 17+ / Android API 33+ (for X25519 support).
+Android Library (AAR, AGP `com.android.library`) containing `E2EKeyPair`,
+`E2EChannel`, `Hkdf`, `PigeonConn`, and the generated
+`PairingCeremonyMachine.kt`. The packaged AAR includes
+`libpigeon-jni.so` for `arm64-v8a` and `x86_64`, each statically linked
+against a vendored libsodium built per-ABI by `c/vendor/build-android.sh`.
+Consumed via JitPack (`com.github.marcelocantos.pigeon:pigeon:<tag>`).
+Requires JDK 17+ / Android API 33+ (for X25519 support) and an
+Android NDK r27+ install on the build host (pinned to
+`29.0.14206865` via `android.ndkVersion` in `android/pigeon/build.gradle.kts`).
+Desktop JVM unit tests still run on the host platform via
+`gradlew :pigeon:testDebugUnitTest`; the AAR is built via
+`gradlew :pigeon:assembleRelease`.
 
 ## Deployment
 
