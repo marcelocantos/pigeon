@@ -114,6 +114,18 @@ public struct PairingRecord: Codable, Sendable {
         self.peerPublicKey = peerPublicKey
     }
 
+    /// Construct a `PairingRecord` directly from raw key bytes. Used by
+    /// the pairing-ceremony driver which already has the raw 32-byte
+    /// X25519 material on hand.
+    public init(peerInstanceID: String, relayURL: String,
+                localPrivateKey: Data, localPublicKey: Data, peerPublicKey: Data) {
+        self.peerInstanceID = peerInstanceID
+        self.relayURL = relayURL
+        self.localPrivateKey = localPrivateKey
+        self.localPublicKey = localPublicKey
+        self.peerPublicKey = peerPublicKey
+    }
+
     /// Derive an encrypted channel from the stored keys.
     /// The info parameters should match what was used during the original pairing.
     public func deriveChannel(sendInfo: Data, recvInfo: Data) throws -> E2EChannel {
