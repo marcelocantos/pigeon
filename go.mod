@@ -3,7 +3,10 @@ module github.com/marcelocantos/pigeon
 go 1.25.0
 
 require (
+	github.com/arr-ai/frozen v1.11.0
 	github.com/caddyserver/certmagic v0.25.2
+	github.com/fsnotify/fsnotify v1.9.0
+	github.com/keybase/go-keychain v0.0.1
 	github.com/quic-go/quic-go v0.59.0
 	github.com/quic-go/webtransport-go v0.10.0
 	github.com/skip2/go-qrcode v0.0.0-20200617195104-da1b6568686e
@@ -12,10 +15,8 @@ require (
 )
 
 require (
-	github.com/arr-ai/frozen v1.11.0 // indirect
 	github.com/caddyserver/zerossl v0.1.5 // indirect
 	github.com/dunglas/httpsfv v1.1.0 // indirect
-	github.com/fsnotify/fsnotify v1.9.0 // indirect
 	github.com/klauspost/cpuid/v2 v2.3.0 // indirect
 	github.com/libdns/libdns v1.1.1 // indirect
 	github.com/mholt/acmez/v3 v3.1.6 // indirect

@@ -617,7 +617,7 @@ targets:
     achieved: 2026-04-29
   T23:
     name: macOS backends can store the long-term Identity in the system Keychain (Tier 1, in-process X25519/Ed25519)
-    status: identified
+    status: achieved
     value: 0.0
     cost: 0.0
     acceptance:
