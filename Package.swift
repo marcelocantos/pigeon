@@ -57,5 +57,13 @@ let package = Package(
             dependencies: ["Pigeon"],
             path: "e2e/swift"
         ),
+        // pairing-peer-swift drives the Swift PairingCeremony as the
+        // initiator side from a Go acceptor's subprocess, used by the
+        // cross-language test in pairing/cross_swift_test.go.
+        .executableTarget(
+            name: "pairing-peer-swift",
+            dependencies: ["Pigeon"],
+            path: "e2e/pairing-peer-swift"
+        ),
     ]
 )
