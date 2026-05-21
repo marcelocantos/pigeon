@@ -83,7 +83,7 @@ func main() {
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer cancel()
 
-	identity, err := crypto.NewFileIdentity(*idPath)
+	identity, err := loadIdentity(*idPath)
 	if err != nil {
 		slog.Error("identity", "err", err)
 		os.Exit(1)

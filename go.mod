@@ -5,6 +5,8 @@ go 1.25.0
 require (
 	github.com/arr-ai/frozen v1.11.0
 	github.com/caddyserver/certmagic v0.25.2
+	github.com/fsnotify/fsnotify v1.9.0
+	github.com/keybase/go-keychain v0.0.1
 	github.com/quic-go/quic-go v0.59.0
 	github.com/quic-go/webtransport-go v0.10.0
 	github.com/skip2/go-qrcode v0.0.0-20200617195104-da1b6568686e
