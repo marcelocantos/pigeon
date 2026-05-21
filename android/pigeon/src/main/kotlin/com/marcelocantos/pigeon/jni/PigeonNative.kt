@@ -157,4 +157,60 @@ object PigeonNative {
 
     /** Returns the application payload, or an empty array if the channel-id didn't match. */
     @JvmStatic external fun datagramRecv(handle: Long): ByteArray
+
+    // --- JVM-callback transport (T36) ---
+
+    /**
+     * Build a pigeon_session over a JVM-callback transport.
+     *
+     * `transport` must be a JVM object exposing the seven methods the
+     * C side resolves by name and signature:
+     *
+     *   - `openStream(): Long`                — `()J`
+     *   - `acceptStream(): Long`              — `()J`
+     *   - `sendOnStream(Long, ByteArray)`     — `(J[B)V`
+     *   - `recvOnStream(Long): ByteArray`     — `(J)[B`
+     *   - `closeStream(Long)`                 — `(J)V`
+     *   - `sendDatagram(ByteArray)`           — `([B)V`
+     *   - `recvDatagram(): ByteArray`         — `()[B`
+     *
+     * Handles returned by `openStream` / `acceptStream` are opaque
+     * `Long` values minted by the transport — the C side stores them
+     * inside `pigeon_stream_handle*` and hands them back on per-stream
+     * calls. A return value of `0` from open/accept signals failure
+     * (or "no stream pending" for accept).
+     *
+     * Methods that fail should throw — the JNI layer clears the
+     * pending exception, returns -1 to the C library, and surfaces a
+     * `RuntimeException` to the Kotlin caller at the next API
+     * boundary.
+     *
+     * The session retains a global ref to `transport` until
+     * [sessionFree]; the caller can drop its local reference safely
+     * once this method returns.
+     */
+    @JvmStatic external fun sessionInitWithJniTransport(
+        channelHandle: Long,
+        transport: Any,
+        isBackend: Boolean,
+        clientTag: Int,
+        dgChannelNames: Array<String>?,
+        dgChannelIds: LongArray?,
+    ): Long
+
+    /**
+     * Generic accept-and-decode for sessions backed by any transport
+     * with `accept_stream` and `recv_on_stream` populated (e.g. the
+     * JVM-callback transport). Drives `accept_stream`, reads the
+     * first framed message (the unencrypted name-binding header),
+     * decodes it according to the session's role, and returns a
+     * fully-attached `pigeon_stream*`.
+     *
+     * Returns 0 if no stream is currently pending. `nameOut[0]` is
+     * populated with the decoded stream name on success.
+     */
+    @JvmStatic external fun sessionAcceptStreamGeneric(
+        sessionHandle: Long,
+        nameOut: Array<String?>,
+    ): Long
 }

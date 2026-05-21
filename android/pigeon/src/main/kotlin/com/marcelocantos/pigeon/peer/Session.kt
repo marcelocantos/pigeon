@@ -84,19 +84,29 @@ class Channel internal constructor(internal val handle: Long) : AutoCloseable {
  * versa from the client side). Wraps a `pigeon_session*` and the
  * underlying transport.
  *
- * Today the only supported transport is the in-process C loopback,
- * exposed via [Session.loopbackPair] for tests. Production use over
- * a real QUIC stack waits on the Java-callback transport bridge
- * (see PigeonNative comments).
+ * Two transport flavours are supported:
+ *
+ *   - The in-process C loopback (built via [Session.loopbackPair]).
+ *     Used by SDK tests; not for production.
+ *   - A JVM-callback transport (built via [Session.fromTransport]).
+ *     Each vtable slot thunks through JNI back into a Kotlin object
+ *     that implements [JniQuicTransport]. This is the production
+ *     path — desktop JVM (Kwik) and Android (Cronet / native ngtcp2)
+ *     plug a [JniQuicTransport] in here.
  *
  * The session takes ownership of the supplied [Channel] objects and
- * closes them on [close].
+ * closes them on [close]. The JNI-callback transport object's
+ * [JniQuicTransport.close] is *not* called automatically — the
+ * application owns the transport's lifetime, since the transport
+ * usually outlives any single session (e.g. a relay-side transport
+ * accepts many client sessions).
  */
 class Session internal constructor(
     private val handleRef: AtomicLong,
     private val channel: Channel,
     val isBackend: Boolean,
     val clientTag: Int,
+    private val useGenericAccept: Boolean = false,
 ) : AutoCloseable {
 
     val handle: Long get() = handleRef.get()
@@ -131,7 +141,11 @@ class Session internal constructor(
     /** Synchronous variant of [acceptStream]. */
     fun acceptStreamBlocking(): Stream? {
         val nameOut = arrayOfNulls<String>(1)
-        val h = PigeonNative.sessionAcceptStream(handle, nameOut)
+        val h = if (useGenericAccept) {
+            PigeonNative.sessionAcceptStreamGeneric(handle, nameOut)
+        } else {
+            PigeonNative.sessionAcceptStream(handle, nameOut)
+        }
         if (h == 0L) return null
         return Stream(h, nameOut[0] ?: "")
     }
@@ -161,6 +175,45 @@ class Session internal constructor(
          * session B. Both sessions get the same datagram-channel
          * declarations.
          */
+        /**
+         * Build a session over a JVM-callback transport (T36).
+         *
+         * `transport` must implement [JniQuicTransport]; libpigeon
+         * resolves the seven vtable methods by name + signature and
+         * thunks through JNI on each call. The session retains a
+         * global ref to `transport` until [close], so the caller can
+         * drop their local reference safely.
+         *
+         * `channel` is consumed by the session — closing the session
+         * closes the channel. The transport's lifetime is the
+         * application's responsibility (closing the session does NOT
+         * call `transport.close()`).
+         *
+         * `isBackend` and `clientTag` mirror [loopbackPair]; the
+         * combination of the two governs how stream-header framing
+         * looks on outbound streams (backend prepends the 4-byte
+         * clientTag prefix).
+         */
+        fun fromTransport(
+            channel: Channel,
+            transport: JniQuicTransport,
+            isBackend: Boolean,
+            clientTag: Int,
+            datagramChannels: List<DatagramChannelDef> = emptyList(),
+        ): Session {
+            val names = if (datagramChannels.isEmpty()) null
+                else datagramChannels.map { it.name }.toTypedArray()
+            val ids = if (datagramChannels.isEmpty()) null
+                else LongArray(datagramChannels.size) { datagramChannels[it].id }
+            val handle = PigeonNative.sessionInitWithJniTransport(
+                channel.handle, transport,
+                isBackend, clientTag,
+                names, ids,
+            )
+            return Session(AtomicLong(handle), channel, isBackend, clientTag,
+                useGenericAccept = true)
+        }
+
         fun loopbackPair(
             channelA: Channel,
             channelB: Channel,
