@@ -93,21 +93,32 @@ jobs:
       - uses: actions/setup-go@v5
         with:
           go-version-file: go.mod
-      - name: Resolve libsodium pinned SHA
-        id: libsodium-sha
-        run: echo "sha=$(git ls-tree HEAD c/vendor/github.com/jedisct1/libsodium | awk '{print $3}')" >> $GITHUB_OUTPUT
-      - name: Cache vendored libsodium build
-        id: cache-libsodium
+      - name: Resolve vendor pinned SHAs
+        id: vendor-shas
+        run: |
+          {
+            echo "libsodium=$(git ls-tree HEAD c/vendor/github.com/jedisct1/libsodium | awk '{print $3}')"
+            echo "openssl=$(git ls-tree HEAD c/vendor/github.com/quictls/openssl | awk '{print $3}')"
+            echo "ngtcp2=$(git ls-tree HEAD c/vendor/github.com/ngtcp2/ngtcp2 | awk '{print $3}')"
+          } >> $GITHUB_OUTPUT
+      - name: Cache vendored C deps
+        id: cache-vendor
         uses: actions/cache@v4
         with:
           path: c/vendor/build
-          key: libsodium-${{ runner.os }}-${{ steps.libsodium-sha.outputs.sha }}-${{ hashFiles('c/vendor/build.sh') }}
-      - name: Init vendored libsodium submodule
-        if: steps.cache-libsodium.outputs.cache-hit != 'true'
-        run: git submodule update --init --depth 1 c/vendor/github.com/jedisct1/libsodium
-      - name: Build vendored libsodium
-        if: steps.cache-libsodium.outputs.cache-hit != 'true'
-        run: bash c/vendor/build.sh libsodium
+          key: vendor-${{ runner.os }}-sodium-${{ steps.vendor-shas.outputs.libsodium }}-ossl-${{ steps.vendor-shas.outputs.openssl }}-ngtcp2-${{ steps.vendor-shas.outputs.ngtcp2 }}-${{ hashFiles('c/vendor/build.sh') }}
+      - name: Init vendored submodules
+        if: steps.cache-vendor.outputs.cache-hit != 'true'
+        run: |
+          git submodule update --init --depth 1 c/vendor/github.com/jedisct1/libsodium
+          git submodule update --init --depth 1 c/vendor/github.com/quictls/openssl
+          git submodule update --init --depth 1 c/vendor/github.com/ngtcp2/ngtcp2
+      - name: Build vendored C deps
+        if: steps.cache-vendor.outputs.cache-hit != 'true'
+        run: |
+          bash c/vendor/build.sh libsodium
+          bash c/vendor/build.sh openssl
+          bash c/vendor/build.sh ngtcp2
       - run: swift test
 
   deploy:
