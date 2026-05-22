@@ -5,8 +5,11 @@
 //   - "ping" datagram channel (id 1): echoes pings as "pong:..."
 //   - "metric" datagram channel (id 2): replies with "echoes=N"
 //
-// Pair new clients with the sibling `pair` subcommand (./backend pair);
-// the running daemon picks up new entries via fsnotify on pairings.json.
+// Pair new clients with the sibling `pair` subcommand (./backend pair).
+// The CLI dials the daemon's local backchannel socket; the daemon
+// runs the acceptor-side pairing ceremony, writes the resulting
+// PairingRecord into pairings.json, and the in-memory pairings map is
+// updated atomically — no fsnotify, no restart.
 //
 // Copyright 2026 Marcelo Cantos
 // SPDX-License-Identifier: Apache-2.0
@@ -21,14 +24,14 @@ import (
 	"log/slog"
 	"os"
 	"os/signal"
-	"path/filepath"
 	"sync"
 	"sync/atomic"
 	"syscall"
 
-	"github.com/fsnotify/fsnotify"
 	"github.com/marcelocantos/pigeon"
+	"github.com/marcelocantos/pigeon/backchannel"
 	"github.com/marcelocantos/pigeon/crypto"
+	"github.com/marcelocantos/pigeon/pairing"
 )
 
 // dgChannels declares the datagram channels both peers must agree on.
@@ -38,6 +41,10 @@ var dgChannels = map[string]uint64{
 	"ping":   1,
 	"metric": 2,
 }
+
+// appName is the backchannel disambiguator. Sharing it between the
+// `pair` subcommand and the running daemon is how the CLI finds us.
+const appName = "echo-backend"
 
 func loadPairings(path string) (map[string]*crypto.PairingRecord, error) {
 	b, err := os.ReadFile(path)
@@ -54,6 +61,14 @@ func loadPairings(path string) (map[string]*crypto.PairingRecord, error) {
 	return out, nil
 }
 
+func savePairings(path string, pairings map[string]*crypto.PairingRecord) error {
+	b, err := json.MarshalIndent(pairings, "", "  ")
+	if err != nil {
+		return err
+	}
+	return os.WriteFile(path, b, 0o600)
+}
+
 func main() {
 	if len(os.Args) > 1 && os.Args[1] == "pair" {
 		pairCmd(os.Args[2:])
@@ -68,7 +83,7 @@ func main() {
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer cancel()
 
-	identity, err := crypto.NewFileIdentity(*idPath)
+	identity, err := loadIdentity(*idPath)
 	if err != nil {
 		slog.Error("identity", "err", err)
 		os.Exit(1)
@@ -83,42 +98,38 @@ func main() {
 
 	var mu sync.RWMutex
 
-	watcher, err := fsnotify.NewWatcher()
+	// Long-lived pairer for the backchannel handler to drive.
+	pairer, err := pairing.Register(ctx, &pairing.Args{
+		Relay:    *relay,
+		Identity: identity,
+	})
 	if err != nil {
-		slog.Error("watcher", "err", err)
+		slog.Error("pairing register", "err", err)
 		os.Exit(1)
 	}
-	defer watcher.Close()
-	dir, _ := filepath.Abs(filepath.Dir(*store))
-	if err := watcher.Add(dir); err != nil {
-		slog.Error("watch", "err", err)
+	defer pairer.Close()
+
+	bc, err := backchannel.Listen(&backchannel.ListenArgs{AppName: appName})
+	if err != nil {
+		slog.Error("backchannel listen", "err", err)
 		os.Exit(1)
 	}
-	target, _ := filepath.Abs(*store)
+	defer bc.Close()
+	slog.Info("backchannel ready", "path", bc.Path())
+
+	// Accept loop for the CLI side. Each accepted Session runs one
+	// pairing ceremony, then closes; the daemon stays up.
 	go func() {
 		for {
-			select {
-			case <-ctx.Done():
-				return
-			case ev := <-watcher.Events:
-				if ev.Name != target {
-					continue
+			sess, err := bc.Accept(ctx)
+			if err != nil {
+				if ctx.Err() != nil {
+					return
 				}
-				if ev.Op&(fsnotify.Write|fsnotify.Create|fsnotify.Rename) == 0 {
-					continue
-				}
-				next, err := loadPairings(*store)
-				if err != nil {
-					slog.Warn("reload pairings", "err", err)
-					continue
-				}
-				mu.Lock()
-				pairings = next
-				mu.Unlock()
-				slog.Info("pairings reloaded", "total", len(next))
-			case err := <-watcher.Errors:
-				slog.Warn("watcher error", "err", err)
+				slog.Warn("backchannel accept", "err", err)
+				continue
 			}
+			go handlePairingCLI(ctx, sess, pairer, &mu, &pairings, *store)
 		}
 	}()
 

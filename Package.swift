@@ -2,31 +2,49 @@
 
 import PackageDescription
 
-// Header / linker settings for libsodium. CPigeon's amalgamated source
-// (dist/pigeon.c) is built with -DPIGEON_CRYPTO_LIBSODIUM and pulls
-// the AEAD primitives from libsodium. We link the static lib built by
-// `c/vendor/build.sh libsodium` (or `make build-vendor-deps`); see
-// c/vendor/github.com/jedisct1/libsodium for the pinned submodule.
+// Header / linker settings for the vendored C stack. CPigeon's amalgamated
+// source (dist/pigeon.c) is built with -DPIGEON_CRYPTO_LIBSODIUM and pulls
+// AEAD primitives from libsodium; the ngtcp2 transport build unit
+// (Sources/CPigeon/cpigeon_ngtcp2.c, added in 🎯T37) compiles
+// c/src/ngtcp2_transport.c + c/src/listener_ngtcp2.c against the vendored
+// ngtcp2 + quictls headers. All four static libraries (libsodium,
+// libngtcp2, libngtcp2_crypto_quictls, libssl, libcrypto) live under
+// c/vendor/build/lib/.
 //
-// The vendored static lib is in-tree at a stable path, so we hard-code
-// it rather than asking SwiftPM to discover libsodium dynamically.
-// Callers must run `make build-vendor-deps` (or at minimum
-// `bash c/vendor/build.sh libsodium`) before `swift build`.
+// The vendored static libs are in-tree at a stable path, so we hard-code
+// them rather than asking SwiftPM to discover them dynamically. Callers
+// must run `make build-vendor-deps` (or at minimum
+// `bash c/vendor/build.sh libsodium openssl ngtcp2`) before `swift build`.
 let cpigeonCSettings: [CSetting] = [
     .define("PIGEON_CRYPTO_LIBSODIUM"),
     // dist/pigeon.h is included by cpigeon.c via "../../dist/pigeon.c".
     // The amalgamated header itself self-includes; SwiftPM also needs
     // to find it for the umbrella header, hence the extra search path.
     .headerSearchPath("../../dist"),
-    // Vendored libsodium headers under c/vendor/build/include.
-    // .headerSearchPath paths are relative to the target source dir
-    // (Sources/CPigeon/), so up two levels reaches the package root.
+    // Vendored libsodium / ngtcp2 / openssl headers under
+    // c/vendor/build/include. .headerSearchPath paths are relative to
+    // the target source dir (Sources/CPigeon/), so up two levels reaches
+    // the package root.
     .headerSearchPath("../../c/vendor/build/include"),
+    // Canonical pigeon C headers (c/include) — required by the ngtcp2
+    // transport build unit, which #includes "pigeon/ngtcp2_transport.h"
+    // and (transitively) the canonical "pigeon/pigeon.h". The amalgamated
+    // dist/pigeon.h is guard-compatible (PIGEON_H), so the
+    // include-once protection keeps the two coexistent.
+    .headerSearchPath("../../c/include"),
 ]
 
 let cpigeonLinkerSettings: [LinkerSetting] = [
-    // Linker unsafeFlags resolve relative to the package root.
-    .unsafeFlags(["c/vendor/build/lib/libsodium.a"]),
+    // Linker unsafeFlags resolve relative to the package root. Order
+    // matters: ngtcp2_crypto_quictls depends on ngtcp2 + openssl,
+    // ngtcp2 depends on openssl. Libsodium last (no deps).
+    .unsafeFlags([
+        "c/vendor/build/lib/libngtcp2_crypto_quictls.a",
+        "c/vendor/build/lib/libngtcp2.a",
+        "c/vendor/build/lib/libssl.a",
+        "c/vendor/build/lib/libcrypto.a",
+        "c/vendor/build/lib/libsodium.a",
+    ]),
 ]
 
 let package = Package(
@@ -56,6 +74,14 @@ let package = Package(
             name: "pigeon-e2e-swift",
             dependencies: ["Pigeon"],
             path: "e2e/swift"
+        ),
+        // pairing-peer-swift drives the Swift PairingCeremony as the
+        // initiator side from a Go acceptor's subprocess, used by the
+        // cross-language test in pairing/cross_swift_test.go.
+        .executableTarget(
+            name: "pairing-peer-swift",
+            dependencies: ["Pigeon"],
+            path: "e2e/pairing-peer-swift"
         ),
     ]
 )

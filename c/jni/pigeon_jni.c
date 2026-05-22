@@ -16,9 +16,13 @@
 //      unit tests to exercise the full multi-stream wire end-to-end
 //      without a live ngtcp2 stack. See pigeonNewLoopbackPair below.
 //
-//   2. (Future) A Java-callback transport that invokes Kotlin
-//      QuicTransport methods from C. Not yet implemented; this is the
-//      gap that gates real Android NDK use. See T30 commit message.
+//   2. A JVM-callback transport (T36): each pigeon_transport vtable
+//      entry thunks through JNI back into a Kotlin object that
+//      implements com.marcelocantos.pigeon.peer.JniQuicTransport. This
+//      lets the Kotlin side own the underlying QUIC stack (Kwik on
+//      desktop JVM, Cronet / native ngtcp2 on Android) while libpigeon
+//      drives all AEAD / wire framing. See sessionInitWithJniTransport
+//      and the jni_transport_* helpers below.
 //
 // Build:
 //   clang -shared -fPIC \
@@ -39,6 +43,59 @@
 #include <string.h>
 
 #include "pigeon.h"
+
+// ----------------------------------------------------------------------------
+// JavaVM* cache (T36).
+//
+// Every JVM-callback transport thunk needs a JNIEnv* on the current
+// thread. Per the JNI spec the JNIEnv* is per-thread, so we cache the
+// JavaVM* once (it's process-global) and recover the JNIEnv* on each
+// call via GetEnv / AttachCurrentThread. For our use cases the calls
+// always happen on the calling thread (libpigeon is single-threaded;
+// the caller is already in JNI), so GetEnv almost always succeeds and
+// we don't need to detach.
+// ----------------------------------------------------------------------------
+
+static JavaVM *g_jvm = NULL;
+
+JNIEXPORT jint JNICALL JNI_OnLoad(JavaVM *vm, void *reserved)
+{
+    (void)reserved;
+    g_jvm = vm;
+    return JNI_VERSION_1_6;
+}
+
+// Fetch the JNIEnv* for the current thread, attaching to the JVM if
+// the thread isn't already attached. On success *out_attached signals
+// whether the caller is responsible for DetachCurrentThread.
+//
+// In practice libpigeon's JVM-callback transport is always invoked on
+// the same JVM thread that called into the JNI surface, so GetEnv
+// succeeds and *out_attached stays false. We still handle the attach
+// case for robustness (e.g. future native callback dispatch threads).
+static JNIEnv *jni_env_for_thread(bool *out_attached)
+{
+    if (out_attached) *out_attached = false;
+    if (!g_jvm) return NULL;
+    JNIEnv *env = NULL;
+    jint rc = (*g_jvm)->GetEnv(g_jvm, (void **)&env, JNI_VERSION_1_6);
+    if (rc == JNI_OK) return env;
+    if (rc == JNI_EDETACHED) {
+        if ((*g_jvm)->AttachCurrentThread(g_jvm, (void **)&env, NULL) != JNI_OK) {
+            return NULL;
+        }
+        if (out_attached) *out_attached = true;
+        return env;
+    }
+    return NULL;
+}
+
+static void jni_env_release(bool attached)
+{
+    if (attached && g_jvm) {
+        (*g_jvm)->DetachCurrentThread(g_jvm);
+    }
+}
 
 // ----------------------------------------------------------------------------
 // Loopback transport (mirrors c/test/test_pigeon.c).
@@ -446,10 +503,20 @@ typedef struct loopback_pair {
     int ref_count;  // sessions that reference this pair (0..2)
 } loopback_pair;
 
+// Forward declaration — defined in the JVM-callback transport section
+// below. session_holder needs the type so it can own a pointer.
+typedef struct jni_transport_udata jni_transport_udata;
+static void jni_transport_udata_free(jni_transport_udata *u);
+
 typedef struct session_holder {
     pigeon_session  session;  // owned
-    loopback_pair  *pair;     // shared with the peer holder
-    bool            is_a;     // which endpoint we used
+    // For loopback-pair sessions: shared loopback transport.
+    loopback_pair  *pair;     // shared with the peer holder, or NULL
+    bool            is_a;     // which endpoint we used (loopback only)
+    // For JNI-callback sessions: heap-allocated bridge to the Kotlin
+    // transport object. NULL for loopback sessions. Owned by this
+    // holder — released by sessionFree.
+    jni_transport_udata *jni_transport;
 } session_holder;
 
 static loopback_pair *new_loopback_pair(void)
@@ -554,6 +621,10 @@ Java_com_marcelocantos_pigeon_jni_PigeonNative_sessionFree(
     if (!h) return;
     if (h->pair && --h->pair->ref_count == 0) {
         free(h->pair);
+    }
+    if (h->jni_transport) {
+        jni_transport_udata_free(h->jni_transport);
+        h->jni_transport = NULL;
     }
     free(h);
 }
@@ -772,4 +843,429 @@ Java_com_marcelocantos_pigeon_jni_PigeonNative_datagramRecv(
     jbyteArray res = bytes_to_jba(env, buf, (size_t)n);
     free(buf);
     return res;
+}
+
+// ----------------------------------------------------------------------------
+// JVM-callback transport (T36).
+//
+// A pigeon_transport whose vtable entries thunk through JNI back into a
+// Kotlin object that implements com.marcelocantos.pigeon.peer.JniQuicTransport.
+// libpigeon drives all AEAD / wire framing; the Kotlin side owns the
+// underlying QUIC stack (Kwik / Cronet / ngtcp2).
+//
+// Memory model: one heap-allocated `jni_transport_udata` per session.
+// The udata box owns one global ref to the Kotlin transport object and
+// the cached jmethodIDs for each vtable entry. The C transport vtable's
+// `userdata` pointer is the udata pointer; cwire uses the same shape
+// (cwire_go_udata) so this stays familiar for cross-language reviewers.
+//
+// Threading: libpigeon's stream/datagram entry points are called on
+// the JVM thread that drove into the JNI surface, so GetEnv succeeds
+// and no AttachCurrentThread round-trip happens on the hot path.
+// jni_env_for_thread handles the rare attach case for robustness.
+// ----------------------------------------------------------------------------
+
+struct jni_transport_udata {
+    // Global ref to the Kotlin transport object (implements
+    // JniQuicTransport). NULL after jni_transport_udata_free.
+    jobject  obj;
+
+    // Cached jmethodIDs (resolved once at construction). jmethodIDs
+    // remain valid as long as the class is loaded; the global ref on
+    // `obj` keeps the class alive transitively.
+    jmethodID m_open_stream;     // ()J
+    jmethodID m_accept_stream;   // ()J
+    jmethodID m_send_on_stream;  // (J[B)V
+    jmethodID m_recv_on_stream;  // (J)[B
+    jmethodID m_close_stream;    // (J)V
+    jmethodID m_send_datagram;   // ([B)V
+    jmethodID m_recv_datagram;   // ()[B
+};
+
+// Free the udata. Releases the global ref via the calling thread's
+// JNIEnv (recovered via jni_env_for_thread). Idempotent on NULL.
+static void jni_transport_udata_free(jni_transport_udata *u)
+{
+    if (!u) return;
+    if (u->obj) {
+        bool attached = false;
+        JNIEnv *env = jni_env_for_thread(&attached);
+        if (env) {
+            (*env)->DeleteGlobalRef(env, u->obj);
+            jni_env_release(attached);
+        }
+        u->obj = NULL;
+    }
+    free(u);
+}
+
+// Check for a pending Java exception. If one is set, clear it (so the
+// C library doesn't re-enter Java with the exception still set) and
+// return -1. Otherwise return 0. The original exception is lost; for
+// our use case the transport is expected to throw only on hard errors
+// where -1 propagation is the correct response.
+//
+// (A future enhancement could log the exception via spdlog; for now
+// the Kotlin layer surfaces failures as RuntimeException at the API
+// boundary, which is good enough for the loopback tests.)
+static int jni_clear_pending(JNIEnv *env)
+{
+    if ((*env)->ExceptionCheck(env)) {
+        (*env)->ExceptionDescribe(env);
+        (*env)->ExceptionClear(env);
+        return -1;
+    }
+    return 0;
+}
+
+// --- vtable thunks ---
+//
+// Each one recovers the JNIEnv*, invokes the Kotlin method, checks for
+// a pending exception, and translates errors into a -1 return.
+
+static int jni_tr_open_stream(void *ud, pigeon_stream_handle **out)
+{
+    jni_transport_udata *u = (jni_transport_udata *)ud;
+    bool attached = false;
+    JNIEnv *env = jni_env_for_thread(&attached);
+    if (!env || !u || !u->obj) return -1;
+    jlong h = (*env)->CallLongMethod(env, u->obj, u->m_open_stream);
+    int rc = jni_clear_pending(env);
+    jni_env_release(attached);
+    if (rc != 0) return -1;
+    if (h == 0) return -1;
+    *out = (pigeon_stream_handle *)(intptr_t)h;
+    return 0;
+}
+
+static int jni_tr_accept_stream(void *ud, pigeon_stream_handle **out)
+{
+    jni_transport_udata *u = (jni_transport_udata *)ud;
+    bool attached = false;
+    JNIEnv *env = jni_env_for_thread(&attached);
+    if (!env || !u || !u->obj) return -1;
+    jlong h = (*env)->CallLongMethod(env, u->obj, u->m_accept_stream);
+    int rc = jni_clear_pending(env);
+    jni_env_release(attached);
+    if (rc != 0) return -1;
+    if (h == 0) return -1;
+    *out = (pigeon_stream_handle *)(intptr_t)h;
+    return 0;
+}
+
+static int jni_tr_send_on_stream(void *ud, pigeon_stream_handle *h,
+                                 const uint8_t *data, size_t len)
+{
+    jni_transport_udata *u = (jni_transport_udata *)ud;
+    bool attached = false;
+    JNIEnv *env = jni_env_for_thread(&attached);
+    if (!env || !u || !u->obj) return -1;
+    jbyteArray arr = (*env)->NewByteArray(env, (jsize)len);
+    if (!arr) { jni_env_release(attached); return -1; }
+    if (len > 0) {
+        (*env)->SetByteArrayRegion(env, arr, 0, (jsize)len, (const jbyte *)data);
+    }
+    (*env)->CallVoidMethod(env, u->obj, u->m_send_on_stream,
+                           (jlong)(intptr_t)h, arr);
+    int rc = jni_clear_pending(env);
+    (*env)->DeleteLocalRef(env, arr);
+    jni_env_release(attached);
+    return rc;
+}
+
+static int jni_tr_recv_on_stream(void *ud, pigeon_stream_handle *h,
+                                 uint8_t *buf, size_t buf_len, size_t *out_len)
+{
+    jni_transport_udata *u = (jni_transport_udata *)ud;
+    bool attached = false;
+    JNIEnv *env = jni_env_for_thread(&attached);
+    if (!env || !u || !u->obj) return -1;
+    jobject jres = (*env)->CallObjectMethod(env, u->obj, u->m_recv_on_stream,
+                                            (jlong)(intptr_t)h);
+    if (jni_clear_pending(env) != 0) {
+        if (jres) (*env)->DeleteLocalRef(env, jres);
+        jni_env_release(attached);
+        return -1;
+    }
+    if (!jres) {
+        jni_env_release(attached);
+        return -1;
+    }
+    jsize n = (*env)->GetArrayLength(env, (jbyteArray)jres);
+    if ((size_t)n > buf_len) {
+        (*env)->DeleteLocalRef(env, jres);
+        jni_env_release(attached);
+        return -1;
+    }
+    if (n > 0) {
+        (*env)->GetByteArrayRegion(env, (jbyteArray)jres, 0, n, (jbyte *)buf);
+    }
+    *out_len = (size_t)n;
+    (*env)->DeleteLocalRef(env, jres);
+    jni_env_release(attached);
+    return 0;
+}
+
+static int jni_tr_close_stream(void *ud, pigeon_stream_handle *h)
+{
+    jni_transport_udata *u = (jni_transport_udata *)ud;
+    bool attached = false;
+    JNIEnv *env = jni_env_for_thread(&attached);
+    if (!env || !u || !u->obj) return -1;
+    (*env)->CallVoidMethod(env, u->obj, u->m_close_stream, (jlong)(intptr_t)h);
+    int rc = jni_clear_pending(env);
+    jni_env_release(attached);
+    return rc;
+}
+
+static int jni_tr_send_datagram(void *ud, const uint8_t *data, size_t len)
+{
+    jni_transport_udata *u = (jni_transport_udata *)ud;
+    bool attached = false;
+    JNIEnv *env = jni_env_for_thread(&attached);
+    if (!env || !u || !u->obj) return -1;
+    jbyteArray arr = (*env)->NewByteArray(env, (jsize)len);
+    if (!arr) { jni_env_release(attached); return -1; }
+    if (len > 0) {
+        (*env)->SetByteArrayRegion(env, arr, 0, (jsize)len, (const jbyte *)data);
+    }
+    (*env)->CallVoidMethod(env, u->obj, u->m_send_datagram, arr);
+    int rc = jni_clear_pending(env);
+    (*env)->DeleteLocalRef(env, arr);
+    jni_env_release(attached);
+    return rc;
+}
+
+static int jni_tr_recv_datagram(void *ud, uint8_t *buf, size_t buf_len, size_t *out_len)
+{
+    jni_transport_udata *u = (jni_transport_udata *)ud;
+    bool attached = false;
+    JNIEnv *env = jni_env_for_thread(&attached);
+    if (!env || !u || !u->obj) return -1;
+    jobject jres = (*env)->CallObjectMethod(env, u->obj, u->m_recv_datagram);
+    if (jni_clear_pending(env) != 0) {
+        if (jres) (*env)->DeleteLocalRef(env, jres);
+        jni_env_release(attached);
+        return -1;
+    }
+    if (!jres) {
+        jni_env_release(attached);
+        return -1;
+    }
+    jsize n = (*env)->GetArrayLength(env, (jbyteArray)jres);
+    if ((size_t)n > buf_len) {
+        (*env)->DeleteLocalRef(env, jres);
+        jni_env_release(attached);
+        return -1;
+    }
+    if (n > 0) {
+        (*env)->GetByteArrayRegion(env, (jbyteArray)jres, 0, n, (jbyte *)buf);
+    }
+    *out_len = (size_t)n;
+    (*env)->DeleteLocalRef(env, jres);
+    jni_env_release(attached);
+    return 0;
+}
+
+// Build a jni_transport_udata around the supplied Kotlin object. The
+// Kotlin object must implement
+// com.marcelocantos.pigeon.peer.JniQuicTransport. On success returns a
+// heap-allocated box; the caller (sessionInitWithJniTransport) takes
+// ownership. Returns NULL and throws a Java RuntimeException on
+// failure.
+static jni_transport_udata *jni_transport_udata_new(JNIEnv *env, jobject transport)
+{
+    jclass cls = (*env)->GetObjectClass(env, transport);
+    if (!cls) { throw_runtime(env, "GetObjectClass(transport) failed"); return NULL; }
+
+    jni_transport_udata *u = calloc(1, sizeof(*u));
+    if (!u) { throw_runtime(env, "alloc failed"); return NULL; }
+
+    u->m_open_stream    = (*env)->GetMethodID(env, cls, "openStream",    "()J");
+    u->m_accept_stream  = (*env)->GetMethodID(env, cls, "acceptStream",  "()J");
+    u->m_send_on_stream = (*env)->GetMethodID(env, cls, "sendOnStream",  "(J[B)V");
+    u->m_recv_on_stream = (*env)->GetMethodID(env, cls, "recvOnStream",  "(J)[B");
+    u->m_close_stream   = (*env)->GetMethodID(env, cls, "closeStream",   "(J)V");
+    u->m_send_datagram  = (*env)->GetMethodID(env, cls, "sendDatagram",  "([B)V");
+    u->m_recv_datagram  = (*env)->GetMethodID(env, cls, "recvDatagram",  "()[B");
+
+    // GetMethodID throws NoSuchMethodError on miss — check once.
+    if ((*env)->ExceptionCheck(env)) {
+        free(u);
+        return NULL;  // exception propagates to Java caller
+    }
+    if (!u->m_open_stream || !u->m_accept_stream ||
+        !u->m_send_on_stream || !u->m_recv_on_stream ||
+        !u->m_close_stream || !u->m_send_datagram ||
+        !u->m_recv_datagram) {
+        free(u);
+        throw_runtime(env, "JniQuicTransport method lookup failed");
+        return NULL;
+    }
+
+    u->obj = (*env)->NewGlobalRef(env, transport);
+    if (!u->obj) {
+        free(u);
+        throw_runtime(env, "NewGlobalRef(transport) failed");
+        return NULL;
+    }
+    return u;
+}
+
+static void jni_make_transport(pigeon_transport *t, jni_transport_udata *u)
+{
+    memset(t, 0, sizeof(*t));
+    t->userdata        = u;
+    t->open_stream     = jni_tr_open_stream;
+    t->accept_stream   = jni_tr_accept_stream;
+    t->send_on_stream  = jni_tr_send_on_stream;
+    t->recv_on_stream  = jni_tr_recv_on_stream;
+    t->close_stream    = jni_tr_close_stream;
+    t->send_datagram   = jni_tr_send_datagram;
+    t->recv_datagram   = jni_tr_recv_datagram;
+}
+
+// Construct a pigeon_session over a JVM-callback transport. The
+// session takes ownership of the JNI transport bridge (a global ref
+// to `transport` plus cached jmethodIDs); sessionFree releases both
+// when the Kotlin Session is closed.
+//
+// The caller still owns the `channel` handle and the `transport`
+// Kotlin reference. The session adds its own global ref to keep the
+// transport alive for the session's lifetime — Kotlin code can drop
+// its local reference to `transport` as soon as this call returns
+// without the C side dangling.
+JNIEXPORT jlong JNICALL
+Java_com_marcelocantos_pigeon_jni_PigeonNative_sessionInitWithJniTransport(
+    JNIEnv *env, jclass cls,
+    jlong channelHandle, jobject transport,
+    jboolean isBackend, jint clientTag,
+    jobjectArray dgnames, jlongArray dgids)
+{
+    (void)cls;
+    pigeon_channel *ch = (pigeon_channel *)(intptr_t)channelHandle;
+    if (!ch || !transport) { throw_runtime(env, "null channel or transport"); return 0; }
+
+    pigeon_dgchannel_def chans[PIGEON_MAX_DATAGRAM_CHANNELS];
+    size_t nchans = 0;
+    if (dgnames && dgids) {
+        jsize n = (*env)->GetArrayLength(env, dgnames);
+        if ((*env)->GetArrayLength(env, dgids) != n) {
+            throw_runtime(env, "dgnames / dgids length mismatch");
+            return 0;
+        }
+        if (n > PIGEON_MAX_DATAGRAM_CHANNELS) {
+            throw_runtime(env, "too many datagram channels");
+            return 0;
+        }
+        nchans = (size_t)n;
+        jlong *ids = (*env)->GetLongArrayElements(env, dgids, NULL);
+        for (jsize i = 0; i < n; i++) {
+            jstring jn = (jstring)(*env)->GetObjectArrayElement(env, dgnames, i);
+            const char *cn = (*env)->GetStringUTFChars(env, jn, NULL);
+            memset(&chans[i], 0, sizeof(chans[i]));
+            strncpy(chans[i].name, cn, PIGEON_MAX_NAME_LEN - 1);
+            chans[i].channel_id = (uint64_t)ids[i];
+            (*env)->ReleaseStringUTFChars(env, jn, cn);
+            (*env)->DeleteLocalRef(env, jn);
+        }
+        (*env)->ReleaseLongArrayElements(env, dgids, ids, JNI_ABORT);
+    }
+
+    jni_transport_udata *u = jni_transport_udata_new(env, transport);
+    if (!u) return 0;  // exception already pending
+
+    session_holder *h = calloc(1, sizeof(session_holder));
+    if (!h) {
+        jni_transport_udata_free(u);
+        throw_runtime(env, "alloc failed");
+        return 0;
+    }
+    h->jni_transport = u;
+
+    pigeon_transport t;
+    jni_make_transport(&t, u);
+
+    if (pigeon_session_init(&h->session, &t, ch,
+                            isBackend ? true : false, (uint32_t)clientTag,
+                            nchans ? chans : NULL, nchans) != 0) {
+        jni_transport_udata_free(u);
+        h->jni_transport = NULL;
+        free(h);
+        throw_runtime(env, "pigeon_session_init failed");
+        return 0;
+    }
+
+    return (jlong)(intptr_t)h;
+}
+
+// Accept the next inbound stream by driving the session's transport
+// vtable (which thunks through JNI back to the Kotlin transport).
+// Reads the first framed message off the new stream — the unencrypted
+// name-binding header — decodes it according to the session's role,
+// and returns a fully-attached pigeon_stream*.
+//
+// Returns 0 (no exception) if accept_stream signals "no stream
+// available" — the Kotlin layer translates this to acceptStream() ==
+// null. Returns nonzero on header-decode error or transport hard
+// failure (Java exception thrown).
+JNIEXPORT jlong JNICALL
+Java_com_marcelocantos_pigeon_jni_PigeonNative_sessionAcceptStreamGeneric(
+    JNIEnv *env, jclass cls, jlong sessionHandle, jobjectArray nameOut)
+{
+    (void)cls;
+    session_holder *h = (session_holder *)(intptr_t)sessionHandle;
+    if (!h) { throw_runtime(env, "null session"); return 0; }
+
+    pigeon_transport *tr = &h->session.transport;
+    if (!tr->accept_stream || !tr->recv_on_stream) {
+        throw_runtime(env, "transport lacks accept_stream / recv_on_stream");
+        return 0;
+    }
+
+    pigeon_stream_handle *sh = NULL;
+    if (tr->accept_stream(tr->userdata, &sh) != 0) {
+        // No stream pending (or transport hiccup the Kotlin side already
+        // surfaced as an exception). If an exception is pending leave it
+        // for the JVM to observe; otherwise this is the "null" path.
+        return 0;
+    }
+
+    uint8_t hdr[PIGEON_MAX_STREAM_HEADER];
+    size_t hn = 0;
+    if (tr->recv_on_stream(tr->userdata, sh, hdr, sizeof(hdr), &hn) != 0) {
+        throw_runtime(env, "transport recv_on_stream(header) failed");
+        return 0;
+    }
+
+    char name[PIGEON_MAX_NAME_LEN] = {0};
+    size_t name_len = 0;
+    if (!h->session.is_backend) {
+        // Peer is the backend — header carries the 4-byte tag prefix.
+        uint32_t tag = 0;
+        if (pigeon_wire_stream_header_decode_backend(hdr, hn, &tag,
+                name, sizeof(name), &name_len) < 0) {
+            throw_runtime(env, "decode_backend_stream_header failed");
+            return 0;
+        }
+    } else {
+        if (pigeon_wire_stream_header_decode_client(hdr, hn,
+                name, sizeof(name), &name_len) < 0) {
+            throw_runtime(env, "decode_client_stream_header failed");
+            return 0;
+        }
+    }
+
+    pigeon_stream *ps = calloc(1, sizeof(pigeon_stream));
+    if (!ps) { throw_runtime(env, "alloc failed"); return 0; }
+    ps->session = &h->session;
+    ps->handle  = sh;
+    memcpy(ps->name, name, name_len);
+
+    if (nameOut && (*env)->GetArrayLength(env, nameOut) > 0) {
+        (*env)->SetObjectArrayElement(env, nameOut, 0,
+            (*env)->NewStringUTF(env, name));
+    }
+
+    return (jlong)(intptr_t)ps;
 }

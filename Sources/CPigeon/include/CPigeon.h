@@ -17,5 +17,7 @@
 
 #include "pigeon.h"
 #include "pigeon_loopback.h"
+#include "pigeon_ngtcp2.h"
+#include "pigeon_ngtcp2_accessors.h"
 
 #endif // CPIGEON_H

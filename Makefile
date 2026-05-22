@@ -3,6 +3,11 @@
 
 JDK21 ?= /opt/homebrew/Cellar/openjdk@21/21.0.11/libexec/openjdk.jdk/Contents/Home
 
+# Android SDK location for AGP (android/pigeon's AAR build).
+# Default to the standard Android Studio install path on macOS.
+ANDROID_HOME ?= $(HOME)/Library/Android/sdk
+export ANDROID_HOME
+
 .PHONY: all build test test-go test-swift test-kotlin test-web \
         e2e e2e-go e2e-swift e2e-kotlin \
         test-live bench clean \
@@ -276,16 +281,25 @@ bullseye: bullseye-prereq
 	   else \
 	     echo fail > /tmp/bullseye/tlc.status; \
 	   fi ) & \
+	 ( if [ -f "$(VENDOR_SENTINEL)" ]; then \
+	     go test -tags csdke2e -count=1 -timeout=180s ./c/test/csdke2e/ > /tmp/bullseye/interop.log 2>&1 \
+	       && echo ok > /tmp/bullseye/interop.status \
+	       || echo fail > /tmp/bullseye/interop.status; \
+	   else \
+	     echo "skipped: vendored ngtcp2/quictls not built (run 'make build-vendor-deps' to enable)" > /tmp/bullseye/interop.log; \
+	     echo ok-skipped > /tmp/bullseye/interop.status; \
+	   fi ) & \
 	 wait
 	@fail=0; \
-	 for step in gofmt govet gobuild gotest swift-test kotlin web test-c tlc; do \
-	   if [ "$$(cat /tmp/bullseye/$$step.status 2>/dev/null)" = "ok" ]; then \
-	     printf "✓ %s\n" "$$step"; \
-	   else \
-	     printf "✗ %s\n" "$$step"; \
-	     tail -30 /tmp/bullseye/$$step.log 2>/dev/null | sed 's/^/    /'; \
-	     fail=1; \
-	   fi; \
+	 for step in gofmt govet gobuild gotest swift-test kotlin web test-c tlc interop; do \
+	   status=$$(cat /tmp/bullseye/$$step.status 2>/dev/null); \
+	   case "$$status" in \
+	     ok)         printf "✓ %s\n" "$$step" ;; \
+	     ok-skipped) printf "○ %s (skipped)\n" "$$step" ;; \
+	     *)          printf "✗ %s\n" "$$step"; \
+	                 tail -30 /tmp/bullseye/$$step.log 2>/dev/null | sed 's/^/    /'; \
+	                 fail=1 ;; \
+	   esac; \
 	 done; \
 	 exit $$fail
 

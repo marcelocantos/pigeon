@@ -164,6 +164,25 @@ final class RelayE2ETests: XCTestCase {
         backend.cancel(); client.cancel()
     }
 
+    /// 🎯T37: Cross-language confirmation-code test wired through the
+    /// real Ngtcp2Transport + PigeonSession path.
+    ///
+    /// Wire: Swift PigeonSession (via Ngtcp2Transport role .connect) ↔
+    /// Go relay ↔ Go crypto-peer (pigeon.Register pairing-mode, listener.Accept).
+    ///
+    /// Replaces the previous NWConnection-based variant that spoke the
+    /// raw QUIC stream directly. The post-🎯T37 path goes through the
+    /// vendored ngtcp2 client + libpigeon multi-stream session glue,
+    /// so this exercises:
+    ///
+    ///   * Ngtcp2Transport.init → pigeon_ngtcp2_transport_init → real
+    ///     QUIC handshake + relay greeting (connect:<id>).
+    ///   * PigeonSession.pairingConnect → pigeon_connect_on_transport
+    ///     (record == NULL → pairing mode, writes empty-name primary
+    ///     header, leaves AEAD channel unestablished).
+    ///   * PigeonSession.primaryStream → pigeon_session_primary →
+    ///     pigeon_stream_send / pigeon_stream_recv (plaintext path
+    ///     because !channel.established).
     func testCrossLanguageConfirmationCode() async throws {
         // Build the crypto-peer binary.
         let repoRoot = URL(fileURLWithPath: #filePath)
@@ -246,38 +265,54 @@ final class RelayE2ETests: XCTestCase {
         }
         let instanceID = instanceIDResult
 
-        // Connect to relay using the instance ID.
-        let client = try await connect(instanceID)
-        defer { client.cancel() }
+        // Build the Ngtcp2Transport on a dedicated worker thread. The
+        // ngtcp2 init runs the QUIC handshake synchronously (blocks on
+        // select() inside the C code); we don't want that on Swift's
+        // cooperative pool. Also keep the transport's lifetime tied to
+        // this scope — the transport's userdata pointer flows into
+        // PigeonSession, which retains the transport, so it stays alive
+        // while we use the session.
+        let transport: Ngtcp2Transport = try await Task.detached(priority: .userInitiated) {
+            try Ngtcp2Transport(
+                host: "127.0.0.1",
+                port: String(self.relayPort!),
+                role: .connect(peerInstanceID: instanceID),
+                verifyPeer: false,
+                timeoutMs: 15000
+            )
+        }.value
+        defer { transport.close() }
 
-        // Send the modern-wire empty-name primary stream header. Post-T39.6.1
-        // crypto-peer registers in pairing-mode against the modern Register
-        // / Connect path, which routes through bridgeClientMux on the relay
-        // and expects the first message on a new client stream to be the
-        // primary's stream-name binding header. The header for an unnamed
-        // primary is just `varint(0)` = a single 0x00 byte; writeMsg adds
-        // the 4-byte length prefix.
-        try await writeMsg(client, Data([0x00]))
+        // Promote the primary stream into the multi-channel slot table
+        // and run pigeon_connect_on_transport in pairing mode. Result:
+        // a PigeonSession whose primary stream is bound and ready to
+        // exchange plaintext messages over send_on_stream / recv_on_stream.
+        let primary = try transport.primaryHandle()
+        let session = try PigeonSession.pairingConnect(
+            transport: transport,
+            primaryHandle: primary,
+            peerInstanceID: instanceID
+        )
 
-        // Receive crypto-peer's 32-byte public key. The connection is
-        // cancelled after 10 seconds to ensure readMsg cannot hang.
-        let peerPublicKey = try await readMsgWithTimeout(client, 10)
+        // Drive the key exchange + confirmation-code receipt over the
+        // primary stream. Use PigeonStream.send / .recv — in pairing
+        // mode (!channel.established) these short-circuit to
+        // transport_send_on_stream / transport_recv_on_stream, which
+        // wrap each call in a 4-byte BE length prefix and forward to
+        // the QUIC stream. Matches the framing the Go peer-library
+        // Stream.Send/Recv produces on the other side.
+        let primaryStream = try session.primaryStream()
+
+        // 1. Receive crypto-peer's 32-byte public key.
+        let peerPublicKey = try await primaryStream.recv()
         XCTAssertEqual(peerPublicKey.count, 32, "peer public key should be 32 bytes")
 
-        // Generate own X25519 keypair.
+        // 2. Send our 32-byte public key.
         let myKeyPair = E2EKeyPair()
+        try await primaryStream.send(myKeyPair.publicKeyData)
 
-        // Start reading the confirmation code BEFORE sending our pubkey.
-        // This ensures NWConnection.receive() is already posted when the
-        // code arrives, avoiding a race where data arrives before receive
-        // is posted and NWConnection may not deliver it.
-        async let peerCodeFuture = readMsgWithTimeout(client, 10)
-
-        // Send our 32-byte public key. Crypto-peer will respond with the code.
-        try await writeMsg(client, myKeyPair.publicKeyData)
-
-        // Await the confirmation code.
-        let peerCodeData = try await peerCodeFuture
+        // 3. Receive crypto-peer's 6-byte confirmation code.
+        let peerCodeData = try await primaryStream.recv()
         let peerCode = String(decoding: peerCodeData, as: UTF8.self)
 
         // Derive own confirmation code and assert cross-language agreement.
@@ -285,6 +320,13 @@ final class RelayE2ETests: XCTestCase {
         XCTAssertEqual(myCode, peerCode,
                        "Swift and Go confirmation codes must match (cross-language HKDF verification)")
         XCTAssertEqual(myCode.count, 6, "confirmation code should be 6 digits")
+
+        // Politely close the stream so crypto-peer's trailing stream.Recv
+        // returns and it exits cleanly. The legacy NWConnection variant
+        // relied on connection cancellation for the same effect; here
+        // the PigeonSession close+ Ngtcp2Transport.close in the defers
+        // tear everything down.
+        try? primaryStream.close()
     }
 
     /// Reads one length-prefixed message from `c`, cancelling `c` after
