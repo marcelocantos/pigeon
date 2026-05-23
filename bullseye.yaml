@@ -1403,7 +1403,7 @@ targets:
     achieved: 2026-05-10
   T39.7:
     name: protocol/session.yaml has a generic candidate-pair sub-FSM (Candidate record, candidate-exchange wire format, candidate-pair handshake, nomination over a set) — not the flat LAN-vs-relay scheme it ships with today
-    status: identified
+    status: achieved
     value: 0.0
     cost: 0.0
     acceptance:
@@ -1429,6 +1429,7 @@ targets:
     - T39
     origin: discovered during T43 fan-out attempt
     discovered: 2026-05-21
+    achieved: 2026-05-23
   T4:
     name: Investigate STUN/NAT hole-punching as a transport
     status: achieved
