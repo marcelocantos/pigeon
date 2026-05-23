@@ -20,10 +20,10 @@ public enum SessionBackendState: String, Sendable {
     case authCheck = "AuthCheck"
     case sessionActive = "SessionActive"
     case relayConnected = "RelayConnected"
-    case lANOffered = "LANOffered"
-    case lANActive = "LANActive"
+    case candidatesAdvertised = "CandidatesAdvertised"
+    case altActive = "AltActive"
     case relayBackoff = "RelayBackoff"
-    case lANDegraded = "LANDegraded"
+    case altDegraded = "AltDegraded"
 }
 
 public enum SessionClientState: String, Sendable {
@@ -40,9 +40,9 @@ public enum SessionClientState: String, Sendable {
     case sendAuth = "SendAuth"
     case sessionActive = "SessionActive"
     case relayConnected = "RelayConnected"
-    case lANConnecting = "LANConnecting"
-    case lANVerifying = "LANVerifying"
-    case lANActive = "LANActive"
+    case pairDialing = "PairDialing"
+    case pairChecking = "PairChecking"
+    case altActive = "AltActive"
     case relayFallback = "RelayFallback"
 }
 
@@ -65,8 +65,12 @@ public enum SessionWire {
     public static let maxDatagramPayload = 1200
     public static let fragmentTimeoutMs = 5000 // ms
     public static let frameApp: UInt8 = 0x00
-    public static let frameLanOffer: UInt8 = 0x01
+    public static let frameCandidates: UInt8 = 0x01
     public static let frameCutover: UInt8 = 0x02
+    public static let framePairCheck: UInt8 = 0x03
+    public static let framePairCheckAck: UInt8 = 0x04
+    public static let candHost = "host"
+    public static let candSrflx = "srflx"
     public static let maxMessageSize = 1048576
     public static let lengthPrefixSize = 4
     public static let pingIntervalMs = 5000 // ms
@@ -90,9 +94,9 @@ public enum SessionProtocol {
         case pairComplete = "pair_complete"
         case authRequest = "auth_request"
         case authOk = "auth_ok"
-        case lanOffer = "lan_offer"
-        case lanVerify = "lan_verify"
-        case lanConfirm = "lan_confirm"
+        case candidates = "candidates"
+        case pairCheck = "pair_check"
+        case pairCheckAck = "pair_check_ack"
         case pathPing = "path_ping"
         case pathPong = "path_pong"
     }
@@ -107,9 +111,9 @@ public enum SessionProtocol {
         case nonceFresh = "nonce_fresh"
         case challengeValid = "challenge_valid"
         case challengeInvalid = "challenge_invalid"
-        case lanEnabled = "lan_enabled"
-        case lanDisabled = "lan_disabled"
-        case lanServerAvailable = "lan_server_available"
+        case altEnabled = "alt_enabled"
+        case altDisabled = "alt_disabled"
+        case localCandidatesAvailable = "local_candidates_available"
         case underMaxFailures = "under_max_failures"
         case atMaxFailures = "at_max_failures"
     }
@@ -125,7 +129,7 @@ public enum SessionProtocol {
         case resetFailures = "reset_failures"
         case sendPairHello = "send_pair_hello"
         case storeSecret = "store_secret"
-        case dialLan = "dial_lan"
+        case dialCandidate = "dial_candidate"
         case bridgeStreams = "bridge_streams"
         case unbridge = "unbridge"
     }
@@ -140,16 +144,16 @@ public enum SessionProtocol {
         case relayStreamData = "relay_stream_data"
         case relayStreamError = "relay_stream_error"
         case relayDatagram = "relay_datagram"
-        case lanStreamData = "lan_stream_data"
-        case lanStreamError = "lan_stream_error"
-        case lanDatagram = "lan_datagram"
-        case lanDialOk = "lan_dial_ok"
-        case lanDialFailed = "lan_dial_failed"
-        case lanVerifyOk = "lan_verify_ok"
+        case altStreamData = "alt_stream_data"
+        case altStreamError = "alt_stream_error"
+        case altDatagram = "alt_datagram"
+        case dialOk = "dial_ok"
+        case dialFailed = "dial_failed"
+        case pairCheckOk = "pair_check_ok"
         case pingTimeout = "ping_timeout"
         case pingTick = "ping_tick"
         case backoffExpired = "backoff_expired"
-        case offerTimeout = "offer_timeout"
+        case candidatesTimeout = "candidates_timeout"
         case cliInitPair = "cli_init_pair"
         case tokenCreated = "token_created"
         case relayRegistered = "relay_registered"
@@ -160,9 +164,9 @@ public enum SessionProtocol {
         case finalise = "finalise"
         case verify = "verify"
         case sessionEstablished = "session_established"
-        case lanServerReady = "lan_server_ready"
-        case lanServerChanged = "lan_server_changed"
-        case readvertiseTick = "readvertise_tick"
+        case candidatesGathered = "candidates_gathered"
+        case candidatesChanged = "candidates_changed"
+        case candidatesRefreshTick = "candidates_refresh_tick"
         case disconnect = "disconnect"
         case backchannelReceived = "backchannel_received"
         case secretParsed = "secret_parsed"
@@ -171,7 +175,7 @@ public enum SessionProtocol {
         case codeDisplayed = "code_displayed"
         case appLaunch = "app_launch"
         case verifyTimeout = "verify_timeout"
-        case lanError = "lan_error"
+        case altError = "alt_error"
         case relayOk = "relay_ok"
         case backendRegister = "backend_register"
         case clientConnect = "client_connect"
@@ -179,14 +183,14 @@ public enum SessionProtocol {
         case backendDisconnect = "backend_disconnect"
         case recvPairHello = "recv_pair_hello"
         case recvAuthRequest = "recv_auth_request"
-        case recvLanVerify = "recv_lan_verify"
+        case recvPairCheck = "recv_pair_check"
         case recvPathPong = "recv_path_pong"
         case recvPairHelloAck = "recv_pair_hello_ack"
         case recvPairConfirm = "recv_pair_confirm"
         case recvPairComplete = "recv_pair_complete"
         case recvAuthOk = "recv_auth_ok"
-        case recvLanOffer = "recv_lan_offer"
-        case recvLanConfirm = "recv_lan_confirm"
+        case recvCandidates = "recv_candidates"
+        case recvPairCheckAck = "recv_pair_check_ack"
         case recvPathPing = "recv_path_ping"
     }
 
@@ -195,25 +199,25 @@ public enum SessionProtocol {
         case sendActiveDatagram = "send_active_datagram"
         case sendPathPing = "send_path_ping"
         case sendPathPong = "send_path_pong"
-        case sendLanOffer = "send_lan_offer"
-        case sendLanVerify = "send_lan_verify"
-        case sendLanConfirm = "send_lan_confirm"
-        case dialLan = "dial_lan"
+        case sendCandidates = "send_candidates"
+        case sendPairCheck = "send_pair_check"
+        case sendPairCheckAck = "send_pair_check_ack"
+        case dialCandidate = "dial_candidate"
         case deliverRecv = "deliver_recv"
         case deliverRecvError = "deliver_recv_error"
         case deliverRecvDatagram = "deliver_recv_datagram"
-        case startLanStreamReader = "start_lan_stream_reader"
-        case stopLanStreamReader = "stop_lan_stream_reader"
-        case startLanDgReader = "start_lan_dg_reader"
-        case stopLanDgReader = "stop_lan_dg_reader"
+        case startAltStreamReader = "start_alt_stream_reader"
+        case stopAltStreamReader = "stop_alt_stream_reader"
+        case startAltDgReader = "start_alt_dg_reader"
+        case stopAltDgReader = "stop_alt_dg_reader"
         case startMonitor = "start_monitor"
         case stopMonitor = "stop_monitor"
         case startPongTimeout = "start_pong_timeout"
         case cancelPongTimeout = "cancel_pong_timeout"
         case startBackoffTimer = "start_backoff_timer"
-        case closeLanPath = "close_lan_path"
-        case signalLanReady = "signal_lan_ready"
-        case resetLanReady = "reset_lan_ready"
+        case closeAltPath = "close_alt_path"
+        case signalAltReady = "signal_alt_ready"
+        case resetAltReady = "reset_alt_ready"
         case setCryptoDatagram = "set_crypto_datagram"
     }
 
@@ -237,54 +241,54 @@ public enum SessionProtocol {
         (from: "AuthCheck", to: "SessionActive", on: "verify", onKind: "internal", guard: "device_known", action: "verify_device", sends: [(to: "client", msg: "auth_ok")]),
         (from: "AuthCheck", to: "Idle", on: "verify", onKind: "internal", guard: "device_unknown", action: nil, sends: []),
         (from: "SessionActive", to: "RelayConnected", on: "session_established", onKind: "internal", guard: nil, action: nil, sends: []),
-        (from: "RelayConnected", to: "LANOffered", on: "lan_server_ready", onKind: "internal", guard: nil, action: nil, sends: [(to: "client", msg: "lan_offer")]),
-        (from: "LANOffered", to: "LANActive", on: "lan_verify", onKind: "recv", guard: "challenge_valid", action: "activate_lan", sends: [(to: "client", msg: "lan_confirm")]),
-        (from: "LANOffered", to: "RelayConnected", on: "lan_verify", onKind: "recv", guard: "challenge_invalid", action: nil, sends: []),
-        (from: "LANOffered", to: "RelayBackoff", on: "offer_timeout", onKind: "internal", guard: nil, action: nil, sends: []),
-        (from: "LANActive", to: "LANActive", on: "ping_tick", onKind: "internal", guard: nil, action: nil, sends: [(to: "client", msg: "path_ping")]),
-        (from: "LANActive", to: "LANDegraded", on: "ping_timeout", onKind: "internal", guard: nil, action: nil, sends: []),
-        (from: "LANDegraded", to: "LANDegraded", on: "ping_tick", onKind: "internal", guard: nil, action: nil, sends: [(to: "client", msg: "path_ping")]),
-        (from: "LANActive", to: "RelayBackoff", on: "lan_stream_error", onKind: "internal", guard: nil, action: "fallback_to_relay", sends: []),
-        (from: "LANDegraded", to: "RelayBackoff", on: "lan_stream_error", onKind: "internal", guard: nil, action: "fallback_to_relay", sends: []),
-        (from: "LANDegraded", to: "LANActive", on: "path_pong", onKind: "recv", guard: nil, action: "reset_failures", sends: []),
-        (from: "LANDegraded", to: "LANDegraded", on: "ping_timeout", onKind: "internal", guard: "under_max_failures", action: nil, sends: []),
-        (from: "LANDegraded", to: "RelayBackoff", on: "ping_timeout", onKind: "internal", guard: "at_max_failures", action: "fallback_to_relay", sends: []),
-        (from: "RelayBackoff", to: "LANOffered", on: "backoff_expired", onKind: "internal", guard: nil, action: nil, sends: [(to: "client", msg: "lan_offer")]),
-        (from: "RelayBackoff", to: "LANOffered", on: "lan_server_changed", onKind: "internal", guard: nil, action: nil, sends: [(to: "client", msg: "lan_offer")]),
-        (from: "RelayConnected", to: "LANOffered", on: "readvertise_tick", onKind: "internal", guard: "lan_server_available", action: nil, sends: [(to: "client", msg: "lan_offer")]),
-        (from: "LANOffered", to: "RelayConnected", on: "app_force_fallback", onKind: "internal", guard: nil, action: nil, sends: []),
-        (from: "LANActive", to: "RelayBackoff", on: "app_force_fallback", onKind: "internal", guard: nil, action: "fallback_to_relay", sends: []),
-        (from: "LANDegraded", to: "RelayBackoff", on: "app_force_fallback", onKind: "internal", guard: nil, action: "fallback_to_relay", sends: []),
+        (from: "RelayConnected", to: "CandidatesAdvertised", on: "candidates_gathered", onKind: "internal", guard: nil, action: nil, sends: [(to: "client", msg: "candidates")]),
+        (from: "CandidatesAdvertised", to: "AltActive", on: "pair_check", onKind: "recv", guard: "challenge_valid", action: "activate_lan", sends: [(to: "client", msg: "pair_check_ack")]),
+        (from: "CandidatesAdvertised", to: "RelayConnected", on: "pair_check", onKind: "recv", guard: "challenge_invalid", action: nil, sends: []),
+        (from: "CandidatesAdvertised", to: "RelayBackoff", on: "candidates_timeout", onKind: "internal", guard: nil, action: nil, sends: []),
+        (from: "AltActive", to: "AltActive", on: "ping_tick", onKind: "internal", guard: nil, action: nil, sends: [(to: "client", msg: "path_ping")]),
+        (from: "AltActive", to: "AltDegraded", on: "ping_timeout", onKind: "internal", guard: nil, action: nil, sends: []),
+        (from: "AltDegraded", to: "AltDegraded", on: "ping_tick", onKind: "internal", guard: nil, action: nil, sends: [(to: "client", msg: "path_ping")]),
+        (from: "AltActive", to: "RelayBackoff", on: "alt_stream_error", onKind: "internal", guard: nil, action: "fallback_to_relay", sends: []),
+        (from: "AltDegraded", to: "RelayBackoff", on: "alt_stream_error", onKind: "internal", guard: nil, action: "fallback_to_relay", sends: []),
+        (from: "AltDegraded", to: "AltActive", on: "path_pong", onKind: "recv", guard: nil, action: "reset_failures", sends: []),
+        (from: "AltDegraded", to: "AltDegraded", on: "ping_timeout", onKind: "internal", guard: "under_max_failures", action: nil, sends: []),
+        (from: "AltDegraded", to: "RelayBackoff", on: "ping_timeout", onKind: "internal", guard: "at_max_failures", action: "fallback_to_relay", sends: []),
+        (from: "RelayBackoff", to: "CandidatesAdvertised", on: "backoff_expired", onKind: "internal", guard: nil, action: nil, sends: [(to: "client", msg: "candidates")]),
+        (from: "RelayBackoff", to: "CandidatesAdvertised", on: "candidates_changed", onKind: "internal", guard: nil, action: nil, sends: [(to: "client", msg: "candidates")]),
+        (from: "RelayConnected", to: "CandidatesAdvertised", on: "candidates_refresh_tick", onKind: "internal", guard: "local_candidates_available", action: nil, sends: [(to: "client", msg: "candidates")]),
+        (from: "CandidatesAdvertised", to: "RelayConnected", on: "app_force_fallback", onKind: "internal", guard: nil, action: nil, sends: []),
+        (from: "AltActive", to: "RelayBackoff", on: "app_force_fallback", onKind: "internal", guard: nil, action: "fallback_to_relay", sends: []),
+        (from: "AltDegraded", to: "RelayBackoff", on: "app_force_fallback", onKind: "internal", guard: nil, action: "fallback_to_relay", sends: []),
         (from: "RelayConnected", to: "Paired", on: "disconnect", onKind: "internal", guard: nil, action: nil, sends: []),
         (from: "RelayConnected", to: "RelayConnected", on: "app_send", onKind: "internal", guard: nil, action: nil, sends: []),
-        (from: "LANOffered", to: "LANOffered", on: "app_send", onKind: "internal", guard: nil, action: nil, sends: []),
-        (from: "LANActive", to: "LANActive", on: "app_send", onKind: "internal", guard: nil, action: nil, sends: []),
-        (from: "LANDegraded", to: "LANDegraded", on: "app_send", onKind: "internal", guard: nil, action: nil, sends: []),
+        (from: "CandidatesAdvertised", to: "CandidatesAdvertised", on: "app_send", onKind: "internal", guard: nil, action: nil, sends: []),
+        (from: "AltActive", to: "AltActive", on: "app_send", onKind: "internal", guard: nil, action: nil, sends: []),
+        (from: "AltDegraded", to: "AltDegraded", on: "app_send", onKind: "internal", guard: nil, action: nil, sends: []),
         (from: "RelayBackoff", to: "RelayBackoff", on: "app_send", onKind: "internal", guard: nil, action: nil, sends: []),
         (from: "RelayConnected", to: "RelayConnected", on: "relay_stream_data", onKind: "internal", guard: nil, action: nil, sends: []),
-        (from: "LANOffered", to: "LANOffered", on: "relay_stream_data", onKind: "internal", guard: nil, action: nil, sends: []),
-        (from: "LANActive", to: "LANActive", on: "relay_stream_data", onKind: "internal", guard: nil, action: nil, sends: []),
-        (from: "LANDegraded", to: "LANDegraded", on: "relay_stream_data", onKind: "internal", guard: nil, action: nil, sends: []),
+        (from: "CandidatesAdvertised", to: "CandidatesAdvertised", on: "relay_stream_data", onKind: "internal", guard: nil, action: nil, sends: []),
+        (from: "AltActive", to: "AltActive", on: "relay_stream_data", onKind: "internal", guard: nil, action: nil, sends: []),
+        (from: "AltDegraded", to: "AltDegraded", on: "relay_stream_data", onKind: "internal", guard: nil, action: nil, sends: []),
         (from: "RelayBackoff", to: "RelayBackoff", on: "relay_stream_data", onKind: "internal", guard: nil, action: nil, sends: []),
         (from: "RelayConnected", to: "RelayConnected", on: "relay_stream_error", onKind: "internal", guard: nil, action: nil, sends: []),
-        (from: "LANOffered", to: "LANOffered", on: "relay_stream_error", onKind: "internal", guard: nil, action: nil, sends: []),
-        (from: "LANActive", to: "LANActive", on: "relay_stream_error", onKind: "internal", guard: nil, action: nil, sends: []),
-        (from: "LANDegraded", to: "LANDegraded", on: "relay_stream_error", onKind: "internal", guard: nil, action: nil, sends: []),
+        (from: "CandidatesAdvertised", to: "CandidatesAdvertised", on: "relay_stream_error", onKind: "internal", guard: nil, action: nil, sends: []),
+        (from: "AltActive", to: "AltActive", on: "relay_stream_error", onKind: "internal", guard: nil, action: nil, sends: []),
+        (from: "AltDegraded", to: "AltDegraded", on: "relay_stream_error", onKind: "internal", guard: nil, action: nil, sends: []),
         (from: "RelayBackoff", to: "RelayBackoff", on: "relay_stream_error", onKind: "internal", guard: nil, action: nil, sends: []),
         (from: "RelayConnected", to: "RelayConnected", on: "app_send_datagram", onKind: "internal", guard: nil, action: nil, sends: []),
-        (from: "LANOffered", to: "LANOffered", on: "app_send_datagram", onKind: "internal", guard: nil, action: nil, sends: []),
-        (from: "LANActive", to: "LANActive", on: "app_send_datagram", onKind: "internal", guard: nil, action: nil, sends: []),
-        (from: "LANDegraded", to: "LANDegraded", on: "app_send_datagram", onKind: "internal", guard: nil, action: nil, sends: []),
+        (from: "CandidatesAdvertised", to: "CandidatesAdvertised", on: "app_send_datagram", onKind: "internal", guard: nil, action: nil, sends: []),
+        (from: "AltActive", to: "AltActive", on: "app_send_datagram", onKind: "internal", guard: nil, action: nil, sends: []),
+        (from: "AltDegraded", to: "AltDegraded", on: "app_send_datagram", onKind: "internal", guard: nil, action: nil, sends: []),
         (from: "RelayBackoff", to: "RelayBackoff", on: "app_send_datagram", onKind: "internal", guard: nil, action: nil, sends: []),
         (from: "RelayConnected", to: "RelayConnected", on: "relay_datagram", onKind: "internal", guard: nil, action: nil, sends: []),
-        (from: "LANOffered", to: "LANOffered", on: "relay_datagram", onKind: "internal", guard: nil, action: nil, sends: []),
-        (from: "LANActive", to: "LANActive", on: "relay_datagram", onKind: "internal", guard: nil, action: nil, sends: []),
-        (from: "LANDegraded", to: "LANDegraded", on: "relay_datagram", onKind: "internal", guard: nil, action: nil, sends: []),
+        (from: "CandidatesAdvertised", to: "CandidatesAdvertised", on: "relay_datagram", onKind: "internal", guard: nil, action: nil, sends: []),
+        (from: "AltActive", to: "AltActive", on: "relay_datagram", onKind: "internal", guard: nil, action: nil, sends: []),
+        (from: "AltDegraded", to: "AltDegraded", on: "relay_datagram", onKind: "internal", guard: nil, action: nil, sends: []),
         (from: "RelayBackoff", to: "RelayBackoff", on: "relay_datagram", onKind: "internal", guard: nil, action: nil, sends: []),
-        (from: "LANActive", to: "LANActive", on: "lan_stream_data", onKind: "internal", guard: nil, action: nil, sends: []),
-        (from: "LANDegraded", to: "LANDegraded", on: "lan_stream_data", onKind: "internal", guard: nil, action: nil, sends: []),
-        (from: "LANActive", to: "LANActive", on: "lan_datagram", onKind: "internal", guard: nil, action: nil, sends: []),
-        (from: "LANDegraded", to: "LANDegraded", on: "lan_datagram", onKind: "internal", guard: nil, action: nil, sends: []),
+        (from: "AltActive", to: "AltActive", on: "alt_stream_data", onKind: "internal", guard: nil, action: nil, sends: []),
+        (from: "AltDegraded", to: "AltDegraded", on: "alt_stream_data", onKind: "internal", guard: nil, action: nil, sends: []),
+        (from: "AltActive", to: "AltActive", on: "alt_datagram", onKind: "internal", guard: nil, action: nil, sends: []),
+        (from: "AltDegraded", to: "AltDegraded", on: "alt_datagram", onKind: "internal", guard: nil, action: nil, sends: []),
     ]
 
     /// client transitions.
@@ -303,48 +307,48 @@ public enum SessionProtocol {
         (from: "Reconnect", to: "SendAuth", on: "relay_connected", onKind: "internal", guard: nil, action: nil, sends: [(to: "backend", msg: "auth_request")]),
         (from: "SendAuth", to: "SessionActive", on: "auth_ok", onKind: "recv", guard: nil, action: nil, sends: []),
         (from: "SessionActive", to: "RelayConnected", on: "session_established", onKind: "internal", guard: nil, action: nil, sends: []),
-        (from: "RelayConnected", to: "LANConnecting", on: "lan_offer", onKind: "recv", guard: "lan_enabled", action: "dial_lan", sends: []),
-        (from: "RelayConnected", to: "RelayConnected", on: "lan_offer", onKind: "recv", guard: "lan_disabled", action: nil, sends: []),
-        (from: "LANConnecting", to: "LANVerifying", on: "lan_dial_ok", onKind: "internal", guard: nil, action: nil, sends: [(to: "backend", msg: "lan_verify")]),
-        (from: "LANConnecting", to: "RelayConnected", on: "lan_dial_failed", onKind: "internal", guard: nil, action: nil, sends: []),
-        (from: "LANVerifying", to: "LANActive", on: "lan_confirm", onKind: "recv", guard: nil, action: "activate_lan", sends: []),
-        (from: "LANVerifying", to: "RelayConnected", on: "verify_timeout", onKind: "internal", guard: nil, action: nil, sends: []),
-        (from: "LANActive", to: "LANActive", on: "path_ping", onKind: "recv", guard: nil, action: nil, sends: [(to: "backend", msg: "path_pong")]),
-        (from: "LANActive", to: "RelayFallback", on: "lan_error", onKind: "internal", guard: nil, action: "fallback_to_relay", sends: []),
-        (from: "LANActive", to: "RelayFallback", on: "lan_stream_error", onKind: "internal", guard: nil, action: "fallback_to_relay", sends: []),
+        (from: "RelayConnected", to: "PairDialing", on: "candidates", onKind: "recv", guard: "alt_enabled", action: "dial_candidate", sends: []),
+        (from: "RelayConnected", to: "RelayConnected", on: "candidates", onKind: "recv", guard: "alt_disabled", action: nil, sends: []),
+        (from: "PairDialing", to: "PairChecking", on: "dial_ok", onKind: "internal", guard: nil, action: nil, sends: [(to: "backend", msg: "pair_check")]),
+        (from: "PairDialing", to: "RelayConnected", on: "dial_failed", onKind: "internal", guard: nil, action: nil, sends: []),
+        (from: "PairChecking", to: "AltActive", on: "pair_check_ack", onKind: "recv", guard: nil, action: "activate_lan", sends: []),
+        (from: "PairChecking", to: "RelayConnected", on: "verify_timeout", onKind: "internal", guard: nil, action: nil, sends: []),
+        (from: "AltActive", to: "AltActive", on: "path_ping", onKind: "recv", guard: nil, action: nil, sends: [(to: "backend", msg: "path_pong")]),
+        (from: "AltActive", to: "RelayFallback", on: "alt_error", onKind: "internal", guard: nil, action: "fallback_to_relay", sends: []),
+        (from: "AltActive", to: "RelayFallback", on: "alt_stream_error", onKind: "internal", guard: nil, action: "fallback_to_relay", sends: []),
         (from: "RelayFallback", to: "RelayConnected", on: "relay_ok", onKind: "internal", guard: nil, action: nil, sends: []),
-        (from: "LANActive", to: "LANConnecting", on: "lan_offer", onKind: "recv", guard: "lan_enabled", action: "dial_lan", sends: []),
-        (from: "LANConnecting", to: "RelayConnected", on: "app_force_fallback", onKind: "internal", guard: nil, action: nil, sends: []),
-        (from: "LANVerifying", to: "RelayConnected", on: "app_force_fallback", onKind: "internal", guard: nil, action: nil, sends: []),
-        (from: "LANActive", to: "RelayConnected", on: "app_force_fallback", onKind: "internal", guard: nil, action: "fallback_to_relay", sends: []),
+        (from: "AltActive", to: "PairDialing", on: "candidates", onKind: "recv", guard: "alt_enabled", action: "dial_candidate", sends: []),
+        (from: "PairDialing", to: "RelayConnected", on: "app_force_fallback", onKind: "internal", guard: nil, action: nil, sends: []),
+        (from: "PairChecking", to: "RelayConnected", on: "app_force_fallback", onKind: "internal", guard: nil, action: nil, sends: []),
+        (from: "AltActive", to: "RelayConnected", on: "app_force_fallback", onKind: "internal", guard: nil, action: "fallback_to_relay", sends: []),
         (from: "RelayConnected", to: "Paired", on: "disconnect", onKind: "internal", guard: nil, action: nil, sends: []),
         (from: "RelayConnected", to: "RelayConnected", on: "app_send", onKind: "internal", guard: nil, action: nil, sends: []),
-        (from: "LANConnecting", to: "LANConnecting", on: "app_send", onKind: "internal", guard: nil, action: nil, sends: []),
-        (from: "LANVerifying", to: "LANVerifying", on: "app_send", onKind: "internal", guard: nil, action: nil, sends: []),
-        (from: "LANActive", to: "LANActive", on: "app_send", onKind: "internal", guard: nil, action: nil, sends: []),
+        (from: "PairDialing", to: "PairDialing", on: "app_send", onKind: "internal", guard: nil, action: nil, sends: []),
+        (from: "PairChecking", to: "PairChecking", on: "app_send", onKind: "internal", guard: nil, action: nil, sends: []),
+        (from: "AltActive", to: "AltActive", on: "app_send", onKind: "internal", guard: nil, action: nil, sends: []),
         (from: "RelayFallback", to: "RelayFallback", on: "app_send", onKind: "internal", guard: nil, action: nil, sends: []),
         (from: "RelayConnected", to: "RelayConnected", on: "relay_stream_data", onKind: "internal", guard: nil, action: nil, sends: []),
-        (from: "LANConnecting", to: "LANConnecting", on: "relay_stream_data", onKind: "internal", guard: nil, action: nil, sends: []),
-        (from: "LANVerifying", to: "LANVerifying", on: "relay_stream_data", onKind: "internal", guard: nil, action: nil, sends: []),
-        (from: "LANActive", to: "LANActive", on: "relay_stream_data", onKind: "internal", guard: nil, action: nil, sends: []),
+        (from: "PairDialing", to: "PairDialing", on: "relay_stream_data", onKind: "internal", guard: nil, action: nil, sends: []),
+        (from: "PairChecking", to: "PairChecking", on: "relay_stream_data", onKind: "internal", guard: nil, action: nil, sends: []),
+        (from: "AltActive", to: "AltActive", on: "relay_stream_data", onKind: "internal", guard: nil, action: nil, sends: []),
         (from: "RelayFallback", to: "RelayFallback", on: "relay_stream_data", onKind: "internal", guard: nil, action: nil, sends: []),
         (from: "RelayConnected", to: "RelayConnected", on: "relay_stream_error", onKind: "internal", guard: nil, action: nil, sends: []),
-        (from: "LANConnecting", to: "LANConnecting", on: "relay_stream_error", onKind: "internal", guard: nil, action: nil, sends: []),
-        (from: "LANVerifying", to: "LANVerifying", on: "relay_stream_error", onKind: "internal", guard: nil, action: nil, sends: []),
-        (from: "LANActive", to: "LANActive", on: "relay_stream_error", onKind: "internal", guard: nil, action: nil, sends: []),
+        (from: "PairDialing", to: "PairDialing", on: "relay_stream_error", onKind: "internal", guard: nil, action: nil, sends: []),
+        (from: "PairChecking", to: "PairChecking", on: "relay_stream_error", onKind: "internal", guard: nil, action: nil, sends: []),
+        (from: "AltActive", to: "AltActive", on: "relay_stream_error", onKind: "internal", guard: nil, action: nil, sends: []),
         (from: "RelayFallback", to: "RelayFallback", on: "relay_stream_error", onKind: "internal", guard: nil, action: nil, sends: []),
         (from: "RelayConnected", to: "RelayConnected", on: "app_send_datagram", onKind: "internal", guard: nil, action: nil, sends: []),
-        (from: "LANConnecting", to: "LANConnecting", on: "app_send_datagram", onKind: "internal", guard: nil, action: nil, sends: []),
-        (from: "LANVerifying", to: "LANVerifying", on: "app_send_datagram", onKind: "internal", guard: nil, action: nil, sends: []),
-        (from: "LANActive", to: "LANActive", on: "app_send_datagram", onKind: "internal", guard: nil, action: nil, sends: []),
+        (from: "PairDialing", to: "PairDialing", on: "app_send_datagram", onKind: "internal", guard: nil, action: nil, sends: []),
+        (from: "PairChecking", to: "PairChecking", on: "app_send_datagram", onKind: "internal", guard: nil, action: nil, sends: []),
+        (from: "AltActive", to: "AltActive", on: "app_send_datagram", onKind: "internal", guard: nil, action: nil, sends: []),
         (from: "RelayFallback", to: "RelayFallback", on: "app_send_datagram", onKind: "internal", guard: nil, action: nil, sends: []),
         (from: "RelayConnected", to: "RelayConnected", on: "relay_datagram", onKind: "internal", guard: nil, action: nil, sends: []),
-        (from: "LANConnecting", to: "LANConnecting", on: "relay_datagram", onKind: "internal", guard: nil, action: nil, sends: []),
-        (from: "LANVerifying", to: "LANVerifying", on: "relay_datagram", onKind: "internal", guard: nil, action: nil, sends: []),
-        (from: "LANActive", to: "LANActive", on: "relay_datagram", onKind: "internal", guard: nil, action: nil, sends: []),
+        (from: "PairDialing", to: "PairDialing", on: "relay_datagram", onKind: "internal", guard: nil, action: nil, sends: []),
+        (from: "PairChecking", to: "PairChecking", on: "relay_datagram", onKind: "internal", guard: nil, action: nil, sends: []),
+        (from: "AltActive", to: "AltActive", on: "relay_datagram", onKind: "internal", guard: nil, action: nil, sends: []),
         (from: "RelayFallback", to: "RelayFallback", on: "relay_datagram", onKind: "internal", guard: nil, action: nil, sends: []),
-        (from: "LANActive", to: "LANActive", on: "lan_stream_data", onKind: "internal", guard: nil, action: nil, sends: []),
-        (from: "LANActive", to: "LANActive", on: "lan_datagram", onKind: "internal", guard: nil, action: nil, sends: []),
+        (from: "AltActive", to: "AltActive", on: "alt_stream_data", onKind: "internal", guard: nil, action: nil, sends: []),
+        (from: "AltActive", to: "AltActive", on: "alt_datagram", onKind: "internal", guard: nil, action: nil, sends: []),
     ]
 
     /// relay transitions.
@@ -387,7 +391,7 @@ public final class SessionBackendMachine: @unchecked Sendable {
     public var bActivePath: String // backend active path
     public var bDispatcherPath: String // backend datagram dispatcher binding
     public var monitorTarget: String // health monitor target
-    public var lanSignal: String // LANReady notification state
+    public var altSignal: String // AltReady notification state
 
     public var guards: [GuardID: () -> Bool] = [:]
     public var actions: [ActionID: () throws -> Void] = [:]
@@ -414,7 +418,7 @@ public final class SessionBackendMachine: @unchecked Sendable {
         self.bActivePath = "relay"
         self.bDispatcherPath = "relay"
         self.monitorTarget = "none"
-        self.lanSignal = "pending"
+        self.altSignal = "pending"
     }
 
     /// Handle any event (message receipt or internal). Returns emitted commands.
@@ -487,124 +491,124 @@ public final class SessionBackendMachine: @unchecked Sendable {
         case (.sessionActive, .sessionEstablished):
             state = .relayConnected
             return []
-        case (.relayConnected, .lanServerReady):
-            state = .lANOffered
-            return [.sendLanOffer]
-        case (.lANOffered, .recvLanVerify) where guards[.challengeValid]?() == true:
+        case (.relayConnected, .candidatesGathered):
+            state = .candidatesAdvertised
+            return [.sendCandidates]
+        case (.candidatesAdvertised, .recvPairCheck) where guards[.challengeValid]?() == true:
             try actions[.activateLan]?()
             pingFailures = 0
             backoffLevel = 0
-            bActivePath = "lan"
-            bDispatcherPath = "lan"
-            monitorTarget = "lan"
-            lanSignal = "ready"
-            state = .lANActive
-            return [.sendLanConfirm, .startLanStreamReader, .startLanDgReader, .startMonitor, .signalLanReady, .setCryptoDatagram]
-        case (.lANOffered, .recvLanVerify) where guards[.challengeInvalid]?() == true:
+            bActivePath = "alt"
+            bDispatcherPath = "alt"
+            monitorTarget = "alt"
+            altSignal = "ready"
+            state = .altActive
+            return [.sendPairCheckAck, .startAltStreamReader, .startAltDgReader, .startMonitor, .signalAltReady, .setCryptoDatagram]
+        case (.candidatesAdvertised, .recvPairCheck) where guards[.challengeInvalid]?() == true:
             state = .relayConnected
             return []
-        case (.lANOffered, .offerTimeout):
+        case (.candidatesAdvertised, .candidatesTimeout):
             // backoff_level: Min(backoff_level + 1, max_backoff_level) (set by action)
-            lanSignal = "pending"
+            altSignal = "pending"
             state = .relayBackoff
-            return [.resetLanReady, .startBackoffTimer]
-        case (.lANActive, .pingTick):
-            state = .lANActive
+            return [.resetAltReady, .startBackoffTimer]
+        case (.altActive, .pingTick):
+            state = .altActive
             return [.sendPathPing, .startPongTimeout]
-        case (.lANActive, .pingTimeout):
+        case (.altActive, .pingTimeout):
             pingFailures = 1
-            state = .lANDegraded
+            state = .altDegraded
             return []
-        case (.lANDegraded, .pingTick):
-            state = .lANDegraded
+        case (.altDegraded, .pingTick):
+            state = .altDegraded
             return [.sendPathPing, .startPongTimeout]
-        case (.lANActive, .lanStreamError):
+        case (.altActive, .altStreamError):
             try actions[.fallbackToRelay]?()
             // backoff_level: Min(backoff_level + 1, max_backoff_level) (set by action)
             bActivePath = "relay"
             bDispatcherPath = "relay"
             monitorTarget = "none"
-            lanSignal = "pending"
+            altSignal = "pending"
             pingFailures = 0
             state = .relayBackoff
-            return [.stopMonitor, .stopLanStreamReader, .stopLanDgReader, .closeLanPath, .resetLanReady, .startBackoffTimer]
-        case (.lANDegraded, .lanStreamError):
+            return [.stopMonitor, .stopAltStreamReader, .stopAltDgReader, .closeAltPath, .resetAltReady, .startBackoffTimer]
+        case (.altDegraded, .altStreamError):
             try actions[.fallbackToRelay]?()
             // backoff_level: Min(backoff_level + 1, max_backoff_level) (set by action)
             bActivePath = "relay"
             bDispatcherPath = "relay"
             monitorTarget = "none"
-            lanSignal = "pending"
+            altSignal = "pending"
             pingFailures = 0
             state = .relayBackoff
-            return [.stopMonitor, .stopLanStreamReader, .stopLanDgReader, .closeLanPath, .resetLanReady, .startBackoffTimer]
-        case (.lANDegraded, .recvPathPong):
+            return [.stopMonitor, .stopAltStreamReader, .stopAltDgReader, .closeAltPath, .resetAltReady, .startBackoffTimer]
+        case (.altDegraded, .recvPathPong):
             try actions[.resetFailures]?()
             pingFailures = 0
-            state = .lANActive
+            state = .altActive
             return [.cancelPongTimeout]
-        case (.lANDegraded, .pingTimeout) where guards[.underMaxFailures]?() == true:
+        case (.altDegraded, .pingTimeout) where guards[.underMaxFailures]?() == true:
             // ping_failures: ping_failures + 1 (set by action)
-            state = .lANDegraded
+            state = .altDegraded
             return []
-        case (.lANDegraded, .pingTimeout) where guards[.atMaxFailures]?() == true:
+        case (.altDegraded, .pingTimeout) where guards[.atMaxFailures]?() == true:
             try actions[.fallbackToRelay]?()
             // backoff_level: Min(backoff_level + 1, max_backoff_level) (set by action)
             bActivePath = "relay"
             bDispatcherPath = "relay"
             monitorTarget = "none"
-            lanSignal = "pending"
+            altSignal = "pending"
             pingFailures = 0
             state = .relayBackoff
-            return [.stopMonitor, .stopLanStreamReader, .stopLanDgReader, .closeLanPath, .resetLanReady, .startBackoffTimer]
+            return [.stopMonitor, .stopAltStreamReader, .stopAltDgReader, .closeAltPath, .resetAltReady, .startBackoffTimer]
         case (.relayBackoff, .backoffExpired):
-            state = .lANOffered
-            return [.sendLanOffer]
-        case (.relayBackoff, .lanServerChanged):
+            state = .candidatesAdvertised
+            return [.sendCandidates]
+        case (.relayBackoff, .candidatesChanged):
             backoffLevel = 0
-            state = .lANOffered
-            return [.sendLanOffer]
-        case (.relayConnected, .readvertiseTick) where guards[.lanServerAvailable]?() == true:
-            state = .lANOffered
-            return [.sendLanOffer]
-        case (.lANOffered, .appForceFallback):
-            lanSignal = "pending"
+            state = .candidatesAdvertised
+            return [.sendCandidates]
+        case (.relayConnected, .candidatesRefreshTick) where guards[.localCandidatesAvailable]?() == true:
+            state = .candidatesAdvertised
+            return [.sendCandidates]
+        case (.candidatesAdvertised, .appForceFallback):
+            altSignal = "pending"
             state = .relayConnected
-            return [.resetLanReady]
-        case (.lANActive, .appForceFallback):
+            return [.resetAltReady]
+        case (.altActive, .appForceFallback):
             try actions[.fallbackToRelay]?()
             // backoff_level: Min(backoff_level + 1, max_backoff_level) (set by action)
             bActivePath = "relay"
             bDispatcherPath = "relay"
             monitorTarget = "none"
-            lanSignal = "pending"
+            altSignal = "pending"
             pingFailures = 0
             state = .relayBackoff
-            return [.stopMonitor, .cancelPongTimeout, .stopLanStreamReader, .stopLanDgReader, .closeLanPath, .resetLanReady, .startBackoffTimer]
-        case (.lANDegraded, .appForceFallback):
+            return [.stopMonitor, .cancelPongTimeout, .stopAltStreamReader, .stopAltDgReader, .closeAltPath, .resetAltReady, .startBackoffTimer]
+        case (.altDegraded, .appForceFallback):
             try actions[.fallbackToRelay]?()
             // backoff_level: Min(backoff_level + 1, max_backoff_level) (set by action)
             bActivePath = "relay"
             bDispatcherPath = "relay"
             monitorTarget = "none"
-            lanSignal = "pending"
+            altSignal = "pending"
             pingFailures = 0
             state = .relayBackoff
-            return [.stopMonitor, .cancelPongTimeout, .stopLanStreamReader, .stopLanDgReader, .closeLanPath, .resetLanReady, .startBackoffTimer]
+            return [.stopMonitor, .cancelPongTimeout, .stopAltStreamReader, .stopAltDgReader, .closeAltPath, .resetAltReady, .startBackoffTimer]
         case (.relayConnected, .disconnect):
             state = .paired
             return []
         case (.relayConnected, .appSend):
             state = .relayConnected
             return [.writeActiveStream]
-        case (.lANOffered, .appSend):
-            state = .lANOffered
+        case (.candidatesAdvertised, .appSend):
+            state = .candidatesAdvertised
             return [.writeActiveStream]
-        case (.lANActive, .appSend):
-            state = .lANActive
+        case (.altActive, .appSend):
+            state = .altActive
             return [.writeActiveStream]
-        case (.lANDegraded, .appSend):
-            state = .lANDegraded
+        case (.altDegraded, .appSend):
+            state = .altDegraded
             return [.writeActiveStream]
         case (.relayBackoff, .appSend):
             state = .relayBackoff
@@ -612,14 +616,14 @@ public final class SessionBackendMachine: @unchecked Sendable {
         case (.relayConnected, .relayStreamData):
             state = .relayConnected
             return [.deliverRecv]
-        case (.lANOffered, .relayStreamData):
-            state = .lANOffered
+        case (.candidatesAdvertised, .relayStreamData):
+            state = .candidatesAdvertised
             return [.deliverRecv]
-        case (.lANActive, .relayStreamData):
-            state = .lANActive
+        case (.altActive, .relayStreamData):
+            state = .altActive
             return [.deliverRecv]
-        case (.lANDegraded, .relayStreamData):
-            state = .lANDegraded
+        case (.altDegraded, .relayStreamData):
+            state = .altDegraded
             return [.deliverRecv]
         case (.relayBackoff, .relayStreamData):
             state = .relayBackoff
@@ -627,14 +631,14 @@ public final class SessionBackendMachine: @unchecked Sendable {
         case (.relayConnected, .relayStreamError):
             state = .relayConnected
             return [.deliverRecvError]
-        case (.lANOffered, .relayStreamError):
-            state = .lANOffered
+        case (.candidatesAdvertised, .relayStreamError):
+            state = .candidatesAdvertised
             return [.deliverRecvError]
-        case (.lANActive, .relayStreamError):
-            state = .lANActive
+        case (.altActive, .relayStreamError):
+            state = .altActive
             return [.deliverRecvError]
-        case (.lANDegraded, .relayStreamError):
-            state = .lANDegraded
+        case (.altDegraded, .relayStreamError):
+            state = .altDegraded
             return [.deliverRecvError]
         case (.relayBackoff, .relayStreamError):
             state = .relayBackoff
@@ -642,14 +646,14 @@ public final class SessionBackendMachine: @unchecked Sendable {
         case (.relayConnected, .appSendDatagram):
             state = .relayConnected
             return [.sendActiveDatagram]
-        case (.lANOffered, .appSendDatagram):
-            state = .lANOffered
+        case (.candidatesAdvertised, .appSendDatagram):
+            state = .candidatesAdvertised
             return [.sendActiveDatagram]
-        case (.lANActive, .appSendDatagram):
-            state = .lANActive
+        case (.altActive, .appSendDatagram):
+            state = .altActive
             return [.sendActiveDatagram]
-        case (.lANDegraded, .appSendDatagram):
-            state = .lANDegraded
+        case (.altDegraded, .appSendDatagram):
+            state = .altDegraded
             return [.sendActiveDatagram]
         case (.relayBackoff, .appSendDatagram):
             state = .relayBackoff
@@ -657,29 +661,29 @@ public final class SessionBackendMachine: @unchecked Sendable {
         case (.relayConnected, .relayDatagram):
             state = .relayConnected
             return [.deliverRecvDatagram]
-        case (.lANOffered, .relayDatagram):
-            state = .lANOffered
+        case (.candidatesAdvertised, .relayDatagram):
+            state = .candidatesAdvertised
             return [.deliverRecvDatagram]
-        case (.lANActive, .relayDatagram):
-            state = .lANActive
+        case (.altActive, .relayDatagram):
+            state = .altActive
             return [.deliverRecvDatagram]
-        case (.lANDegraded, .relayDatagram):
-            state = .lANDegraded
+        case (.altDegraded, .relayDatagram):
+            state = .altDegraded
             return [.deliverRecvDatagram]
         case (.relayBackoff, .relayDatagram):
             state = .relayBackoff
             return [.deliverRecvDatagram]
-        case (.lANActive, .lanStreamData):
-            state = .lANActive
+        case (.altActive, .altStreamData):
+            state = .altActive
             return [.deliverRecv]
-        case (.lANDegraded, .lanStreamData):
-            state = .lANDegraded
+        case (.altDegraded, .altStreamData):
+            state = .altDegraded
             return [.deliverRecv]
-        case (.lANActive, .lanDatagram):
-            state = .lANActive
+        case (.altActive, .altDatagram):
+            state = .altActive
             return [.deliverRecvDatagram]
-        case (.lANDegraded, .lanDatagram):
-            state = .lANDegraded
+        case (.altDegraded, .altDatagram):
+            state = .altDegraded
             return [.deliverRecvDatagram]
         default:
             return []
@@ -706,23 +710,23 @@ public final class SessionBackendMachine: @unchecked Sendable {
             // received_auth_nonce: recv_msg.nonce (set by action)
             state = .authCheck
             return state
-        case (.lANOffered, .lanVerify) where guards[.challengeValid]?() == true:
+        case (.candidatesAdvertised, .pairCheck) where guards[.challengeValid]?() == true:
             try actions[.activateLan]?()
             pingFailures = 0
             backoffLevel = 0
-            bActivePath = "lan"
-            bDispatcherPath = "lan"
-            monitorTarget = "lan"
-            lanSignal = "ready"
-            state = .lANActive
+            bActivePath = "alt"
+            bDispatcherPath = "alt"
+            monitorTarget = "alt"
+            altSignal = "ready"
+            state = .altActive
             return state
-        case (.lANOffered, .lanVerify) where guards[.challengeInvalid]?() == true:
+        case (.candidatesAdvertised, .pairCheck) where guards[.challengeInvalid]?() == true:
             state = .relayConnected
             return state
-        case (.lANDegraded, .pathPong):
+        case (.altDegraded, .pathPong):
             try actions[.resetFailures]?()
             pingFailures = 0
-            state = .lANActive
+            state = .altActive
             return state
         default:
             return nil
@@ -811,7 +815,7 @@ public final class SessionClientMachine: @unchecked Sendable {
     public var clientCode: String // code computed by client
     public var cActivePath: String // client active path
     public var cDispatcherPath: String // client datagram dispatcher binding
-    public var lanSignal: String // LANReady notification state
+    public var altSignal: String // AltReady notification state
 
     public var guards: [GuardID: () -> Bool] = [:]
     public var actions: [ActionID: () throws -> Void] = [:]
@@ -823,7 +827,7 @@ public final class SessionClientMachine: @unchecked Sendable {
         self.clientCode = ""
         self.cActivePath = "relay"
         self.cDispatcherPath = "relay"
-        self.lanSignal = "pending"
+        self.altSignal = "pending"
     }
 
     /// Handle any event (message receipt or internal). Returns emitted commands.
@@ -872,82 +876,82 @@ public final class SessionClientMachine: @unchecked Sendable {
         case (.sessionActive, .sessionEstablished):
             state = .relayConnected
             return []
-        case (.relayConnected, .recvLanOffer) where guards[.lanEnabled]?() == true:
-            try actions[.dialLan]?()
-            state = .lANConnecting
-            return [.dialLan]
-        case (.relayConnected, .recvLanOffer) where guards[.lanDisabled]?() == true:
+        case (.relayConnected, .recvCandidates) where guards[.altEnabled]?() == true:
+            try actions[.dialCandidate]?()
+            state = .pairDialing
+            return [.dialCandidate]
+        case (.relayConnected, .recvCandidates) where guards[.altDisabled]?() == true:
             state = .relayConnected
             return []
-        case (.lANConnecting, .lanDialOk):
-            state = .lANVerifying
-            return [.sendLanVerify]
-        case (.lANConnecting, .lanDialFailed):
+        case (.pairDialing, .dialOk):
+            state = .pairChecking
+            return [.sendPairCheck]
+        case (.pairDialing, .dialFailed):
             state = .relayConnected
             return []
-        case (.lANVerifying, .recvLanConfirm):
+        case (.pairChecking, .recvPairCheckAck):
             try actions[.activateLan]?()
-            cActivePath = "lan"
-            cDispatcherPath = "lan"
-            lanSignal = "ready"
-            state = .lANActive
-            return [.startLanStreamReader, .startLanDgReader, .signalLanReady, .setCryptoDatagram]
-        case (.lANVerifying, .verifyTimeout):
+            cActivePath = "alt"
+            cDispatcherPath = "alt"
+            altSignal = "ready"
+            state = .altActive
+            return [.startAltStreamReader, .startAltDgReader, .signalAltReady, .setCryptoDatagram]
+        case (.pairChecking, .verifyTimeout):
             cDispatcherPath = "relay"
             state = .relayConnected
             return []
-        case (.lANActive, .recvPathPing):
-            state = .lANActive
+        case (.altActive, .recvPathPing):
+            state = .altActive
             return [.sendPathPong]
-        case (.lANActive, .lanError):
+        case (.altActive, .altError):
             try actions[.fallbackToRelay]?()
             cActivePath = "relay"
             cDispatcherPath = "relay"
-            lanSignal = "pending"
+            altSignal = "pending"
             state = .relayFallback
-            return [.stopLanStreamReader, .stopLanDgReader, .closeLanPath, .resetLanReady]
-        case (.lANActive, .lanStreamError):
+            return [.stopAltStreamReader, .stopAltDgReader, .closeAltPath, .resetAltReady]
+        case (.altActive, .altStreamError):
             try actions[.fallbackToRelay]?()
             cActivePath = "relay"
             cDispatcherPath = "relay"
-            lanSignal = "pending"
+            altSignal = "pending"
             state = .relayFallback
-            return [.stopLanStreamReader, .stopLanDgReader, .closeLanPath, .resetLanReady]
+            return [.stopAltStreamReader, .stopAltDgReader, .closeAltPath, .resetAltReady]
         case (.relayFallback, .relayOk):
             state = .relayConnected
             return []
-        case (.lANActive, .recvLanOffer) where guards[.lanEnabled]?() == true:
-            try actions[.dialLan]?()
-            state = .lANConnecting
-            return [.stopLanStreamReader, .stopLanDgReader, .closeLanPath, .dialLan]
-        case (.lANConnecting, .appForceFallback):
+        case (.altActive, .recvCandidates) where guards[.altEnabled]?() == true:
+            try actions[.dialCandidate]?()
+            state = .pairDialing
+            return [.stopAltStreamReader, .stopAltDgReader, .closeAltPath, .dialCandidate]
+        case (.pairDialing, .appForceFallback):
             state = .relayConnected
             return []
-        case (.lANVerifying, .appForceFallback):
+        case (.pairChecking, .appForceFallback):
             cDispatcherPath = "relay"
             state = .relayConnected
-            return [.stopLanStreamReader, .stopLanDgReader, .closeLanPath]
-        case (.lANActive, .appForceFallback):
+            return [.stopAltStreamReader, .stopAltDgReader, .closeAltPath]
+        case (.altActive, .appForceFallback):
             try actions[.fallbackToRelay]?()
             cActivePath = "relay"
             cDispatcherPath = "relay"
-            lanSignal = "pending"
+            altSignal = "pending"
             state = .relayConnected
-            return [.stopLanStreamReader, .stopLanDgReader, .closeLanPath, .resetLanReady]
+            return [.stopAltStreamReader, .stopAltDgReader, .closeAltPath, .resetAltReady]
         case (.relayConnected, .disconnect):
             state = .paired
             return []
         case (.relayConnected, .appSend):
             state = .relayConnected
             return [.writeActiveStream]
-        case (.lANConnecting, .appSend):
-            state = .lANConnecting
+        case (.pairDialing, .appSend):
+            state = .pairDialing
             return [.writeActiveStream]
-        case (.lANVerifying, .appSend):
-            state = .lANVerifying
+        case (.pairChecking, .appSend):
+            state = .pairChecking
             return [.writeActiveStream]
-        case (.lANActive, .appSend):
-            state = .lANActive
+        case (.altActive, .appSend):
+            state = .altActive
             return [.writeActiveStream]
         case (.relayFallback, .appSend):
             state = .relayFallback
@@ -955,14 +959,14 @@ public final class SessionClientMachine: @unchecked Sendable {
         case (.relayConnected, .relayStreamData):
             state = .relayConnected
             return [.deliverRecv]
-        case (.lANConnecting, .relayStreamData):
-            state = .lANConnecting
+        case (.pairDialing, .relayStreamData):
+            state = .pairDialing
             return [.deliverRecv]
-        case (.lANVerifying, .relayStreamData):
-            state = .lANVerifying
+        case (.pairChecking, .relayStreamData):
+            state = .pairChecking
             return [.deliverRecv]
-        case (.lANActive, .relayStreamData):
-            state = .lANActive
+        case (.altActive, .relayStreamData):
+            state = .altActive
             return [.deliverRecv]
         case (.relayFallback, .relayStreamData):
             state = .relayFallback
@@ -970,14 +974,14 @@ public final class SessionClientMachine: @unchecked Sendable {
         case (.relayConnected, .relayStreamError):
             state = .relayConnected
             return [.deliverRecvError]
-        case (.lANConnecting, .relayStreamError):
-            state = .lANConnecting
+        case (.pairDialing, .relayStreamError):
+            state = .pairDialing
             return [.deliverRecvError]
-        case (.lANVerifying, .relayStreamError):
-            state = .lANVerifying
+        case (.pairChecking, .relayStreamError):
+            state = .pairChecking
             return [.deliverRecvError]
-        case (.lANActive, .relayStreamError):
-            state = .lANActive
+        case (.altActive, .relayStreamError):
+            state = .altActive
             return [.deliverRecvError]
         case (.relayFallback, .relayStreamError):
             state = .relayFallback
@@ -985,14 +989,14 @@ public final class SessionClientMachine: @unchecked Sendable {
         case (.relayConnected, .appSendDatagram):
             state = .relayConnected
             return [.sendActiveDatagram]
-        case (.lANConnecting, .appSendDatagram):
-            state = .lANConnecting
+        case (.pairDialing, .appSendDatagram):
+            state = .pairDialing
             return [.sendActiveDatagram]
-        case (.lANVerifying, .appSendDatagram):
-            state = .lANVerifying
+        case (.pairChecking, .appSendDatagram):
+            state = .pairChecking
             return [.sendActiveDatagram]
-        case (.lANActive, .appSendDatagram):
-            state = .lANActive
+        case (.altActive, .appSendDatagram):
+            state = .altActive
             return [.sendActiveDatagram]
         case (.relayFallback, .appSendDatagram):
             state = .relayFallback
@@ -1000,23 +1004,23 @@ public final class SessionClientMachine: @unchecked Sendable {
         case (.relayConnected, .relayDatagram):
             state = .relayConnected
             return [.deliverRecvDatagram]
-        case (.lANConnecting, .relayDatagram):
-            state = .lANConnecting
+        case (.pairDialing, .relayDatagram):
+            state = .pairDialing
             return [.deliverRecvDatagram]
-        case (.lANVerifying, .relayDatagram):
-            state = .lANVerifying
+        case (.pairChecking, .relayDatagram):
+            state = .pairChecking
             return [.deliverRecvDatagram]
-        case (.lANActive, .relayDatagram):
-            state = .lANActive
+        case (.altActive, .relayDatagram):
+            state = .altActive
             return [.deliverRecvDatagram]
         case (.relayFallback, .relayDatagram):
             state = .relayFallback
             return [.deliverRecvDatagram]
-        case (.lANActive, .lanStreamData):
-            state = .lANActive
+        case (.altActive, .altStreamData):
+            state = .altActive
             return [.deliverRecv]
-        case (.lANActive, .lanDatagram):
-            state = .lANActive
+        case (.altActive, .altDatagram):
+            state = .altActive
             return [.deliverRecvDatagram]
         default:
             return []
@@ -1044,26 +1048,26 @@ public final class SessionClientMachine: @unchecked Sendable {
         case (.sendAuth, .authOk):
             state = .sessionActive
             return state
-        case (.relayConnected, .lanOffer) where guards[.lanEnabled]?() == true:
-            try actions[.dialLan]?()
-            state = .lANConnecting
+        case (.relayConnected, .candidates) where guards[.altEnabled]?() == true:
+            try actions[.dialCandidate]?()
+            state = .pairDialing
             return state
-        case (.relayConnected, .lanOffer) where guards[.lanDisabled]?() == true:
+        case (.relayConnected, .candidates) where guards[.altDisabled]?() == true:
             state = .relayConnected
             return state
-        case (.lANVerifying, .lanConfirm):
+        case (.pairChecking, .pairCheckAck):
             try actions[.activateLan]?()
-            cActivePath = "lan"
-            cDispatcherPath = "lan"
-            lanSignal = "ready"
-            state = .lANActive
+            cActivePath = "alt"
+            cDispatcherPath = "alt"
+            altSignal = "ready"
+            state = .altActive
             return state
-        case (.lANActive, .pathPing):
-            state = .lANActive
+        case (.altActive, .pathPing):
+            state = .altActive
             return state
-        case (.lANActive, .lanOffer) where guards[.lanEnabled]?() == true:
-            try actions[.dialLan]?()
-            state = .lANConnecting
+        case (.altActive, .candidates) where guards[.altEnabled]?() == true:
+            try actions[.dialCandidate]?()
+            state = .pairDialing
             return state
         default:
             return nil

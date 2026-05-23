@@ -8,7 +8,7 @@
 # device secret establishment. The "cli" actor from the original pairing
 # spec is folded into backend as local actions (user input, not protocol).
 #
-# Phase 2 — Transport: relay (permanent baseline) + LAN (direct, optional).
+# Phase 2 — Transport: relay (permanent baseline) + alt-pair candidates (e.g. LAN host, future STUN srflx).
 # Health monitoring, exponential backoff, resource lifecycle management.
 #
 # The transition from Phase 1 to Phase 2 is:
@@ -42,9 +42,19 @@ wire_constants:
   - {name: fragment_timeout_ms,  value: 5000, type: duration_ms, group: datagram_limits, desc: 'fragment reassembly timeout'}
 
   # Internal message types (first byte of encrypted stream plaintext).
-  - {name: frame_app,       value: 0x00, type: byte, group: message_framing, desc: 'application data'}
-  - {name: frame_lan_offer, value: 0x01, type: byte, group: message_framing, desc: 'LAN address exchange'}
-  - {name: frame_cutover,   value: 0x02, type: byte, group: message_framing, desc: 'transport cutover marker'}
+  - {name: frame_app,            value: 0x00, type: byte, group: message_framing, desc: 'application data'}
+  - {name: frame_candidates,     value: 0x01, type: byte, group: message_framing, desc: 'candidate set advertisement (relay control channel)'}
+  - {name: frame_cutover,        value: 0x02, type: byte, group: message_framing, desc: 'transport cutover marker'}
+  - {name: frame_pair_check,     value: 0x03, type: byte, group: message_framing, desc: 'candidate-pair connectivity-check challenge (on candidate pipe)'}
+  - {name: frame_pair_check_ack, value: 0x04, type: byte, group: message_framing, desc: 'candidate-pair connectivity-check ack / implicit nomination (on candidate pipe)'}
+
+  # Candidate kinds. Surfaced as wire-level discriminators on Candidate
+  # records carried inside the `candidates` message. Phase 1 ships `host`
+  # (LAN-direct). `srflx` is reserved for STUN-reflexive candidates
+  # (🎯T43). Additional kinds (e.g. `relay-of` for cascaded TURN) plug
+  # in by adding entries here without FSM changes.
+  - {name: cand_host,  value: 'host',  type: string, group: candidates, desc: 'host candidate (local interface address; what LAN-direct uses)'}
+  - {name: cand_srflx, value: 'srflx', type: string, group: candidates, desc: 'server-reflexive candidate (STUN-derived public address; Phase 1 STUN target)'}
 
   # Stream message framing.
   - {name: max_message_size,    value: 1048576, type: int, group: message_framing, desc: 'max stream message size (1 MiB)'}
@@ -93,18 +103,18 @@ messages:
     desc: session established
 
   # --- Phase 2: Transport ---
-  lan_offer:
+  candidates:
     from: backend
     to: client
-    desc: 'LAN address + challenge (sent via relay)'
-  lan_verify:
+    desc: 'set of local candidates (host, srflx, ...) + a per-candidate pair_check challenge (sent via relay)'
+  pair_check:
     from: client
     to: backend
-    desc: 'challenge response + instance ID (sent via LAN)'
-  lan_confirm:
+    desc: 'challenge echo + instance ID + pair_id under test (sent on the candidate-pair pipe)'
+  pair_check_ack:
     from: backend
     to: client
-    desc: 'LAN verified, path is live (sent via LAN)'
+    desc: 'pair_check accepted; this candidate-pair is nominated as the active path (sent on the candidate-pair pipe)'
   path_ping:
     from: backend
     to: client
@@ -131,16 +141,16 @@ events:
   relay_stream_data: 'data received on relay stream'
   relay_stream_error: 'error reading relay stream'
   relay_datagram: 'datagram received on relay'
-  lan_stream_data: 'data received on LAN stream'
-  lan_stream_error: 'error reading LAN stream'
-  lan_datagram: 'datagram received on LAN'
-  lan_dial_ok: 'LAN dial succeeded (client has connection resources)'
-  lan_dial_failed: 'LAN dial failed'
-  lan_verify_ok: 'LAN challenge verified (backend has connection resources)'
+  alt_stream_data: 'data received on alt-pair stream'
+  alt_stream_error: 'error reading alt-pair stream'
+  alt_datagram: 'datagram received on alt-pair'
+  dial_ok: 'candidate dial succeeded (client has connection resources)'
+  dial_failed: 'candidate dial failed'
+  pair_check_ok: 'pair-check challenge verified (backend has connection resources)'
   ping_timeout: 'health ping timed out (no pong)'
   ping_tick: 'health ping timer fired'
   backoff_expired: 'backoff timer expired'
-  offer_timeout: 'LAN offer timed out with no verification'
+  candidates_timeout: 'candidate-pair check timed out with no verification'
 
 # Declared commands — emitted by transitions for the executor.
 # The executor carries out these commands as I/O operations or
@@ -151,10 +161,10 @@ commands:
   send_active_datagram: 'send datagram on the currently active path'
   send_path_ping: 'send health ping on direct path'
   send_path_pong: 'send health pong on direct path'
-  send_lan_offer: 'send LAN offer via relay control channel'
-  send_lan_verify: 'send LAN verification on direct connection'
-  send_lan_confirm: 'send LAN confirmation on direct connection'
-  dial_lan: 'initiate LAN connection to offered address'
+  send_candidates: 'send candidate set via relay control channel'
+  send_pair_check: 'send pair-check challenge on candidate connection'
+  send_pair_check_ack: 'send pair-check ack on candidate connection'
+  dial_candidate: 'initiate connection to candidate address'
 
   # Deliver to application.
   deliver_recv: 'deliver received data to blocked Recv() caller'
@@ -162,20 +172,20 @@ commands:
   deliver_recv_datagram: 'deliver received datagram to blocked RecvDatagram() caller'
 
   # Resource lifecycle.
-  start_lan_stream_reader: 'start goroutine reading from LAN stream'
-  stop_lan_stream_reader: 'stop LAN stream reader goroutine'
-  start_lan_dg_reader: 'start goroutine reading from LAN datagrams'
-  stop_lan_dg_reader: 'stop LAN datagram reader goroutine'
+  start_alt_stream_reader: 'start goroutine reading from alt-pair stream'
+  stop_alt_stream_reader: 'stop alt-pair stream reader goroutine'
+  start_alt_dg_reader: 'start goroutine reading from alt-pair datagrams'
+  stop_alt_dg_reader: 'stop alt-pair datagram reader goroutine'
   start_monitor: 'start health ping timer for direct path'
   stop_monitor: 'stop health ping timer'
   start_pong_timeout: 'start timer expecting pong reply'
   cancel_pong_timeout: 'cancel pong reply timer (pong received)'
   start_backoff_timer: 'start exponential backoff timer'
-  close_lan_path: 'close the LAN path resources'
+  close_alt_path: 'close the alt-pair resources'
 
   # Notifications.
-  signal_lan_ready: 'close the LANReady channel (LAN active)'
-  reset_lan_ready: 'create a new LANReady channel (LAN inactive)'
+  signal_alt_ready: 'close the AltReady channel (alt-pair active)'
+  reset_alt_ready: 'create a new AltReady channel (alt-pair inactive)'
 
   # Encryption mode.
   set_crypto_datagram: 'switch crypto channels to datagram mode'
@@ -186,19 +196,19 @@ actors:
     states:
       # Superstate: all transport path states inherit data-forwarding.
       Connected:
-        children: [RelayConnected, LANOffered, LANPath, RelayBackoff]
+        children: [RelayConnected, CandidatesAdvertised, AltPath, RelayBackoff]
         transitions:
           - {on: app_send, emits: [write_active_stream]}
           - {on: relay_stream_data, emits: [deliver_recv]}
           - {on: relay_stream_error, emits: [deliver_recv_error]}
           - {on: app_send_datagram, emits: [send_active_datagram]}
           - {on: relay_datagram, emits: [deliver_recv_datagram]}
-      # Sub-superstate: LAN-active states also handle LAN-specific I/O.
-      LANPath:
-        children: [LANActive, LANDegraded]
+      # Sub-superstate: alt-active states also handle alt-specific I/O.
+      AltPath:
+        children: [AltActive, AltDegraded]
         transitions:
-          - {on: lan_stream_data, emits: [deliver_recv]}
-          - {on: lan_datagram, emits: [deliver_recv_datagram]}
+          - {on: alt_stream_data, emits: [deliver_recv]}
+          - {on: alt_datagram, emits: [deliver_recv_datagram]}
     transitions:
       # ============================================================
       # Phase 1: Pairing
@@ -327,129 +337,129 @@ actors:
       # ============================================================
 
       - from: RelayConnected
-        to: LANOffered
-        on: lan_server_ready
+        to: CandidatesAdvertised
+        on: candidates_gathered
         sends:
           - to: client
-            msg: lan_offer
+            msg: candidates
             fields:
-              addr: lan_addr
-              challenge: challenge_bytes
-        emits: [send_lan_offer]
+              set: local_candidates
+              challenge: local_pair_check_challenge
+        emits: [send_candidates]
 
-      - from: LANOffered
-        to: LANActive
-        on: recv lan_verify
+      - from: CandidatesAdvertised
+        to: AltActive
+        on: recv pair_check
         guard: challenge_valid
         do: activate_lan
         sends:
           - to: client
-            msg: lan_confirm
+            msg: pair_check_ack
         updates:
           ping_failures: '0'
           backoff_level: '0'
-          b_active_path: '"lan"'
-          b_dispatcher_path: '"lan"'
-          monitor_target: '"lan"'
-          lan_signal: '"ready"'
+          b_active_path: '"alt"'
+          b_dispatcher_path: '"alt"'
+          monitor_target: '"alt"'
+          alt_signal: '"ready"'
         emits:
-          - send_lan_confirm
-          - start_lan_stream_reader
-          - start_lan_dg_reader
+          - send_pair_check_ack
+          - start_alt_stream_reader
+          - start_alt_dg_reader
           - start_monitor
-          - signal_lan_ready
+          - signal_alt_ready
           - set_crypto_datagram
 
-      - from: LANOffered
+      - from: CandidatesAdvertised
         to: RelayConnected
-        on: recv lan_verify
+        on: recv pair_check
         guard: challenge_invalid
 
-      - from: LANOffered
+      - from: CandidatesAdvertised
         to: RelayBackoff
-        on: offer_timeout
+        on: candidates_timeout
         updates:
           backoff_level: 'Min(backoff_level + 1, max_backoff_level)'
-          lan_signal: '"pending"'
-        emits: [reset_lan_ready, start_backoff_timer]
+          alt_signal: '"pending"'
+        emits: [reset_alt_ready, start_backoff_timer]
 
-      - from: LANActive
-        to: LANActive
+      - from: AltActive
+        to: AltActive
         on: ping_tick
         sends:
           - to: client
             msg: path_ping
         emits: [send_path_ping, start_pong_timeout]
 
-      - from: LANActive
-        to: LANDegraded
+      - from: AltActive
+        to: AltDegraded
         on: ping_timeout
         updates:
           ping_failures: '1'
 
-      - from: LANDegraded
-        to: LANDegraded
+      - from: AltDegraded
+        to: AltDegraded
         on: ping_tick
         sends:
           - to: client
             msg: path_ping
         emits: [send_path_ping, start_pong_timeout]
 
-      # LAN stream error triggers immediate fallback (no degradation).
-      - from: LANActive
+      # Alt-pair stream error triggers immediate fallback (no degradation).
+      - from: AltActive
         to: RelayBackoff
-        on: lan_stream_error
+        on: alt_stream_error
         do: fallback_to_relay
         updates:
           backoff_level: 'Min(backoff_level + 1, max_backoff_level)'
           b_active_path: '"relay"'
           b_dispatcher_path: '"relay"'
           monitor_target: '"none"'
-          lan_signal: '"pending"'
+          alt_signal: '"pending"'
           ping_failures: '0'
         emits:
           - stop_monitor
-          - stop_lan_stream_reader
-          - stop_lan_dg_reader
-          - close_lan_path
-          - reset_lan_ready
+          - stop_alt_stream_reader
+          - stop_alt_dg_reader
+          - close_alt_path
+          - reset_alt_ready
           - start_backoff_timer
 
-      - from: LANDegraded
+      - from: AltDegraded
         to: RelayBackoff
-        on: lan_stream_error
+        on: alt_stream_error
         do: fallback_to_relay
         updates:
           backoff_level: 'Min(backoff_level + 1, max_backoff_level)'
           b_active_path: '"relay"'
           b_dispatcher_path: '"relay"'
           monitor_target: '"none"'
-          lan_signal: '"pending"'
+          alt_signal: '"pending"'
           ping_failures: '0'
         emits:
           - stop_monitor
-          - stop_lan_stream_reader
-          - stop_lan_dg_reader
-          - close_lan_path
-          - reset_lan_ready
+          - stop_alt_stream_reader
+          - stop_alt_dg_reader
+          - close_alt_path
+          - reset_alt_ready
           - start_backoff_timer
 
-      - from: LANDegraded
-        to: LANActive
+      - from: AltDegraded
+        to: AltActive
         on: recv path_pong
         do: reset_failures
         updates:
           ping_failures: '0'
         emits: [cancel_pong_timeout]
 
-      - from: LANDegraded
-        to: LANDegraded
+      - from: AltDegraded
+        to: AltDegraded
         on: ping_timeout
         guard: under_max_failures
         updates:
           ping_failures: 'ping_failures + 1'
 
-      - from: LANDegraded
+      - from: AltDegraded
         to: RelayBackoff
         on: ping_timeout
         guard: at_max_failures
@@ -459,62 +469,62 @@ actors:
           b_active_path: '"relay"'
           b_dispatcher_path: '"relay"'
           monitor_target: '"none"'
-          lan_signal: '"pending"'
+          alt_signal: '"pending"'
           ping_failures: '0'
         emits:
           - stop_monitor
-          - stop_lan_stream_reader
-          - stop_lan_dg_reader
-          - close_lan_path
-          - reset_lan_ready
+          - stop_alt_stream_reader
+          - stop_alt_dg_reader
+          - close_alt_path
+          - reset_alt_ready
           - start_backoff_timer
 
       - from: RelayBackoff
-        to: LANOffered
+        to: CandidatesAdvertised
         on: backoff_expired
         fairness: strong
         sends:
           - to: client
-            msg: lan_offer
+            msg: candidates
             fields:
-              addr: lan_addr
-              challenge: challenge_bytes
-        emits: [send_lan_offer]
+              set: local_candidates
+              challenge: local_pair_check_challenge
+        emits: [send_candidates]
 
       - from: RelayBackoff
-        to: LANOffered
-        on: lan_server_changed
+        to: CandidatesAdvertised
+        on: candidates_changed
         sends:
           - to: client
-            msg: lan_offer
+            msg: candidates
             fields:
-              addr: lan_addr
-              challenge: challenge_bytes
+              set: local_candidates
+              challenge: local_pair_check_challenge
         updates:
           backoff_level: '0'
-        emits: [send_lan_offer]
+        emits: [send_candidates]
 
       - from: RelayConnected
-        to: LANOffered
-        on: readvertise_tick
-        guard: lan_server_available
+        to: CandidatesAdvertised
+        on: candidates_refresh_tick
+        guard: local_candidates_available
         sends:
           - to: client
-            msg: lan_offer
+            msg: candidates
             fields:
-              addr: lan_addr
-              challenge: challenge_bytes
-        emits: [send_lan_offer]
+              set: local_candidates
+              challenge: local_pair_check_challenge
+        emits: [send_candidates]
 
-      # Force fallback from any LAN state to relay.
-      - from: LANOffered
+      # Force fallback from any alt-pair state to relay.
+      - from: CandidatesAdvertised
         to: RelayConnected
         on: app_force_fallback
         updates:
-          lan_signal: '"pending"'
-        emits: [reset_lan_ready]
+          alt_signal: '"pending"'
+        emits: [reset_alt_ready]
 
-      - from: LANActive
+      - from: AltActive
         to: RelayBackoff
         on: app_force_fallback
         do: fallback_to_relay
@@ -523,18 +533,18 @@ actors:
           b_active_path: '"relay"'
           b_dispatcher_path: '"relay"'
           monitor_target: '"none"'
-          lan_signal: '"pending"'
+          alt_signal: '"pending"'
           ping_failures: '0'
         emits:
           - stop_monitor
           - cancel_pong_timeout
-          - stop_lan_stream_reader
-          - stop_lan_dg_reader
-          - close_lan_path
-          - reset_lan_ready
+          - stop_alt_stream_reader
+          - stop_alt_dg_reader
+          - close_alt_path
+          - reset_alt_ready
           - start_backoff_timer
 
-      - from: LANDegraded
+      - from: AltDegraded
         to: RelayBackoff
         on: app_force_fallback
         do: fallback_to_relay
@@ -543,15 +553,15 @@ actors:
           b_active_path: '"relay"'
           b_dispatcher_path: '"relay"'
           monitor_target: '"none"'
-          lan_signal: '"pending"'
+          alt_signal: '"pending"'
           ping_failures: '0'
         emits:
           - stop_monitor
           - cancel_pong_timeout
-          - stop_lan_stream_reader
-          - stop_lan_dg_reader
-          - close_lan_path
-          - reset_lan_ready
+          - stop_alt_stream_reader
+          - stop_alt_dg_reader
+          - close_alt_path
+          - reset_alt_ready
           - start_backoff_timer
 
       # Re-enter pairing on disconnect.
@@ -564,19 +574,19 @@ actors:
     states:
       # Superstate: all transport path states inherit data-forwarding.
       Connected:
-        children: [RelayConnected, LANConnecting, LANVerifying, LANDataPath, RelayFallback]
+        children: [RelayConnected, PairDialing, PairChecking, AltDataPath, RelayFallback]
         transitions:
           - {on: app_send, emits: [write_active_stream]}
           - {on: relay_stream_data, emits: [deliver_recv]}
           - {on: relay_stream_error, emits: [deliver_recv_error]}
           - {on: app_send_datagram, emits: [send_active_datagram]}
           - {on: relay_datagram, emits: [deliver_recv_datagram]}
-      # LANActive also handles LAN-specific I/O.
-      LANDataPath:
-        children: [LANActive]
+      # AltActive also handles alt-specific I/O.
+      AltDataPath:
+        children: [AltActive]
         transitions:
-          - {on: lan_stream_data, emits: [deliver_recv]}
-          - {on: lan_datagram, emits: [deliver_recv_datagram]}
+          - {on: alt_stream_data, emits: [deliver_recv]}
+          - {on: alt_datagram, emits: [deliver_recv_datagram]}
     transitions:
       # ============================================================
       # Phase 1: Pairing
@@ -660,131 +670,131 @@ actors:
       # ============================================================
 
       - from: RelayConnected
-        to: LANConnecting
-        on: recv lan_offer
-        guard: lan_enabled
-        do: dial_lan
-        emits: [dial_lan]
+        to: PairDialing
+        on: recv candidates
+        guard: alt_enabled
+        do: dial_candidate
+        emits: [dial_candidate]
 
       - from: RelayConnected
         to: RelayConnected
-        on: recv lan_offer
-        guard: lan_disabled
+        on: recv candidates
+        guard: alt_disabled
 
-      - from: LANConnecting
-        to: LANVerifying
-        on: lan_dial_ok
+      - from: PairDialing
+        to: PairChecking
+        on: dial_ok
         sends:
           - to: backend
-            msg: lan_verify
+            msg: pair_check
             fields:
-              challenge: offer_challenge
+              challenge: received_pair_check_challenge
               instance_id: instance_id
-        emits: [send_lan_verify]
+        emits: [send_pair_check]
 
-      - from: LANConnecting
+      - from: PairDialing
         to: RelayConnected
-        on: lan_dial_failed
+        on: dial_failed
 
-      - from: LANVerifying
-        to: LANActive
-        on: recv lan_confirm
+      - from: PairChecking
+        to: AltActive
+        on: recv pair_check_ack
         do: activate_lan
         updates:
-          c_active_path: '"lan"'
-          c_dispatcher_path: '"lan"'
-          lan_signal: '"ready"'
+          c_active_path: '"alt"'
+          c_dispatcher_path: '"alt"'
+          alt_signal: '"ready"'
         emits:
-          - start_lan_stream_reader
-          - start_lan_dg_reader
-          - signal_lan_ready
+          - start_alt_stream_reader
+          - start_alt_dg_reader
+          - signal_alt_ready
           - set_crypto_datagram
 
-      - from: LANVerifying
+      - from: PairChecking
         to: RelayConnected
         on: verify_timeout
         updates:
           c_dispatcher_path: '"relay"'
 
-      - from: LANActive
-        to: LANActive
+      - from: AltActive
+        to: AltActive
         on: recv path_ping
         sends:
           - to: backend
             msg: path_pong
         emits: [send_path_pong]
 
-      - from: LANActive
+      - from: AltActive
         to: RelayFallback
-        on: lan_error
+        on: alt_error
         do: fallback_to_relay
         updates:
           c_active_path: '"relay"'
           c_dispatcher_path: '"relay"'
-          lan_signal: '"pending"'
+          alt_signal: '"pending"'
         emits:
-          - stop_lan_stream_reader
-          - stop_lan_dg_reader
-          - close_lan_path
-          - reset_lan_ready
+          - stop_alt_stream_reader
+          - stop_alt_dg_reader
+          - close_alt_path
+          - reset_alt_ready
 
-      - from: LANActive
+      - from: AltActive
         to: RelayFallback
-        on: lan_stream_error
+        on: alt_stream_error
         do: fallback_to_relay
         updates:
           c_active_path: '"relay"'
           c_dispatcher_path: '"relay"'
-          lan_signal: '"pending"'
+          alt_signal: '"pending"'
         emits:
-          - stop_lan_stream_reader
-          - stop_lan_dg_reader
-          - close_lan_path
-          - reset_lan_ready
+          - stop_alt_stream_reader
+          - stop_alt_dg_reader
+          - close_alt_path
+          - reset_alt_ready
 
       - from: RelayFallback
         to: RelayConnected
         on: relay_ok
 
-      - from: LANActive
-        to: LANConnecting
-        on: recv lan_offer
-        guard: lan_enabled
-        do: dial_lan
+      - from: AltActive
+        to: PairDialing
+        on: recv candidates
+        guard: alt_enabled
+        do: dial_candidate
         emits:
-          - stop_lan_stream_reader
-          - stop_lan_dg_reader
-          - close_lan_path
-          - dial_lan
+          - stop_alt_stream_reader
+          - stop_alt_dg_reader
+          - close_alt_path
+          - dial_candidate
 
-      # Force fallback from any LAN state to relay.
-      - from: LANConnecting
+      # Force fallback from any alt-pair state to relay.
+      - from: PairDialing
         to: RelayConnected
         on: app_force_fallback
 
-      - from: LANVerifying
+      - from: PairChecking
         to: RelayConnected
         on: app_force_fallback
         updates:
           c_dispatcher_path: '"relay"'
         emits:
-          - stop_lan_stream_reader
-          - stop_lan_dg_reader
-          - close_lan_path
+          - stop_alt_stream_reader
+          - stop_alt_dg_reader
+          - close_alt_path
 
-      - from: LANActive
+      - from: AltActive
         to: RelayConnected
         on: app_force_fallback
         do: fallback_to_relay
         updates:
           c_active_path: '"relay"'
           c_dispatcher_path: '"relay"'
-          lan_signal: '"pending"'
+          alt_signal: '"pending"'
         emits:
-          - stop_lan_stream_reader
-          - stop_lan_dg_reader
-          - close_lan_path
-          - reset_lan_ready
+          - stop_alt_stream_reader
+          - stop_alt_dg_reader
+          - close_alt_path
+          - reset_alt_ready
 
       # Re-enter pairing on disconnect.
       - from: RelayConnected
@@ -862,10 +872,10 @@ structs:
       type: string
       initial: '"none"'
       desc: health monitor target
-    lan_signal:
+    alt_signal:
       type: string
       initial: '"pending"'
-      desc: LANReady notification state
+      desc: AltReady notification state
 
   ClientPathState:
     active_path:
@@ -876,6 +886,30 @@ structs:
       type: string
       initial: '"relay"'
       desc: datagram dispatcher binding
+
+  # Candidate is the wire-level descriptor exchanged in the `candidates`
+  # message. Each peer enumerates its reachable transport addresses
+  # (host = local interface; srflx = STUN-reflexive; ...) and emits a
+  # set of these records. The pair_check / pair_check_ack handshake
+  # validates a specific local↔remote pair; nomination picks the
+  # highest-priority pair whose check has completed.
+  Candidate:
+    kind:
+      type: string
+      initial: '"host"'
+      desc: 'candidate kind discriminator: cand_host / cand_srflx / ...'
+    addr:
+      type: string
+      initial: '""'
+      desc: 'transport address (host:port) the peer should dial'
+    priority:
+      type: int
+      initial: '0'
+      desc: 'pair-priority used during nomination (higher wins; ICE-style numbering recommended)'
+    cand_id:
+      type: string
+      initial: '""'
+      desc: 'stable per-session identifier; pair IDs are <<local_cand_id, remote_cand_id>>'
 
 vars:
   # --- Phase 1: Pairing ---
@@ -979,18 +1013,14 @@ vars:
     desc: real backend pubkey saved during MitM
 
   # --- Phase 2: Transport ---
-  lan_addr:
+  local_pair_check_challenge:
     type: string
     initial: '"none"'
-    desc: LAN server address (host:port)
-  challenge_bytes:
+    desc: 32-byte random challenge for pair_check exchange
+  received_pair_check_challenge:
     type: string
     initial: '"none"'
-    desc: 32-byte random challenge for LAN verification
-  offer_challenge:
-    type: string
-    initial: '"none"'
-    desc: challenge from the most recent LAN offer
+    desc: challenge most recently received in pair_check
   instance_id:
     type: string
     initial: '"none"'
@@ -1011,10 +1041,32 @@ vars:
     type: int
     initial: '5'
     desc: backoff cap
-  lan_server_addr:
+  local_listen_addr:
     type: string
     initial: '"none"'
-    desc: LAN server listen address
+    desc: local listening address (host candidate)
+
+  # --- Candidate-pair state (Phase 2) ---
+  # TLA+ models candidate identities abstractly as opaque strings.
+  # The per-language Candidate struct (kind / addr / priority / cand_id)
+  # is the wire-level view; here we track only the identifier sets the
+  # FSM needs to reason about pair formation and nomination.
+  local_candidates:
+    type: set<string>
+    initial: '{}'
+    desc: candidate IDs this peer gathered locally and advertised via candidates message
+  remote_candidates:
+    type: set<string>
+    initial: '{}'
+    desc: candidate IDs this peer received in the peer's candidates message
+  pair_check_acks:
+    type: set<string>
+    initial: '{}'
+    desc: pair IDs for which a pair_check_ack has been observed (nomination universe)
+  active_pair_id:
+    type: string
+    initial: '"none"'
+    desc: 'pair ID currently nominated as the active alt path; "none" when on relay'
 
   # --- Resource lifecycle (Phase 2) ---
   b_active_path:
@@ -1037,10 +1089,10 @@ vars:
     type: string
     initial: '"none"'
     desc: health monitor target
-  lan_signal:
+  alt_signal:
     type: string
     initial: '"pending"'
-    desc: LANReady notification state
+    desc: AltReady notification state
   relay_bridge:
     type: string
     initial: '"idle"'
@@ -1056,11 +1108,11 @@ guards:
   device_unknown: 'received_device_id \notin paired_devices'
   nonce_fresh: 'received_auth_nonce \notin auth_nonces_used'
   # Phase 2
-  challenge_valid: 'offer_challenge = challenge_bytes'
-  challenge_invalid: 'offer_challenge /= challenge_bytes'
-  lan_enabled: 'TRUE'
-  lan_disabled: 'FALSE'
-  lan_server_available: 'lan_server_addr /= "none"'
+  challenge_valid: 'received_pair_check_challenge = local_pair_check_challenge'
+  challenge_invalid: 'received_pair_check_challenge /= local_pair_check_challenge'
+  alt_enabled: 'TRUE'
+  alt_disabled: 'FALSE'
+  local_candidates_available: 'local_listen_addr /= "none"'
   under_max_failures: 'ping_failures + 1 < max_ping_failures'
   at_max_failures: 'ping_failures + 1 >= max_ping_failures'
 
@@ -1145,37 +1197,40 @@ phases:
     states:
       # Backend transport states
       - RelayConnected
-      - LANOffered
-      - LANActive
-      - LANDegraded
+      - CandidatesAdvertised
+      - AltActive
+      - AltDegraded
       - RelayBackoff
       # Client transport states
-      - LANConnecting
-      - LANVerifying
+      - PairDialing
+      - PairChecking
       - RelayFallback
     vars:
-      - lan_addr
-      - challenge_bytes
-      - offer_challenge
+      - local_pair_check_challenge
+      - received_pair_check_challenge
       - instance_id
       - ping_failures
       - max_ping_failures
       - backoff_level
       - max_backoff_level
-      - lan_server_addr
+      - local_listen_addr
+      - local_candidates
+      - remote_candidates
+      - pair_check_acks
+      - active_pair_id
       - b_active_path
       - c_active_path
       - b_dispatcher_path
       - c_dispatcher_path
       - monitor_target
-      - lan_signal
+      - alt_signal
     adversary: false
 
 # The adversary is only active during the pairing phase. Once the
 # backend reaches transport states, the adversary self-disables.
 # This prevents combinatorial explosion from adversary interleavings
 # with transport events that can never interact with pairing.
-adversary_guard: 'backend_state \notin {backend_RelayConnected, backend_LANOffered, backend_LANActive, backend_LANDegraded, backend_RelayBackoff}'
+adversary_guard: 'backend_state \notin {backend_RelayConnected, backend_CandidatesAdvertised, backend_AltActive, backend_AltDegraded, backend_RelayBackoff}'
 
 adversary:
   - name: QR_shoulder_surf
@@ -1265,7 +1320,7 @@ properties:
   # --- Phase 2: Transport ---
   - name: PathConsistency
     kind: invariant
-    expr: 'b_active_path \in {"relay", "lan"} /\ c_active_path \in {"relay", "lan"}'
+    expr: 'b_active_path \in {"relay", "alt"} /\ c_active_path \in {"relay", "alt"}'
     desc: Paths are always valid
   - name: BackoffBounded
     kind: invariant
@@ -1273,39 +1328,39 @@ properties:
     desc: Backoff never exceeds cap
   - name: BackoffResetsOnSuccess
     kind: invariant
-    expr: 'backend_state = backend_LANActive => backoff_level = 0'
-    desc: LAN success resets backoff
+    expr: 'backend_state = backend_AltActive => backoff_level = 0'
+    desc: alt-pair success resets backoff
 
   # --- Resource lifecycle ---
   - name: DispatcherAlwaysBound
     kind: invariant
-    expr: 'b_dispatcher_path \in {"relay", "lan"} /\ c_dispatcher_path \in {"relay", "lan"}'
+    expr: 'b_dispatcher_path \in {"relay", "alt"} /\ c_dispatcher_path \in {"relay", "alt"}'
     desc: Dispatchers always bound to valid path
   - name: BackendDispatcherMatchesActive
     kind: invariant
-    expr: 'backend_state = backend_LANActive => b_dispatcher_path = "lan"'
-    desc: Backend dispatcher on LAN when LAN active
+    expr: 'backend_state = backend_AltActive => b_dispatcher_path = "alt"'
+    desc: Backend dispatcher on alt-pair when alt-pair active
   - name: ClientDispatcherMatchesActive
     kind: invariant
-    expr: 'client_state = client_LANActive => c_dispatcher_path = "lan"'
-    desc: Client dispatcher on LAN when LAN active
-  - name: MonitorOnlyWhenLAN
+    expr: 'client_state = client_AltActive => c_dispatcher_path = "alt"'
+    desc: Client dispatcher on alt-pair when alt-pair active
+  - name: MonitorOnlyWhenAlt
     kind: invariant
-    expr: 'monitor_target = "lan" => backend_state \in {backend_LANActive, backend_LANDegraded}'
-    desc: Monitor only pings when LAN is active/degraded
-  # LANSignalPendingOnFallback removed: lan_signal is shared between
+    expr: 'monitor_target = "alt" => backend_state \in {backend_AltActive, backend_AltDegraded}'
+    desc: Monitor only pings when alt-pair is active or degraded
+  # AltSignalPendingOnFallback removed: alt_signal is shared between
   # actors but updated independently, creating valid states where the
   # backend has fallen back but the client hasn't reset the signal yet.
-  # In the Go implementation, each Conn has its own lanReady channel.
+  # In the Go implementation, each Conn has its own altReady channel.
 
   # --- Leads-to (progress guarantees) ---
   - name: FallbackLeadsToReadvertise
     kind: leads_to
     from_expr: 'backend_state = backend_RelayBackoff'
-    to_expr: 'backend_state = backend_LANOffered'
-    desc: After fallback, backend eventually re-advertises LAN
+    to_expr: 'backend_state = backend_CandidatesAdvertised'
+    desc: After fallback, backend eventually re-advertises candidates
   - name: DegradedLeadsToResolutionOrFallback
     kind: leads_to
-    from_expr: 'backend_state = backend_LANDegraded'
-    to_expr: 'backend_state \in {backend_LANActive, backend_RelayBackoff}'
+    from_expr: 'backend_state = backend_AltDegraded'
+    to_expr: 'backend_state \in {backend_AltActive, backend_RelayBackoff}'
     desc: Degraded state eventually resolves (recovery or fallback)
