@@ -12,7 +12,9 @@ The protocol has two phases connected by a single choke point:
 
 1. **Pairing** — ECDH key exchange, confirmation code verification,
    device secret establishment. One-shot: runs once per device pair.
-2. **Transport** — relay (permanent baseline) + LAN (direct, optional).
+2. **Transport** — relay (permanent baseline) + zero-or-more alternative
+   candidate-pair pipes (LAN-direct as candidate kind `host`; STUN
+   server-reflexive as `srflx`; future kinds plug in additively).
    Continuous: runs for the lifetime of the session, adapting to
    network conditions.
 
@@ -26,8 +28,8 @@ Three actors participate across both phases:
 
 | Actor | Role |
 |---|---|
-| **backend** | The device behind the NAT/firewall. Registers with the relay, starts a LAN server, advertises LAN address. Includes CLI interactions (QR display, code entry) as local actions. |
-| **client** | The mobile device. Scans QR, connects via relay, dials LAN when offered. |
+| **backend** | The device behind the NAT/firewall. Registers with the relay, listens on its local candidate addresses, and advertises them as a set via the `candidates` control message. Includes CLI interactions (QR display, code entry) as local actions. |
+| **client** | The mobile device. Scans QR, connects via relay, dials remote candidates and runs the pair-check handshake on each. |
 | **relay** | The intermediary server. Bridges traffic between backend and client. Permanent baseline — never closes while the session is active. |
 
 ## State Machine Diagrams
@@ -36,7 +38,7 @@ Three actors participate across both phases:
 
 ![Transport State Machine](transport.svg)
 
-Superstates (`Connected`, `LANPath`/`LANDataPath`) are rendered as
+Superstates (`Connected`, `AltPath`/`AltDataPath`) are rendered as
 containers. App I/O transitions inherited from superstates appear as
 self-loops on the container boundary — see
 [State Hierarchy](#state-hierarchy). Commands emitted by transitions
@@ -60,9 +62,9 @@ The state machine mediates between two event surfaces:
 **Top (application):** `app_send`, `app_recv`, `app_send_datagram`,
 `app_recv_datagram`, `app_close`
 
-**Bottom (I/O):** `relay_stream_data`, `lan_stream_data`,
-`relay_stream_error`, `lan_stream_error`, `relay_datagram`,
-`lan_datagram`, `lan_dial_ok`, `lan_dial_failed`, `ping_timeout`,
+**Bottom (I/O):** `relay_stream_data`, `alt_stream_data`,
+`relay_stream_error`, `alt_stream_error`, `relay_datagram`,
+`alt_datagram`, `dial_ok`, `dial_failed`, `ping_timeout`,
 `backoff_expired`
 
 The machine is a pure function: **(State, Event) → (State, []Command)**.
@@ -79,16 +81,17 @@ Declared in the `events:` section of session.yaml. Two categories:
 - **I/O events**: completions from the runtime (data arrived on
   socket, connection error, timer expired)
 
-Message receipts (`recv lan_offer`, `recv path_ping`, etc.) are also
-events — the stream reader detects the message type and posts the
+Message receipts (`recv candidates`, `recv pair_check`,
+`recv pair_check_ack`, `recv path_ping`, etc.) are also events —
+the stream reader detects the message type and posts the
 corresponding event.
 
 `app_force_fallback` is a special application event: the caller
-requests immediate fallback to relay regardless of current LAN state.
-The machine has transitions from every LAN-related state, each emitting
-the correct cleanup commands. This replaced an ad-hoc `fallbackToRelay()`
-function that type-asserted the machine and manipulated variables
-directly.
+requests immediate fallback to relay regardless of current alt-pair
+state. The machine has transitions from every alt-pair-related state,
+each emitting the correct cleanup commands. This replaced an ad-hoc
+`fallbackToRelay()` function that type-asserted the machine and
+manipulated variables directly.
 
 ### Commands
 
@@ -99,10 +102,10 @@ field on each transition lists the commands it produces. Categories:
 |---|---|
 | **I/O writes** | `write_active_stream`, `send_active_datagram`, `send_path_ping` |
 | **App delivery** | `deliver_recv`, `deliver_recv_datagram`, `deliver_recv_error` |
-| **Resource lifecycle** | `start_lan_stream_reader`, `stop_monitor`, `close_lan_path` |
+| **Resource lifecycle** | `start_alt_stream_reader`, `stop_monitor`, `close_alt_path` |
 | **Timers** | `start_backoff_timer`, `start_pong_timeout`, `cancel_pong_timeout` |
-| **LAN lifecycle** | `send_lan_offer`, `dial_lan`, `send_lan_verify` |
-| **Notifications** | `signal_lan_ready`, `reset_lan_ready` |
+| **Candidate-pair lifecycle** | `send_candidates`, `dial_candidate`, `send_pair_check`, `send_pair_check_ack` |
+| **Notifications** | `signal_alt_ready`, `reset_alt_ready` |
 | **Crypto** | `set_crypto_datagram` |
 
 ### Executor
@@ -115,8 +118,8 @@ I/O resources, and app response channels. Its `run()` loop:
 3. Feed event to `machine.HandleEvent(ev)` → get `[]CmdID`
 4. Execute each command
 
-I/O reader goroutines (relay stream, relay datagram, LAN stream,
-LAN datagram) post events — they contain zero state logic. App
+I/O reader goroutines (relay stream, relay datagram, alt-pair stream,
+alt-pair datagram) post events — they contain zero state logic. App
 methods (`Send`, `Recv`) submit events and block on response channels.
 
 If the machine has no transition for an event in the current state,
@@ -136,7 +139,7 @@ happen.
   through event loop).
 - **DatagramChannel I/O**: through the event loop (needs demux).
 - **Relay reader**: always runs (relay is permanent, control messages
-  arrive on it even when LAN is active).
+  arrive on it even when an alt-pair is active).
 
 ## Phase 1: Pairing
 
@@ -180,8 +183,14 @@ or prevented by the protocol.
 ## Phase 2: Transport
 
 After pairing, the transport phase manages which network path carries
-traffic. The relay is always connected as a fallback; LAN provides a
-direct low-latency path when both devices are on the same network.
+traffic. The relay is always connected as a permanent baseline; in
+parallel, each peer gathers transport candidates (LAN host candidates
+from local interfaces today; STUN server-reflexive candidates next;
+future kinds plug in without FSM changes) and runs a generic
+candidate-pair handshake to nominate the best working alternative.
+The application surface (L4 streams/datagrams) is routed onto the
+nominated pair, with the relay always available as a zero-cost
+fallback.
 
 The transport submachine is organised as a hierarchy of superstates.
 A superstate groups leaf states and defines transitions that all its
@@ -196,19 +205,19 @@ authoring convenience, not a runtime concept.
 backend:
   Connected                        # superstate — all path states
   ├─ RelayConnected
-  ├─ LANOffered
-  ├─ LANPath                       # sub-superstate — LAN-active states
-  │   ├─ LANActive
-  │   └─ LANDegraded
+  ├─ CandidatesAdvertised
+  ├─ AltPath                       # sub-superstate — alt-pair-active states
+  │   ├─ AltActive
+  │   └─ AltDegraded
   └─ RelayBackoff
 
 client:
   Connected
   ├─ RelayConnected
-  ├─ LANConnecting
-  ├─ LANVerifying
-  ├─ LANDataPath                   # sub-superstate
-  │   └─ LANActive
+  ├─ PairDialing
+  ├─ PairChecking
+  ├─ AltDataPath                   # sub-superstate
+  │   └─ AltActive
   └─ RelayBackoff
 ```
 
@@ -219,7 +228,7 @@ transitions — defined once on the superstate, not replicated per leaf:
 
 ```yaml
 Connected:
-  children: [RelayConnected, LANOffered, LANPath, RelayBackoff]
+  children: [RelayConnected, CandidatesAdvertised, AltPath, RelayBackoff]
   transitions:
     - {on: app_send, emits: [write_active_stream]}
     - {on: relay_stream_data, emits: [deliver_recv]}
@@ -229,62 +238,94 @@ Connected:
 ```
 
 This means every transport state can send and receive data — the app
-never needs to know which path is active. The relay always delivers
-(it carries control messages even when LAN is active).
+never needs to know which pipe is active. The relay always delivers
+(it carries control messages even when an alt-pair is active).
 
-### LANPath / LANDataPath (sub-superstates)
+### AltPath / AltDataPath (sub-superstates)
 
-States where LAN is usable additionally inherit LAN-specific I/O:
+States where an alt-pair pipe is usable additionally inherit
+alt-pair-specific I/O:
 
 ```yaml
-LANPath:
-  children: [LANActive, LANDegraded]
+AltPath:
+  children: [AltActive, AltDegraded]
   transitions:
-    - {on: lan_stream_data, emits: [deliver_recv]}
-    - {on: lan_datagram, emits: [deliver_recv_datagram]}
+    - {on: alt_stream_data, emits: [deliver_recv]}
+    - {on: alt_datagram, emits: [deliver_recv_datagram]}
 ```
 
-`LANActive` and `LANDegraded` thus handle both relay and LAN data —
-inherited from two levels of the hierarchy.
+`AltActive` and `AltDegraded` thus handle both relay and alt-pair
+data — inherited from two levels of the hierarchy.
 
-### LAN Establishment Flow
+### Candidate-pair establishment flow
 
-1. Backend starts a LAN server and sends `lan_offer` via relay
-   (includes LAN address + random challenge)
-2. Client receives offer, dials the LAN address directly
-3. Client sends `lan_verify` with the challenge echoed back
-4. Backend verifies challenge, sends `lan_confirm`
-5. Both sides switch to the LAN path
+Phase 2 generalises the original LAN-vs-relay flow into a typed
+candidate model. LAN-direct is now candidate kind `host`; STUN-
+reflexive (🎯T43) is `srflx`; further kinds plug in without
+restructuring the FSM.
 
-The activation transition (`LANOffered → LANActive`) explicitly emits
-the commands that bring up LAN resources:
+**Wire vocabulary.** Three messages over the established AEAD pipe:
+
+| Message | Pipe | Direction | Carries |
+|---|---|---|---|
+| `candidates` | relay | backend → client | set of `Candidate` records + per-session pair-check challenge |
+| `pair_check` | candidate pipe | client → backend | echoed challenge + instance ID |
+| `pair_check_ack` | candidate pipe | backend → client | implicit pair nomination on success |
+
+`Candidate` is a `kind / addr / priority / cand_id` record (see the
+`structs:` table below). The set carried by `candidates` is what
+the wire renames generalise — a flat single-address LAN offer becomes
+a typed set whose first element today is always a `host` candidate.
+
+**Flow:**
+
+1. Backend gathers local candidates (host = local interface
+   addresses; srflx = STUN-derived later). Backend listens on every
+   host candidate's transport address.
+2. Backend sends `candidates` over the relay pipe with the
+   advertised set + a per-session pair-check challenge.
+3. Client dials each remote candidate it has a route to.
+4. On each successful dial, client sends `pair_check` over the
+   candidate-pair pipe with the echoed challenge.
+5. Backend receives `pair_check`, validates the challenge, and
+   replies with `pair_check_ack` on the same pipe.
+6. Receipt of `pair_check_ack` implicitly nominates that pair as
+   the active alt path; both sides switch.
+
+The activation transition (`CandidatesAdvertised → AltActive`)
+explicitly emits the commands that bring up the alt-pair resources:
 
 ```yaml
 emits:
-  - send_lan_confirm
-  - start_lan_stream_reader
-  - start_lan_dg_reader
+  - send_pair_check_ack
+  - start_alt_stream_reader
+  - start_alt_dg_reader
   - start_monitor
-  - signal_lan_ready
+  - signal_alt_ready
   - set_crypto_datagram
 ```
 
+In the Phase 1 ship (host candidate only) the candidate set is a
+single entry and nomination is trivially "the one that works." Phase
+1 STUN (🎯T43) adds `srflx` candidates additively and exercises the
+multi-candidate paths of this same flow.
+
 ### Health Monitor
 
-Once LAN is active, the health monitor sends `dgPing` datagrams at
-fixed intervals. Each ping emits `start_pong_timeout`; a `dgPong`
-reply emits `cancel_pong_timeout`. If the pong timeout fires,
-`ping_timeout` triggers degradation (`LANActive → LANDegraded`).
-After 3 consecutive failures, fallback:
+Once an alt-pair is active, the health monitor sends `dgPing`
+datagrams at fixed intervals. Each ping emits `start_pong_timeout`;
+a `dgPong` reply emits `cancel_pong_timeout`. If the pong timeout
+fires, `ping_timeout` triggers degradation
+(`AltActive → AltDegraded`). After 3 consecutive failures, fallback:
 
 ```yaml
-# LANDegraded → RelayBackoff (guard: at_max_failures)
+# AltDegraded → RelayBackoff (guard: at_max_failures)
 emits:
   - stop_monitor
-  - stop_lan_stream_reader
-  - stop_lan_dg_reader
-  - close_lan_path
-  - reset_lan_ready
+  - stop_alt_stream_reader
+  - stop_alt_dg_reader
+  - close_alt_path
+  - reset_alt_ready
   - start_backoff_timer
 ```
 
@@ -294,7 +335,7 @@ are created and destroyed.
 
 ### Force Fallback
 
-`app_force_fallback` is defined on every LAN-related leaf state,
+`app_force_fallback` is defined on every alt-pair-related leaf state,
 each emitting the correct cleanup commands for that state. This
 replaced ad-hoc code that type-asserted the machine and manipulated
 variables directly. One `submitSync(EventAppForceFallback)` call.
@@ -302,31 +343,31 @@ variables directly. One `submitSync(EventAppForceFallback)` call.
 ### Backoff Strategy
 
 After falling back to relay, the backend waits before re-advertising
-LAN. The delay is exponential: `2^(level-1) × 1s` with ±25% jitter,
-capped at level 5 (~16s). The backoff level:
+candidates. The delay is exponential: `2^(level-1) × 1s` with ±25%
+jitter, capped at level 5 (~16s). The backoff level:
 
-- Resets to 0 on successful LAN establishment
-- Increments on offer timeout or max-failure fallback
+- Resets to 0 on successful alt-pair establishment
+- Increments on `candidates_timeout` or max-failure fallback
 - Never exceeds `max_backoff_level`
 
 ### Transport Properties (verified by TLA+)
 
-- **PathConsistency**: active path is always "relay" or "lan"
+- **PathConsistency**: active path is always "relay" or "alt"
 - **BackoffBounded**: backoff level never exceeds cap
-- **BackoffResetsOnSuccess**: LAN active implies backoff = 0
+- **BackoffResetsOnSuccess**: alt-pair active implies backoff = 0
 - **DispatcherAlwaysBound**: dispatchers always on a valid path
-- **BackendDispatcherMatchesActive**: backend dispatcher on LAN when
-  LAN is active
-- **ClientDispatcherMatchesActive**: client dispatcher on LAN when
-  LAN is active
-- **MonitorOnlyWhenLAN**: health monitor only pings when LAN is
-  active or degraded
+- **BackendDispatcherMatchesActive**: backend dispatcher on the
+  alt-pair when alt-pair is active
+- **ClientDispatcherMatchesActive**: client dispatcher on the
+  alt-pair when alt-pair is active
+- **MonitorOnlyWhenAlt**: health monitor only pings when an
+  alt-pair is active or degraded
 
 ### Leads-to Properties
 
 - **FallbackLeadsToReadvertise**: after fallback, the backend
-  eventually re-advertises LAN
-- **DegradedLeadsToResolutionOrFallback**: a degraded LAN path
+  eventually re-advertises candidates
+- **DegradedLeadsToResolutionOrFallback**: a degraded alt-pair
   eventually either recovers or falls back
 
 ## Typed Variables
@@ -345,8 +386,9 @@ into structs:
 |---|---|---|
 | `ECDHState` | backend_pub, client_pub, shared_key, code | ECDH key exchange state |
 | `TokenState` | current, active, used | Pairing token lifecycle |
-| `BackendPathState` | active_path, dispatcher_path, monitor_target, lan_signal | Backend transport resources |
+| `BackendPathState` | active_path, dispatcher_path, monitor_target, alt_signal | Backend transport resources |
 | `ClientPathState` | active_path, dispatcher_path | Client transport resources |
+| `Candidate` | kind, addr, priority, cand_id | Wire-level transport candidate descriptor (host / srflx / ...) carried in the `candidates` message |
 
 ## Code Generation
 
@@ -713,23 +755,41 @@ The framework implementation: `StateNode` with `Parent`/`Children`/
 hierarchy, and all generators consuming the flattened table — the
 hierarchy is invisible below the YAML layer.
 
+### Generic Candidate-Pair FSM (🎯T39.7)
+
+The LAN-vs-relay two-state path model was folded into a generic
+candidate-pair sub-FSM. LAN-direct became candidate kind `host`; the
+typed `Candidate` record carries `kind / addr / priority / cand_id`;
+the `candidates` message carries a set; and the `pair_check` /
+`pair_check_ack` handshake replaced the LAN-specific
+`lan_verify` / `lan_confirm` exchange. Nomination is computed over
+the candidate-pair set rather than checkpointed against a single
+binary LAN-vs-relay choice. STUN-reflexive (`srflx`) candidates and
+any future kind plug in additively — only the per-language gathering
+code grows; the FSM, the wire shape, and the TLA+ verification are
+already generic.
+
+The historical narrative below is preserved as-is for context — its
+LAN-specific framing describes the state of the project *before* the
+T39.7 refactor.
+
 ### The Current State
 
 | Layer | Formalism | Status |
 |---|---|---|
 | YAML spec | Single source of truth | `session.yaml` |
-| Hierarchy | Superstates with inherited transitions | `Connected`, `LANPath`/`LANDataPath` |
+| Hierarchy | Superstates with inherited transitions | `Connected`, `AltPath`/`AltDataPath` |
 | Events | Declared in `events:` section | App surface + I/O surface + force fallback |
 | Commands | Declared in `commands:` section | I/O writes, timers, resource lifecycle, notifications |
 | Emits | Per-transition command lists | Every transition declares its commands |
-| Wire constants | Declared in `wire_constants:` section | Frame types, sizes, thresholds — generated per language |
-| Phases | Named groupings with scoped vars | Pairing (21 states, 24 vars), Transport (8 states, 16 vars) |
-| Types | `string`, `int`, `bool`, `set<string>` | All 40 variables typed |
-| Structs | Named variable groups | 4 structs (ECDH, Token, BackendPath, ClientPath) |
+| Wire constants | Declared in `wire_constants:` section | Frame types, sizes, candidate kinds, thresholds — generated per language |
+| Phases | Named groupings with scoped vars | Pairing (21 states, 24 vars), Transport (8 states, 20 vars) |
+| Types | `string`, `int`, `bool`, `set<string>` | All variables typed |
+| Structs | Named variable groups | 5 structs (ECDH, Token, BackendPath, ClientPath, Candidate) |
 | Constants | Parameterised for model checking | Challenges set |
 | Fairness | Per-transition weak/strong | `backoff_expired` is strong-fair |
 | Properties | Invariants, liveness, leads-to | 14 total (6 security + 8 transport) |
-| TLA+ generation | Pure TLA+, channel-free | 121 states, <1s |
+| TLA+ generation | Pure TLA+, channel-free | ~4 k distinct states, <1s |
 | Go code generation | `HandleEvent` + typed machines | Event/command/state constants |
 | Other languages | `handleEvent` + typed machines | Swift, Kotlin, TypeScript |
 | Executor | Thin event loop in `executor.go` | Conn delegates all I/O, zero state logic |
@@ -739,7 +799,8 @@ The progression: hand-written code → hand-written TLA+ →
 generated PlusCal (failed) → generated pure TLA+ (slow) → generated
 pure TLA+ with channel elimination (fast) → OnChange callbacks
 (wrong abstraction) → explicit command emission → close ad-hoc gaps
-(🎯T18) → **hierarchical superstates (🎯T19).**
+(🎯T18) → hierarchical superstates (🎯T19) → **generic candidate-pair
+FSM (🎯T39.7).**
 
 Each step moved more logic into the state machine and removed more
 ad-hoc code from the executor. The executor now contains zero state

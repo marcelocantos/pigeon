@@ -46,10 +46,14 @@ session is the stable thing the application holds onto.
 
 **Current state vs. target.** Goals reflect the target. The pieces
 shipped today are pairing (full), relay-tunnelled session carrier (full,
-single-client and multi-client), and named streams + named datagram
-channels (full). LAN-direct carriers, path optimisation, and the
-candidate-pair FSM are designed (`docs/session-protocol.md`,
-`docs/local-backchannel.md`) but not yet implemented across all SDKs.
+single-client and multi-client), named streams + named datagram
+channels (full), and the **generic candidate-pair sub-FSM** that
+underpins LAN-direct and future STUN-reflexive paths
+(`protocol/session.yaml` Phase 2, verified by `formal/SessionMachine.tla`
+under 🎯T39.7). LAN-direct *carrier code* on the executor side, path
+optimisation in the runtime, and `host`-candidate-only STUN gathering
+(🎯T43) remain follow-up work — the spec layer is no longer the
+bottleneck.
 
 ---
 
@@ -368,10 +372,10 @@ sub-states are listed for clarity but they are not separate FSMs.
 | Interaction                  | Source-of-truth status         |
 |------------------------------|--------------------------------|
 | **Pairing machine**          | `protocol/pairing.yaml` ✓; verified by `formal/PairingCeremony.tla` ✓ |
-| **Session machine** (whole)  | `docs/session-protocol.md` (designed; not yet in YAML); verification by an independent `formal/SessionMachine.tla` once in YAML |
-| &nbsp;&nbsp;⊢ session-open hello/ack | Sub-state — currently hand-rolled JSON (`api.go::connectHello/connectAck`) |
-| &nbsp;&nbsp;⊢ path selection / LAN candidate exchange | Sub-state — designed; not implemented |
-| &nbsp;&nbsp;⊢ health monitor ping/pong | Sub-state — designed; not implemented |
+| **Session machine** (whole)  | `protocol/session.yaml` ✓; verified by `formal/SessionMachine.tla` (Transport phase, 🎯T39, 🎯T39.7) — runtime consumption is partial; `api.go` still drives the per-pipe I/O directly while the YAML spec is the source of truth for protogen-emitted machines in every SDK |
+| &nbsp;&nbsp;⊢ session-open hello/ack | Sub-state — currently hand-rolled JSON (`api.go::connectHello/connectAck`); folding onto the YAML machine is tracked under 🎯T39 sub-targets |
+| &nbsp;&nbsp;⊢ path selection / candidate exchange | Sub-state ✓ — generic `Candidate` / `candidates` / `pair_check` / `pair_check_ack` FSM in `session.yaml` Phase 2 (🎯T39.7); LAN-direct is candidate kind `host`, STUN `srflx` plugs in additively (🎯T43) |
+| &nbsp;&nbsp;⊢ health monitor ping/pong | Sub-state ✓ — `path_ping` / `path_pong` + degraded/backoff states in `session.yaml` Phase 2 |
 | Cross-machine properties     | Interface contract (`ValidPairingRecord`) + local proofs in each spec; **no composed TLA+ spec** (state space explodes) |
 | Relay greeting variants      | `protocol/wireformats.yaml::relay_greeting` ✓ (protogen-generated encoder/decoder in every SDK; T40) |
 | Stream-name binding header   | `protocol/wireformats.yaml::stream_header` ✓ (protogen-generated; T40) |
@@ -386,11 +390,12 @@ still possible. The target is for every entry in the catalogue above to
 be a protogen spec.
 
 The session+transport FSM (joined pairing + path-selection state
-machine) is the largest piece of pending YAML work. It is fully
-specified prosaically in `docs/session-protocol.md` — translating that
-into protogen YAML and re-generating the executors is the path to
-collapsing significant chunks of hand-rolled per-language session
-plumbing.
+machine) is now in protogen YAML (🎯T39 + 🎯T39.7) and verified by
+TLA+. The remaining gap is *runtime consumption*: `api.go` and the
+per-SDK executors still drive per-pipe I/O directly rather than
+dispatching events through the generated machine. Folding the
+executor onto the generated FSM is incremental work tracked under
+the T39 sub-targets.
 
 See `docs/session-protocol.md` for the authoritative state-machine
 design (state hierarchy, transition table, TLA+ verification properties).
@@ -575,13 +580,17 @@ for the analysis. STUN candidates fit the same upgrade model as LAN —
 the relay session is the signalling channel; the AEAD context
 authenticates the connectivity check.
 
-**Current state vs. target.** L3 is fully designed
-(`docs/session-protocol.md`) and not yet implemented as a clean layer
-in any SDK — the responsibilities are partially scattered across
-`executor.go`, `lan.go`, `path.go`, and `pathRouter` inside `Conn`.
-The relay-only path is the only one shipping today; LAN-direct is the
-next major capability and the natural first consumer of the cleanly-
-separated L3. STUN-reflexive is a third tier deferred behind LAN-direct.
+**Current state vs. target.** L3's *spec* layer is fully landed: the
+generic candidate-pair sub-FSM lives in `protocol/session.yaml`
+Phase 2 (🎯T39.7) and is verified by `formal/SessionMachine.tla`.
+LAN-direct is candidate kind `host`; STUN-reflexive (`srflx`) is the
+natural second kind and slots into the same `candidates` set / pair-
+check handshake without further FSM work (🎯T43). The remaining gap
+is *runtime*: the relay-only path is still the only one shipping;
+LAN-direct candidate gathering, dial, pair-check, and nomination all
+need to land on the executor side (`executor.go`, `lan.go`, the
+`pathRouter` inside `Conn`) consuming the generated machine rather
+than running ad-hoc Go code.
 
 ---
 
@@ -604,10 +613,16 @@ separated L3. STUN-reflexive is a third tier deferred behind LAN-direct.
    API and stays on `pigeon.Conn`. Making L2 skippable when no
    `PairingRecord` is supplied collapses the pairing-vs-session
    distinction and is a precondition for `Conn` deletion.
-3. **L3 unimplemented as a clean layer.** The path-management
-   responsibilities (§3 L3, §8) are designed; LAN-direct, candidate
-   exchange, probing, swap mechanics, and demotion all need first
-   implementations on the cleanly-layered surface.
+3. **L3 unimplemented as a clean layer.** The path-management *spec*
+   is complete — the generic candidate-pair FSM (`Candidate` records,
+   `candidates` / `pair_check` / `pair_check_ack` exchange, nomination
+   over the pair set, AltActive/AltDegraded/RelayBackoff lifecycle)
+   landed in `protocol/session.yaml` under 🎯T39.7 and verifies under
+   `formal/SessionMachine.tla`. What remains is the *runtime* — folding
+   `executor.go`, `lan.go`, and `pathRouter` onto the generated machine
+   so that LAN-direct (candidate kind `host`) actually drives traffic
+   end-to-end. STUN-reflexive (`srflx`) plugs into the same machine
+   additively (🎯T43).
 4. **Pipe-swap semantics undecided.** §8 lists the three candidate
    strategies; v1 needs to commit to one before L3 ships.
 5. **Wire interactions not yet protogen specs.** ~~Stream-name binding

@@ -23,7 +23,7 @@ void pigeon_backend_machine_init(pigeon_backend_machine *m)
 	m->b_active_path = "relay";
 	m->b_dispatcher_path = "relay";
 	m->monitor_target = "none";
-	m->lan_signal = "pending";
+	m->alt_signal = "pending";
 }
 
 int pigeon_backend_handle_message(pigeon_backend_machine *m, session_msg_type msg)
@@ -51,7 +51,7 @@ int pigeon_backend_handle_message(pigeon_backend_machine *m, session_msg_type ms
 		m->state = PIGEON_BACKEND_AUTH_CHECK;
 		return 1;
 	}
-	if (m->state == PIGEON_BACKEND_LAN_OFFERED && msg == PIGEON_SESSION_MSG_LAN_VERIFY && m->guards[PIGEON_SESSION_GUARD_CHALLENGE_VALID] && m->guards[PIGEON_SESSION_GUARD_CHALLENGE_VALID](m->userdata)) {
+	if (m->state == PIGEON_BACKEND_CANDIDATES_ADVERTISED && msg == PIGEON_SESSION_MSG_PAIR_CHECK && m->guards[PIGEON_SESSION_GUARD_CHALLENGE_VALID] && m->guards[PIGEON_SESSION_GUARD_CHALLENGE_VALID](m->userdata)) {
 		if (m->actions[PIGEON_SESSION_ACTION_ACTIVATE_LAN]) {
 			int err = m->actions[PIGEON_SESSION_ACTION_ACTIVATE_LAN](m->userdata);
 			if (err) return -err;
@@ -60,29 +60,29 @@ int pigeon_backend_handle_message(pigeon_backend_machine *m, session_msg_type ms
 		if (m->on_change) m->on_change("ping_failures", m->userdata);
 		m->backoff_level = 0;
 		if (m->on_change) m->on_change("backoff_level", m->userdata);
-		m->b_active_path = "lan";
+		m->b_active_path = "alt";
 		if (m->on_change) m->on_change("b_active_path", m->userdata);
-		m->b_dispatcher_path = "lan";
+		m->b_dispatcher_path = "alt";
 		if (m->on_change) m->on_change("b_dispatcher_path", m->userdata);
-		m->monitor_target = "lan";
+		m->monitor_target = "alt";
 		if (m->on_change) m->on_change("monitor_target", m->userdata);
-		m->lan_signal = "ready";
-		if (m->on_change) m->on_change("lan_signal", m->userdata);
-		m->state = PIGEON_BACKEND_LAN_ACTIVE;
+		m->alt_signal = "ready";
+		if (m->on_change) m->on_change("alt_signal", m->userdata);
+		m->state = PIGEON_BACKEND_ALT_ACTIVE;
 		return 1;
 	}
-	if (m->state == PIGEON_BACKEND_LAN_OFFERED && msg == PIGEON_SESSION_MSG_LAN_VERIFY && m->guards[PIGEON_SESSION_GUARD_CHALLENGE_INVALID] && m->guards[PIGEON_SESSION_GUARD_CHALLENGE_INVALID](m->userdata)) {
+	if (m->state == PIGEON_BACKEND_CANDIDATES_ADVERTISED && msg == PIGEON_SESSION_MSG_PAIR_CHECK && m->guards[PIGEON_SESSION_GUARD_CHALLENGE_INVALID] && m->guards[PIGEON_SESSION_GUARD_CHALLENGE_INVALID](m->userdata)) {
 		m->state = PIGEON_BACKEND_RELAY_CONNECTED;
 		return 1;
 	}
-	if (m->state == PIGEON_BACKEND_LAN_DEGRADED && msg == PIGEON_SESSION_MSG_PATH_PONG) {
+	if (m->state == PIGEON_BACKEND_ALT_DEGRADED && msg == PIGEON_SESSION_MSG_PATH_PONG) {
 		if (m->actions[PIGEON_SESSION_ACTION_RESET_FAILURES]) {
 			int err = m->actions[PIGEON_SESSION_ACTION_RESET_FAILURES](m->userdata);
 			if (err) return -err;
 		}
 		m->ping_failures = 0;
 		if (m->on_change) m->on_change("ping_failures", m->userdata);
-		m->state = PIGEON_BACKEND_LAN_ACTIVE;
+		m->state = PIGEON_BACKEND_ALT_ACTIVE;
 		return 1;
 	}
 	return 0;
@@ -168,32 +168,32 @@ int pigeon_backend_step(pigeon_backend_machine *m, session_event_id event)
 		m->state = PIGEON_BACKEND_RELAY_CONNECTED;
 		return 1;
 	}
-	if (m->state == PIGEON_BACKEND_RELAY_CONNECTED && event == PIGEON_SESSION_EVENT_LAN_SERVER_READY) {
-		m->state = PIGEON_BACKEND_LAN_OFFERED;
+	if (m->state == PIGEON_BACKEND_RELAY_CONNECTED && event == PIGEON_SESSION_EVENT_CANDIDATES_GATHERED) {
+		m->state = PIGEON_BACKEND_CANDIDATES_ADVERTISED;
 		return 1;
 	}
-	if (m->state == PIGEON_BACKEND_LAN_OFFERED && event == PIGEON_SESSION_EVENT_OFFER_TIMEOUT) {
+	if (m->state == PIGEON_BACKEND_CANDIDATES_ADVERTISED && event == PIGEON_SESSION_EVENT_CANDIDATES_TIMEOUT) {
 		// backoff_level: Min(backoff_level + 1, max_backoff_level) (set by action)
-		m->lan_signal = "pending";
-		if (m->on_change) m->on_change("lan_signal", m->userdata);
+		m->alt_signal = "pending";
+		if (m->on_change) m->on_change("alt_signal", m->userdata);
 		m->state = PIGEON_BACKEND_RELAY_BACKOFF;
 		return 1;
 	}
-	if (m->state == PIGEON_BACKEND_LAN_ACTIVE && event == PIGEON_SESSION_EVENT_PING_TICK) {
-		m->state = PIGEON_BACKEND_LAN_ACTIVE;
+	if (m->state == PIGEON_BACKEND_ALT_ACTIVE && event == PIGEON_SESSION_EVENT_PING_TICK) {
+		m->state = PIGEON_BACKEND_ALT_ACTIVE;
 		return 1;
 	}
-	if (m->state == PIGEON_BACKEND_LAN_ACTIVE && event == PIGEON_SESSION_EVENT_PING_TIMEOUT) {
+	if (m->state == PIGEON_BACKEND_ALT_ACTIVE && event == PIGEON_SESSION_EVENT_PING_TIMEOUT) {
 		m->ping_failures = 1;
 		if (m->on_change) m->on_change("ping_failures", m->userdata);
-		m->state = PIGEON_BACKEND_LAN_DEGRADED;
+		m->state = PIGEON_BACKEND_ALT_DEGRADED;
 		return 1;
 	}
-	if (m->state == PIGEON_BACKEND_LAN_DEGRADED && event == PIGEON_SESSION_EVENT_PING_TICK) {
-		m->state = PIGEON_BACKEND_LAN_DEGRADED;
+	if (m->state == PIGEON_BACKEND_ALT_DEGRADED && event == PIGEON_SESSION_EVENT_PING_TICK) {
+		m->state = PIGEON_BACKEND_ALT_DEGRADED;
 		return 1;
 	}
-	if (m->state == PIGEON_BACKEND_LAN_ACTIVE && event == PIGEON_SESSION_EVENT_LAN_STREAM_ERROR) {
+	if (m->state == PIGEON_BACKEND_ALT_ACTIVE && event == PIGEON_SESSION_EVENT_ALT_STREAM_ERROR) {
 		if (m->actions[PIGEON_SESSION_ACTION_FALLBACK_TO_RELAY]) {
 			int err = m->actions[PIGEON_SESSION_ACTION_FALLBACK_TO_RELAY](m->userdata);
 			if (err) return -err;
@@ -205,14 +205,14 @@ int pigeon_backend_step(pigeon_backend_machine *m, session_event_id event)
 		if (m->on_change) m->on_change("b_dispatcher_path", m->userdata);
 		m->monitor_target = "none";
 		if (m->on_change) m->on_change("monitor_target", m->userdata);
-		m->lan_signal = "pending";
-		if (m->on_change) m->on_change("lan_signal", m->userdata);
+		m->alt_signal = "pending";
+		if (m->on_change) m->on_change("alt_signal", m->userdata);
 		m->ping_failures = 0;
 		if (m->on_change) m->on_change("ping_failures", m->userdata);
 		m->state = PIGEON_BACKEND_RELAY_BACKOFF;
 		return 1;
 	}
-	if (m->state == PIGEON_BACKEND_LAN_DEGRADED && event == PIGEON_SESSION_EVENT_LAN_STREAM_ERROR) {
+	if (m->state == PIGEON_BACKEND_ALT_DEGRADED && event == PIGEON_SESSION_EVENT_ALT_STREAM_ERROR) {
 		if (m->actions[PIGEON_SESSION_ACTION_FALLBACK_TO_RELAY]) {
 			int err = m->actions[PIGEON_SESSION_ACTION_FALLBACK_TO_RELAY](m->userdata);
 			if (err) return -err;
@@ -224,20 +224,20 @@ int pigeon_backend_step(pigeon_backend_machine *m, session_event_id event)
 		if (m->on_change) m->on_change("b_dispatcher_path", m->userdata);
 		m->monitor_target = "none";
 		if (m->on_change) m->on_change("monitor_target", m->userdata);
-		m->lan_signal = "pending";
-		if (m->on_change) m->on_change("lan_signal", m->userdata);
+		m->alt_signal = "pending";
+		if (m->on_change) m->on_change("alt_signal", m->userdata);
 		m->ping_failures = 0;
 		if (m->on_change) m->on_change("ping_failures", m->userdata);
 		m->state = PIGEON_BACKEND_RELAY_BACKOFF;
 		return 1;
 	}
-	if (m->state == PIGEON_BACKEND_LAN_DEGRADED && event == PIGEON_SESSION_EVENT_PING_TIMEOUT && m->guards[PIGEON_SESSION_GUARD_UNDER_MAX_FAILURES] && m->guards[PIGEON_SESSION_GUARD_UNDER_MAX_FAILURES](m->userdata)) {
+	if (m->state == PIGEON_BACKEND_ALT_DEGRADED && event == PIGEON_SESSION_EVENT_PING_TIMEOUT && m->guards[PIGEON_SESSION_GUARD_UNDER_MAX_FAILURES] && m->guards[PIGEON_SESSION_GUARD_UNDER_MAX_FAILURES](m->userdata)) {
 		m->ping_failures = m->ping_failures + 1;
 		if (m->on_change) m->on_change("ping_failures", m->userdata);
-		m->state = PIGEON_BACKEND_LAN_DEGRADED;
+		m->state = PIGEON_BACKEND_ALT_DEGRADED;
 		return 1;
 	}
-	if (m->state == PIGEON_BACKEND_LAN_DEGRADED && event == PIGEON_SESSION_EVENT_PING_TIMEOUT && m->guards[PIGEON_SESSION_GUARD_AT_MAX_FAILURES] && m->guards[PIGEON_SESSION_GUARD_AT_MAX_FAILURES](m->userdata)) {
+	if (m->state == PIGEON_BACKEND_ALT_DEGRADED && event == PIGEON_SESSION_EVENT_PING_TIMEOUT && m->guards[PIGEON_SESSION_GUARD_AT_MAX_FAILURES] && m->guards[PIGEON_SESSION_GUARD_AT_MAX_FAILURES](m->userdata)) {
 		if (m->actions[PIGEON_SESSION_ACTION_FALLBACK_TO_RELAY]) {
 			int err = m->actions[PIGEON_SESSION_ACTION_FALLBACK_TO_RELAY](m->userdata);
 			if (err) return -err;
@@ -249,34 +249,34 @@ int pigeon_backend_step(pigeon_backend_machine *m, session_event_id event)
 		if (m->on_change) m->on_change("b_dispatcher_path", m->userdata);
 		m->monitor_target = "none";
 		if (m->on_change) m->on_change("monitor_target", m->userdata);
-		m->lan_signal = "pending";
-		if (m->on_change) m->on_change("lan_signal", m->userdata);
+		m->alt_signal = "pending";
+		if (m->on_change) m->on_change("alt_signal", m->userdata);
 		m->ping_failures = 0;
 		if (m->on_change) m->on_change("ping_failures", m->userdata);
 		m->state = PIGEON_BACKEND_RELAY_BACKOFF;
 		return 1;
 	}
 	if (m->state == PIGEON_BACKEND_RELAY_BACKOFF && event == PIGEON_SESSION_EVENT_BACKOFF_EXPIRED) {
-		m->state = PIGEON_BACKEND_LAN_OFFERED;
+		m->state = PIGEON_BACKEND_CANDIDATES_ADVERTISED;
 		return 1;
 	}
-	if (m->state == PIGEON_BACKEND_RELAY_BACKOFF && event == PIGEON_SESSION_EVENT_LAN_SERVER_CHANGED) {
+	if (m->state == PIGEON_BACKEND_RELAY_BACKOFF && event == PIGEON_SESSION_EVENT_CANDIDATES_CHANGED) {
 		m->backoff_level = 0;
 		if (m->on_change) m->on_change("backoff_level", m->userdata);
-		m->state = PIGEON_BACKEND_LAN_OFFERED;
+		m->state = PIGEON_BACKEND_CANDIDATES_ADVERTISED;
 		return 1;
 	}
-	if (m->state == PIGEON_BACKEND_RELAY_CONNECTED && event == PIGEON_SESSION_EVENT_READVERTISE_TICK && m->guards[PIGEON_SESSION_GUARD_LAN_SERVER_AVAILABLE] && m->guards[PIGEON_SESSION_GUARD_LAN_SERVER_AVAILABLE](m->userdata)) {
-		m->state = PIGEON_BACKEND_LAN_OFFERED;
+	if (m->state == PIGEON_BACKEND_RELAY_CONNECTED && event == PIGEON_SESSION_EVENT_CANDIDATES_REFRESH_TICK && m->guards[PIGEON_SESSION_GUARD_LOCAL_CANDIDATES_AVAILABLE] && m->guards[PIGEON_SESSION_GUARD_LOCAL_CANDIDATES_AVAILABLE](m->userdata)) {
+		m->state = PIGEON_BACKEND_CANDIDATES_ADVERTISED;
 		return 1;
 	}
-	if (m->state == PIGEON_BACKEND_LAN_OFFERED && event == PIGEON_SESSION_EVENT_APP_FORCE_FALLBACK) {
-		m->lan_signal = "pending";
-		if (m->on_change) m->on_change("lan_signal", m->userdata);
+	if (m->state == PIGEON_BACKEND_CANDIDATES_ADVERTISED && event == PIGEON_SESSION_EVENT_APP_FORCE_FALLBACK) {
+		m->alt_signal = "pending";
+		if (m->on_change) m->on_change("alt_signal", m->userdata);
 		m->state = PIGEON_BACKEND_RELAY_CONNECTED;
 		return 1;
 	}
-	if (m->state == PIGEON_BACKEND_LAN_ACTIVE && event == PIGEON_SESSION_EVENT_APP_FORCE_FALLBACK) {
+	if (m->state == PIGEON_BACKEND_ALT_ACTIVE && event == PIGEON_SESSION_EVENT_APP_FORCE_FALLBACK) {
 		if (m->actions[PIGEON_SESSION_ACTION_FALLBACK_TO_RELAY]) {
 			int err = m->actions[PIGEON_SESSION_ACTION_FALLBACK_TO_RELAY](m->userdata);
 			if (err) return -err;
@@ -288,14 +288,14 @@ int pigeon_backend_step(pigeon_backend_machine *m, session_event_id event)
 		if (m->on_change) m->on_change("b_dispatcher_path", m->userdata);
 		m->monitor_target = "none";
 		if (m->on_change) m->on_change("monitor_target", m->userdata);
-		m->lan_signal = "pending";
-		if (m->on_change) m->on_change("lan_signal", m->userdata);
+		m->alt_signal = "pending";
+		if (m->on_change) m->on_change("alt_signal", m->userdata);
 		m->ping_failures = 0;
 		if (m->on_change) m->on_change("ping_failures", m->userdata);
 		m->state = PIGEON_BACKEND_RELAY_BACKOFF;
 		return 1;
 	}
-	if (m->state == PIGEON_BACKEND_LAN_DEGRADED && event == PIGEON_SESSION_EVENT_APP_FORCE_FALLBACK) {
+	if (m->state == PIGEON_BACKEND_ALT_DEGRADED && event == PIGEON_SESSION_EVENT_APP_FORCE_FALLBACK) {
 		if (m->actions[PIGEON_SESSION_ACTION_FALLBACK_TO_RELAY]) {
 			int err = m->actions[PIGEON_SESSION_ACTION_FALLBACK_TO_RELAY](m->userdata);
 			if (err) return -err;
@@ -307,8 +307,8 @@ int pigeon_backend_step(pigeon_backend_machine *m, session_event_id event)
 		if (m->on_change) m->on_change("b_dispatcher_path", m->userdata);
 		m->monitor_target = "none";
 		if (m->on_change) m->on_change("monitor_target", m->userdata);
-		m->lan_signal = "pending";
-		if (m->on_change) m->on_change("lan_signal", m->userdata);
+		m->alt_signal = "pending";
+		if (m->on_change) m->on_change("alt_signal", m->userdata);
 		m->ping_failures = 0;
 		if (m->on_change) m->on_change("ping_failures", m->userdata);
 		m->state = PIGEON_BACKEND_RELAY_BACKOFF;
@@ -322,16 +322,16 @@ int pigeon_backend_step(pigeon_backend_machine *m, session_event_id event)
 		m->state = PIGEON_BACKEND_RELAY_CONNECTED;
 		return 1;
 	}
-	if (m->state == PIGEON_BACKEND_LAN_OFFERED && event == PIGEON_SESSION_EVENT_APP_SEND) {
-		m->state = PIGEON_BACKEND_LAN_OFFERED;
+	if (m->state == PIGEON_BACKEND_CANDIDATES_ADVERTISED && event == PIGEON_SESSION_EVENT_APP_SEND) {
+		m->state = PIGEON_BACKEND_CANDIDATES_ADVERTISED;
 		return 1;
 	}
-	if (m->state == PIGEON_BACKEND_LAN_ACTIVE && event == PIGEON_SESSION_EVENT_APP_SEND) {
-		m->state = PIGEON_BACKEND_LAN_ACTIVE;
+	if (m->state == PIGEON_BACKEND_ALT_ACTIVE && event == PIGEON_SESSION_EVENT_APP_SEND) {
+		m->state = PIGEON_BACKEND_ALT_ACTIVE;
 		return 1;
 	}
-	if (m->state == PIGEON_BACKEND_LAN_DEGRADED && event == PIGEON_SESSION_EVENT_APP_SEND) {
-		m->state = PIGEON_BACKEND_LAN_DEGRADED;
+	if (m->state == PIGEON_BACKEND_ALT_DEGRADED && event == PIGEON_SESSION_EVENT_APP_SEND) {
+		m->state = PIGEON_BACKEND_ALT_DEGRADED;
 		return 1;
 	}
 	if (m->state == PIGEON_BACKEND_RELAY_BACKOFF && event == PIGEON_SESSION_EVENT_APP_SEND) {
@@ -342,16 +342,16 @@ int pigeon_backend_step(pigeon_backend_machine *m, session_event_id event)
 		m->state = PIGEON_BACKEND_RELAY_CONNECTED;
 		return 1;
 	}
-	if (m->state == PIGEON_BACKEND_LAN_OFFERED && event == PIGEON_SESSION_EVENT_RELAY_STREAM_DATA) {
-		m->state = PIGEON_BACKEND_LAN_OFFERED;
+	if (m->state == PIGEON_BACKEND_CANDIDATES_ADVERTISED && event == PIGEON_SESSION_EVENT_RELAY_STREAM_DATA) {
+		m->state = PIGEON_BACKEND_CANDIDATES_ADVERTISED;
 		return 1;
 	}
-	if (m->state == PIGEON_BACKEND_LAN_ACTIVE && event == PIGEON_SESSION_EVENT_RELAY_STREAM_DATA) {
-		m->state = PIGEON_BACKEND_LAN_ACTIVE;
+	if (m->state == PIGEON_BACKEND_ALT_ACTIVE && event == PIGEON_SESSION_EVENT_RELAY_STREAM_DATA) {
+		m->state = PIGEON_BACKEND_ALT_ACTIVE;
 		return 1;
 	}
-	if (m->state == PIGEON_BACKEND_LAN_DEGRADED && event == PIGEON_SESSION_EVENT_RELAY_STREAM_DATA) {
-		m->state = PIGEON_BACKEND_LAN_DEGRADED;
+	if (m->state == PIGEON_BACKEND_ALT_DEGRADED && event == PIGEON_SESSION_EVENT_RELAY_STREAM_DATA) {
+		m->state = PIGEON_BACKEND_ALT_DEGRADED;
 		return 1;
 	}
 	if (m->state == PIGEON_BACKEND_RELAY_BACKOFF && event == PIGEON_SESSION_EVENT_RELAY_STREAM_DATA) {
@@ -362,16 +362,16 @@ int pigeon_backend_step(pigeon_backend_machine *m, session_event_id event)
 		m->state = PIGEON_BACKEND_RELAY_CONNECTED;
 		return 1;
 	}
-	if (m->state == PIGEON_BACKEND_LAN_OFFERED && event == PIGEON_SESSION_EVENT_RELAY_STREAM_ERROR) {
-		m->state = PIGEON_BACKEND_LAN_OFFERED;
+	if (m->state == PIGEON_BACKEND_CANDIDATES_ADVERTISED && event == PIGEON_SESSION_EVENT_RELAY_STREAM_ERROR) {
+		m->state = PIGEON_BACKEND_CANDIDATES_ADVERTISED;
 		return 1;
 	}
-	if (m->state == PIGEON_BACKEND_LAN_ACTIVE && event == PIGEON_SESSION_EVENT_RELAY_STREAM_ERROR) {
-		m->state = PIGEON_BACKEND_LAN_ACTIVE;
+	if (m->state == PIGEON_BACKEND_ALT_ACTIVE && event == PIGEON_SESSION_EVENT_RELAY_STREAM_ERROR) {
+		m->state = PIGEON_BACKEND_ALT_ACTIVE;
 		return 1;
 	}
-	if (m->state == PIGEON_BACKEND_LAN_DEGRADED && event == PIGEON_SESSION_EVENT_RELAY_STREAM_ERROR) {
-		m->state = PIGEON_BACKEND_LAN_DEGRADED;
+	if (m->state == PIGEON_BACKEND_ALT_DEGRADED && event == PIGEON_SESSION_EVENT_RELAY_STREAM_ERROR) {
+		m->state = PIGEON_BACKEND_ALT_DEGRADED;
 		return 1;
 	}
 	if (m->state == PIGEON_BACKEND_RELAY_BACKOFF && event == PIGEON_SESSION_EVENT_RELAY_STREAM_ERROR) {
@@ -382,16 +382,16 @@ int pigeon_backend_step(pigeon_backend_machine *m, session_event_id event)
 		m->state = PIGEON_BACKEND_RELAY_CONNECTED;
 		return 1;
 	}
-	if (m->state == PIGEON_BACKEND_LAN_OFFERED && event == PIGEON_SESSION_EVENT_APP_SEND_DATAGRAM) {
-		m->state = PIGEON_BACKEND_LAN_OFFERED;
+	if (m->state == PIGEON_BACKEND_CANDIDATES_ADVERTISED && event == PIGEON_SESSION_EVENT_APP_SEND_DATAGRAM) {
+		m->state = PIGEON_BACKEND_CANDIDATES_ADVERTISED;
 		return 1;
 	}
-	if (m->state == PIGEON_BACKEND_LAN_ACTIVE && event == PIGEON_SESSION_EVENT_APP_SEND_DATAGRAM) {
-		m->state = PIGEON_BACKEND_LAN_ACTIVE;
+	if (m->state == PIGEON_BACKEND_ALT_ACTIVE && event == PIGEON_SESSION_EVENT_APP_SEND_DATAGRAM) {
+		m->state = PIGEON_BACKEND_ALT_ACTIVE;
 		return 1;
 	}
-	if (m->state == PIGEON_BACKEND_LAN_DEGRADED && event == PIGEON_SESSION_EVENT_APP_SEND_DATAGRAM) {
-		m->state = PIGEON_BACKEND_LAN_DEGRADED;
+	if (m->state == PIGEON_BACKEND_ALT_DEGRADED && event == PIGEON_SESSION_EVENT_APP_SEND_DATAGRAM) {
+		m->state = PIGEON_BACKEND_ALT_DEGRADED;
 		return 1;
 	}
 	if (m->state == PIGEON_BACKEND_RELAY_BACKOFF && event == PIGEON_SESSION_EVENT_APP_SEND_DATAGRAM) {
@@ -402,36 +402,36 @@ int pigeon_backend_step(pigeon_backend_machine *m, session_event_id event)
 		m->state = PIGEON_BACKEND_RELAY_CONNECTED;
 		return 1;
 	}
-	if (m->state == PIGEON_BACKEND_LAN_OFFERED && event == PIGEON_SESSION_EVENT_RELAY_DATAGRAM) {
-		m->state = PIGEON_BACKEND_LAN_OFFERED;
+	if (m->state == PIGEON_BACKEND_CANDIDATES_ADVERTISED && event == PIGEON_SESSION_EVENT_RELAY_DATAGRAM) {
+		m->state = PIGEON_BACKEND_CANDIDATES_ADVERTISED;
 		return 1;
 	}
-	if (m->state == PIGEON_BACKEND_LAN_ACTIVE && event == PIGEON_SESSION_EVENT_RELAY_DATAGRAM) {
-		m->state = PIGEON_BACKEND_LAN_ACTIVE;
+	if (m->state == PIGEON_BACKEND_ALT_ACTIVE && event == PIGEON_SESSION_EVENT_RELAY_DATAGRAM) {
+		m->state = PIGEON_BACKEND_ALT_ACTIVE;
 		return 1;
 	}
-	if (m->state == PIGEON_BACKEND_LAN_DEGRADED && event == PIGEON_SESSION_EVENT_RELAY_DATAGRAM) {
-		m->state = PIGEON_BACKEND_LAN_DEGRADED;
+	if (m->state == PIGEON_BACKEND_ALT_DEGRADED && event == PIGEON_SESSION_EVENT_RELAY_DATAGRAM) {
+		m->state = PIGEON_BACKEND_ALT_DEGRADED;
 		return 1;
 	}
 	if (m->state == PIGEON_BACKEND_RELAY_BACKOFF && event == PIGEON_SESSION_EVENT_RELAY_DATAGRAM) {
 		m->state = PIGEON_BACKEND_RELAY_BACKOFF;
 		return 1;
 	}
-	if (m->state == PIGEON_BACKEND_LAN_ACTIVE && event == PIGEON_SESSION_EVENT_LAN_STREAM_DATA) {
-		m->state = PIGEON_BACKEND_LAN_ACTIVE;
+	if (m->state == PIGEON_BACKEND_ALT_ACTIVE && event == PIGEON_SESSION_EVENT_ALT_STREAM_DATA) {
+		m->state = PIGEON_BACKEND_ALT_ACTIVE;
 		return 1;
 	}
-	if (m->state == PIGEON_BACKEND_LAN_DEGRADED && event == PIGEON_SESSION_EVENT_LAN_STREAM_DATA) {
-		m->state = PIGEON_BACKEND_LAN_DEGRADED;
+	if (m->state == PIGEON_BACKEND_ALT_DEGRADED && event == PIGEON_SESSION_EVENT_ALT_STREAM_DATA) {
+		m->state = PIGEON_BACKEND_ALT_DEGRADED;
 		return 1;
 	}
-	if (m->state == PIGEON_BACKEND_LAN_ACTIVE && event == PIGEON_SESSION_EVENT_LAN_DATAGRAM) {
-		m->state = PIGEON_BACKEND_LAN_ACTIVE;
+	if (m->state == PIGEON_BACKEND_ALT_ACTIVE && event == PIGEON_SESSION_EVENT_ALT_DATAGRAM) {
+		m->state = PIGEON_BACKEND_ALT_ACTIVE;
 		return 1;
 	}
-	if (m->state == PIGEON_BACKEND_LAN_DEGRADED && event == PIGEON_SESSION_EVENT_LAN_DATAGRAM) {
-		m->state = PIGEON_BACKEND_LAN_DEGRADED;
+	if (m->state == PIGEON_BACKEND_ALT_DEGRADED && event == PIGEON_SESSION_EVENT_ALT_DATAGRAM) {
+		m->state = PIGEON_BACKEND_ALT_DEGRADED;
 		return 1;
 	}
 	return 0;
@@ -444,7 +444,7 @@ void pigeon_client_machine_init(pigeon_client_machine *m)
 	m->received_backend_pub = "none";
 	m->c_active_path = "relay";
 	m->c_dispatcher_path = "relay";
-	m->lan_signal = "pending";
+	m->alt_signal = "pending";
 }
 
 int pigeon_client_handle_message(pigeon_client_machine *m, session_msg_type msg)
@@ -476,42 +476,42 @@ int pigeon_client_handle_message(pigeon_client_machine *m, session_msg_type msg)
 		m->state = PIGEON_CLIENT_SESSION_ACTIVE;
 		return 1;
 	}
-	if (m->state == PIGEON_CLIENT_RELAY_CONNECTED && msg == PIGEON_SESSION_MSG_LAN_OFFER && m->guards[PIGEON_SESSION_GUARD_LAN_ENABLED] && m->guards[PIGEON_SESSION_GUARD_LAN_ENABLED](m->userdata)) {
-		if (m->actions[PIGEON_SESSION_ACTION_DIAL_LAN]) {
-			int err = m->actions[PIGEON_SESSION_ACTION_DIAL_LAN](m->userdata);
+	if (m->state == PIGEON_CLIENT_RELAY_CONNECTED && msg == PIGEON_SESSION_MSG_CANDIDATES && m->guards[PIGEON_SESSION_GUARD_ALT_ENABLED] && m->guards[PIGEON_SESSION_GUARD_ALT_ENABLED](m->userdata)) {
+		if (m->actions[PIGEON_SESSION_ACTION_DIAL_CANDIDATE]) {
+			int err = m->actions[PIGEON_SESSION_ACTION_DIAL_CANDIDATE](m->userdata);
 			if (err) return -err;
 		}
-		m->state = PIGEON_CLIENT_LAN_CONNECTING;
+		m->state = PIGEON_CLIENT_PAIR_DIALING;
 		return 1;
 	}
-	if (m->state == PIGEON_CLIENT_RELAY_CONNECTED && msg == PIGEON_SESSION_MSG_LAN_OFFER && m->guards[PIGEON_SESSION_GUARD_LAN_DISABLED] && m->guards[PIGEON_SESSION_GUARD_LAN_DISABLED](m->userdata)) {
+	if (m->state == PIGEON_CLIENT_RELAY_CONNECTED && msg == PIGEON_SESSION_MSG_CANDIDATES && m->guards[PIGEON_SESSION_GUARD_ALT_DISABLED] && m->guards[PIGEON_SESSION_GUARD_ALT_DISABLED](m->userdata)) {
 		m->state = PIGEON_CLIENT_RELAY_CONNECTED;
 		return 1;
 	}
-	if (m->state == PIGEON_CLIENT_LAN_VERIFYING && msg == PIGEON_SESSION_MSG_LAN_CONFIRM) {
+	if (m->state == PIGEON_CLIENT_PAIR_CHECKING && msg == PIGEON_SESSION_MSG_PAIR_CHECK_ACK) {
 		if (m->actions[PIGEON_SESSION_ACTION_ACTIVATE_LAN]) {
 			int err = m->actions[PIGEON_SESSION_ACTION_ACTIVATE_LAN](m->userdata);
 			if (err) return -err;
 		}
-		m->c_active_path = "lan";
+		m->c_active_path = "alt";
 		if (m->on_change) m->on_change("c_active_path", m->userdata);
-		m->c_dispatcher_path = "lan";
+		m->c_dispatcher_path = "alt";
 		if (m->on_change) m->on_change("c_dispatcher_path", m->userdata);
-		m->lan_signal = "ready";
-		if (m->on_change) m->on_change("lan_signal", m->userdata);
-		m->state = PIGEON_CLIENT_LAN_ACTIVE;
+		m->alt_signal = "ready";
+		if (m->on_change) m->on_change("alt_signal", m->userdata);
+		m->state = PIGEON_CLIENT_ALT_ACTIVE;
 		return 1;
 	}
-	if (m->state == PIGEON_CLIENT_LAN_ACTIVE && msg == PIGEON_SESSION_MSG_PATH_PING) {
-		m->state = PIGEON_CLIENT_LAN_ACTIVE;
+	if (m->state == PIGEON_CLIENT_ALT_ACTIVE && msg == PIGEON_SESSION_MSG_PATH_PING) {
+		m->state = PIGEON_CLIENT_ALT_ACTIVE;
 		return 1;
 	}
-	if (m->state == PIGEON_CLIENT_LAN_ACTIVE && msg == PIGEON_SESSION_MSG_LAN_OFFER && m->guards[PIGEON_SESSION_GUARD_LAN_ENABLED] && m->guards[PIGEON_SESSION_GUARD_LAN_ENABLED](m->userdata)) {
-		if (m->actions[PIGEON_SESSION_ACTION_DIAL_LAN]) {
-			int err = m->actions[PIGEON_SESSION_ACTION_DIAL_LAN](m->userdata);
+	if (m->state == PIGEON_CLIENT_ALT_ACTIVE && msg == PIGEON_SESSION_MSG_CANDIDATES && m->guards[PIGEON_SESSION_GUARD_ALT_ENABLED] && m->guards[PIGEON_SESSION_GUARD_ALT_ENABLED](m->userdata)) {
+		if (m->actions[PIGEON_SESSION_ACTION_DIAL_CANDIDATE]) {
+			int err = m->actions[PIGEON_SESSION_ACTION_DIAL_CANDIDATE](m->userdata);
 			if (err) return -err;
 		}
-		m->state = PIGEON_CLIENT_LAN_CONNECTING;
+		m->state = PIGEON_CLIENT_PAIR_DIALING;
 		return 1;
 	}
 	return 0;
@@ -555,21 +555,21 @@ int pigeon_client_step(pigeon_client_machine *m, session_event_id event)
 		m->state = PIGEON_CLIENT_RELAY_CONNECTED;
 		return 1;
 	}
-	if (m->state == PIGEON_CLIENT_LAN_CONNECTING && event == PIGEON_SESSION_EVENT_LAN_DIAL_OK) {
-		m->state = PIGEON_CLIENT_LAN_VERIFYING;
+	if (m->state == PIGEON_CLIENT_PAIR_DIALING && event == PIGEON_SESSION_EVENT_DIAL_OK) {
+		m->state = PIGEON_CLIENT_PAIR_CHECKING;
 		return 1;
 	}
-	if (m->state == PIGEON_CLIENT_LAN_CONNECTING && event == PIGEON_SESSION_EVENT_LAN_DIAL_FAILED) {
+	if (m->state == PIGEON_CLIENT_PAIR_DIALING && event == PIGEON_SESSION_EVENT_DIAL_FAILED) {
 		m->state = PIGEON_CLIENT_RELAY_CONNECTED;
 		return 1;
 	}
-	if (m->state == PIGEON_CLIENT_LAN_VERIFYING && event == PIGEON_SESSION_EVENT_VERIFY_TIMEOUT) {
+	if (m->state == PIGEON_CLIENT_PAIR_CHECKING && event == PIGEON_SESSION_EVENT_VERIFY_TIMEOUT) {
 		m->c_dispatcher_path = "relay";
 		if (m->on_change) m->on_change("c_dispatcher_path", m->userdata);
 		m->state = PIGEON_CLIENT_RELAY_CONNECTED;
 		return 1;
 	}
-	if (m->state == PIGEON_CLIENT_LAN_ACTIVE && event == PIGEON_SESSION_EVENT_LAN_ERROR) {
+	if (m->state == PIGEON_CLIENT_ALT_ACTIVE && event == PIGEON_SESSION_EVENT_ALT_ERROR) {
 		if (m->actions[PIGEON_SESSION_ACTION_FALLBACK_TO_RELAY]) {
 			int err = m->actions[PIGEON_SESSION_ACTION_FALLBACK_TO_RELAY](m->userdata);
 			if (err) return -err;
@@ -578,12 +578,12 @@ int pigeon_client_step(pigeon_client_machine *m, session_event_id event)
 		if (m->on_change) m->on_change("c_active_path", m->userdata);
 		m->c_dispatcher_path = "relay";
 		if (m->on_change) m->on_change("c_dispatcher_path", m->userdata);
-		m->lan_signal = "pending";
-		if (m->on_change) m->on_change("lan_signal", m->userdata);
+		m->alt_signal = "pending";
+		if (m->on_change) m->on_change("alt_signal", m->userdata);
 		m->state = PIGEON_CLIENT_RELAY_FALLBACK;
 		return 1;
 	}
-	if (m->state == PIGEON_CLIENT_LAN_ACTIVE && event == PIGEON_SESSION_EVENT_LAN_STREAM_ERROR) {
+	if (m->state == PIGEON_CLIENT_ALT_ACTIVE && event == PIGEON_SESSION_EVENT_ALT_STREAM_ERROR) {
 		if (m->actions[PIGEON_SESSION_ACTION_FALLBACK_TO_RELAY]) {
 			int err = m->actions[PIGEON_SESSION_ACTION_FALLBACK_TO_RELAY](m->userdata);
 			if (err) return -err;
@@ -592,8 +592,8 @@ int pigeon_client_step(pigeon_client_machine *m, session_event_id event)
 		if (m->on_change) m->on_change("c_active_path", m->userdata);
 		m->c_dispatcher_path = "relay";
 		if (m->on_change) m->on_change("c_dispatcher_path", m->userdata);
-		m->lan_signal = "pending";
-		if (m->on_change) m->on_change("lan_signal", m->userdata);
+		m->alt_signal = "pending";
+		if (m->on_change) m->on_change("alt_signal", m->userdata);
 		m->state = PIGEON_CLIENT_RELAY_FALLBACK;
 		return 1;
 	}
@@ -601,17 +601,17 @@ int pigeon_client_step(pigeon_client_machine *m, session_event_id event)
 		m->state = PIGEON_CLIENT_RELAY_CONNECTED;
 		return 1;
 	}
-	if (m->state == PIGEON_CLIENT_LAN_CONNECTING && event == PIGEON_SESSION_EVENT_APP_FORCE_FALLBACK) {
+	if (m->state == PIGEON_CLIENT_PAIR_DIALING && event == PIGEON_SESSION_EVENT_APP_FORCE_FALLBACK) {
 		m->state = PIGEON_CLIENT_RELAY_CONNECTED;
 		return 1;
 	}
-	if (m->state == PIGEON_CLIENT_LAN_VERIFYING && event == PIGEON_SESSION_EVENT_APP_FORCE_FALLBACK) {
+	if (m->state == PIGEON_CLIENT_PAIR_CHECKING && event == PIGEON_SESSION_EVENT_APP_FORCE_FALLBACK) {
 		m->c_dispatcher_path = "relay";
 		if (m->on_change) m->on_change("c_dispatcher_path", m->userdata);
 		m->state = PIGEON_CLIENT_RELAY_CONNECTED;
 		return 1;
 	}
-	if (m->state == PIGEON_CLIENT_LAN_ACTIVE && event == PIGEON_SESSION_EVENT_APP_FORCE_FALLBACK) {
+	if (m->state == PIGEON_CLIENT_ALT_ACTIVE && event == PIGEON_SESSION_EVENT_APP_FORCE_FALLBACK) {
 		if (m->actions[PIGEON_SESSION_ACTION_FALLBACK_TO_RELAY]) {
 			int err = m->actions[PIGEON_SESSION_ACTION_FALLBACK_TO_RELAY](m->userdata);
 			if (err) return -err;
@@ -620,8 +620,8 @@ int pigeon_client_step(pigeon_client_machine *m, session_event_id event)
 		if (m->on_change) m->on_change("c_active_path", m->userdata);
 		m->c_dispatcher_path = "relay";
 		if (m->on_change) m->on_change("c_dispatcher_path", m->userdata);
-		m->lan_signal = "pending";
-		if (m->on_change) m->on_change("lan_signal", m->userdata);
+		m->alt_signal = "pending";
+		if (m->on_change) m->on_change("alt_signal", m->userdata);
 		m->state = PIGEON_CLIENT_RELAY_CONNECTED;
 		return 1;
 	}
@@ -633,16 +633,16 @@ int pigeon_client_step(pigeon_client_machine *m, session_event_id event)
 		m->state = PIGEON_CLIENT_RELAY_CONNECTED;
 		return 1;
 	}
-	if (m->state == PIGEON_CLIENT_LAN_CONNECTING && event == PIGEON_SESSION_EVENT_APP_SEND) {
-		m->state = PIGEON_CLIENT_LAN_CONNECTING;
+	if (m->state == PIGEON_CLIENT_PAIR_DIALING && event == PIGEON_SESSION_EVENT_APP_SEND) {
+		m->state = PIGEON_CLIENT_PAIR_DIALING;
 		return 1;
 	}
-	if (m->state == PIGEON_CLIENT_LAN_VERIFYING && event == PIGEON_SESSION_EVENT_APP_SEND) {
-		m->state = PIGEON_CLIENT_LAN_VERIFYING;
+	if (m->state == PIGEON_CLIENT_PAIR_CHECKING && event == PIGEON_SESSION_EVENT_APP_SEND) {
+		m->state = PIGEON_CLIENT_PAIR_CHECKING;
 		return 1;
 	}
-	if (m->state == PIGEON_CLIENT_LAN_ACTIVE && event == PIGEON_SESSION_EVENT_APP_SEND) {
-		m->state = PIGEON_CLIENT_LAN_ACTIVE;
+	if (m->state == PIGEON_CLIENT_ALT_ACTIVE && event == PIGEON_SESSION_EVENT_APP_SEND) {
+		m->state = PIGEON_CLIENT_ALT_ACTIVE;
 		return 1;
 	}
 	if (m->state == PIGEON_CLIENT_RELAY_FALLBACK && event == PIGEON_SESSION_EVENT_APP_SEND) {
@@ -653,16 +653,16 @@ int pigeon_client_step(pigeon_client_machine *m, session_event_id event)
 		m->state = PIGEON_CLIENT_RELAY_CONNECTED;
 		return 1;
 	}
-	if (m->state == PIGEON_CLIENT_LAN_CONNECTING && event == PIGEON_SESSION_EVENT_RELAY_STREAM_DATA) {
-		m->state = PIGEON_CLIENT_LAN_CONNECTING;
+	if (m->state == PIGEON_CLIENT_PAIR_DIALING && event == PIGEON_SESSION_EVENT_RELAY_STREAM_DATA) {
+		m->state = PIGEON_CLIENT_PAIR_DIALING;
 		return 1;
 	}
-	if (m->state == PIGEON_CLIENT_LAN_VERIFYING && event == PIGEON_SESSION_EVENT_RELAY_STREAM_DATA) {
-		m->state = PIGEON_CLIENT_LAN_VERIFYING;
+	if (m->state == PIGEON_CLIENT_PAIR_CHECKING && event == PIGEON_SESSION_EVENT_RELAY_STREAM_DATA) {
+		m->state = PIGEON_CLIENT_PAIR_CHECKING;
 		return 1;
 	}
-	if (m->state == PIGEON_CLIENT_LAN_ACTIVE && event == PIGEON_SESSION_EVENT_RELAY_STREAM_DATA) {
-		m->state = PIGEON_CLIENT_LAN_ACTIVE;
+	if (m->state == PIGEON_CLIENT_ALT_ACTIVE && event == PIGEON_SESSION_EVENT_RELAY_STREAM_DATA) {
+		m->state = PIGEON_CLIENT_ALT_ACTIVE;
 		return 1;
 	}
 	if (m->state == PIGEON_CLIENT_RELAY_FALLBACK && event == PIGEON_SESSION_EVENT_RELAY_STREAM_DATA) {
@@ -673,16 +673,16 @@ int pigeon_client_step(pigeon_client_machine *m, session_event_id event)
 		m->state = PIGEON_CLIENT_RELAY_CONNECTED;
 		return 1;
 	}
-	if (m->state == PIGEON_CLIENT_LAN_CONNECTING && event == PIGEON_SESSION_EVENT_RELAY_STREAM_ERROR) {
-		m->state = PIGEON_CLIENT_LAN_CONNECTING;
+	if (m->state == PIGEON_CLIENT_PAIR_DIALING && event == PIGEON_SESSION_EVENT_RELAY_STREAM_ERROR) {
+		m->state = PIGEON_CLIENT_PAIR_DIALING;
 		return 1;
 	}
-	if (m->state == PIGEON_CLIENT_LAN_VERIFYING && event == PIGEON_SESSION_EVENT_RELAY_STREAM_ERROR) {
-		m->state = PIGEON_CLIENT_LAN_VERIFYING;
+	if (m->state == PIGEON_CLIENT_PAIR_CHECKING && event == PIGEON_SESSION_EVENT_RELAY_STREAM_ERROR) {
+		m->state = PIGEON_CLIENT_PAIR_CHECKING;
 		return 1;
 	}
-	if (m->state == PIGEON_CLIENT_LAN_ACTIVE && event == PIGEON_SESSION_EVENT_RELAY_STREAM_ERROR) {
-		m->state = PIGEON_CLIENT_LAN_ACTIVE;
+	if (m->state == PIGEON_CLIENT_ALT_ACTIVE && event == PIGEON_SESSION_EVENT_RELAY_STREAM_ERROR) {
+		m->state = PIGEON_CLIENT_ALT_ACTIVE;
 		return 1;
 	}
 	if (m->state == PIGEON_CLIENT_RELAY_FALLBACK && event == PIGEON_SESSION_EVENT_RELAY_STREAM_ERROR) {
@@ -693,16 +693,16 @@ int pigeon_client_step(pigeon_client_machine *m, session_event_id event)
 		m->state = PIGEON_CLIENT_RELAY_CONNECTED;
 		return 1;
 	}
-	if (m->state == PIGEON_CLIENT_LAN_CONNECTING && event == PIGEON_SESSION_EVENT_APP_SEND_DATAGRAM) {
-		m->state = PIGEON_CLIENT_LAN_CONNECTING;
+	if (m->state == PIGEON_CLIENT_PAIR_DIALING && event == PIGEON_SESSION_EVENT_APP_SEND_DATAGRAM) {
+		m->state = PIGEON_CLIENT_PAIR_DIALING;
 		return 1;
 	}
-	if (m->state == PIGEON_CLIENT_LAN_VERIFYING && event == PIGEON_SESSION_EVENT_APP_SEND_DATAGRAM) {
-		m->state = PIGEON_CLIENT_LAN_VERIFYING;
+	if (m->state == PIGEON_CLIENT_PAIR_CHECKING && event == PIGEON_SESSION_EVENT_APP_SEND_DATAGRAM) {
+		m->state = PIGEON_CLIENT_PAIR_CHECKING;
 		return 1;
 	}
-	if (m->state == PIGEON_CLIENT_LAN_ACTIVE && event == PIGEON_SESSION_EVENT_APP_SEND_DATAGRAM) {
-		m->state = PIGEON_CLIENT_LAN_ACTIVE;
+	if (m->state == PIGEON_CLIENT_ALT_ACTIVE && event == PIGEON_SESSION_EVENT_APP_SEND_DATAGRAM) {
+		m->state = PIGEON_CLIENT_ALT_ACTIVE;
 		return 1;
 	}
 	if (m->state == PIGEON_CLIENT_RELAY_FALLBACK && event == PIGEON_SESSION_EVENT_APP_SEND_DATAGRAM) {
@@ -713,28 +713,28 @@ int pigeon_client_step(pigeon_client_machine *m, session_event_id event)
 		m->state = PIGEON_CLIENT_RELAY_CONNECTED;
 		return 1;
 	}
-	if (m->state == PIGEON_CLIENT_LAN_CONNECTING && event == PIGEON_SESSION_EVENT_RELAY_DATAGRAM) {
-		m->state = PIGEON_CLIENT_LAN_CONNECTING;
+	if (m->state == PIGEON_CLIENT_PAIR_DIALING && event == PIGEON_SESSION_EVENT_RELAY_DATAGRAM) {
+		m->state = PIGEON_CLIENT_PAIR_DIALING;
 		return 1;
 	}
-	if (m->state == PIGEON_CLIENT_LAN_VERIFYING && event == PIGEON_SESSION_EVENT_RELAY_DATAGRAM) {
-		m->state = PIGEON_CLIENT_LAN_VERIFYING;
+	if (m->state == PIGEON_CLIENT_PAIR_CHECKING && event == PIGEON_SESSION_EVENT_RELAY_DATAGRAM) {
+		m->state = PIGEON_CLIENT_PAIR_CHECKING;
 		return 1;
 	}
-	if (m->state == PIGEON_CLIENT_LAN_ACTIVE && event == PIGEON_SESSION_EVENT_RELAY_DATAGRAM) {
-		m->state = PIGEON_CLIENT_LAN_ACTIVE;
+	if (m->state == PIGEON_CLIENT_ALT_ACTIVE && event == PIGEON_SESSION_EVENT_RELAY_DATAGRAM) {
+		m->state = PIGEON_CLIENT_ALT_ACTIVE;
 		return 1;
 	}
 	if (m->state == PIGEON_CLIENT_RELAY_FALLBACK && event == PIGEON_SESSION_EVENT_RELAY_DATAGRAM) {
 		m->state = PIGEON_CLIENT_RELAY_FALLBACK;
 		return 1;
 	}
-	if (m->state == PIGEON_CLIENT_LAN_ACTIVE && event == PIGEON_SESSION_EVENT_LAN_STREAM_DATA) {
-		m->state = PIGEON_CLIENT_LAN_ACTIVE;
+	if (m->state == PIGEON_CLIENT_ALT_ACTIVE && event == PIGEON_SESSION_EVENT_ALT_STREAM_DATA) {
+		m->state = PIGEON_CLIENT_ALT_ACTIVE;
 		return 1;
 	}
-	if (m->state == PIGEON_CLIENT_LAN_ACTIVE && event == PIGEON_SESSION_EVENT_LAN_DATAGRAM) {
-		m->state = PIGEON_CLIENT_LAN_ACTIVE;
+	if (m->state == PIGEON_CLIENT_ALT_ACTIVE && event == PIGEON_SESSION_EVENT_ALT_DATAGRAM) {
+		m->state = PIGEON_CLIENT_ALT_ACTIVE;
 		return 1;
 	}
 	return 0;

@@ -18,10 +18,10 @@ export enum SessionBackendState {
     AuthCheck = "AuthCheck",
     SessionActive = "SessionActive",
     RelayConnected = "RelayConnected",
-    LANOffered = "LANOffered",
-    LANActive = "LANActive",
+    CandidatesAdvertised = "CandidatesAdvertised",
+    AltActive = "AltActive",
     RelayBackoff = "RelayBackoff",
-    LANDegraded = "LANDegraded",
+    AltDegraded = "AltDegraded",
 }
 
 export enum SessionClientState {
@@ -38,9 +38,9 @@ export enum SessionClientState {
     SendAuth = "SendAuth",
     SessionActive = "SessionActive",
     RelayConnected = "RelayConnected",
-    LANConnecting = "LANConnecting",
-    LANVerifying = "LANVerifying",
-    LANActive = "LANActive",
+    PairDialing = "PairDialing",
+    PairChecking = "PairChecking",
+    AltActive = "AltActive",
     RelayFallback = "RelayFallback",
 }
 
@@ -60,9 +60,9 @@ export namespace SessionProtocol {
         PairComplete = "pair_complete",
         AuthRequest = "auth_request",
         AuthOk = "auth_ok",
-        LanOffer = "lan_offer",
-        LanVerify = "lan_verify",
-        LanConfirm = "lan_confirm",
+        Candidates = "candidates",
+        PairCheck = "pair_check",
+        PairCheckAck = "pair_check_ack",
         PathPing = "path_ping",
         PathPong = "path_pong",
     }
@@ -77,9 +77,9 @@ export namespace SessionProtocol {
         NonceFresh = "nonce_fresh",
         ChallengeValid = "challenge_valid",
         ChallengeInvalid = "challenge_invalid",
-        LanEnabled = "lan_enabled",
-        LanDisabled = "lan_disabled",
-        LanServerAvailable = "lan_server_available",
+        AltEnabled = "alt_enabled",
+        AltDisabled = "alt_disabled",
+        LocalCandidatesAvailable = "local_candidates_available",
         UnderMaxFailures = "under_max_failures",
         AtMaxFailures = "at_max_failures",
     }
@@ -95,7 +95,7 @@ export namespace SessionProtocol {
         ResetFailures = "reset_failures",
         SendPairHello = "send_pair_hello",
         StoreSecret = "store_secret",
-        DialLan = "dial_lan",
+        DialCandidate = "dial_candidate",
         BridgeStreams = "bridge_streams",
         Unbridge = "unbridge",
     }
@@ -110,16 +110,16 @@ export namespace SessionProtocol {
         RelayStreamData = "relay_stream_data",
         RelayStreamError = "relay_stream_error",
         RelayDatagram = "relay_datagram",
-        LanStreamData = "lan_stream_data",
-        LanStreamError = "lan_stream_error",
-        LanDatagram = "lan_datagram",
-        LanDialOk = "lan_dial_ok",
-        LanDialFailed = "lan_dial_failed",
-        LanVerifyOk = "lan_verify_ok",
+        AltStreamData = "alt_stream_data",
+        AltStreamError = "alt_stream_error",
+        AltDatagram = "alt_datagram",
+        DialOk = "dial_ok",
+        DialFailed = "dial_failed",
+        PairCheckOk = "pair_check_ok",
         PingTimeout = "ping_timeout",
         PingTick = "ping_tick",
         BackoffExpired = "backoff_expired",
-        OfferTimeout = "offer_timeout",
+        CandidatesTimeout = "candidates_timeout",
         CliInitPair = "cli_init_pair",
         TokenCreated = "token_created",
         RelayRegistered = "relay_registered",
@@ -130,9 +130,9 @@ export namespace SessionProtocol {
         Finalise = "finalise",
         Verify = "verify",
         SessionEstablished = "session_established",
-        LanServerReady = "lan_server_ready",
-        LanServerChanged = "lan_server_changed",
-        ReadvertiseTick = "readvertise_tick",
+        CandidatesGathered = "candidates_gathered",
+        CandidatesChanged = "candidates_changed",
+        CandidatesRefreshTick = "candidates_refresh_tick",
         Disconnect = "disconnect",
         BackchannelReceived = "backchannel_received",
         SecretParsed = "secret_parsed",
@@ -141,7 +141,7 @@ export namespace SessionProtocol {
         CodeDisplayed = "code_displayed",
         AppLaunch = "app_launch",
         VerifyTimeout = "verify_timeout",
-        LanError = "lan_error",
+        AltError = "alt_error",
         RelayOk = "relay_ok",
         BackendRegister = "backend_register",
         ClientConnect = "client_connect",
@@ -149,14 +149,14 @@ export namespace SessionProtocol {
         BackendDisconnect = "backend_disconnect",
         RecvPairHello = "recv_pair_hello",
         RecvAuthRequest = "recv_auth_request",
-        RecvLanVerify = "recv_lan_verify",
+        RecvPairCheck = "recv_pair_check",
         RecvPathPong = "recv_path_pong",
         RecvPairHelloAck = "recv_pair_hello_ack",
         RecvPairConfirm = "recv_pair_confirm",
         RecvPairComplete = "recv_pair_complete",
         RecvAuthOk = "recv_auth_ok",
-        RecvLanOffer = "recv_lan_offer",
-        RecvLanConfirm = "recv_lan_confirm",
+        RecvCandidates = "recv_candidates",
+        RecvPairCheckAck = "recv_pair_check_ack",
         RecvPathPing = "recv_path_ping",
     }
 
@@ -165,25 +165,25 @@ export namespace SessionProtocol {
         SendActiveDatagram = "send_active_datagram",
         SendPathPing = "send_path_ping",
         SendPathPong = "send_path_pong",
-        SendLanOffer = "send_lan_offer",
-        SendLanVerify = "send_lan_verify",
-        SendLanConfirm = "send_lan_confirm",
-        DialLan = "dial_lan",
+        SendCandidates = "send_candidates",
+        SendPairCheck = "send_pair_check",
+        SendPairCheckAck = "send_pair_check_ack",
+        DialCandidate = "dial_candidate",
         DeliverRecv = "deliver_recv",
         DeliverRecvError = "deliver_recv_error",
         DeliverRecvDatagram = "deliver_recv_datagram",
-        StartLanStreamReader = "start_lan_stream_reader",
-        StopLanStreamReader = "stop_lan_stream_reader",
-        StartLanDgReader = "start_lan_dg_reader",
-        StopLanDgReader = "stop_lan_dg_reader",
+        StartAltStreamReader = "start_alt_stream_reader",
+        StopAltStreamReader = "stop_alt_stream_reader",
+        StartAltDgReader = "start_alt_dg_reader",
+        StopAltDgReader = "stop_alt_dg_reader",
         StartMonitor = "start_monitor",
         StopMonitor = "stop_monitor",
         StartPongTimeout = "start_pong_timeout",
         CancelPongTimeout = "cancel_pong_timeout",
         StartBackoffTimer = "start_backoff_timer",
-        CloseLanPath = "close_lan_path",
-        SignalLanReady = "signal_lan_ready",
-        ResetLanReady = "reset_lan_ready",
+        CloseAltPath = "close_alt_path",
+        SignalAltReady = "signal_alt_ready",
+        ResetAltReady = "reset_alt_ready",
         SetCryptoDatagram = "set_crypto_datagram",
     }
 
@@ -200,8 +200,12 @@ export namespace SessionProtocol {
         MAX_DATAGRAM_PAYLOAD: 1200,
         FRAGMENT_TIMEOUT_MS: 5000, // ms
         FRAME_APP: 0x00,
-        FRAME_LAN_OFFER: 0x01,
+        FRAME_CANDIDATES: 0x01,
         FRAME_CUTOVER: 0x02,
+        FRAME_PAIR_CHECK: 0x03,
+        FRAME_PAIR_CHECK_ACK: 0x04,
+        CAND_HOST: "host",
+        CAND_SRFLX: "srflx",
         MAX_MESSAGE_SIZE: 1048576,
         LENGTH_PREFIX_SIZE: 4,
         PING_INTERVAL_MS: 5000, // ms
@@ -249,54 +253,54 @@ export namespace SessionProtocol {
             { from: "AuthCheck", to: "SessionActive", on: "verify", onKind: "internal", guard: "device_known", action: "verify_device", sends: [{ to: "client", msg: "auth_ok" }] },
             { from: "AuthCheck", to: "Idle", on: "verify", onKind: "internal", guard: "device_unknown" },
             { from: "SessionActive", to: "RelayConnected", on: "session_established", onKind: "internal" },
-            { from: "RelayConnected", to: "LANOffered", on: "lan_server_ready", onKind: "internal", sends: [{ to: "client", msg: "lan_offer" }] },
-            { from: "LANOffered", to: "LANActive", on: "lan_verify", onKind: "recv", guard: "challenge_valid", action: "activate_lan", sends: [{ to: "client", msg: "lan_confirm" }] },
-            { from: "LANOffered", to: "RelayConnected", on: "lan_verify", onKind: "recv", guard: "challenge_invalid" },
-            { from: "LANOffered", to: "RelayBackoff", on: "offer_timeout", onKind: "internal" },
-            { from: "LANActive", to: "LANActive", on: "ping_tick", onKind: "internal", sends: [{ to: "client", msg: "path_ping" }] },
-            { from: "LANActive", to: "LANDegraded", on: "ping_timeout", onKind: "internal" },
-            { from: "LANDegraded", to: "LANDegraded", on: "ping_tick", onKind: "internal", sends: [{ to: "client", msg: "path_ping" }] },
-            { from: "LANActive", to: "RelayBackoff", on: "lan_stream_error", onKind: "internal", action: "fallback_to_relay" },
-            { from: "LANDegraded", to: "RelayBackoff", on: "lan_stream_error", onKind: "internal", action: "fallback_to_relay" },
-            { from: "LANDegraded", to: "LANActive", on: "path_pong", onKind: "recv", action: "reset_failures" },
-            { from: "LANDegraded", to: "LANDegraded", on: "ping_timeout", onKind: "internal", guard: "under_max_failures" },
-            { from: "LANDegraded", to: "RelayBackoff", on: "ping_timeout", onKind: "internal", guard: "at_max_failures", action: "fallback_to_relay" },
-            { from: "RelayBackoff", to: "LANOffered", on: "backoff_expired", onKind: "internal", sends: [{ to: "client", msg: "lan_offer" }] },
-            { from: "RelayBackoff", to: "LANOffered", on: "lan_server_changed", onKind: "internal", sends: [{ to: "client", msg: "lan_offer" }] },
-            { from: "RelayConnected", to: "LANOffered", on: "readvertise_tick", onKind: "internal", guard: "lan_server_available", sends: [{ to: "client", msg: "lan_offer" }] },
-            { from: "LANOffered", to: "RelayConnected", on: "app_force_fallback", onKind: "internal" },
-            { from: "LANActive", to: "RelayBackoff", on: "app_force_fallback", onKind: "internal", action: "fallback_to_relay" },
-            { from: "LANDegraded", to: "RelayBackoff", on: "app_force_fallback", onKind: "internal", action: "fallback_to_relay" },
+            { from: "RelayConnected", to: "CandidatesAdvertised", on: "candidates_gathered", onKind: "internal", sends: [{ to: "client", msg: "candidates" }] },
+            { from: "CandidatesAdvertised", to: "AltActive", on: "pair_check", onKind: "recv", guard: "challenge_valid", action: "activate_lan", sends: [{ to: "client", msg: "pair_check_ack" }] },
+            { from: "CandidatesAdvertised", to: "RelayConnected", on: "pair_check", onKind: "recv", guard: "challenge_invalid" },
+            { from: "CandidatesAdvertised", to: "RelayBackoff", on: "candidates_timeout", onKind: "internal" },
+            { from: "AltActive", to: "AltActive", on: "ping_tick", onKind: "internal", sends: [{ to: "client", msg: "path_ping" }] },
+            { from: "AltActive", to: "AltDegraded", on: "ping_timeout", onKind: "internal" },
+            { from: "AltDegraded", to: "AltDegraded", on: "ping_tick", onKind: "internal", sends: [{ to: "client", msg: "path_ping" }] },
+            { from: "AltActive", to: "RelayBackoff", on: "alt_stream_error", onKind: "internal", action: "fallback_to_relay" },
+            { from: "AltDegraded", to: "RelayBackoff", on: "alt_stream_error", onKind: "internal", action: "fallback_to_relay" },
+            { from: "AltDegraded", to: "AltActive", on: "path_pong", onKind: "recv", action: "reset_failures" },
+            { from: "AltDegraded", to: "AltDegraded", on: "ping_timeout", onKind: "internal", guard: "under_max_failures" },
+            { from: "AltDegraded", to: "RelayBackoff", on: "ping_timeout", onKind: "internal", guard: "at_max_failures", action: "fallback_to_relay" },
+            { from: "RelayBackoff", to: "CandidatesAdvertised", on: "backoff_expired", onKind: "internal", sends: [{ to: "client", msg: "candidates" }] },
+            { from: "RelayBackoff", to: "CandidatesAdvertised", on: "candidates_changed", onKind: "internal", sends: [{ to: "client", msg: "candidates" }] },
+            { from: "RelayConnected", to: "CandidatesAdvertised", on: "candidates_refresh_tick", onKind: "internal", guard: "local_candidates_available", sends: [{ to: "client", msg: "candidates" }] },
+            { from: "CandidatesAdvertised", to: "RelayConnected", on: "app_force_fallback", onKind: "internal" },
+            { from: "AltActive", to: "RelayBackoff", on: "app_force_fallback", onKind: "internal", action: "fallback_to_relay" },
+            { from: "AltDegraded", to: "RelayBackoff", on: "app_force_fallback", onKind: "internal", action: "fallback_to_relay" },
             { from: "RelayConnected", to: "Paired", on: "disconnect", onKind: "internal" },
             { from: "RelayConnected", to: "RelayConnected", on: "app_send", onKind: "internal" },
-            { from: "LANOffered", to: "LANOffered", on: "app_send", onKind: "internal" },
-            { from: "LANActive", to: "LANActive", on: "app_send", onKind: "internal" },
-            { from: "LANDegraded", to: "LANDegraded", on: "app_send", onKind: "internal" },
+            { from: "CandidatesAdvertised", to: "CandidatesAdvertised", on: "app_send", onKind: "internal" },
+            { from: "AltActive", to: "AltActive", on: "app_send", onKind: "internal" },
+            { from: "AltDegraded", to: "AltDegraded", on: "app_send", onKind: "internal" },
             { from: "RelayBackoff", to: "RelayBackoff", on: "app_send", onKind: "internal" },
             { from: "RelayConnected", to: "RelayConnected", on: "relay_stream_data", onKind: "internal" },
-            { from: "LANOffered", to: "LANOffered", on: "relay_stream_data", onKind: "internal" },
-            { from: "LANActive", to: "LANActive", on: "relay_stream_data", onKind: "internal" },
-            { from: "LANDegraded", to: "LANDegraded", on: "relay_stream_data", onKind: "internal" },
+            { from: "CandidatesAdvertised", to: "CandidatesAdvertised", on: "relay_stream_data", onKind: "internal" },
+            { from: "AltActive", to: "AltActive", on: "relay_stream_data", onKind: "internal" },
+            { from: "AltDegraded", to: "AltDegraded", on: "relay_stream_data", onKind: "internal" },
             { from: "RelayBackoff", to: "RelayBackoff", on: "relay_stream_data", onKind: "internal" },
             { from: "RelayConnected", to: "RelayConnected", on: "relay_stream_error", onKind: "internal" },
-            { from: "LANOffered", to: "LANOffered", on: "relay_stream_error", onKind: "internal" },
-            { from: "LANActive", to: "LANActive", on: "relay_stream_error", onKind: "internal" },
-            { from: "LANDegraded", to: "LANDegraded", on: "relay_stream_error", onKind: "internal" },
+            { from: "CandidatesAdvertised", to: "CandidatesAdvertised", on: "relay_stream_error", onKind: "internal" },
+            { from: "AltActive", to: "AltActive", on: "relay_stream_error", onKind: "internal" },
+            { from: "AltDegraded", to: "AltDegraded", on: "relay_stream_error", onKind: "internal" },
             { from: "RelayBackoff", to: "RelayBackoff", on: "relay_stream_error", onKind: "internal" },
             { from: "RelayConnected", to: "RelayConnected", on: "app_send_datagram", onKind: "internal" },
-            { from: "LANOffered", to: "LANOffered", on: "app_send_datagram", onKind: "internal" },
-            { from: "LANActive", to: "LANActive", on: "app_send_datagram", onKind: "internal" },
-            { from: "LANDegraded", to: "LANDegraded", on: "app_send_datagram", onKind: "internal" },
+            { from: "CandidatesAdvertised", to: "CandidatesAdvertised", on: "app_send_datagram", onKind: "internal" },
+            { from: "AltActive", to: "AltActive", on: "app_send_datagram", onKind: "internal" },
+            { from: "AltDegraded", to: "AltDegraded", on: "app_send_datagram", onKind: "internal" },
             { from: "RelayBackoff", to: "RelayBackoff", on: "app_send_datagram", onKind: "internal" },
             { from: "RelayConnected", to: "RelayConnected", on: "relay_datagram", onKind: "internal" },
-            { from: "LANOffered", to: "LANOffered", on: "relay_datagram", onKind: "internal" },
-            { from: "LANActive", to: "LANActive", on: "relay_datagram", onKind: "internal" },
-            { from: "LANDegraded", to: "LANDegraded", on: "relay_datagram", onKind: "internal" },
+            { from: "CandidatesAdvertised", to: "CandidatesAdvertised", on: "relay_datagram", onKind: "internal" },
+            { from: "AltActive", to: "AltActive", on: "relay_datagram", onKind: "internal" },
+            { from: "AltDegraded", to: "AltDegraded", on: "relay_datagram", onKind: "internal" },
             { from: "RelayBackoff", to: "RelayBackoff", on: "relay_datagram", onKind: "internal" },
-            { from: "LANActive", to: "LANActive", on: "lan_stream_data", onKind: "internal" },
-            { from: "LANDegraded", to: "LANDegraded", on: "lan_stream_data", onKind: "internal" },
-            { from: "LANActive", to: "LANActive", on: "lan_datagram", onKind: "internal" },
-            { from: "LANDegraded", to: "LANDegraded", on: "lan_datagram", onKind: "internal" },
+            { from: "AltActive", to: "AltActive", on: "alt_stream_data", onKind: "internal" },
+            { from: "AltDegraded", to: "AltDegraded", on: "alt_stream_data", onKind: "internal" },
+            { from: "AltActive", to: "AltActive", on: "alt_datagram", onKind: "internal" },
+            { from: "AltDegraded", to: "AltDegraded", on: "alt_datagram", onKind: "internal" },
         ],
     };
 
@@ -316,48 +320,48 @@ export namespace SessionProtocol {
             { from: "Reconnect", to: "SendAuth", on: "relay_connected", onKind: "internal", sends: [{ to: "backend", msg: "auth_request" }] },
             { from: "SendAuth", to: "SessionActive", on: "auth_ok", onKind: "recv" },
             { from: "SessionActive", to: "RelayConnected", on: "session_established", onKind: "internal" },
-            { from: "RelayConnected", to: "LANConnecting", on: "lan_offer", onKind: "recv", guard: "lan_enabled", action: "dial_lan" },
-            { from: "RelayConnected", to: "RelayConnected", on: "lan_offer", onKind: "recv", guard: "lan_disabled" },
-            { from: "LANConnecting", to: "LANVerifying", on: "lan_dial_ok", onKind: "internal", sends: [{ to: "backend", msg: "lan_verify" }] },
-            { from: "LANConnecting", to: "RelayConnected", on: "lan_dial_failed", onKind: "internal" },
-            { from: "LANVerifying", to: "LANActive", on: "lan_confirm", onKind: "recv", action: "activate_lan" },
-            { from: "LANVerifying", to: "RelayConnected", on: "verify_timeout", onKind: "internal" },
-            { from: "LANActive", to: "LANActive", on: "path_ping", onKind: "recv", sends: [{ to: "backend", msg: "path_pong" }] },
-            { from: "LANActive", to: "RelayFallback", on: "lan_error", onKind: "internal", action: "fallback_to_relay" },
-            { from: "LANActive", to: "RelayFallback", on: "lan_stream_error", onKind: "internal", action: "fallback_to_relay" },
+            { from: "RelayConnected", to: "PairDialing", on: "candidates", onKind: "recv", guard: "alt_enabled", action: "dial_candidate" },
+            { from: "RelayConnected", to: "RelayConnected", on: "candidates", onKind: "recv", guard: "alt_disabled" },
+            { from: "PairDialing", to: "PairChecking", on: "dial_ok", onKind: "internal", sends: [{ to: "backend", msg: "pair_check" }] },
+            { from: "PairDialing", to: "RelayConnected", on: "dial_failed", onKind: "internal" },
+            { from: "PairChecking", to: "AltActive", on: "pair_check_ack", onKind: "recv", action: "activate_lan" },
+            { from: "PairChecking", to: "RelayConnected", on: "verify_timeout", onKind: "internal" },
+            { from: "AltActive", to: "AltActive", on: "path_ping", onKind: "recv", sends: [{ to: "backend", msg: "path_pong" }] },
+            { from: "AltActive", to: "RelayFallback", on: "alt_error", onKind: "internal", action: "fallback_to_relay" },
+            { from: "AltActive", to: "RelayFallback", on: "alt_stream_error", onKind: "internal", action: "fallback_to_relay" },
             { from: "RelayFallback", to: "RelayConnected", on: "relay_ok", onKind: "internal" },
-            { from: "LANActive", to: "LANConnecting", on: "lan_offer", onKind: "recv", guard: "lan_enabled", action: "dial_lan" },
-            { from: "LANConnecting", to: "RelayConnected", on: "app_force_fallback", onKind: "internal" },
-            { from: "LANVerifying", to: "RelayConnected", on: "app_force_fallback", onKind: "internal" },
-            { from: "LANActive", to: "RelayConnected", on: "app_force_fallback", onKind: "internal", action: "fallback_to_relay" },
+            { from: "AltActive", to: "PairDialing", on: "candidates", onKind: "recv", guard: "alt_enabled", action: "dial_candidate" },
+            { from: "PairDialing", to: "RelayConnected", on: "app_force_fallback", onKind: "internal" },
+            { from: "PairChecking", to: "RelayConnected", on: "app_force_fallback", onKind: "internal" },
+            { from: "AltActive", to: "RelayConnected", on: "app_force_fallback", onKind: "internal", action: "fallback_to_relay" },
             { from: "RelayConnected", to: "Paired", on: "disconnect", onKind: "internal" },
             { from: "RelayConnected", to: "RelayConnected", on: "app_send", onKind: "internal" },
-            { from: "LANConnecting", to: "LANConnecting", on: "app_send", onKind: "internal" },
-            { from: "LANVerifying", to: "LANVerifying", on: "app_send", onKind: "internal" },
-            { from: "LANActive", to: "LANActive", on: "app_send", onKind: "internal" },
+            { from: "PairDialing", to: "PairDialing", on: "app_send", onKind: "internal" },
+            { from: "PairChecking", to: "PairChecking", on: "app_send", onKind: "internal" },
+            { from: "AltActive", to: "AltActive", on: "app_send", onKind: "internal" },
             { from: "RelayFallback", to: "RelayFallback", on: "app_send", onKind: "internal" },
             { from: "RelayConnected", to: "RelayConnected", on: "relay_stream_data", onKind: "internal" },
-            { from: "LANConnecting", to: "LANConnecting", on: "relay_stream_data", onKind: "internal" },
-            { from: "LANVerifying", to: "LANVerifying", on: "relay_stream_data", onKind: "internal" },
-            { from: "LANActive", to: "LANActive", on: "relay_stream_data", onKind: "internal" },
+            { from: "PairDialing", to: "PairDialing", on: "relay_stream_data", onKind: "internal" },
+            { from: "PairChecking", to: "PairChecking", on: "relay_stream_data", onKind: "internal" },
+            { from: "AltActive", to: "AltActive", on: "relay_stream_data", onKind: "internal" },
             { from: "RelayFallback", to: "RelayFallback", on: "relay_stream_data", onKind: "internal" },
             { from: "RelayConnected", to: "RelayConnected", on: "relay_stream_error", onKind: "internal" },
-            { from: "LANConnecting", to: "LANConnecting", on: "relay_stream_error", onKind: "internal" },
-            { from: "LANVerifying", to: "LANVerifying", on: "relay_stream_error", onKind: "internal" },
-            { from: "LANActive", to: "LANActive", on: "relay_stream_error", onKind: "internal" },
+            { from: "PairDialing", to: "PairDialing", on: "relay_stream_error", onKind: "internal" },
+            { from: "PairChecking", to: "PairChecking", on: "relay_stream_error", onKind: "internal" },
+            { from: "AltActive", to: "AltActive", on: "relay_stream_error", onKind: "internal" },
             { from: "RelayFallback", to: "RelayFallback", on: "relay_stream_error", onKind: "internal" },
             { from: "RelayConnected", to: "RelayConnected", on: "app_send_datagram", onKind: "internal" },
-            { from: "LANConnecting", to: "LANConnecting", on: "app_send_datagram", onKind: "internal" },
-            { from: "LANVerifying", to: "LANVerifying", on: "app_send_datagram", onKind: "internal" },
-            { from: "LANActive", to: "LANActive", on: "app_send_datagram", onKind: "internal" },
+            { from: "PairDialing", to: "PairDialing", on: "app_send_datagram", onKind: "internal" },
+            { from: "PairChecking", to: "PairChecking", on: "app_send_datagram", onKind: "internal" },
+            { from: "AltActive", to: "AltActive", on: "app_send_datagram", onKind: "internal" },
             { from: "RelayFallback", to: "RelayFallback", on: "app_send_datagram", onKind: "internal" },
             { from: "RelayConnected", to: "RelayConnected", on: "relay_datagram", onKind: "internal" },
-            { from: "LANConnecting", to: "LANConnecting", on: "relay_datagram", onKind: "internal" },
-            { from: "LANVerifying", to: "LANVerifying", on: "relay_datagram", onKind: "internal" },
-            { from: "LANActive", to: "LANActive", on: "relay_datagram", onKind: "internal" },
+            { from: "PairDialing", to: "PairDialing", on: "relay_datagram", onKind: "internal" },
+            { from: "PairChecking", to: "PairChecking", on: "relay_datagram", onKind: "internal" },
+            { from: "AltActive", to: "AltActive", on: "relay_datagram", onKind: "internal" },
             { from: "RelayFallback", to: "RelayFallback", on: "relay_datagram", onKind: "internal" },
-            { from: "LANActive", to: "LANActive", on: "lan_stream_data", onKind: "internal" },
-            { from: "LANActive", to: "LANActive", on: "lan_datagram", onKind: "internal" },
+            { from: "AltActive", to: "AltActive", on: "alt_stream_data", onKind: "internal" },
+            { from: "AltActive", to: "AltActive", on: "alt_datagram", onKind: "internal" },
         ],
     };
 
@@ -398,7 +402,7 @@ export class SessionBackendMachine {
     bActivePath: string = "relay"; // backend active path
     bDispatcherPath: string = "relay"; // backend datagram dispatcher binding
     monitorTarget: string = "none"; // health monitor target
-    lanSignal: string = "pending"; // LANReady notification state
+    altSignal: string = "pending"; // AltReady notification state
     guards: Map<SessionProtocol.GuardID, () => boolean> = new Map();
     actions: Map<SessionProtocol.ActionID, () => void> = new Map();
 
@@ -489,127 +493,127 @@ export class SessionBackendMachine {
                 this.state = SessionBackendState.RelayConnected;
                 return [];
             }
-            case this.state === SessionBackendState.RelayConnected && ev === SessionProtocol.EventID.LanServerReady: {
-                this.state = SessionBackendState.LANOffered;
-                return [SessionProtocol.CmdID.SendLanOffer];
+            case this.state === SessionBackendState.RelayConnected && ev === SessionProtocol.EventID.CandidatesGathered: {
+                this.state = SessionBackendState.CandidatesAdvertised;
+                return [SessionProtocol.CmdID.SendCandidates];
             }
-            case this.state === SessionBackendState.LANOffered && ev === SessionProtocol.EventID.RecvLanVerify && this.guards.get(SessionProtocol.GuardID.ChallengeValid)?.() === true: {
+            case this.state === SessionBackendState.CandidatesAdvertised && ev === SessionProtocol.EventID.RecvPairCheck && this.guards.get(SessionProtocol.GuardID.ChallengeValid)?.() === true: {
                 this.actions.get(SessionProtocol.ActionID.ActivateLan)?.();
                 this.pingFailures = 0;
                 this.backoffLevel = 0;
-                this.bActivePath = "lan";
-                this.bDispatcherPath = "lan";
-                this.monitorTarget = "lan";
-                this.lanSignal = "ready";
-                this.state = SessionBackendState.LANActive;
-                return [SessionProtocol.CmdID.SendLanConfirm, SessionProtocol.CmdID.StartLanStreamReader, SessionProtocol.CmdID.StartLanDgReader, SessionProtocol.CmdID.StartMonitor, SessionProtocol.CmdID.SignalLanReady, SessionProtocol.CmdID.SetCryptoDatagram];
+                this.bActivePath = "alt";
+                this.bDispatcherPath = "alt";
+                this.monitorTarget = "alt";
+                this.altSignal = "ready";
+                this.state = SessionBackendState.AltActive;
+                return [SessionProtocol.CmdID.SendPairCheckAck, SessionProtocol.CmdID.StartAltStreamReader, SessionProtocol.CmdID.StartAltDgReader, SessionProtocol.CmdID.StartMonitor, SessionProtocol.CmdID.SignalAltReady, SessionProtocol.CmdID.SetCryptoDatagram];
             }
-            case this.state === SessionBackendState.LANOffered && ev === SessionProtocol.EventID.RecvLanVerify && this.guards.get(SessionProtocol.GuardID.ChallengeInvalid)?.() === true: {
+            case this.state === SessionBackendState.CandidatesAdvertised && ev === SessionProtocol.EventID.RecvPairCheck && this.guards.get(SessionProtocol.GuardID.ChallengeInvalid)?.() === true: {
                 this.state = SessionBackendState.RelayConnected;
                 return [];
             }
-            case this.state === SessionBackendState.LANOffered && ev === SessionProtocol.EventID.OfferTimeout: {
+            case this.state === SessionBackendState.CandidatesAdvertised && ev === SessionProtocol.EventID.CandidatesTimeout: {
                 // backoff_level: Min(backoff_level + 1, max_backoff_level) (set by action)
-                this.lanSignal = "pending";
+                this.altSignal = "pending";
                 this.state = SessionBackendState.RelayBackoff;
-                return [SessionProtocol.CmdID.ResetLanReady, SessionProtocol.CmdID.StartBackoffTimer];
+                return [SessionProtocol.CmdID.ResetAltReady, SessionProtocol.CmdID.StartBackoffTimer];
             }
-            case this.state === SessionBackendState.LANActive && ev === SessionProtocol.EventID.PingTick: {
-                this.state = SessionBackendState.LANActive;
+            case this.state === SessionBackendState.AltActive && ev === SessionProtocol.EventID.PingTick: {
+                this.state = SessionBackendState.AltActive;
                 return [SessionProtocol.CmdID.SendPathPing, SessionProtocol.CmdID.StartPongTimeout];
             }
-            case this.state === SessionBackendState.LANActive && ev === SessionProtocol.EventID.PingTimeout: {
+            case this.state === SessionBackendState.AltActive && ev === SessionProtocol.EventID.PingTimeout: {
                 this.pingFailures = 1;
-                this.state = SessionBackendState.LANDegraded;
+                this.state = SessionBackendState.AltDegraded;
                 return [];
             }
-            case this.state === SessionBackendState.LANDegraded && ev === SessionProtocol.EventID.PingTick: {
-                this.state = SessionBackendState.LANDegraded;
+            case this.state === SessionBackendState.AltDegraded && ev === SessionProtocol.EventID.PingTick: {
+                this.state = SessionBackendState.AltDegraded;
                 return [SessionProtocol.CmdID.SendPathPing, SessionProtocol.CmdID.StartPongTimeout];
             }
-            case this.state === SessionBackendState.LANActive && ev === SessionProtocol.EventID.LanStreamError: {
+            case this.state === SessionBackendState.AltActive && ev === SessionProtocol.EventID.AltStreamError: {
                 this.actions.get(SessionProtocol.ActionID.FallbackToRelay)?.();
                 // backoff_level: Min(backoff_level + 1, max_backoff_level) (set by action)
                 this.bActivePath = "relay";
                 this.bDispatcherPath = "relay";
                 this.monitorTarget = "none";
-                this.lanSignal = "pending";
+                this.altSignal = "pending";
                 this.pingFailures = 0;
                 this.state = SessionBackendState.RelayBackoff;
-                return [SessionProtocol.CmdID.StopMonitor, SessionProtocol.CmdID.StopLanStreamReader, SessionProtocol.CmdID.StopLanDgReader, SessionProtocol.CmdID.CloseLanPath, SessionProtocol.CmdID.ResetLanReady, SessionProtocol.CmdID.StartBackoffTimer];
+                return [SessionProtocol.CmdID.StopMonitor, SessionProtocol.CmdID.StopAltStreamReader, SessionProtocol.CmdID.StopAltDgReader, SessionProtocol.CmdID.CloseAltPath, SessionProtocol.CmdID.ResetAltReady, SessionProtocol.CmdID.StartBackoffTimer];
             }
-            case this.state === SessionBackendState.LANDegraded && ev === SessionProtocol.EventID.LanStreamError: {
+            case this.state === SessionBackendState.AltDegraded && ev === SessionProtocol.EventID.AltStreamError: {
                 this.actions.get(SessionProtocol.ActionID.FallbackToRelay)?.();
                 // backoff_level: Min(backoff_level + 1, max_backoff_level) (set by action)
                 this.bActivePath = "relay";
                 this.bDispatcherPath = "relay";
                 this.monitorTarget = "none";
-                this.lanSignal = "pending";
+                this.altSignal = "pending";
                 this.pingFailures = 0;
                 this.state = SessionBackendState.RelayBackoff;
-                return [SessionProtocol.CmdID.StopMonitor, SessionProtocol.CmdID.StopLanStreamReader, SessionProtocol.CmdID.StopLanDgReader, SessionProtocol.CmdID.CloseLanPath, SessionProtocol.CmdID.ResetLanReady, SessionProtocol.CmdID.StartBackoffTimer];
+                return [SessionProtocol.CmdID.StopMonitor, SessionProtocol.CmdID.StopAltStreamReader, SessionProtocol.CmdID.StopAltDgReader, SessionProtocol.CmdID.CloseAltPath, SessionProtocol.CmdID.ResetAltReady, SessionProtocol.CmdID.StartBackoffTimer];
             }
-            case this.state === SessionBackendState.LANDegraded && ev === SessionProtocol.EventID.RecvPathPong: {
+            case this.state === SessionBackendState.AltDegraded && ev === SessionProtocol.EventID.RecvPathPong: {
                 this.actions.get(SessionProtocol.ActionID.ResetFailures)?.();
                 this.pingFailures = 0;
-                this.state = SessionBackendState.LANActive;
+                this.state = SessionBackendState.AltActive;
                 return [SessionProtocol.CmdID.CancelPongTimeout];
             }
-            case this.state === SessionBackendState.LANDegraded && ev === SessionProtocol.EventID.PingTimeout && this.guards.get(SessionProtocol.GuardID.UnderMaxFailures)?.() === true: {
+            case this.state === SessionBackendState.AltDegraded && ev === SessionProtocol.EventID.PingTimeout && this.guards.get(SessionProtocol.GuardID.UnderMaxFailures)?.() === true: {
                 // ping_failures: ping_failures + 1 (set by action)
-                this.state = SessionBackendState.LANDegraded;
+                this.state = SessionBackendState.AltDegraded;
                 return [];
             }
-            case this.state === SessionBackendState.LANDegraded && ev === SessionProtocol.EventID.PingTimeout && this.guards.get(SessionProtocol.GuardID.AtMaxFailures)?.() === true: {
+            case this.state === SessionBackendState.AltDegraded && ev === SessionProtocol.EventID.PingTimeout && this.guards.get(SessionProtocol.GuardID.AtMaxFailures)?.() === true: {
                 this.actions.get(SessionProtocol.ActionID.FallbackToRelay)?.();
                 // backoff_level: Min(backoff_level + 1, max_backoff_level) (set by action)
                 this.bActivePath = "relay";
                 this.bDispatcherPath = "relay";
                 this.monitorTarget = "none";
-                this.lanSignal = "pending";
+                this.altSignal = "pending";
                 this.pingFailures = 0;
                 this.state = SessionBackendState.RelayBackoff;
-                return [SessionProtocol.CmdID.StopMonitor, SessionProtocol.CmdID.StopLanStreamReader, SessionProtocol.CmdID.StopLanDgReader, SessionProtocol.CmdID.CloseLanPath, SessionProtocol.CmdID.ResetLanReady, SessionProtocol.CmdID.StartBackoffTimer];
+                return [SessionProtocol.CmdID.StopMonitor, SessionProtocol.CmdID.StopAltStreamReader, SessionProtocol.CmdID.StopAltDgReader, SessionProtocol.CmdID.CloseAltPath, SessionProtocol.CmdID.ResetAltReady, SessionProtocol.CmdID.StartBackoffTimer];
             }
             case this.state === SessionBackendState.RelayBackoff && ev === SessionProtocol.EventID.BackoffExpired: {
-                this.state = SessionBackendState.LANOffered;
-                return [SessionProtocol.CmdID.SendLanOffer];
+                this.state = SessionBackendState.CandidatesAdvertised;
+                return [SessionProtocol.CmdID.SendCandidates];
             }
-            case this.state === SessionBackendState.RelayBackoff && ev === SessionProtocol.EventID.LanServerChanged: {
+            case this.state === SessionBackendState.RelayBackoff && ev === SessionProtocol.EventID.CandidatesChanged: {
                 this.backoffLevel = 0;
-                this.state = SessionBackendState.LANOffered;
-                return [SessionProtocol.CmdID.SendLanOffer];
+                this.state = SessionBackendState.CandidatesAdvertised;
+                return [SessionProtocol.CmdID.SendCandidates];
             }
-            case this.state === SessionBackendState.RelayConnected && ev === SessionProtocol.EventID.ReadvertiseTick && this.guards.get(SessionProtocol.GuardID.LanServerAvailable)?.() === true: {
-                this.state = SessionBackendState.LANOffered;
-                return [SessionProtocol.CmdID.SendLanOffer];
+            case this.state === SessionBackendState.RelayConnected && ev === SessionProtocol.EventID.CandidatesRefreshTick && this.guards.get(SessionProtocol.GuardID.LocalCandidatesAvailable)?.() === true: {
+                this.state = SessionBackendState.CandidatesAdvertised;
+                return [SessionProtocol.CmdID.SendCandidates];
             }
-            case this.state === SessionBackendState.LANOffered && ev === SessionProtocol.EventID.AppForceFallback: {
-                this.lanSignal = "pending";
+            case this.state === SessionBackendState.CandidatesAdvertised && ev === SessionProtocol.EventID.AppForceFallback: {
+                this.altSignal = "pending";
                 this.state = SessionBackendState.RelayConnected;
-                return [SessionProtocol.CmdID.ResetLanReady];
+                return [SessionProtocol.CmdID.ResetAltReady];
             }
-            case this.state === SessionBackendState.LANActive && ev === SessionProtocol.EventID.AppForceFallback: {
+            case this.state === SessionBackendState.AltActive && ev === SessionProtocol.EventID.AppForceFallback: {
                 this.actions.get(SessionProtocol.ActionID.FallbackToRelay)?.();
                 // backoff_level: Min(backoff_level + 1, max_backoff_level) (set by action)
                 this.bActivePath = "relay";
                 this.bDispatcherPath = "relay";
                 this.monitorTarget = "none";
-                this.lanSignal = "pending";
+                this.altSignal = "pending";
                 this.pingFailures = 0;
                 this.state = SessionBackendState.RelayBackoff;
-                return [SessionProtocol.CmdID.StopMonitor, SessionProtocol.CmdID.CancelPongTimeout, SessionProtocol.CmdID.StopLanStreamReader, SessionProtocol.CmdID.StopLanDgReader, SessionProtocol.CmdID.CloseLanPath, SessionProtocol.CmdID.ResetLanReady, SessionProtocol.CmdID.StartBackoffTimer];
+                return [SessionProtocol.CmdID.StopMonitor, SessionProtocol.CmdID.CancelPongTimeout, SessionProtocol.CmdID.StopAltStreamReader, SessionProtocol.CmdID.StopAltDgReader, SessionProtocol.CmdID.CloseAltPath, SessionProtocol.CmdID.ResetAltReady, SessionProtocol.CmdID.StartBackoffTimer];
             }
-            case this.state === SessionBackendState.LANDegraded && ev === SessionProtocol.EventID.AppForceFallback: {
+            case this.state === SessionBackendState.AltDegraded && ev === SessionProtocol.EventID.AppForceFallback: {
                 this.actions.get(SessionProtocol.ActionID.FallbackToRelay)?.();
                 // backoff_level: Min(backoff_level + 1, max_backoff_level) (set by action)
                 this.bActivePath = "relay";
                 this.bDispatcherPath = "relay";
                 this.monitorTarget = "none";
-                this.lanSignal = "pending";
+                this.altSignal = "pending";
                 this.pingFailures = 0;
                 this.state = SessionBackendState.RelayBackoff;
-                return [SessionProtocol.CmdID.StopMonitor, SessionProtocol.CmdID.CancelPongTimeout, SessionProtocol.CmdID.StopLanStreamReader, SessionProtocol.CmdID.StopLanDgReader, SessionProtocol.CmdID.CloseLanPath, SessionProtocol.CmdID.ResetLanReady, SessionProtocol.CmdID.StartBackoffTimer];
+                return [SessionProtocol.CmdID.StopMonitor, SessionProtocol.CmdID.CancelPongTimeout, SessionProtocol.CmdID.StopAltStreamReader, SessionProtocol.CmdID.StopAltDgReader, SessionProtocol.CmdID.CloseAltPath, SessionProtocol.CmdID.ResetAltReady, SessionProtocol.CmdID.StartBackoffTimer];
             }
             case this.state === SessionBackendState.RelayConnected && ev === SessionProtocol.EventID.Disconnect: {
                 this.state = SessionBackendState.Paired;
@@ -619,16 +623,16 @@ export class SessionBackendMachine {
                 this.state = SessionBackendState.RelayConnected;
                 return [SessionProtocol.CmdID.WriteActiveStream];
             }
-            case this.state === SessionBackendState.LANOffered && ev === SessionProtocol.EventID.AppSend: {
-                this.state = SessionBackendState.LANOffered;
+            case this.state === SessionBackendState.CandidatesAdvertised && ev === SessionProtocol.EventID.AppSend: {
+                this.state = SessionBackendState.CandidatesAdvertised;
                 return [SessionProtocol.CmdID.WriteActiveStream];
             }
-            case this.state === SessionBackendState.LANActive && ev === SessionProtocol.EventID.AppSend: {
-                this.state = SessionBackendState.LANActive;
+            case this.state === SessionBackendState.AltActive && ev === SessionProtocol.EventID.AppSend: {
+                this.state = SessionBackendState.AltActive;
                 return [SessionProtocol.CmdID.WriteActiveStream];
             }
-            case this.state === SessionBackendState.LANDegraded && ev === SessionProtocol.EventID.AppSend: {
-                this.state = SessionBackendState.LANDegraded;
+            case this.state === SessionBackendState.AltDegraded && ev === SessionProtocol.EventID.AppSend: {
+                this.state = SessionBackendState.AltDegraded;
                 return [SessionProtocol.CmdID.WriteActiveStream];
             }
             case this.state === SessionBackendState.RelayBackoff && ev === SessionProtocol.EventID.AppSend: {
@@ -639,16 +643,16 @@ export class SessionBackendMachine {
                 this.state = SessionBackendState.RelayConnected;
                 return [SessionProtocol.CmdID.DeliverRecv];
             }
-            case this.state === SessionBackendState.LANOffered && ev === SessionProtocol.EventID.RelayStreamData: {
-                this.state = SessionBackendState.LANOffered;
+            case this.state === SessionBackendState.CandidatesAdvertised && ev === SessionProtocol.EventID.RelayStreamData: {
+                this.state = SessionBackendState.CandidatesAdvertised;
                 return [SessionProtocol.CmdID.DeliverRecv];
             }
-            case this.state === SessionBackendState.LANActive && ev === SessionProtocol.EventID.RelayStreamData: {
-                this.state = SessionBackendState.LANActive;
+            case this.state === SessionBackendState.AltActive && ev === SessionProtocol.EventID.RelayStreamData: {
+                this.state = SessionBackendState.AltActive;
                 return [SessionProtocol.CmdID.DeliverRecv];
             }
-            case this.state === SessionBackendState.LANDegraded && ev === SessionProtocol.EventID.RelayStreamData: {
-                this.state = SessionBackendState.LANDegraded;
+            case this.state === SessionBackendState.AltDegraded && ev === SessionProtocol.EventID.RelayStreamData: {
+                this.state = SessionBackendState.AltDegraded;
                 return [SessionProtocol.CmdID.DeliverRecv];
             }
             case this.state === SessionBackendState.RelayBackoff && ev === SessionProtocol.EventID.RelayStreamData: {
@@ -659,16 +663,16 @@ export class SessionBackendMachine {
                 this.state = SessionBackendState.RelayConnected;
                 return [SessionProtocol.CmdID.DeliverRecvError];
             }
-            case this.state === SessionBackendState.LANOffered && ev === SessionProtocol.EventID.RelayStreamError: {
-                this.state = SessionBackendState.LANOffered;
+            case this.state === SessionBackendState.CandidatesAdvertised && ev === SessionProtocol.EventID.RelayStreamError: {
+                this.state = SessionBackendState.CandidatesAdvertised;
                 return [SessionProtocol.CmdID.DeliverRecvError];
             }
-            case this.state === SessionBackendState.LANActive && ev === SessionProtocol.EventID.RelayStreamError: {
-                this.state = SessionBackendState.LANActive;
+            case this.state === SessionBackendState.AltActive && ev === SessionProtocol.EventID.RelayStreamError: {
+                this.state = SessionBackendState.AltActive;
                 return [SessionProtocol.CmdID.DeliverRecvError];
             }
-            case this.state === SessionBackendState.LANDegraded && ev === SessionProtocol.EventID.RelayStreamError: {
-                this.state = SessionBackendState.LANDegraded;
+            case this.state === SessionBackendState.AltDegraded && ev === SessionProtocol.EventID.RelayStreamError: {
+                this.state = SessionBackendState.AltDegraded;
                 return [SessionProtocol.CmdID.DeliverRecvError];
             }
             case this.state === SessionBackendState.RelayBackoff && ev === SessionProtocol.EventID.RelayStreamError: {
@@ -679,16 +683,16 @@ export class SessionBackendMachine {
                 this.state = SessionBackendState.RelayConnected;
                 return [SessionProtocol.CmdID.SendActiveDatagram];
             }
-            case this.state === SessionBackendState.LANOffered && ev === SessionProtocol.EventID.AppSendDatagram: {
-                this.state = SessionBackendState.LANOffered;
+            case this.state === SessionBackendState.CandidatesAdvertised && ev === SessionProtocol.EventID.AppSendDatagram: {
+                this.state = SessionBackendState.CandidatesAdvertised;
                 return [SessionProtocol.CmdID.SendActiveDatagram];
             }
-            case this.state === SessionBackendState.LANActive && ev === SessionProtocol.EventID.AppSendDatagram: {
-                this.state = SessionBackendState.LANActive;
+            case this.state === SessionBackendState.AltActive && ev === SessionProtocol.EventID.AppSendDatagram: {
+                this.state = SessionBackendState.AltActive;
                 return [SessionProtocol.CmdID.SendActiveDatagram];
             }
-            case this.state === SessionBackendState.LANDegraded && ev === SessionProtocol.EventID.AppSendDatagram: {
-                this.state = SessionBackendState.LANDegraded;
+            case this.state === SessionBackendState.AltDegraded && ev === SessionProtocol.EventID.AppSendDatagram: {
+                this.state = SessionBackendState.AltDegraded;
                 return [SessionProtocol.CmdID.SendActiveDatagram];
             }
             case this.state === SessionBackendState.RelayBackoff && ev === SessionProtocol.EventID.AppSendDatagram: {
@@ -699,36 +703,36 @@ export class SessionBackendMachine {
                 this.state = SessionBackendState.RelayConnected;
                 return [SessionProtocol.CmdID.DeliverRecvDatagram];
             }
-            case this.state === SessionBackendState.LANOffered && ev === SessionProtocol.EventID.RelayDatagram: {
-                this.state = SessionBackendState.LANOffered;
+            case this.state === SessionBackendState.CandidatesAdvertised && ev === SessionProtocol.EventID.RelayDatagram: {
+                this.state = SessionBackendState.CandidatesAdvertised;
                 return [SessionProtocol.CmdID.DeliverRecvDatagram];
             }
-            case this.state === SessionBackendState.LANActive && ev === SessionProtocol.EventID.RelayDatagram: {
-                this.state = SessionBackendState.LANActive;
+            case this.state === SessionBackendState.AltActive && ev === SessionProtocol.EventID.RelayDatagram: {
+                this.state = SessionBackendState.AltActive;
                 return [SessionProtocol.CmdID.DeliverRecvDatagram];
             }
-            case this.state === SessionBackendState.LANDegraded && ev === SessionProtocol.EventID.RelayDatagram: {
-                this.state = SessionBackendState.LANDegraded;
+            case this.state === SessionBackendState.AltDegraded && ev === SessionProtocol.EventID.RelayDatagram: {
+                this.state = SessionBackendState.AltDegraded;
                 return [SessionProtocol.CmdID.DeliverRecvDatagram];
             }
             case this.state === SessionBackendState.RelayBackoff && ev === SessionProtocol.EventID.RelayDatagram: {
                 this.state = SessionBackendState.RelayBackoff;
                 return [SessionProtocol.CmdID.DeliverRecvDatagram];
             }
-            case this.state === SessionBackendState.LANActive && ev === SessionProtocol.EventID.LanStreamData: {
-                this.state = SessionBackendState.LANActive;
+            case this.state === SessionBackendState.AltActive && ev === SessionProtocol.EventID.AltStreamData: {
+                this.state = SessionBackendState.AltActive;
                 return [SessionProtocol.CmdID.DeliverRecv];
             }
-            case this.state === SessionBackendState.LANDegraded && ev === SessionProtocol.EventID.LanStreamData: {
-                this.state = SessionBackendState.LANDegraded;
+            case this.state === SessionBackendState.AltDegraded && ev === SessionProtocol.EventID.AltStreamData: {
+                this.state = SessionBackendState.AltDegraded;
                 return [SessionProtocol.CmdID.DeliverRecv];
             }
-            case this.state === SessionBackendState.LANActive && ev === SessionProtocol.EventID.LanDatagram: {
-                this.state = SessionBackendState.LANActive;
+            case this.state === SessionBackendState.AltActive && ev === SessionProtocol.EventID.AltDatagram: {
+                this.state = SessionBackendState.AltActive;
                 return [SessionProtocol.CmdID.DeliverRecvDatagram];
             }
-            case this.state === SessionBackendState.LANDegraded && ev === SessionProtocol.EventID.LanDatagram: {
-                this.state = SessionBackendState.LANDegraded;
+            case this.state === SessionBackendState.AltDegraded && ev === SessionProtocol.EventID.AltDatagram: {
+                this.state = SessionBackendState.AltDegraded;
                 return [SessionProtocol.CmdID.DeliverRecvDatagram];
             }
         }
@@ -745,7 +749,7 @@ export class SessionClientMachine {
     clientCode: string = ""; // code computed by client
     cActivePath: string = "relay"; // client active path
     cDispatcherPath: string = "relay"; // client datagram dispatcher binding
-    lanSignal: string = "pending"; // LANReady notification state
+    altSignal: string = "pending"; // AltReady notification state
     guards: Map<SessionProtocol.GuardID, () => boolean> = new Map();
     actions: Map<SessionProtocol.ActionID, () => void> = new Map();
 
@@ -809,81 +813,81 @@ export class SessionClientMachine {
                 this.state = SessionClientState.RelayConnected;
                 return [];
             }
-            case this.state === SessionClientState.RelayConnected && ev === SessionProtocol.EventID.RecvLanOffer && this.guards.get(SessionProtocol.GuardID.LanEnabled)?.() === true: {
-                this.actions.get(SessionProtocol.ActionID.DialLan)?.();
-                this.state = SessionClientState.LANConnecting;
-                return [SessionProtocol.CmdID.DialLan];
+            case this.state === SessionClientState.RelayConnected && ev === SessionProtocol.EventID.RecvCandidates && this.guards.get(SessionProtocol.GuardID.AltEnabled)?.() === true: {
+                this.actions.get(SessionProtocol.ActionID.DialCandidate)?.();
+                this.state = SessionClientState.PairDialing;
+                return [SessionProtocol.CmdID.DialCandidate];
             }
-            case this.state === SessionClientState.RelayConnected && ev === SessionProtocol.EventID.RecvLanOffer && this.guards.get(SessionProtocol.GuardID.LanDisabled)?.() === true: {
+            case this.state === SessionClientState.RelayConnected && ev === SessionProtocol.EventID.RecvCandidates && this.guards.get(SessionProtocol.GuardID.AltDisabled)?.() === true: {
                 this.state = SessionClientState.RelayConnected;
                 return [];
             }
-            case this.state === SessionClientState.LANConnecting && ev === SessionProtocol.EventID.LanDialOk: {
-                this.state = SessionClientState.LANVerifying;
-                return [SessionProtocol.CmdID.SendLanVerify];
+            case this.state === SessionClientState.PairDialing && ev === SessionProtocol.EventID.DialOk: {
+                this.state = SessionClientState.PairChecking;
+                return [SessionProtocol.CmdID.SendPairCheck];
             }
-            case this.state === SessionClientState.LANConnecting && ev === SessionProtocol.EventID.LanDialFailed: {
+            case this.state === SessionClientState.PairDialing && ev === SessionProtocol.EventID.DialFailed: {
                 this.state = SessionClientState.RelayConnected;
                 return [];
             }
-            case this.state === SessionClientState.LANVerifying && ev === SessionProtocol.EventID.RecvLanConfirm: {
+            case this.state === SessionClientState.PairChecking && ev === SessionProtocol.EventID.RecvPairCheckAck: {
                 this.actions.get(SessionProtocol.ActionID.ActivateLan)?.();
-                this.cActivePath = "lan";
-                this.cDispatcherPath = "lan";
-                this.lanSignal = "ready";
-                this.state = SessionClientState.LANActive;
-                return [SessionProtocol.CmdID.StartLanStreamReader, SessionProtocol.CmdID.StartLanDgReader, SessionProtocol.CmdID.SignalLanReady, SessionProtocol.CmdID.SetCryptoDatagram];
+                this.cActivePath = "alt";
+                this.cDispatcherPath = "alt";
+                this.altSignal = "ready";
+                this.state = SessionClientState.AltActive;
+                return [SessionProtocol.CmdID.StartAltStreamReader, SessionProtocol.CmdID.StartAltDgReader, SessionProtocol.CmdID.SignalAltReady, SessionProtocol.CmdID.SetCryptoDatagram];
             }
-            case this.state === SessionClientState.LANVerifying && ev === SessionProtocol.EventID.VerifyTimeout: {
+            case this.state === SessionClientState.PairChecking && ev === SessionProtocol.EventID.VerifyTimeout: {
                 this.cDispatcherPath = "relay";
                 this.state = SessionClientState.RelayConnected;
                 return [];
             }
-            case this.state === SessionClientState.LANActive && ev === SessionProtocol.EventID.RecvPathPing: {
-                this.state = SessionClientState.LANActive;
+            case this.state === SessionClientState.AltActive && ev === SessionProtocol.EventID.RecvPathPing: {
+                this.state = SessionClientState.AltActive;
                 return [SessionProtocol.CmdID.SendPathPong];
             }
-            case this.state === SessionClientState.LANActive && ev === SessionProtocol.EventID.LanError: {
+            case this.state === SessionClientState.AltActive && ev === SessionProtocol.EventID.AltError: {
                 this.actions.get(SessionProtocol.ActionID.FallbackToRelay)?.();
                 this.cActivePath = "relay";
                 this.cDispatcherPath = "relay";
-                this.lanSignal = "pending";
+                this.altSignal = "pending";
                 this.state = SessionClientState.RelayFallback;
-                return [SessionProtocol.CmdID.StopLanStreamReader, SessionProtocol.CmdID.StopLanDgReader, SessionProtocol.CmdID.CloseLanPath, SessionProtocol.CmdID.ResetLanReady];
+                return [SessionProtocol.CmdID.StopAltStreamReader, SessionProtocol.CmdID.StopAltDgReader, SessionProtocol.CmdID.CloseAltPath, SessionProtocol.CmdID.ResetAltReady];
             }
-            case this.state === SessionClientState.LANActive && ev === SessionProtocol.EventID.LanStreamError: {
+            case this.state === SessionClientState.AltActive && ev === SessionProtocol.EventID.AltStreamError: {
                 this.actions.get(SessionProtocol.ActionID.FallbackToRelay)?.();
                 this.cActivePath = "relay";
                 this.cDispatcherPath = "relay";
-                this.lanSignal = "pending";
+                this.altSignal = "pending";
                 this.state = SessionClientState.RelayFallback;
-                return [SessionProtocol.CmdID.StopLanStreamReader, SessionProtocol.CmdID.StopLanDgReader, SessionProtocol.CmdID.CloseLanPath, SessionProtocol.CmdID.ResetLanReady];
+                return [SessionProtocol.CmdID.StopAltStreamReader, SessionProtocol.CmdID.StopAltDgReader, SessionProtocol.CmdID.CloseAltPath, SessionProtocol.CmdID.ResetAltReady];
             }
             case this.state === SessionClientState.RelayFallback && ev === SessionProtocol.EventID.RelayOk: {
                 this.state = SessionClientState.RelayConnected;
                 return [];
             }
-            case this.state === SessionClientState.LANActive && ev === SessionProtocol.EventID.RecvLanOffer && this.guards.get(SessionProtocol.GuardID.LanEnabled)?.() === true: {
-                this.actions.get(SessionProtocol.ActionID.DialLan)?.();
-                this.state = SessionClientState.LANConnecting;
-                return [SessionProtocol.CmdID.StopLanStreamReader, SessionProtocol.CmdID.StopLanDgReader, SessionProtocol.CmdID.CloseLanPath, SessionProtocol.CmdID.DialLan];
+            case this.state === SessionClientState.AltActive && ev === SessionProtocol.EventID.RecvCandidates && this.guards.get(SessionProtocol.GuardID.AltEnabled)?.() === true: {
+                this.actions.get(SessionProtocol.ActionID.DialCandidate)?.();
+                this.state = SessionClientState.PairDialing;
+                return [SessionProtocol.CmdID.StopAltStreamReader, SessionProtocol.CmdID.StopAltDgReader, SessionProtocol.CmdID.CloseAltPath, SessionProtocol.CmdID.DialCandidate];
             }
-            case this.state === SessionClientState.LANConnecting && ev === SessionProtocol.EventID.AppForceFallback: {
+            case this.state === SessionClientState.PairDialing && ev === SessionProtocol.EventID.AppForceFallback: {
                 this.state = SessionClientState.RelayConnected;
                 return [];
             }
-            case this.state === SessionClientState.LANVerifying && ev === SessionProtocol.EventID.AppForceFallback: {
+            case this.state === SessionClientState.PairChecking && ev === SessionProtocol.EventID.AppForceFallback: {
                 this.cDispatcherPath = "relay";
                 this.state = SessionClientState.RelayConnected;
-                return [SessionProtocol.CmdID.StopLanStreamReader, SessionProtocol.CmdID.StopLanDgReader, SessionProtocol.CmdID.CloseLanPath];
+                return [SessionProtocol.CmdID.StopAltStreamReader, SessionProtocol.CmdID.StopAltDgReader, SessionProtocol.CmdID.CloseAltPath];
             }
-            case this.state === SessionClientState.LANActive && ev === SessionProtocol.EventID.AppForceFallback: {
+            case this.state === SessionClientState.AltActive && ev === SessionProtocol.EventID.AppForceFallback: {
                 this.actions.get(SessionProtocol.ActionID.FallbackToRelay)?.();
                 this.cActivePath = "relay";
                 this.cDispatcherPath = "relay";
-                this.lanSignal = "pending";
+                this.altSignal = "pending";
                 this.state = SessionClientState.RelayConnected;
-                return [SessionProtocol.CmdID.StopLanStreamReader, SessionProtocol.CmdID.StopLanDgReader, SessionProtocol.CmdID.CloseLanPath, SessionProtocol.CmdID.ResetLanReady];
+                return [SessionProtocol.CmdID.StopAltStreamReader, SessionProtocol.CmdID.StopAltDgReader, SessionProtocol.CmdID.CloseAltPath, SessionProtocol.CmdID.ResetAltReady];
             }
             case this.state === SessionClientState.RelayConnected && ev === SessionProtocol.EventID.Disconnect: {
                 this.state = SessionClientState.Paired;
@@ -893,16 +897,16 @@ export class SessionClientMachine {
                 this.state = SessionClientState.RelayConnected;
                 return [SessionProtocol.CmdID.WriteActiveStream];
             }
-            case this.state === SessionClientState.LANConnecting && ev === SessionProtocol.EventID.AppSend: {
-                this.state = SessionClientState.LANConnecting;
+            case this.state === SessionClientState.PairDialing && ev === SessionProtocol.EventID.AppSend: {
+                this.state = SessionClientState.PairDialing;
                 return [SessionProtocol.CmdID.WriteActiveStream];
             }
-            case this.state === SessionClientState.LANVerifying && ev === SessionProtocol.EventID.AppSend: {
-                this.state = SessionClientState.LANVerifying;
+            case this.state === SessionClientState.PairChecking && ev === SessionProtocol.EventID.AppSend: {
+                this.state = SessionClientState.PairChecking;
                 return [SessionProtocol.CmdID.WriteActiveStream];
             }
-            case this.state === SessionClientState.LANActive && ev === SessionProtocol.EventID.AppSend: {
-                this.state = SessionClientState.LANActive;
+            case this.state === SessionClientState.AltActive && ev === SessionProtocol.EventID.AppSend: {
+                this.state = SessionClientState.AltActive;
                 return [SessionProtocol.CmdID.WriteActiveStream];
             }
             case this.state === SessionClientState.RelayFallback && ev === SessionProtocol.EventID.AppSend: {
@@ -913,16 +917,16 @@ export class SessionClientMachine {
                 this.state = SessionClientState.RelayConnected;
                 return [SessionProtocol.CmdID.DeliverRecv];
             }
-            case this.state === SessionClientState.LANConnecting && ev === SessionProtocol.EventID.RelayStreamData: {
-                this.state = SessionClientState.LANConnecting;
+            case this.state === SessionClientState.PairDialing && ev === SessionProtocol.EventID.RelayStreamData: {
+                this.state = SessionClientState.PairDialing;
                 return [SessionProtocol.CmdID.DeliverRecv];
             }
-            case this.state === SessionClientState.LANVerifying && ev === SessionProtocol.EventID.RelayStreamData: {
-                this.state = SessionClientState.LANVerifying;
+            case this.state === SessionClientState.PairChecking && ev === SessionProtocol.EventID.RelayStreamData: {
+                this.state = SessionClientState.PairChecking;
                 return [SessionProtocol.CmdID.DeliverRecv];
             }
-            case this.state === SessionClientState.LANActive && ev === SessionProtocol.EventID.RelayStreamData: {
-                this.state = SessionClientState.LANActive;
+            case this.state === SessionClientState.AltActive && ev === SessionProtocol.EventID.RelayStreamData: {
+                this.state = SessionClientState.AltActive;
                 return [SessionProtocol.CmdID.DeliverRecv];
             }
             case this.state === SessionClientState.RelayFallback && ev === SessionProtocol.EventID.RelayStreamData: {
@@ -933,16 +937,16 @@ export class SessionClientMachine {
                 this.state = SessionClientState.RelayConnected;
                 return [SessionProtocol.CmdID.DeliverRecvError];
             }
-            case this.state === SessionClientState.LANConnecting && ev === SessionProtocol.EventID.RelayStreamError: {
-                this.state = SessionClientState.LANConnecting;
+            case this.state === SessionClientState.PairDialing && ev === SessionProtocol.EventID.RelayStreamError: {
+                this.state = SessionClientState.PairDialing;
                 return [SessionProtocol.CmdID.DeliverRecvError];
             }
-            case this.state === SessionClientState.LANVerifying && ev === SessionProtocol.EventID.RelayStreamError: {
-                this.state = SessionClientState.LANVerifying;
+            case this.state === SessionClientState.PairChecking && ev === SessionProtocol.EventID.RelayStreamError: {
+                this.state = SessionClientState.PairChecking;
                 return [SessionProtocol.CmdID.DeliverRecvError];
             }
-            case this.state === SessionClientState.LANActive && ev === SessionProtocol.EventID.RelayStreamError: {
-                this.state = SessionClientState.LANActive;
+            case this.state === SessionClientState.AltActive && ev === SessionProtocol.EventID.RelayStreamError: {
+                this.state = SessionClientState.AltActive;
                 return [SessionProtocol.CmdID.DeliverRecvError];
             }
             case this.state === SessionClientState.RelayFallback && ev === SessionProtocol.EventID.RelayStreamError: {
@@ -953,16 +957,16 @@ export class SessionClientMachine {
                 this.state = SessionClientState.RelayConnected;
                 return [SessionProtocol.CmdID.SendActiveDatagram];
             }
-            case this.state === SessionClientState.LANConnecting && ev === SessionProtocol.EventID.AppSendDatagram: {
-                this.state = SessionClientState.LANConnecting;
+            case this.state === SessionClientState.PairDialing && ev === SessionProtocol.EventID.AppSendDatagram: {
+                this.state = SessionClientState.PairDialing;
                 return [SessionProtocol.CmdID.SendActiveDatagram];
             }
-            case this.state === SessionClientState.LANVerifying && ev === SessionProtocol.EventID.AppSendDatagram: {
-                this.state = SessionClientState.LANVerifying;
+            case this.state === SessionClientState.PairChecking && ev === SessionProtocol.EventID.AppSendDatagram: {
+                this.state = SessionClientState.PairChecking;
                 return [SessionProtocol.CmdID.SendActiveDatagram];
             }
-            case this.state === SessionClientState.LANActive && ev === SessionProtocol.EventID.AppSendDatagram: {
-                this.state = SessionClientState.LANActive;
+            case this.state === SessionClientState.AltActive && ev === SessionProtocol.EventID.AppSendDatagram: {
+                this.state = SessionClientState.AltActive;
                 return [SessionProtocol.CmdID.SendActiveDatagram];
             }
             case this.state === SessionClientState.RelayFallback && ev === SessionProtocol.EventID.AppSendDatagram: {
@@ -973,28 +977,28 @@ export class SessionClientMachine {
                 this.state = SessionClientState.RelayConnected;
                 return [SessionProtocol.CmdID.DeliverRecvDatagram];
             }
-            case this.state === SessionClientState.LANConnecting && ev === SessionProtocol.EventID.RelayDatagram: {
-                this.state = SessionClientState.LANConnecting;
+            case this.state === SessionClientState.PairDialing && ev === SessionProtocol.EventID.RelayDatagram: {
+                this.state = SessionClientState.PairDialing;
                 return [SessionProtocol.CmdID.DeliverRecvDatagram];
             }
-            case this.state === SessionClientState.LANVerifying && ev === SessionProtocol.EventID.RelayDatagram: {
-                this.state = SessionClientState.LANVerifying;
+            case this.state === SessionClientState.PairChecking && ev === SessionProtocol.EventID.RelayDatagram: {
+                this.state = SessionClientState.PairChecking;
                 return [SessionProtocol.CmdID.DeliverRecvDatagram];
             }
-            case this.state === SessionClientState.LANActive && ev === SessionProtocol.EventID.RelayDatagram: {
-                this.state = SessionClientState.LANActive;
+            case this.state === SessionClientState.AltActive && ev === SessionProtocol.EventID.RelayDatagram: {
+                this.state = SessionClientState.AltActive;
                 return [SessionProtocol.CmdID.DeliverRecvDatagram];
             }
             case this.state === SessionClientState.RelayFallback && ev === SessionProtocol.EventID.RelayDatagram: {
                 this.state = SessionClientState.RelayFallback;
                 return [SessionProtocol.CmdID.DeliverRecvDatagram];
             }
-            case this.state === SessionClientState.LANActive && ev === SessionProtocol.EventID.LanStreamData: {
-                this.state = SessionClientState.LANActive;
+            case this.state === SessionClientState.AltActive && ev === SessionProtocol.EventID.AltStreamData: {
+                this.state = SessionClientState.AltActive;
                 return [SessionProtocol.CmdID.DeliverRecv];
             }
-            case this.state === SessionClientState.LANActive && ev === SessionProtocol.EventID.LanDatagram: {
-                this.state = SessionClientState.LANActive;
+            case this.state === SessionClientState.AltActive && ev === SessionProtocol.EventID.AltDatagram: {
+                this.state = SessionClientState.AltActive;
                 return [SessionProtocol.CmdID.DeliverRecvDatagram];
             }
         }
