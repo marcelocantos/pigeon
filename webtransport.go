@@ -6,7 +6,6 @@ package pigeon
 import (
 	"context"
 	"crypto/rand"
-	"crypto/subtle"
 	"crypto/tls"
 	"encoding/binary"
 	"encoding/hex"
@@ -143,7 +142,7 @@ func readMessage(stream io.Reader) ([]byte, error) {
 type WebTransportServer struct {
 	wtServer *webtransport.Server
 	hub      *hub
-	token    string // bearer token for /register auth; empty = open
+	auth     Auth
 	addr     string
 	conn     net.PacketConn
 }
@@ -151,19 +150,20 @@ type WebTransportServer struct {
 // NewWebTransportServer creates a WebTransport relay server listening on addr.
 // The provided TLS config is used for the QUIC/HTTP3 connection (it may use
 // static certificates or a dynamic GetCertificate callback such as certmagic).
-// If token is non-empty, /register requires a matching Bearer token.
-func NewWebTransportServer(addr string, tlsConfig *tls.Config, token string) (*WebTransportServer, error) {
-	return NewWebTransportServerWithHub(addr, tlsConfig, token, newHub())
+// The zero Auth means "accept all" (open relay); see BearerTokenAuth and
+// MutualTLSAuth for the bundled defaults.
+func NewWebTransportServer(addr string, tlsConfig *tls.Config, auth Auth) (*WebTransportServer, error) {
+	return NewWebTransportServerWithHub(addr, tlsConfig, auth, newHub())
 }
 
 // NewWebTransportServerWithHub creates a WebTransport relay server that
 // shares the provided hub with other server types (e.g. raw QUIC).
-func NewWebTransportServerWithHub(addr string, tlsConfig *tls.Config, token string, h *hub) (*WebTransportServer, error) {
+func NewWebTransportServerWithHub(addr string, tlsConfig *tls.Config, auth Auth, h *hub) (*WebTransportServer, error) {
 	mux := http.NewServeMux()
 	s := &WebTransportServer{
-		hub:   h,
-		token: token,
-		addr:  addr,
+		hub:  h,
+		auth: auth,
+		addr: addr,
 	}
 
 	// Clone to avoid mutating the caller's config.
@@ -205,14 +205,24 @@ func NewWebTransportServerWithHub(addr string, tlsConfig *tls.Config, token stri
 }
 
 func (s *WebTransportServer) handleRegister(w http.ResponseWriter, r *http.Request) {
-	if s.token != "" {
-		auth := r.Header.Get("Authorization")
-		if auth == "" {
-			if qtoken := r.URL.Query().Get("token"); qtoken != "" {
-				auth = "Bearer " + qtoken
-			}
+	if s.auth.VerifyRegister != nil {
+		// Bearer credential lives in the Authorization header or, for
+		// browsers that can't set headers on the upgrade, the ?token=
+		// query param. The verifier sees whichever was presented (or
+		// "" if neither).
+		token := ""
+		if h := r.Header.Get("Authorization"); strings.HasPrefix(h, "Bearer ") {
+			token = h[len("Bearer "):]
+		} else if q := r.URL.Query().Get("token"); q != "" {
+			token = q
 		}
-		if subtle.ConstantTimeCompare([]byte(auth), []byte("Bearer "+s.token)) != 1 {
+		req := &RegisterRequest{
+			Token:       token,
+			TLS:         r.TLS,
+			HTTPRequest: r,
+		}
+		if err := s.auth.VerifyRegister(r.Context(), req); err != nil {
+			slog.Warn("wt register: unauthorized", "err", err)
 			http.Error(w, `{"error":"unauthorized"}`, http.StatusUnauthorized)
 			return
 		}
@@ -293,6 +303,19 @@ func (s *WebTransportServer) handleClient(w http.ResponseWriter, r *http.Request
 	if inst == nil {
 		http.Error(w, `{"error":"instance not found"}`, http.StatusNotFound)
 		return
+	}
+
+	if s.auth.VerifyConnect != nil {
+		req := &ConnectRequest{
+			InstanceID:  instanceID,
+			TLS:         r.TLS,
+			HTTPRequest: r,
+		}
+		if err := s.auth.VerifyConnect(r.Context(), req); err != nil {
+			slog.Warn("wt connect: unauthorized", "err", err)
+			http.Error(w, `{"error":"unauthorized"}`, http.StatusUnauthorized)
+			return
+		}
 	}
 
 	session, err := s.wtServer.Upgrade(w, r)

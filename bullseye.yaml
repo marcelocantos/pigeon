@@ -1475,18 +1475,21 @@ targets:
     discovered: 2026-05-02
     achieved: 2026-05-21
   T42:
-    name: Relay authentication moves from bearer-in-greeting to QUIC/TLS-layer (mTLS or token-at-handshake)
-    status: identified
+    name: Relay authentication exposed as an open-ended Auth hook on the pigeon library; mechanism is adopter choice (bearer, mTLS, OIDC, …)
+    status: achieved
     value: 0.0
     cost: 0.0
     acceptance:
-    - Relay authentication is performed at the QUIC/TLS handshake layer (server-side validation of a client cert, or a token presented as a TLS extension / ALPN-negotiated parameter) rather than in the application-level register-mux greeting.
-    - The register-mux greeting either drops its token field entirely, or retains it only for backwards compatibility with older clients during a transition period documented in docs/audit-log.md.
-    - The Go relay (cmd/pigeon) and the per-SDK clients (Go, Swift, Kotlin, C) all use the new mechanism. make bullseye stays green.
-    - docs/DESIGN.md section 2 'Authentication to the relay' is updated to describe the chosen mechanism and remove the placeholder framing.
-    context: Per docs/DESIGN.md section 2, the current bearer-in-greeting form is a provisional placeholder - relay auth is a connection-level concern that should ride on QUIC/TLS, not appear in pigeon's application greeting. This target is bounded once the relay's QUIC config grows a TLS verify hook. Orthogonal to AEAD security between peers (a relay that authenticates an impersonator still cannot decrypt session data, because the AEAD channel is keyed from the PairingRecord). Not blocking any other current target.
-    origin: docs/DESIGN.md section 2 (Authentication to the relay) and section 9 (gap 5)
+    - The pigeon library exposes an Auth struct (func-valued fields VerifyRegister and VerifyConnect) on the server-side config. The verifier sees the live *quic.Conn (so it can inspect TLS state, peer certs, transport params) plus the parsed greeting metadata. A nil Auth means "accept all" (open-relay behaviour).
+    - Two bundled helpers ship as obvious defaults pigeon.BearerTokenAuth(token) (current behaviour) and pigeon.MutualTLSAuth(*x509.CertPool). Adopters can implement their own (per-cert allowlist, OIDC, etc.) without forking.
+    - cmd/pigeon default behaviour is unchanged PIGEON_TOKEN env var wires up BearerTokenAuth internally; empty token = open relay. The user-facing semantics of the bundled relay do not regress.
+    - The register-mux greeting keeps its optional token field one mechanism the verifier can consume, not the only one. SDK call sites that send the token are not touched.
+    - docs/DESIGN.md section 2 is rewritten to describe the Auth hook (not a specific mechanism) and remove the "provisional placeholder" framing. Section 9 gap 7 is closed.
+    - make bullseye stays green. Existing token-validation tests pass against the default BearerTokenAuth verifier.
+    context: 2026-05-26 reframe original target prescribed mTLS-or-token-at-handshake as a turnkey pigeon choice. That is wrong for pigeon's positioning as a library third-party adopters have wildly different auth needs (static token, mTLS, OIDC, hardware-backed keys, per-tenant API keys). The right shape is a verifier hook that gives the adopter full access to QUIC/TLS state plus greeting metadata, with bundled defaults for the common cases. Mechanism is no longer a pigeon concern. Critical constraint browser WebTransport has no client-cert API, so any "TLS-layer" mechanism would be raw-QUIC-only anyway the hook abstracts over this naturally because the verifier just reads whatever's available.
+    origin: docs/DESIGN.md section 2 (Authentication to the relay) and section 9 (gap 7)
     discovered: 2026-05-02
+    achieved: 2026-05-26
   T43:
     name: STUN-reflexive candidate gathering as a third path-tier between LAN-direct and relay (Phase 1)
     status: identified

@@ -406,7 +406,7 @@ func startRelay(ctx context.Context, b *bus) (string, error) {
 	}
 	tlsCfg := &tls.Config{Certificates: []tls.Certificate{cert}}
 
-	wtSrv, err := pigeon.NewWebTransportServer("127.0.0.1:0", tlsCfg, "")
+	wtSrv, err := pigeon.NewWebTransportServer("127.0.0.1:0", tlsCfg, pigeon.Auth{})
 	if err != nil {
 		return "", fmt.Errorf("wt server: %w", err)
 	}
@@ -420,7 +420,7 @@ func startRelay(ctx context.Context, b *bus) (string, error) {
 		return "", fmt.Errorf("listen udp: %w", err)
 	}
 	port := udpConn.LocalAddr().(*net.UDPAddr).Port
-	qSrv := pigeon.NewQUICServer(fmt.Sprintf("127.0.0.1:%d", port), tlsCfg, "", wtSrv.Hub())
+	qSrv := pigeon.NewQUICServer(fmt.Sprintf("127.0.0.1:%d", port), tlsCfg, pigeon.Auth{}, wtSrv.Hub())
 	go func() {
 		if err := qSrv.ServeWithTLS(udpConn, tlsCfg); err != nil && ctx.Err() == nil {
 			b.publish(event{Pane: "system", Dir: "info", Text: "relay stopped: " + err.Error()})

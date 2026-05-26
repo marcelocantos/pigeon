@@ -197,8 +197,10 @@ func main() {
 		)
 	}
 
+	auth := pigeon.BearerTokenAuth(token)
+
 	wtAddr := ":" + listenPort
-	srv, err := pigeon.NewWebTransportServer(wtAddr, tlsConfig, token)
+	srv, err := pigeon.NewWebTransportServer(wtAddr, tlsConfig, auth)
 	if err != nil {
 		slog.Error("failed to create WebTransport server", "err", err)
 		os.Exit(1)
@@ -206,7 +208,7 @@ func main() {
 
 	// Start the raw QUIC server sharing the same hub.
 	qAddr := ":" + listenQUICPort
-	qsrv := pigeon.NewQUICServer(qAddr, tlsConfig, token, srv.Hub())
+	qsrv := pigeon.NewQUICServer(qAddr, tlsConfig, auth, srv.Hub())
 
 	// When using certmagic, start a TCP/TLS listener on the same port
 	// for ACME TLS-ALPN-01 challenges and HTTPS health checks.

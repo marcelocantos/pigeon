@@ -87,19 +87,37 @@ What the relay does **not** see:
 pairing means). They do not trust the relay with payload data, nor any
 third party.
 
-**Authentication to the relay.** Pigeon authenticates to the relay via
-an optional bearer token presented in the relay greeting
-(`register-mux:<token>:[<id>]` on the backend side; clients are
-authenticated transitively by the backend's pairing callback). This is
-out of scope for the design proper — it is a connection-level concern
-that should ride on QUIC/TLS rather than appearing in pigeon's
-application greeting. The current bearer-in-greeting form is a
-provisional placeholder; the target is mTLS or per-connection token
-exchange at the QUIC handshake layer (see §9). Whatever the mechanism,
-relay auth is orthogonal to the AEAD security between peers — a relay
-that authenticates a backend impersonator still cannot decrypt session
-data, because the AEAD channel is keyed from the PairingRecord, not
-from anything the relay knows.
+**Authentication to the relay.** Pigeon does not prescribe a single
+mechanism. The library exposes a verifier hook (`pigeon.Auth` with
+`VerifyRegister` and `VerifyConnect` func fields); adopters plug in
+whatever mechanism their deployment needs — a static bearer token,
+mTLS, OIDC, per-tenant API keys, hardware-backed client certs, an
+allowlist of cert fingerprints. The verifier sees the live
+`*quic.Conn` (or `*http.Request` for WebTransport), the TLS handshake
+state including any peer certificates, and the greeting metadata, and
+returns a non-nil error to refuse the registration. The zero `Auth`
+means "accept all" — explicit open-relay mode.
+
+Two helpers ship as defaults: `pigeon.BearerTokenAuth(token)`
+(constant-time-compares a presented register-mux greeting token or
+WebTransport `Authorization: Bearer` credential) and
+`pigeon.MutualTLSAuth(*x509.CertPool)` (requires the peer to have
+presented a client certificate signed by one of the roots; caller is
+responsible for setting `tls.Config.ClientAuth` and `ClientCAs`). The
+bundled `cmd/pigeon` relay binary uses `BearerTokenAuth` against
+`PIGEON_TOKEN`; empty token = open relay.
+
+The greeting still carries an optional token field — it's one
+mechanism the verifier may consume, not the only one. Browser
+WebTransport clients can't set TLS-layer credentials, so the
+`Authorization` header on the upgrade request is the only credential
+channel available to them; the verifier sees it via
+`RegisterRequest.Token`.
+
+Whatever the mechanism, relay auth is orthogonal to the AEAD security
+between peers — a relay that authenticates a backend impersonator
+still cannot decrypt session data, because the AEAD channel is keyed
+from the `PairingRecord`, not from anything the relay knows.
 
 **Out of scope of the threat model.**
 
@@ -634,11 +652,10 @@ than running ad-hoc Go code.
 6. **Cross-language API parity.** Swift / Kotlin / C are all behind Go
    on at least one application-API edge (Swift's `setChannel`
    asymmetry is the documented case; others may exist).
-7. **Relay authentication mechanism.** Currently a bearer token in the
-   `register-mux` greeting. Should move to QUIC/TLS layer (mTLS or
-   token exchange at handshake time) — application-greeting auth is
-   the wrong layer. Captured in §2; the implementation change is
-   bounded once the relay's QUIC config grows a TLS verify hook.
+7. ~~**Relay authentication mechanism.**~~ Closed under 🎯T42 —
+   pigeon exposes a `pigeon.Auth` verifier hook with bundled
+   `BearerTokenAuth` and `MutualTLSAuth` helpers; mechanism is
+   adopter choice. See §2.
 
 **Future explorations** (out of scope for v1, captured here so they're
 not lost):
