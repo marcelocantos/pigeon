@@ -59,31 +59,112 @@ ip := qr.LanIP()         // "192.168.1.5" or "localhost" on error
 
 ### Root package (relay client)
 
+The root package exposes `Register`, `Connect`, `Listener`, `Session`, `Stream`, and `Datagram`.
+
+**`Register`** publishes a backend on the relay and returns a `*Listener` plus the stable `instanceID` to advertise. Each `listener.Accept(ctx)` call returns one `*Session` for a newly paired client.
+
+**`Connect`** dials an already-paired backend by `instanceID` and returns a `*Session` ready for I/O.
+
+**`Session`** is the per-peer handle. It carries:
+- `Primary() *Stream` — the default reliable stream (use in pairing-mode or as the main message pipe).
+- `OpenStream(ctx, name) (*Stream, error)` — open a named reliable stream; the peer calls `AcceptStream` with the same name.
+- `AcceptStream(ctx, name) (*Stream, error)` — accept a named stream opened by the peer.
+- `Datagram(name) *Datagram` — retrieve a pre-declared datagram channel by name.
+- `PeerID() string` — InstanceID of the remote peer.
+- `Close() error` — tear down the session.
+
+**`Stream`** is a reliable, ordered, AEAD-encrypted message channel:
+- `Send(msg []byte) error`
+- `Recv(ctx context.Context) ([]byte, error)`
+- `Close() error`
+
+**`Datagram`** is an unreliable, unordered channel keyed by pre-agreed varint ID:
+- `Send(payload []byte) error`
+- `Recv(ctx context.Context) ([]byte, error)`
+
 ```go
-// Register as a backend — returns a Conn with an assigned instance ID.
-conn, err := pigeon.Register(ctx, "https://relay.example.com",
-    pigeon.WithToken("bearer-token"),
-    pigeon.WithTLS(&tls.Config{RootCAs: pool}))
-defer conn.Close()
-id := conn.InstanceID()
+// Backend side.
+listener, instanceID, err := pigeon.Register(ctx, &pigeon.RegisterArgs{
+    Identity:  identity,          // crypto.Identity (long-term keypair)
+    Pairing:   resolvePairing,    // func(clientID string) (*crypto.PairingRecord, error)
+    Relay:     "https://relay.example.com",
+    Token:     bearerToken,       // optional; wires through BearerTokenAuth
+    Datagrams: map[string]uint64{"video": 1},
+})
+defer listener.Close()
+// Advertise instanceID (e.g. as QR payload), then loop:
+session, err := listener.Accept(ctx)
+defer session.Close()
 
-// Connect as a client to a specific backend instance.
-conn, err := pigeon.Connect(ctx, "https://relay.example.com", instanceID,
-    pigeon.WithTLS(&tls.Config{RootCAs: pool}))
-defer conn.Close()
+// Client side.
+session, err := pigeon.Connect(ctx, &pigeon.ConnectArgs{
+    InstanceID: instanceID,
+    Record:     pairingRecord,    // *crypto.PairingRecord from the pairing ceremony
+    Identity:   identity,
+    Relay:      "https://relay.example.com",
+    Datagrams:  map[string]uint64{"video": 1},
+})
+defer session.Close()
 
-// Stream messages (reliable, ordered).
-conn.Send(ctx, []byte("hello"))
-data, err := conn.Recv(ctx)
+// Reliable stream I/O.
+primary := session.Primary()
+if err := primary.Send([]byte("hello")); err != nil { ... }
+msg, err := primary.Recv(ctx)
 
-// Datagrams (unreliable, unordered — for real-time data).
-conn.SendDatagram([]byte("frame"))
-data, err := conn.RecvDatagram(ctx)
+// Named extra stream (both peers call matching Open/Accept).
+stream, err := session.OpenStream(ctx, "control")
+// peer: stream, err := session.AcceptStream(ctx, "control")
 
-// E2E encryption — set after key exchange.
-conn.SetChannel(ch)            // encrypts/decrypts stream messages
-conn.SetDatagramChannel(dgCh)  // encrypts/decrypts datagrams
+// Datagram I/O.
+video := session.Datagram("video")
+video.Send(frame)
+frame, err := video.Recv(ctx)
 ```
+
+## Relay Authentication
+
+The relay server accepts a `pigeon.Auth` hook that controls which backends and clients it admits. Both fields are optional; the zero `Auth` means "accept all" (open relay).
+
+```go
+type Auth struct {
+    VerifyRegister func(ctx context.Context, req *RegisterRequest) error
+    VerifyConnect  func(ctx context.Context, req *ConnectRequest) error
+}
+```
+
+`Auth` is passed to `NewWebTransportServer` or `NewQUICServer` when constructing a relay. Client-side auth is separate: pass a `Token` in `ConnectArgs` / `RegisterArgs` and the relay checks it against the configured verifier.
+
+**Built-in verifiers:**
+
+`BearerTokenAuth(token string) Auth` — admits only registrations whose greeting token matches `token` (constant-time compare). An empty token returns the zero `Auth`. `VerifyConnect` is left unset — clients are admitted transitively by backend pairing logic.
+
+`MutualTLSAuth(pool *x509.CertPool) Auth` — requires a TLS client certificate signed by one of the roots in `pool`. The caller must also set `tls.Config.ClientAuth = tls.RequireAndVerifyClientCert` on the server TLS config.
+
+**`PIGEON_TOKEN`** wires through `BearerTokenAuth` by default. Adopt a custom `Auth` to replace it with any admission policy.
+
+**`RegisterRequest` / `ConnectRequest`** expose the live transport handle for verifiers: `Token`, `InstanceID`, `TLS` (negotiated state + peer certs), `QUICConn` (raw QUIC; nil for WebTransport), and `HTTPRequest` (WebTransport upgrade request; nil for raw QUIC).
+
+**Custom verifier example** (fingerprint allowlist):
+
+```go
+allowlist := map[string]bool{
+    "AA:BB:CC:...": true,
+}
+auth := pigeon.Auth{
+    VerifyRegister: func(ctx context.Context, req *pigeon.RegisterRequest) error {
+        if req.TLS == nil || len(req.TLS.PeerCertificates) == 0 {
+            return pigeon.ErrUnauthorized
+        }
+        fp := fingerprintSHA256(req.TLS.PeerCertificates[0])
+        if !allowlist[fp] {
+            return pigeon.ErrUnauthorized
+        }
+        return nil
+    },
+}
+```
+
+See [docs/DESIGN.md §2](docs/DESIGN.md) for the broader threat model that motivates these hooks.
 
 ## Relay Endpoints
 
@@ -258,6 +339,6 @@ PORT=443 ./pigeon                           # run relay server (self-signed cert
 | `--key` | — | TLS private key file (PEM) |
 | `--version` | — | Print version and exit |
 | `--help-agent` | — | Print this guide |
-| `PIGEON_TOKEN` | — | Bearer token for /register auth |
+| `PIGEON_TOKEN` | — | Bearer token for /register auth. Wires through the default `BearerTokenAuth` verifier; replace with any custom `pigeon.Auth` for more complex admission policies. |
 
 Build-time version injection: `-ldflags "-X main.version=<version>"`.

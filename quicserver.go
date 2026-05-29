@@ -5,7 +5,6 @@ package pigeon
 
 import (
 	"context"
-	"crypto/subtle"
 	"crypto/tls"
 	"fmt"
 	"log/slog"
@@ -88,7 +87,7 @@ func (s *quicSession) Close() error {
 // to a WebTransport browser client and vice versa.
 type QUICServer struct {
 	hub       *hub
-	token     string
+	auth      Auth
 	addr      string
 	listener  *quic.Listener
 	conn      net.PacketConn
@@ -96,12 +95,14 @@ type QUICServer struct {
 }
 
 // NewQUICServer creates a raw QUIC relay server. The hub is shared with
-// a WebTransport server so instances are visible to both protocols.
-func NewQUICServer(addr string, tlsConfig *tls.Config, token string, h *hub) *QUICServer {
+// a WebTransport server so instances are visible to both protocols. The
+// zero Auth means "accept all" (open relay); see BearerTokenAuth and
+// MutualTLSAuth for the bundled defaults.
+func NewQUICServer(addr string, tlsConfig *tls.Config, auth Auth, h *hub) *QUICServer {
 	return &QUICServer{
-		hub:   h,
-		token: token,
-		addr:  addr,
+		hub:  h,
+		auth: auth,
+		addr: addr,
 	}
 }
 
@@ -212,9 +213,16 @@ func (s *QUICServer) handleConnection(conn *quic.Conn) {
 
 func (s *QUICServer) handleRegister(conn *quic.Conn, stream *quic.Stream, token, requestedID string, muxMode bool) {
 
-	if s.token != "" {
-		if subtle.ConstantTimeCompare([]byte(token), []byte(s.token)) != 1 {
-			slog.Warn("quic register: unauthorized")
+	if s.auth.VerifyRegister != nil {
+		tlsState := conn.ConnectionState().TLS
+		req := &RegisterRequest{
+			Token:      token,
+			InstanceID: requestedID,
+			TLS:        &tlsState,
+			QUICConn:   conn,
+		}
+		if err := s.auth.VerifyRegister(conn.Context(), req); err != nil {
+			slog.Warn("quic register: unauthorized", "err", err)
 			conn.CloseWithError(1, "unauthorized")
 			return
 		}
@@ -249,6 +257,20 @@ func (s *QUICServer) handleConnect(conn *quic.Conn, stream *quic.Stream, instanc
 		slog.Error("quic connect: invalid instance ID", "id", instanceID)
 		conn.CloseWithError(1, "invalid instance ID")
 		return
+	}
+
+	if s.auth.VerifyConnect != nil {
+		tlsState := conn.ConnectionState().TLS
+		req := &ConnectRequest{
+			InstanceID: instanceID,
+			TLS:        &tlsState,
+			QUICConn:   conn,
+		}
+		if err := s.auth.VerifyConnect(conn.Context(), req); err != nil {
+			slog.Warn("quic connect: unauthorized", "err", err)
+			conn.CloseWithError(1, "unauthorized")
+			return
+		}
 	}
 
 	inst := s.hub.get(instanceID)

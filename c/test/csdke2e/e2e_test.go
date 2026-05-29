@@ -48,7 +48,7 @@ func startRelay(t *testing.T) *relayFixture {
 	cert := selfSignedCert(t)
 	tlsCfg := &tls.Config{Certificates: []tls.Certificate{cert}}
 
-	wtSrv, err := pigeon.NewWebTransportServer("127.0.0.1:0", tlsCfg, "")
+	wtSrv, err := pigeon.NewWebTransportServer("127.0.0.1:0", tlsCfg, pigeon.Auth{})
 	if err != nil {
 		t.Fatalf("new wt server: %v", err)
 	}
@@ -62,7 +62,7 @@ func startRelay(t *testing.T) *relayFixture {
 		t.Fatalf("listen udp: %v", err)
 	}
 	port := udpConn.LocalAddr().(*net.UDPAddr).Port
-	qSrv := pigeon.NewQUICServer(fmt.Sprintf("127.0.0.1:%d", port), tlsCfg, "", wtSrv.Hub())
+	qSrv := pigeon.NewQUICServer(fmt.Sprintf("127.0.0.1:%d", port), tlsCfg, pigeon.Auth{}, wtSrv.Hub())
 	go func() { _ = qSrv.ServeWithTLS(udpConn, tlsCfg) }()
 
 	// Give the QUIC listener a moment to bind before clients dial.
