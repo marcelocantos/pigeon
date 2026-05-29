@@ -29,18 +29,12 @@ jobs:
           - os: darwin
             arch: arm64
             runner: macos-latest
-            goarch: arm64
-            goos: darwin
           - os: linux
             arch: amd64
             runner: ubuntu-latest
-            goarch: amd64
-            goos: linux
           - os: linux
             arch: arm64
-            runner: ubuntu-latest
-            goarch: arm64
-            goos: linux
+            runner: ubuntu-24.04-arm
 
     steps:
       - uses: actions/checkout@v4
@@ -49,9 +43,28 @@ jobs:
         with:
           go-version-file: go.mod
 
-      - name: Install libsodium (cwire cgo dep)
-        if: matrix.os == 'linux' && matrix.arch == 'amd64'
-        run: sudo apt-get update && sudo apt-get install -y libsodium-dev
+      # cwire links the vendored libsodium static lib at the hardcoded path
+      # c/vendor/build/lib/libsodium.a (see cwire/cwire.go #cgo LDFLAGS), so
+      # the release build needs CGO on and that lib built natively for the
+      # target. Mirror ci.yml's submodule + cache pattern, keyed per os/arch.
+      - name: Resolve libsodium pinned SHA
+        id: libsodium-sha
+        run: echo "sha=$(git ls-tree HEAD c/vendor/github.com/jedisct1/libsodium | awk '{print $3}')" >> "$GITHUB_OUTPUT"
+
+      - name: Cache vendored libsodium build
+        id: cache-libsodium
+        uses: actions/cache@v4
+        with:
+          path: c/vendor/build
+          key: libsodium-${{ matrix.os }}-${{ matrix.arch }}-${{ steps.libsodium-sha.outputs.sha }}-${{ hashFiles('c/vendor/build.sh') }}
+
+      - name: Init vendored libsodium submodule
+        if: steps.cache-libsodium.outputs.cache-hit != 'true'
+        run: git submodule update --init --depth 1 c/vendor/github.com/jedisct1/libsodium
+
+      - name: Build vendored libsodium
+        if: steps.cache-libsodium.outputs.cache-hit != 'true'
+        run: bash c/vendor/build.sh libsodium
 
       - name: Run tests
         if: matrix.os == 'linux' && matrix.arch == 'amd64'
@@ -59,9 +72,7 @@ jobs:
 
       - name: Build binary
         env:
-          GOOS: ${{ matrix.goos }}
-          GOARCH: ${{ matrix.goarch }}
-          CGO_ENABLED: "0"
+          CGO_ENABLED: "1"
           VERSION: ${{ github.event.release.tag_name }}
         run: |
           go build -ldflags "-X main.version=${VERSION}" -o pigeon ./cmd/pigeon

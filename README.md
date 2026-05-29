@@ -55,27 +55,38 @@ import (
 **Quick integration — relay + encrypted channel:**
 
 ```go
-// Backend registers with the relay.
-backend, _ := pigeon.Register(ctx, "https://carrier-pigeon.fly.dev", pigeon.Config{
-    Token: os.Getenv("PIGEON_TOKEN"),
-    TLS:   tlsConfig,
+// Backend registers with the relay and waits for a paired client.
+listener, instanceID, _ := pigeon.Register(ctx, &pigeon.RegisterArgs{
+    Identity:  identity,                         // crypto.Identity (long-term keypair)
+    Pairing:   resolvePairingRecord,             // func(clientID string) (*crypto.PairingRecord, error)
+    Relay:     "https://carrier-pigeon.fly.dev",
+    Token:     os.Getenv("PIGEON_TOKEN"),        // optional; wires through BearerTokenAuth
+    Datagrams: map[string]uint64{"video": 1},
 })
-fmt.Println("Instance ID:", backend.InstanceID()) // share via QR code
+defer listener.Close()
+fmt.Println("Instance ID:", instanceID) // share via QR code
+session, _ := listener.Accept(ctx)     // one paired client per call
+defer session.Close()
 
 // Client connects by instance ID (obtained from QR scan).
-client, _ := pigeon.Connect(ctx, "https://carrier-pigeon.fly.dev", instanceID, pigeon.Config{
-    TLS: tlsConfig,
+session, _ := pigeon.Connect(ctx, &pigeon.ConnectArgs{
+    InstanceID: instanceID,
+    Record:     pairingRecord,                   // *crypto.PairingRecord from pairing ceremony
+    Identity:   identity,
+    Relay:      "https://carrier-pigeon.fly.dev",
+    Datagrams:  map[string]uint64{"video": 1},
 })
+defer session.Close()
 
-// Send/receive through the relay (reliable stream).
-client.Send(ctx, ciphertext)
-data, _ := backend.Recv(ctx)
+// Reliable stream — send/receive encrypted messages.
+primary := session.Primary()
+primary.Send([]byte("hello"))
+data, _ := primary.Recv(ctx)
 
-// Unreliable datagrams (for latency-sensitive data like video frames).
-// Large payloads are automatically fragmented and reassembled; if any
-// fragment is lost the entire message is silently discarded.
-client.SendDatagram(data)
-data, _ = backend.RecvDatagram(ctx)
+// Unreliable datagrams (latency-sensitive data, e.g. video frames).
+video := session.Datagram("video")
+video.Send(frame)
+frame, _ = video.Recv(ctx)
 ```
 
 **Encrypted channel:**
@@ -330,7 +341,7 @@ are included).
 | `--acme-email` | — | Email for Let's Encrypt account |
 | `--cert` | — | TLS certificate file (PEM); if `--domain` is not set |
 | `--key` | — | TLS private key file (PEM); used with `--cert` |
-| `PIGEON_TOKEN` | — | Bearer token required for `/register`; open if unset |
+| `PIGEON_TOKEN` | — | Bearer token required for `/register`; open if unset. Wires through the default `BearerTokenAuth` verifier; replace with any custom `pigeon.Auth` for more complex admission policies. |
 | `--version` | — | Print version and exit |
 | `--help-agent` | — | Print usage + agent guide |
 

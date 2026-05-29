@@ -205,18 +205,10 @@ route to a re-pair flow uniformly.
 
 #### Go
 
-```go
-conn, err := pigeon.ConnectWithArtifact(ctx, artifact, pigeon.Config{})
-if errors.Is(err, pigeon.ErrPairingExpired) {
-    _ = store.Delete()
-    // route to re-pair UI
-    return
-}
-if err != nil { return err }
-defer conn.Close()
-// conn already has SetChannel + SetPairingRecord wired from the artifact.
-conn.Send(ctx, []byte("hello"))
-```
+> **Note:** The `ConnectWithArtifact` helper (and the surrounding
+> `PairingArtifact` / `CredentialStore` / `PairingHost` API) is not yet
+> implemented in Go. Use `pigeon.Connect` with a `*crypto.PairingRecord`
+> loaded from your own store. See the root `api.go` for the current API.
 
 #### Swift
 
@@ -275,21 +267,25 @@ rec, err := crypto.UnmarshalPairingRecord(data)
 store.Save(rec)
 ```
 
-Inside your `pigeon.Register` accept loop, once you know the inbound
-peer's instance ID (from your application's first message — your
-protocol decides), wire the record:
+Inside your `pigeon.Register` accept loop, pass the record lookup as the `Pairing` function so activation resolves it per-client:
 
 ```go
-conn, err := pigeon.Register(ctx, relayURL, pigeon.Config{...})
-peerID, err := readDeviceIDFromHandshake(conn)
-rec, ok := store.Load(peerID)
-if !ok {
-    // Unknown device — re-pair required. Reject or prompt.
-    return
-}
-conn.SetPairingRecord(rec)
-// `Send` / `Recv` / `OpenChannel` now derive their session keys
-// from the stored record automatically.
+listener, instanceID, err := pigeon.Register(ctx, &pigeon.RegisterArgs{
+    Identity: identity,
+    Pairing: func(clientID string) (*crypto.PairingRecord, error) {
+        rec, ok := store.Load(clientID)
+        if !ok {
+            return nil, fmt.Errorf("unknown device %q — re-pair required", clientID)
+        }
+        return rec, nil
+    },
+    Relay: relayURL,
+    Token: bearerToken,
+})
+defer listener.Close()
+// Each Accept call returns a fully-activated *Session with AEAD derived
+// from the matching PairingRecord. No SetPairingRecord call needed.
+session, err := listener.Accept(ctx)
 ```
 
 ### Step 6: Expiry triggers re-pair
