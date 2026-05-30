@@ -1547,7 +1547,7 @@ targets:
     discovered: 2026-05-10
   T46:
     name: Fly.io deploy Dockerfile builds the relay with cwire (CGO) so the deploy job goes green
-    status: identified
+    status: achieved
     value: 0.0
     cost: 0.0
     acceptance:
@@ -1558,6 +1558,7 @@ targets:
     context: 'Deferred from the v0.23.0 release (2026-05-29). Since cwire landed (PR #36) the Fly.io deploy job has been red because the Dockerfile builds with CGO_ENABLED=0, which excludes cwire''s cgo files entirely and leaves api.go with unresolved references. The v0.23.0 release fixed the binary release pipeline (release.yml: vendored libsodium per platform + CGO on native runners) but deferred the Docker/Fly.io fix as out-of-scope. The relay binary and Homebrew formula are unaffected; only the Fly.io continuous deploy is broken (the running relay is on an older image). Fix options: (a) multi-stage Docker build that inits the libsodium submodule and runs c/vendor/build.sh libsodium before a CGO build, or (b) refactor api.go''s cwire usage behind //go:build cgo with a !cgo stub so CGO_ENABLED=0 builds work again. (a) is more contained; (b) is cleaner long-term.'
     origin: manual
     discovered: 2026-05-29
+    achieved: 2026-05-30
   T5:
     name: Investigate Bluetooth as proximity oracle
     status: achieved

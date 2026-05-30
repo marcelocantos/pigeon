@@ -128,6 +128,12 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      # Populate the libsodium submodule source so the Docker build
+      # context shipped by `flyctl deploy --remote-only` includes it.
+      # cwire requires it to be statically linked; the Dockerfile
+      # builds it from this source on the remote builder.
+      - name: Init vendored libsodium submodule
+        run: git submodule update --init --depth 1 c/vendor/github.com/jedisct1/libsodium
       - uses: superfly/flyctl-actions/setup-flyctl@master
       - run: flyctl deploy --remote-only
         env:
