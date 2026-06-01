@@ -1161,7 +1161,7 @@ targets:
     achieved: 2026-05-21
   T36:
     name: 'Java-callback transport: C side calls back into a JVM/Kotlin QuicTransport via JNI'
-    status: converging
+    status: achieved
     value: 0.0
     cost: 0.0
     acceptance:
@@ -1169,15 +1169,14 @@ targets:
     - The existing Kotlin Kwik/Bridge transport implementations can plug into this callback shape (or at least one of them, e.g. Kwik), and a Kotlin Session can drive a real QUIC connection through a JVM-implemented transport.
     - 'Tests verify the callback path: a small in-Kotlin transport (like the C-side loopback, but Kotlin code) exercises Session.openStream → Stream.send → recv with the C peer library doing all the AEAD/wire work.'
     context: |-
-      Phase 1 landed 2026-05-21: C→Java JNI callback machinery (jni_transport_udata + 7 vtable thunks in c/jni/pigeon_jni.c, JniQuicTransport Kotlin interface, sessionInitWithJniTransport + sessionAcceptStreamGeneric, JniTransportLoopbackTest verifying stream/datagram round-trips with libpigeon driving AEAD and Kotlin carrying bytes).
+      Achieved 2026-05-31. Phase 1 (2026-05-21) shipped the C→Java JNI callback machinery (jni_transport_udata + 7 vtable thunks in c/jni/pigeon_jni.c, JniQuicTransport Kotlin interface, sessionInitWithJniTransport + sessionAcceptStreamGeneric, JniTransportLoopbackTest verifying stream/datagram round-trips with libpigeon driving AEAD and Kotlin carrying bytes).
 
-      Phase 2 still owed: a real Kwik adapter (com.marcelocantos.pigeon.peer.JniQuicTransport over org.kwik.Connection) and an end-to-end test that runs through a real QUIC connection rather than the in-memory loopback. The vtable shape is right (mechanical adapter), but a real Kwik adapter and live-relay E2E need their own PR.
-
-      🎯T30 step 1 only wraps the C-side loopback transport — fine for unit tests, useless in production where the QUIC stack lives in JVM-land (Kwik on desktop, possibly Cronet on Android). The C library's pigeon_transport vtable is already abstract enough; this is JNI callback-binding work. The Swift port (🎯T29) faces the same need. Both should agree on the JNI/Swift → C → back-to-host-language callback pattern.
+      Phase 2 (2026-05-31) added the real Kwik adapter (JniKwikTransport wrapping a Kwik QuicConnection with 4-byte length-prefix framing) and JniKwikE2ETest, which pairs two pigeon Sessions over a real Kwik client↔server QUIC connection and round-trips streams, multi-streams, and datagrams. The live-relay variant remains future work because the legacy relay's L1 doesn't pass multi-stream traffic (tracked under 🎯T45).
     depends_on:
     - T30
     origin: discovered when the T30 first slice shipped a loopback-only JNI bridge
     discovered: 2026-04-30
+    achieved: 2026-05-31
   T37:
     name: 'Real Swift transport: Ngtcp2Transport: PigeonTransport built on the multi-stream c/src/ngtcp2_transport.c'
     status: achieved
