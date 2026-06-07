@@ -14,7 +14,6 @@ import (
 	"log/slog"
 	"net"
 	"net/http"
-	"strings"
 	"sync"
 	"time"
 
@@ -193,118 +192,127 @@ func NewWebTransportServerWithHub(addr string, tlsConfig *tls.Config, auth Auth,
 		_, _ = w.Write([]byte(`{"status":"ok"}`))
 	})
 
-	mux.HandleFunc("/register", func(w http.ResponseWriter, r *http.Request) {
-		s.handleRegister(w, r)
-	})
-
-	mux.HandleFunc("/ws/", func(w http.ResponseWriter, r *http.Request) {
-		s.handleClient(w, r)
+	mux.HandleFunc("/pigeon", func(w http.ResponseWriter, r *http.Request) {
+		s.handlePigeon(w, r)
 	})
 
 	return s, nil
 }
 
-func (s *WebTransportServer) handleRegister(w http.ResponseWriter, r *http.Request) {
+// handlePigeon is the single WebTransport entry point under T45's
+// remote-Listen L1 model. The primary stream's greeting decides the
+// role: register / listen / connect.
+func (s *WebTransportServer) handlePigeon(w http.ResponseWriter, r *http.Request) {
+	session, err := s.wtServer.Upgrade(w, r)
+	if err != nil {
+		slog.Error("pigeon: upgrade failed", "err", err)
+		return
+	}
+	stream, err := session.AcceptStream(session.Context())
+	if err != nil {
+		slog.Error("pigeon: accept primary stream failed", "err", err)
+		session.CloseWithError(0, "failed to accept stream")
+		return
+	}
+	handshake, err := readMessage(stream)
+	if err != nil {
+		slog.Error("pigeon: read handshake failed", "err", err)
+		session.CloseWithError(0, "failed to read handshake")
+		return
+	}
+	dec, err := DecodeRelayGreeting(handshake)
+	if err != nil {
+		slog.Error("pigeon: bad handshake", "err", err)
+		session.CloseWithError(0, "bad handshake")
+		return
+	}
+	sess := &wtSession{session: session, stream: stream}
+	switch dec.Variant {
+	case RelayGreetingRegister:
+		s.handleRegister(r, sess, dec.Token, dec.InstanceId)
+	case RelayGreetingListen:
+		s.handleListen(r, sess, dec.Token, dec.InstanceId)
+	case RelayGreetingConnect:
+		s.handleConnect(r, sess, dec.InstanceId)
+	default:
+		slog.Error("pigeon: unknown greeting variant", "variant", dec.Variant)
+		session.CloseWithError(0, "unknown greeting")
+	}
+}
+
+func (s *WebTransportServer) handleRegister(r *http.Request, sess *wtSession, token, requestedID string) {
 	if s.auth.VerifyRegister != nil {
-		// Bearer credential lives in the Authorization header or, for
-		// browsers that can't set headers on the upgrade, the ?token=
-		// query param. The verifier sees whichever was presented (or
-		// "" if neither).
-		token := ""
-		if h := r.Header.Get("Authorization"); strings.HasPrefix(h, "Bearer ") {
-			token = h[len("Bearer "):]
-		} else if q := r.URL.Query().Get("token"); q != "" {
-			token = q
-		}
 		req := &RegisterRequest{
 			Token:       token,
+			InstanceID:  requestedID,
 			TLS:         r.TLS,
 			HTTPRequest: r,
 		}
 		if err := s.auth.VerifyRegister(r.Context(), req); err != nil {
 			slog.Warn("wt register: unauthorized", "err", err)
-			http.Error(w, `{"error":"unauthorized"}`, http.StatusUnauthorized)
+			_ = sess.Close()
 			return
 		}
 	}
-
-	session, err := s.wtServer.Upgrade(w, r)
-	if err != nil {
-		slog.Error("register: upgrade failed", "err", err)
-		return
-	}
-	// Accept the bidirectional stream opened by the backend client.
-	stream, err := session.AcceptStream(session.Context())
-	if err != nil {
-		slog.Error("register: accept stream failed", "err", err)
-		session.CloseWithError(0, "failed to accept stream")
-		return
-	}
-
-	// Read the handshake message. May contain a requested instance ID:
-	//   "register" or "register::INSTANCE_ID"               → pair-mode (1:1)
-	//   "register-mux" or "register-mux::INSTANCE_ID"       → mux-mode (multi-client)
-	handshake, err := readMessage(stream)
-	if err != nil {
-		slog.Error("register: read handshake failed", "err", err)
-		session.CloseWithError(0, "failed to read handshake")
-		return
-	}
-
-	muxMode := false
-	msg := string(handshake)
-	var id string
-	if strings.HasPrefix(msg, "register-mux") {
-		muxMode = true
-		dec, err := DecodeRelayGreeting(handshake)
-		if err != nil {
-			slog.Error("register: bad register-mux handshake", "err", err)
-			session.CloseWithError(0, "bad handshake")
-			return
-		}
-		id = dec.InstanceId
-	} else if strings.HasPrefix(msg, "register::") {
-		// Legacy pair-mode form (no token); not part of the protogen
-		// union (which covers register-mux only).
-		id = msg[len("register::"):]
-	}
+	id := requestedID
 	if id == "" {
 		id = generateID()
 	}
-
-	// Send the instance ID to the backend.
-	if err := writeMessage(stream, []byte(id)); err != nil {
+	if err := sess.WriteMessage([]byte(id)); err != nil {
 		slog.Error("register: write ID failed", "err", err)
-		session.CloseWithError(0, "failed to write ID")
+		_ = sess.Close()
 		return
 	}
-
-	sess := &wtSession{session: session, stream: stream}
-	inst := &instance{id: id, session: sess, muxMode: muxMode}
+	inst := newInstance(id, sess)
 	s.hub.register(inst)
 	defer s.hub.unregister(id)
-
 	slog.Info("instance registered", "id", id, "transport", "webtransport")
-
-	// Keep alive until backend disconnects.
-	<-session.Context().Done()
+	<-sess.Context().Done()
 	slog.Info("instance disconnected", "id", id)
 }
 
-func (s *WebTransportServer) handleClient(w http.ResponseWriter, r *http.Request) {
-	// Extract instance ID from path: /ws/{id}
-	instanceID := r.URL.Path[len("/ws/"):]
-	if len(instanceID) == 0 || len(instanceID) > 64 {
-		http.Error(w, `{"error":"invalid instance ID"}`, http.StatusBadRequest)
+func (s *WebTransportServer) handleListen(r *http.Request, sess *wtSession, token, instanceID string) {
+	if instanceID == "" {
+		slog.Error("wt listen: missing instance ID")
+		_ = sess.Close()
 		return
 	}
-
+	if s.auth.VerifyRegister != nil {
+		req := &RegisterRequest{
+			Token:       token,
+			InstanceID:  instanceID,
+			TLS:         r.TLS,
+			HTTPRequest: r,
+		}
+		if err := s.auth.VerifyRegister(r.Context(), req); err != nil {
+			slog.Warn("wt listen: unauthorized", "err", err)
+			_ = sess.Close()
+			return
+		}
+	}
 	inst := s.hub.get(instanceID)
 	if inst == nil {
-		http.Error(w, `{"error":"instance not found"}`, http.StatusNotFound)
+		slog.Warn("wt listen: instance not found", "id", instanceID)
+		_ = sess.Close()
 		return
 	}
+	if err := sess.WriteMessage([]byte(instanceID)); err != nil {
+		slog.Error("wt listen: write ack failed", "err", err)
+		_ = sess.Close()
+		return
+	}
+	if err := inst.parkListen(r.Context(), sess); err != nil {
+		slog.Info("wt listen: park ended", "id", instanceID, "err", err)
+		_ = sess.Close()
+	}
+}
 
+func (s *WebTransportServer) handleConnect(r *http.Request, sess *wtSession, instanceID string) {
+	if instanceID == "" {
+		slog.Error("wt connect: missing instance ID")
+		_ = sess.Close()
+		return
+	}
 	if s.auth.VerifyConnect != nil {
 		req := &ConnectRequest{
 			InstanceID:  instanceID,
@@ -313,44 +321,30 @@ func (s *WebTransportServer) handleClient(w http.ResponseWriter, r *http.Request
 		}
 		if err := s.auth.VerifyConnect(r.Context(), req); err != nil {
 			slog.Warn("wt connect: unauthorized", "err", err)
-			http.Error(w, `{"error":"unauthorized"}`, http.StatusUnauthorized)
+			_ = sess.Close()
 			return
 		}
 	}
-
-	session, err := s.wtServer.Upgrade(w, r)
+	inst := s.hub.get(instanceID)
+	if inst == nil {
+		slog.Warn("wt connect: instance not found", "id", instanceID)
+		_ = sess.Close()
+		return
+	}
+	listen, err := inst.matchListen(r.Context())
 	if err != nil {
-		slog.Error("client: upgrade failed", "err", err)
+		slog.Warn("wt connect: no listener", "id", instanceID, "err", err)
+		_ = sess.Close()
 		return
 	}
-	defer session.CloseWithError(0, "")
-
-	// Accept the bidirectional stream opened by the client.
-	clientStream, err := session.AcceptStream(session.Context())
-	if err != nil {
-		slog.Error("client: accept stream failed", "err", err)
+	if err := sess.WriteMessage([]byte("ok")); err != nil {
+		slog.Error("wt connect: write ack failed", "err", err)
+		_ = sess.Close()
+		_ = listen.Close()
 		return
 	}
-
-	// Read the handshake message.
-	if _, err := readMessage(clientStream); err != nil {
-		slog.Error("client: read handshake failed", "err", err)
-		return
-	}
-
-	// Send acknowledgment so the client knows the relay has processed the
-	// handshake. This ensures any additional streams opened after Connect()
-	// returns are enqueued after the primary stream in the relay's accept queue,
-	// avoiding stream ordering races in the WebTransport session manager.
-	if err := writeMessage(clientStream, []byte("ok")); err != nil {
-		slog.Error("client: write ack failed", "err", err)
-		return
-	}
-
 	slog.Info("client connected", "instance", instanceID, "transport", "webtransport")
-
-	clientSess := &wtSession{session: session, stream: clientStream}
-	bridgeClient(inst, clientSess)
+	bridge(inst, sess, listen)
 }
 
 // Hub returns the shared hub for use by other server types.

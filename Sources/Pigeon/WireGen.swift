@@ -36,43 +36,17 @@ public enum PigeonWire {
         throw PigeonWireError.truncated
     }
 
-    public static func encodeStreamHeader(isBackend: Bool, clientTag: UInt32, name: String) -> Data {
+    public static func encodeStreamHeader(name: String) -> Data {
         var out = Data()
-        if isBackend {
-            out.append(contentsOf: [UInt8(truncatingIfNeeded: clientTag >> 24), UInt8(truncatingIfNeeded: clientTag >> 16), UInt8(truncatingIfNeeded: clientTag >> 8), UInt8(truncatingIfNeeded: clientTag)])
-            do {
-                let bytes = Array(name.utf8)
-                out.append(PigeonWire.encodeUvarint(UInt64(bytes.count)))
-                out.append(contentsOf: bytes)
-            }
-        } else {
-            do {
-                let bytes = Array(name.utf8)
-                out.append(PigeonWire.encodeUvarint(UInt64(bytes.count)))
-                out.append(contentsOf: bytes)
-            }
+        do {
+            let bytes = Array(name.utf8)
+            out.append(PigeonWire.encodeUvarint(UInt64(bytes.count)))
+            out.append(contentsOf: bytes)
         }
         return out
     }
 
-    public static func decodeStreamHeaderBackend(_ data: Data) throws -> (clientTag: UInt32, name: String, consumed: Int) {
-        var off = 0
-        if data.count - off < 4 { throw PigeonWireError.truncated }
-        let clientTag: UInt32 = (UInt32(data[data.startIndex + off]) << 24)
-            | (UInt32(data[data.startIndex + off + 1]) << 16)
-            | (UInt32(data[data.startIndex + off + 2]) << 8)
-            | UInt32(data[data.startIndex + off + 3])
-        off += 4
-        let (_lenU, _ln) = try PigeonWire.decodeUvarint(data.subdata(in: (data.startIndex + off)..<data.endIndex))
-        off += _ln
-        let _len = Int(_lenU)
-        if data.count - off < _len { throw PigeonWireError.truncated }
-        let name = String(data: data.subdata(in: (data.startIndex + off)..<(data.startIndex + off + _len)), encoding: .utf8) ?? ""
-        off += _len
-        return (clientTag, name, off)
-    }
-
-    public static func decodeStreamHeaderClient(_ data: Data) throws -> (name: String, consumed: Int) {
+    public static func decodeStreamHeader(_ data: Data) throws -> (name: String, consumed: Int) {
         var off = 0
         let (_lenU, _ln) = try PigeonWire.decodeUvarint(data.subdata(in: (data.startIndex + off)..<data.endIndex))
         off += _ln
@@ -101,7 +75,8 @@ public enum PigeonWire {
 
     public enum RelayGreetingVariant {
         case connect
-        case registerMux
+        case register
+        case listen
     }
 
     public struct RelayGreetingDecoded {
@@ -116,8 +91,19 @@ public enum PigeonWire {
         return Data(s.utf8)
     }
 
-    public static func encodeRelayGreetingRegisterMux(token: String, instanceId: String) -> Data {
-        var s = "register-mux"
+    public static func encodeRelayGreetingRegister(token: String, instanceId: String) -> Data {
+        var s = "register"
+        let parts: [String] = [token, instanceId]
+        var anyNonEmpty = false
+        for p in parts { if !p.isEmpty { anyNonEmpty = true } }
+        if anyNonEmpty {
+            for p in parts { s += ":"; s += p }
+        }
+        return Data(s.utf8)
+    }
+
+    public static func encodeRelayGreetingListen(token: String, instanceId: String) -> Data {
+        var s = "listen"
         let parts: [String] = [token, instanceId]
         var anyNonEmpty = false
         for p in parts { if !p.isEmpty { anyNonEmpty = true } }
@@ -129,8 +115,16 @@ public enum PigeonWire {
 
     public static func decodeRelayGreeting(_ data: Data) throws -> RelayGreetingDecoded {
         let s = String(data: data, encoding: .utf8) ?? ""
-        if s.hasPrefix("register-mux") {
-            let rest = String(s.dropFirst(12))
+        if s.hasPrefix("connect:") {
+            let rest = String(s.dropFirst(8))
+            return RelayGreetingDecoded(
+                variant: .connect,
+                instanceId: rest,
+                token: ""
+            )
+        }
+        if s.hasPrefix("register") {
+            let rest = String(s.dropFirst(8))
             var _suffix: [String] = []
             if !rest.isEmpty {
                 if !rest.hasPrefix(":") { throw PigeonWireError.malformed }
@@ -145,17 +139,30 @@ public enum PigeonWire {
                 _suffix = Array(repeating: "", count: 2)
             }
             return RelayGreetingDecoded(
-                variant: .registerMux,
+                variant: .register,
                 instanceId: _suffix[1],
                 token: _suffix[0]
             )
         }
-        if s.hasPrefix("connect:") {
-            let rest = String(s.dropFirst(8))
+        if s.hasPrefix("listen") {
+            let rest = String(s.dropFirst(6))
+            var _suffix: [String] = []
+            if !rest.isEmpty {
+                if !rest.hasPrefix(":") { throw PigeonWireError.malformed }
+                let body = String(rest.dropFirst())
+                _suffix = body.components(separatedBy: ":")
+                while _suffix.count < 2 { _suffix.append("") }
+                if _suffix.count > 2 {
+                    _suffix[1] = _suffix[1...].joined(separator: ":")
+                    _suffix = Array(_suffix.prefix(2))
+                }
+            } else {
+                _suffix = Array(repeating: "", count: 2)
+            }
             return RelayGreetingDecoded(
-                variant: .connect,
-                instanceId: rest,
-                token: ""
+                variant: .listen,
+                instanceId: _suffix[1],
+                token: _suffix[0]
             )
         }
         throw PigeonWireError.malformed
