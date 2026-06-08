@@ -1547,6 +1547,7 @@ targets:
   T46:
     name: docs/DESIGN.md §3 four-layer stack is what pigeon implements end-to-end — L1+L2+L3+L4 clean, no parallel legacy paths remain
     status: identified
+    showcase: true
     value: 0.0
     cost: 0.0
     acceptance:
@@ -1563,8 +1564,7 @@ targets:
     - T45
     - T47
     origin: docs/DESIGN.md §3 four-layer architecture; target-graph review on 2026-06-07 surfaced absence of a capstone target tying the L1-L4 arc together
-    discovered: 2026-05-29
-    achieved: 2026-05-30
+    discovered: 2026-06-07
   T47:
     name: 'ICE+TURN Phase 2: covers symmetric NAT / cellular CGNAT where STUN-reflexive fails'
     status: identified
