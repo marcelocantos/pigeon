@@ -1545,19 +1545,42 @@ targets:
     origin: manual
     discovered: 2026-05-10
   T46:
-    name: Fly.io deploy Dockerfile builds the relay with cwire (CGO) so the deploy job goes green
-    status: achieved
+    name: docs/DESIGN.md §3 four-layer stack is what pigeon implements end-to-end — L1+L2+L3+L4 clean, no parallel legacy paths remain
+    status: identified
     value: 0.0
     cost: 0.0
     acceptance:
-    - The Dockerfile builds cmd/pigeon with CGO_ENABLED=1 and the vendored libsodium static lib (c/vendor/build/lib/libsodium.a) that cwire links against, replacing the current CGO_ENABLED=0 build that cannot resolve the cwire package.
-    - The `COPY cwire/ cwire/` line (and any other newly-required package dirs) is present in the build stage.
-    - The `Deploy to Fly.io` CI job on master goes green.
-    - Image size stays reasonable (multi-stage; the libsodium build tooling does not bloat the final alpine runtime image).
-    context: 'Deferred from the v0.23.0 release (2026-05-29). Since cwire landed (PR #36) the Fly.io deploy job has been red because the Dockerfile builds with CGO_ENABLED=0, which excludes cwire''s cgo files entirely and leaves api.go with unresolved references. The v0.23.0 release fixed the binary release pipeline (release.yml: vendored libsodium per platform + CGO on native runners) but deferred the Docker/Fly.io fix as out-of-scope. The relay binary and Homebrew formula are unaffected; only the Fly.io continuous deploy is broken (the running relay is on an older image). Fix options: (a) multi-stage Docker build that inits the libsodium submodule and runs c/vendor/build.sh libsodium before a CGO build, or (b) refactor api.go''s cwire usage behind //go:build cgo with a !cgo stub so CGO_ENABLED=0 builds work again. (a) is more contained; (b) is cleaner long-term.'
-    origin: manual
+    - 'L1 (relay transport) matches the remote-Listen model: register / listen / connect greetings only, per-client end-to-end QUIC pipe, no clientTag prefix, no bridgeClientMux, no acceptPrimary, no Listener.sessions demux map. (Lands via T45.)'
+    - L2 (session establishment) runs through the protogen-generated session machine for activation and pairing modes on every SDK; no hand-rolled connect-hello/ack remains. (Achieved via T39.x.)
+    - L3 (path management) demonstrably upgrades the baseline relay pipe through LAN-direct (host candidates), STUN-reflexive (srflx candidates), and TURN-relayed (Phase 2) candidates, with health-monitored demotion back through the cascade or to the baseline relay. Integrated as a sub-FSM of session.yaml per T39.7. (Lands via T43 + T47.)
+    - L4 (multiplexing) — named streams, AEAD per-channel datagrams — runs unchanged across path swaps; an L4 consumer cannot observe which pipe is active. (Achieved via T22.x.)
+    - 'End-to-end tests exercise each L3 promotion under representative topologies: same-LAN peers swap to LAN-direct; cone-NAT peers swap to STUN-reflexive; one-side symmetric-NAT peers swap to TURN-relayed. All three start on relay and demote back to relay under simulated degradation.'
+    - docs/DESIGN.md §9 open-questions list closes for the L1–L4 arc, and the 'current state vs. target' notes throughout §3-4 are removed because the implementation matches the target.
+    - make bullseye stays green; no SDK has a parallel legacy code path quarantined behind a build tag.
+    context: 'Capstone target for the architectural arc that docs/DESIGN.md §3 describes. Today''s repo has three sibling active leaves — T43 (STUN), T44 (cascading relay; parked), T45 (L1 collapse) — with no parent target representing ''the DESIGN.md model fully implemented''. T46 plays that role: it''s the showcase / north-star target for the four-layer-stack story. Retiring T46 means the architecture described in DESIGN.md §3 and the architecture in the codebase have converged, with no parallel legacy paths and demonstrated NAT-traversal coverage across the topology classes that matter. T44 (cascading relay) is intentionally NOT a dependency — it''s a future topology extension off the critical path; T46 ships without it. Discovered 2026-06-07 during a target-graph review: the existing active targets were a flat set of sibling islands with no capstone, making the broader ''where are we heading'' story implicit in docs/DESIGN.md rather than visible in the target graph.'
+    depends_on:
+    - T43
+    - T45
+    - T47
+    origin: docs/DESIGN.md §3 four-layer architecture; target-graph review on 2026-06-07 surfaced absence of a capstone target tying the L1-L4 arc together
     discovered: 2026-05-29
     achieved: 2026-05-30
+  T47:
+    name: 'ICE+TURN Phase 2: covers symmetric NAT / cellular CGNAT where STUN-reflexive fails'
+    status: identified
+    value: 0.0
+    cost: 0.0
+    acceptance:
+    - protocol/session.yaml Phase 2 path-selection sub-FSM emits relay-allocated candidates (TURN-relayed) alongside host/srflx/relay candidates from T39.7/T43.
+    - Each peer can request a TURN allocation from a configurable TURN server (or the pigeon relay if it exposes a TURN endpoint). Allocation lifetime, refresh, and tear-down are owned by the session machine, not application code.
+    - 'Candidate-pair priority follows ICE-style rules: host > srflx > relay (TURN) > pigeon-relay-baseline. Nomination uses the same candidate-pair handshake as T39.7; demotion paths exist when an upgraded path degrades.'
+    - An end-to-end test demonstrates successful pairing and a TURN-relayed carrier when at least one peer is behind symmetric NAT or cellular CGNAT — the residual ~20-30% of real-world topologies that T43's STUN-only Phase 1 cannot reach.
+    - Pigeon's bundled TURN server option (relay --turn-port=...) is a simple coturn-compatible TURN responder, or the documented choice is to depend on an external TURN server with credentials wired through ConnectArgs/RegisterArgs.
+    context: 'Placeholder for the Phase 2 of NAT traversal that closes the gap T43 (Phase 1, STUN-reflexive) acknowledges as deferred. docs/investigations/stun-hole-punching.md analyses the NAT distribution: STUN-reflexive Phase 1 covers ~70-80% of Wi-Fi topologies; the remaining ~20-30% (symmetric NAT, cellular CGNAT, and some enterprise firewalls) need full ICE negotiation with TURN-relayed candidates. Adding TURN closes the residual gap. Specific TURN library / coturn-vs-bespoke decision deferred to when the work starts. Existence of this placeholder lets T46 (the docs/DESIGN.md §3 capstone) name a concrete Phase-2 dependency rather than handwave about "future NAT traversal".'
+    depends_on:
+    - T43
+    origin: docs/DESIGN.md §3 L3 path management; T43 acceptance criteria explicitly defer symmetric-NAT/CGNAT to "Phase 2 ICE+TURN target"
+    discovered: 2026-06-08
   T5:
     name: Investigate Bluetooth as proximity oracle
     status: achieved
