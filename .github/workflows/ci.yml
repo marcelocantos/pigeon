@@ -9,8 +9,8 @@ jobs:
   test:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
+      - uses: actions/checkout@v6
+      - uses: actions/setup-go@v6
         with:
           go-version-file: go.mod
       - name: Resolve libsodium pinned SHA
@@ -18,7 +18,7 @@ jobs:
         run: echo "sha=$(git ls-tree HEAD c/vendor/github.com/jedisct1/libsodium | awk '{print $3}')" >> $GITHUB_OUTPUT
       - name: Cache vendored libsodium build
         id: cache-libsodium
-        uses: actions/cache@v4
+        uses: actions/cache@v5
         with:
           path: c/vendor/build
           key: libsodium-${{ runner.os }}-${{ steps.libsodium-sha.outputs.sha }}-${{ hashFiles('c/vendor/build.sh') }}
@@ -35,8 +35,8 @@ jobs:
   web-e2e:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
+      - uses: actions/checkout@v6
+      - uses: actions/setup-go@v6
         with:
           go-version-file: go.mod
       - name: Resolve libsodium pinned SHA
@@ -44,7 +44,7 @@ jobs:
         run: echo "sha=$(git ls-tree HEAD c/vendor/github.com/jedisct1/libsodium | awk '{print $3}')" >> $GITHUB_OUTPUT
       - name: Cache vendored libsodium build
         id: cache-libsodium
-        uses: actions/cache@v4
+        uses: actions/cache@v5
         with:
           path: c/vendor/build
           key: libsodium-${{ runner.os }}-${{ steps.libsodium-sha.outputs.sha }}-${{ hashFiles('c/vendor/build.sh') }}
@@ -56,7 +56,7 @@ jobs:
         run: bash c/vendor/build.sh libsodium
       - name: Increase UDP buffer size for QUIC
         run: sudo sysctl -w net.core.rmem_max=7340032 net.core.wmem_max=7340032
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v6
         with:
           node-version: "20"
       - name: Install npm dependencies
@@ -72,8 +72,8 @@ jobs:
   amalgamate:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
+      - uses: actions/checkout@v6
+      - uses: actions/setup-go@v6
         with:
           go-version-file: go.mod
       - name: Regenerate and amalgamate
@@ -89,8 +89,8 @@ jobs:
   swift-test:
     runs-on: macos-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
+      - uses: actions/checkout@v6
+      - uses: actions/setup-go@v6
         with:
           go-version-file: go.mod
       - name: Resolve vendor pinned SHAs
@@ -103,7 +103,7 @@ jobs:
           } >> $GITHUB_OUTPUT
       - name: Cache vendored C deps
         id: cache-vendor
-        uses: actions/cache@v4
+        uses: actions/cache@v5
         with:
           path: c/vendor/build
           key: vendor-${{ runner.os }}-sodium-${{ steps.vendor-shas.outputs.libsodium }}-ossl-${{ steps.vendor-shas.outputs.openssl }}-ngtcp2-${{ steps.vendor-shas.outputs.ngtcp2 }}-${{ hashFiles('c/vendor/build.sh') }}
@@ -127,7 +127,7 @@ jobs:
     if: github.ref == 'refs/heads/master' && github.event_name == 'push'
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
       # Populate the libsodium submodule source so the Docker build
       # context shipped by `flyctl deploy --remote-only` includes it.
       # cwire requires it to be statically linked; the Dockerfile
