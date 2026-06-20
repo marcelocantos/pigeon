@@ -167,17 +167,33 @@ func test(_ name: String, _ body: @escaping () async throws -> Void) async {
     }
 }
 
+// T45 remote-Listen L1 wire (docs/DESIGN.md §3 L1): the backend opens a
+// `register` control connection (kept open for the instance lifetime, no
+// traffic) plus a pool of `listen` connections; the relay matches each
+// client to a parked listen and bridges the two connections end-to-end.
+// Greetings go through the generated PigeonWire encoders.
+
 func register(_ host: String, _ port: UInt16) async throws -> (NWConnection, String) {
     let c = try await quicConnect(host, port)
-    let hs = relayToken.map { "register:\($0)" } ?? "register"
-    try await writeMsg(c, Data(hs.utf8))
+    try await writeMsg(c, PigeonWire.encodeRelayGreetingRegister(token: relayToken ?? "", instanceId: ""))
     let id = String(decoding: try await readMsg(c), as: UTF8.self)
     return (c, id)
 }
 
+func listen(_ host: String, _ port: UInt16, _ id: String) async throws -> NWConnection {
+    let c = try await quicConnect(host, port)
+    try await writeMsg(c, PigeonWire.encodeRelayGreetingListen(token: relayToken ?? "", instanceId: id))
+    _ = try await readMsg(c)  // relay acks with the instance ID
+    return c
+}
+
 func connect(_ host: String, _ port: UInt16, _ id: String) async throws -> NWConnection {
     let c = try await quicConnect(host, port)
-    try await writeMsg(c, Data("connect:\(id)".utf8))
+    try await writeMsg(c, PigeonWire.encodeRelayGreetingConnect(instanceId: id))
+    let ack = try await readMsg(c)
+    guard String(decoding: ack, as: UTF8.self) == "ok" else {
+        throw NSError(domain: "", code: 0, userInfo: [NSLocalizedDescriptionKey: "connect: expected ok ack, got \(ack.count) bytes"])
+    }
     return c
 }
 
@@ -191,7 +207,9 @@ func runTests(_ host: String, _ port: UInt16) async {
     }
 
     await test("stream round-trip") {
-        let (backend, id) = try await register(host, port)
+        let (control, id) = try await register(host, port)
+        defer { control.cancel() }
+        let backend = try await listen(host, port, id)
         let client = try await connect(host, port, id)
 
         try await client.send("hello from swift", writeMsg)
@@ -210,7 +228,9 @@ func runTests(_ host: String, _ port: UInt16) async {
     }
 
     await test("10 messages in order") {
-        let (backend, id) = try await register(host, port)
+        let (control, id) = try await register(host, port)
+        defer { control.cancel() }
+        let backend = try await listen(host, port, id)
         let client = try await connect(host, port, id)
 
         for i in 0..<10 { try await writeMsg(client, Data("msg-\(i)".utf8)) }
@@ -223,7 +243,9 @@ func runTests(_ host: String, _ port: UInt16) async {
     }
 
     await test("encrypted round-trip") {
-        let (backend, id) = try await register(host, port)
+        let (control, id) = try await register(host, port)
+        defer { control.cancel() }
+        let backend = try await listen(host, port, id)
         let client = try await connect(host, port, id)
 
         let bKP = E2EKeyPair(), cKP = E2EKeyPair()

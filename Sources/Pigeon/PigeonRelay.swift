@@ -92,21 +92,62 @@ public final class PigeonConn: @unchecked Sendable {
         // Wake the relay if it's auto-stopped (best-effort).
         await wakeRelay(host: host, port: port)
 
-        let handshake: String
-        if let token = token {
-            handshake = "register:\(token)"
-        } else {
-            handshake = "register"
-        }
+        // T45: greetings go through the generated encoder. `register` opens
+        // the backend control connection; the relay assigns / echoes the
+        // instance ID and holds the connection open for the instance's
+        // lifetime (see docs/DESIGN.md §3 L1). PigeonConn is a single-
+        // connection legacy client, so it registers and reuses this one
+        // connection for traffic rather than parking a separate `listen`
+        // pool — the relay still bridges it to the next matching client.
+        let handshake = PigeonWire.encodeRelayGreetingRegister(
+            token: token ?? "", instanceId: ""
+        )
 
         let (conn, queue) = try await openConnection(host: host, port: port, quicOptions: quicOptions)
 
         // Send handshake.
-        try await writeMessage(conn, Data(handshake.utf8))
+        try await writeMessage(conn, handshake)
 
         // Read instance ID.
         let idData = try await readMessage(conn)
         let instanceID = String(decoding: idData, as: UTF8.self)
+
+        let pigeonConn = PigeonConn(connection: conn, queue: queue, instanceID: instanceID)
+        pigeonConn.startDatagramReceiver()
+        return pigeonConn
+    }
+
+    /// Open a backend listen slot with the relay.
+    ///
+    /// Under the T45 remote-Listen L1 model the backend parks a pool of
+    /// `listen` connections at the relay; the relay matches the next
+    /// arriving client to a parked listen and bridges the two QUIC
+    /// connections end-to-end. This single-connection legacy client opens
+    /// one such slot: `register` (above) already runs the control
+    /// connection, so `listen` is offered for callers that want to park
+    /// an explicit slot for `instanceID` before a client connects.
+    ///
+    /// The relay acks the greeting (echoing the instance ID) and then
+    /// parks the connection until a client matches.
+    public static func listen(
+        host: String, port: UInt16,
+        instanceID: String,
+        token: String? = nil,
+        quicOptions: NWProtocolQUIC.Options? = nil
+    ) async throws -> PigeonConn {
+        await wakeRelay(host: host, port: port)
+
+        let handshake = PigeonWire.encodeRelayGreetingListen(
+            token: token ?? "", instanceId: instanceID
+        )
+
+        let (conn, queue) = try await openConnection(host: host, port: port, quicOptions: quicOptions)
+
+        try await writeMessage(conn, handshake)
+
+        // The relay acks the listen greeting (echoing the instance ID)
+        // once the slot is parked.
+        _ = try await readMessage(conn)
 
         let pigeonConn = PigeonConn(connection: conn, queue: queue, instanceID: instanceID)
         pigeonConn.startDatagramReceiver()
@@ -131,12 +172,22 @@ public final class PigeonConn: @unchecked Sendable {
         // Wake the relay if it's auto-stopped (best-effort).
         await wakeRelay(host: host, port: port)
 
-        let handshake = "connect:\(instanceID)"
+        let handshake = PigeonWire.encodeRelayGreetingConnect(instanceId: instanceID)
 
         let (conn, queue) = try await openConnection(host: host, port: port, quicOptions: quicOptions)
 
         // Send handshake.
-        try await writeMessage(conn, Data(handshake.utf8))
+        try await writeMessage(conn, handshake)
+
+        // T45: the relay writes an "ok" ack only once it has matched a
+        // parked backend `listen` and the end-to-end bridge is live, so
+        // the caller can begin the session handshake immediately after.
+        let ack = try await readMessage(conn)
+        guard String(decoding: ack, as: UTF8.self) == "ok" else {
+            conn.cancel()
+            throw PigeonRelayError.handshakeFailed(
+                "connect: unexpected ack \(String(decoding: ack, as: UTF8.self))")
+        }
 
         let pigeonConn = PigeonConn(connection: conn, queue: queue, instanceID: instanceID)
         pigeonConn.startDatagramReceiver()
@@ -445,19 +496,9 @@ internal func decodeLengthPrefix(_ data: Data) -> UInt32 {
 // TODO(T12): Add setChannel/setDatagramChannel for automatic E2E encryption.
 // Currently callers must encrypt/decrypt manually using E2EChannel.
 
-/// Construct a handshake message for the pigeon QUIC protocol.
-internal func buildHandshakeMessage(role: String, token: String? = nil, instanceID: String? = nil) -> String {
-    switch role {
-    case "register":
-        if let token = token {
-            return "register:\(token)"
-        }
-        return "register"
-    case "connect":
-        return "connect:\(instanceID ?? "")"
-    default:
-        return role
-    }
-}
+// The relay greeting (register / listen / connect) is built by the
+// protogen-generated PigeonWire.encodeRelayGreeting* encoders in
+// WireGen.swift — there is no hand-rolled handshake builder. See the
+// register / listen / connect static methods above.
 
 #endif
