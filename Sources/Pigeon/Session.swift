@@ -84,20 +84,16 @@ public struct DatagramChannelDef: Sendable, Hashable {
 
 /// One peer-to-peer association: backend ↔ paired client (or vice-
 /// versa from the client side). Owns the AEAD channel derived from
-/// the PairingRecord, the role discriminator (backend/client) and the
-/// `clientTag`, plus a fixed-size table of pre-declared datagram
-/// channels.
+/// the PairingRecord and the role discriminator (backend/client), plus
+/// a fixed-size table of pre-declared datagram channels.
 ///
 /// Mirrors the Go peer-library `Session` — same shape, same
 /// constraints (datagrams pre-declared, streams opened on demand).
 ///
-/// T45 note: under the remote-Listen L1 wire each Session rides its own
-/// end-to-end connection, so there is no relay-assigned per-client tag —
-/// the Go SDK has dropped `clientTag` entirely. This Swift façade is a
-/// thin wrapper over libpigeon (`pigeon_session_init`), whose C ABI
-/// still carries a `client_tag` parameter until the C SDK is ported, so
-/// the field is retained here purely as a passthrough (default 0). It no
-/// longer participates in any Swift-side framing.
+/// Under the T45 remote-Listen L1 wire each Session rides its own
+/// end-to-end QUIC connection, so there is no relay-assigned per-client
+/// tag: the wire is symmetric and `pigeon_session_init` carries no
+/// `client_tag`. `isBackend` is retained as an informational flag only.
 public final class PigeonSession: @unchecked Sendable {
     // Heap-allocated C session struct. We hold it via
     // UnsafeMutablePointer so its address is stable for the
@@ -125,17 +121,17 @@ public final class PigeonSession: @unchecked Sendable {
     // headroom for the C frames plus any Swift bridging.
     private let worker: BigStackWorker
 
+    /// Informational: which half of the pair this Session is. Under the
+    /// T45 remote-Listen model the wire is symmetric — each side rides
+    /// its own end-to-end pipe — so this no longer affects framing.
     public let isBackend: Bool
-    public let clientTag: UInt32
 
     /// Initialise a session from a 32-byte symmetric AEAD master key.
     /// `isBackend == true` means this Session is the server-side half
-    /// of the pair; outbound stream/datagram framing then includes
-    /// the 4-byte clientTag prefix the relay routes by.
+    /// of the pair (informational only since T45 — see `isBackend`).
     public init(
         masterKey: Data,
         isBackend: Bool,
-        clientTag: UInt32 = 0,
         datagramChannels: [DatagramChannelDef] = [],
         transport: PigeonTransport
     ) throws {
@@ -198,8 +194,6 @@ public final class PigeonSession: @unchecked Sendable {
                     session,
                     tPtr,
                     ch,
-                    isBackend,
-                    clientTag,
                     datagramChannels.isEmpty ? nil : dgBuf.baseAddress,
                     datagramChannels.count
                 )
@@ -214,7 +208,6 @@ public final class PigeonSession: @unchecked Sendable {
         self.sessionPtr = session
         self.channelStorage = ch
         self.isBackend = isBackend
-        self.clientTag = clientTag
         self.worker = BigStackWorker()
 
         // Anchor the transport so its userdata pointer stays valid.
@@ -298,7 +291,6 @@ public final class PigeonSession: @unchecked Sendable {
         return PigeonSession(
             adoptingSessionPointer: session,
             isBackend: false,
-            clientTag: 0,
             transportAnchor: transport
         )
     }
@@ -314,7 +306,6 @@ public final class PigeonSession: @unchecked Sendable {
     private init(
         adoptingSessionPointer sp: UnsafeMutablePointer<pigeon_session>,
         isBackend: Bool,
-        clientTag: UInt32,
         transportAnchor: PigeonTransport
     ) {
         self.sessionPtr = sp
@@ -326,7 +317,6 @@ public final class PigeonSession: @unchecked Sendable {
         ch.initialize(to: pigeon_channel())
         self.channelStorage = ch
         self.isBackend = isBackend
-        self.clientTag = clientTag
         self.worker = BigStackWorker()
         self.transportAnchor = transportAnchor
     }
@@ -512,8 +502,8 @@ public final class PigeonStream: @unchecked Sendable {
 // MARK: - PigeonDatagram
 
 /// One named datagram channel within a session. Each `send` AEAD-
-/// encrypts the payload and frames it with the channel id (and the
-/// 4-byte clientTag prefix on the backend side).
+/// encrypts the payload framed with the channel id; the relay forwards
+/// it opaquely on the session's own connection (no routing prefix).
 public final class PigeonDatagram: @unchecked Sendable {
     private let parent: PigeonSession
     private let ptr: UnsafeMutablePointer<pigeon_datagram>

@@ -118,11 +118,11 @@ final class SessionTests: XCTestCase {
         LoopbackTransport.pair(ta, tb)
 
         let sa = try PigeonSession(
-            masterKey: key, isBackend: false, clientTag: 0,
+            masterKey: key, isBackend: false,
             datagramChannels: [], transport: ta
         )
         let sb = try PigeonSession(
-            masterKey: key, isBackend: false, clientTag: 0,
+            masterKey: key, isBackend: false,
             datagramChannels: [], transport: tb
         )
 
@@ -165,11 +165,11 @@ final class SessionTests: XCTestCase {
         ]
 
         let sa = try PigeonSession(
-            masterKey: key, isBackend: false, clientTag: 0,
+            masterKey: key, isBackend: false,
             datagramChannels: chans, transport: ta
         )
         let sb = try PigeonSession(
-            masterKey: key, isBackend: false, clientTag: 0,
+            masterKey: key, isBackend: false,
             datagramChannels: chans, transport: tb
         )
 
@@ -185,7 +185,7 @@ final class SessionTests: XCTestCase {
         let key = Data(repeating: 0xAB, count: 32)
         let t = LoopbackTransport()
         let s = try PigeonSession(
-            masterKey: key, isBackend: false, clientTag: 0,
+            masterKey: key, isBackend: false,
             datagramChannels: [
                 DatagramChannelDef(name: "ping", channelID: 1),
             ],
@@ -203,11 +203,11 @@ final class SessionTests: XCTestCase {
         LoopbackTransport.pair(ta, tb)
 
         let sa = try PigeonSession(
-            masterKey: key, isBackend: false, clientTag: 0,
+            masterKey: key, isBackend: false,
             datagramChannels: [], transport: ta
         )
         let sb = try PigeonSession(
-            masterKey: key, isBackend: false, clientTag: 0,
+            masterKey: key, isBackend: false,
             datagramChannels: [], transport: tb
         )
 

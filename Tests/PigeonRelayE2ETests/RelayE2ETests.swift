@@ -194,15 +194,11 @@ final class RelayE2ETests: XCTestCase {
     ///     pigeon_stream_send / pigeon_stream_recv (plaintext path
     ///     because !channel.established).
     func testCrossLanguageConfirmationCode() async throws {
-        // T45: this path goes through the C Ngtcp2Transport + libpigeon
-        // (dist/pigeon.c), which still speaks the pre-T45 wire — its
-        // `connect` greeting does NOT consume the relay's "ok" ack, so the
-        // first primary read returns "ok" (2 bytes) instead of the peer's
-        // 32-byte public key. The relay and Swift-level greetings are
-        // already on the remote-Listen L1 model; re-enable this test once
-        // the C SDK transport is ported to read the connect ack and park a
-        // listen pool. See docs/DESIGN.md §3 L1.
-        try XCTSkipIf(true, "C Ngtcp2Transport not yet ported to the T45 remote-Listen wire (does not read the connect 'ok' ack)")
+        // T45: the C Ngtcp2Transport (dist/pigeon.c) is ported to the
+        // remote-Listen wire — its `connect` greeting consumes the relay's
+        // "ok" ack, and pigeon_connect_on_transport pairing mode writes the
+        // empty arrival marker the Go backend's accept worker waits for. So
+        // the first primary read here is the peer's 32-byte public key.
 
         // Build the crypto-peer binary.
         let repoRoot = URL(fileURLWithPath: #filePath)
