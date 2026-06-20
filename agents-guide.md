@@ -171,12 +171,15 @@ See [docs/DESIGN.md §2](docs/DESIGN.md) for the broader threat model that motiv
 | Route | Description |
 |-------|-------------|
 | `GET /health` | Returns `{"status":"ok"}` (HTTP/3) |
-| `GET /register` | Backend registers (WebTransport session); receives assigned instance ID |
-| `GET /ws/{id}` | Client connects by instance ID (WebTransport session); bridged bidirectionally to backend |
+| `GET /pigeon` | Single WebTransport entry point; the role (register / listen / connect) is set by the greeting on the primary stream |
 
-Multiple clients can connect to the same instance ID. The relay maintains
-independent bridges for each connected client, so backends can serve more
-than one peer concurrently.
+Native clients use raw QUIC (ALPN `"pigeon"`) instead of WebTransport; the
+same greeting variant (register / listen / connect) selects the role.
+
+Multiple clients can connect to the same instance ID. The backend parks a
+pool of listen connections at the relay; the relay matches each client to a
+parked listen and bridges the two QUIC connections end-to-end, so backends
+serve many peers concurrently — each over its own opaque pipe.
 
 ## Swift (SPM)
 
@@ -237,11 +240,11 @@ CLI               Server              Relay              Mobile
 cli --init
   └─ pair_begin ─→
                   generate token
-                  connect ─────────────────────────────→ /register
+                  register ────────────────────────────→ relay
                   ←──────────────────────────────── instance_id
                   show QR(url+token+id)
                                                      scan QR
-                                                     connect ──→ /ws/{id}
+                                                     connect ──→ relay (by id)
                                                      send {token, pubkey}
                   ←────────────────────────────────────────────
                   verify token
@@ -267,14 +270,19 @@ without repeating the ceremony:
 
 ```go
 // After first pairing — save securely (e.g., Keychain, EncryptedSharedPreferences)
-record := crypto.NewPairingRecord(backend.InstanceID(), relayURL, myKeyPair, peerPubKey)
+record := crypto.NewPairingRecord(peerInstanceID, relayURL, myKeyPair, peerPubKey)
 data, _ := record.Marshal()
 
-// On reconnect — load and derive channel
+// On reconnect — load the record and connect; Connect derives the
+// encrypted channel from it.
 record, _ := crypto.UnmarshalPairingRecord(data)
-ch, _ := record.DeriveChannel([]byte("client-to-server"), []byte("server-to-client"))
-conn, _ := pigeon.Connect(ctx, record.RelayURL, record.PeerInstanceID)
-conn.SetChannel(ch)
+session, _ := pigeon.Connect(ctx, &pigeon.ConnectArgs{
+    InstanceID: record.PeerInstanceID,
+    Record:     record,
+    Identity:   identity,
+    Relay:      record.RelayURL,
+})
+defer session.Close()
 ```
 
 The shared secret is re-derived on each reconnect (never stored). Available
@@ -332,13 +340,16 @@ PORT=443 ./pigeon                           # run relay server (self-signed cert
 | Flag/Env | Default | Description |
 |----------|---------|-------------|
 | `pair` (subcommand) | — | Mint a `PairingArtifact` for a peer instance ID and emit it. See [docs/pairing-lifecycle.md](docs/pairing-lifecycle.md). |
-| `--port` / `PORT` | `443` | Relay listening port (UDP) |
+| `--port` / `PORT` | `443` | WebTransport listening port (UDP) |
+| `--quic-port` / `QUIC_PORT` | `4433` | Raw QUIC listening port (native clients) |
 | `--domain` | — | Domain for automatic Let's Encrypt TLS |
 | `--acme-email` | — | Email for Let's Encrypt account |
 | `--cert` | — | TLS certificate file (PEM); if omitted, generates self-signed |
 | `--key` | — | TLS private key file (PEM) |
+| `--cert-validity` | `365` | Self-signed certificate validity in days (use ≤14 for WebTransport `serverCertificateHashes`) |
+| `--lan` | — | LAN listener address for direct connections (e.g. `:0`); not yet wired into the relay flow |
 | `--version` | — | Print version and exit |
 | `--help-agent` | — | Print this guide |
-| `PIGEON_TOKEN` | — | Bearer token for /register auth. Wires through the default `BearerTokenAuth` verifier; replace with any custom `pigeon.Auth` for more complex admission policies. |
+| `PIGEON_TOKEN` | — | Bearer token for backend registration auth. Wires through the default `BearerTokenAuth` verifier; replace with any custom `pigeon.Auth` for more complex admission policies. |
 
 Build-time version injection: `-ldflags "-X main.version=<version>"`.

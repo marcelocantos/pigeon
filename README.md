@@ -22,11 +22,14 @@ The relay server handles only ciphertext and has no access to session keys.
 
 ## How It Works
 
-1. A **backend** connects to `GET /register` via WebTransport. The relay
-   assigns a unique instance ID and sends it back as the first message.
-2. One or more **clients** connect to `GET /ws/<instance-id>`. The relay
-   bridges traffic bidirectionally — both reliable streams and unreliable
-   datagrams — and maintains an independent bridge per client.
+1. A **backend** registers with the relay over a single WebTransport
+   endpoint (`/pigeon`) — or raw QUIC for native clients — and is assigned
+   a unique instance ID. It then parks a small pool of *listen*
+   connections at the relay, each awaiting a client.
+2. A **client** connects by instance ID. The relay matches it to one of
+   the backend's parked listen connections and bridges the two QUIC
+   connections end-to-end, so every client gets its own opaque pipe to the
+   backend — reliable streams and unreliable datagrams alike.
 3. Pairing and encryption happen above the relay layer, in the
    application, using pigeon's crypto and protocol packages.
 
@@ -149,7 +152,7 @@ dependencyResolutionManagement {
 
 // build.gradle.kts
 dependencies {
-    implementation("com.github.marcelocantos.pigeon:pigeon:v0.5.0")
+    implementation("com.github.marcelocantos.pigeon:pigeon:v0.24.0")
 }
 ```
 
@@ -196,10 +199,10 @@ The full ceremony involves three actors — **server** (backend daemon),
 **mobile** (iOS client), and **CLI** (initiator):
 
 1. CLI sends `pair_begin` to server; server generates a one-time token,
-   connects to the relay (`/register`), and receives an instance ID.
+   registers with the relay, and receives an instance ID.
 2. Server displays a QR code encoding the relay URL, token, and instance ID.
-3. Mobile scans the QR, connects to `/ws/{id}`, generates an X25519 key pair,
-   and sends `{token, pubkey}` to the server through the relay.
+3. Mobile scans the QR, connects to the relay by instance ID, generates an
+   X25519 key pair, and sends `{token, pubkey}` to the server through the relay.
 4. Server verifies the token, performs ECDH, derives the session key, and sends
    `pair_hello_ack {pubkey}` back. Mobile performs ECDH and derives the same key.
 5. Both sides independently compute the 6-digit confirmation code from the two
@@ -217,16 +220,21 @@ without re-scanning the QR code:
 
 ```go
 // After first pairing — save this securely
-record := crypto.NewPairingRecord(backend.InstanceID(), relayURL, myKeyPair, peerPubKey)
+record := crypto.NewPairingRecord(peerInstanceID, relayURL, myKeyPair, peerPubKey)
 data, _ := record.Marshal()
 os.WriteFile("pairing.json", data, 0600)
 
-// On reconnect — load and derive channel
+// On reconnect — load the record and connect; Connect derives the
+// encrypted channel from it (the shared secret is never stored).
 data, _ = os.ReadFile("pairing.json")
 record, _ = crypto.UnmarshalPairingRecord(data)
-ch, _ := record.DeriveChannel([]byte("client-to-server"), []byte("server-to-client"))
-conn, _ := pigeon.Connect(ctx, record.RelayURL, record.PeerInstanceID)
-conn.SetChannel(ch)
+session, _ := pigeon.Connect(ctx, &pigeon.ConnectArgs{
+    InstanceID: record.PeerInstanceID,
+    Record:     record,
+    Identity:   identity,
+    Relay:      record.RelayURL,
+})
+defer session.Close()
 ```
 
 The shared secret is never stored — it is re-derived on each reconnect from
@@ -244,55 +252,27 @@ and Kotlin samples.
 
 ## Channels
 
-Named streaming channels and datagram channels provide independent,
-multiplexed communication paths over a single connection.
+Named reliable streams and datagram channels provide independent,
+multiplexed communication paths over a session's connection.
 
 ```go
-// Streaming channels — independent ordered streams
-ch, _ := conn.OpenChannel("game-state")
-ch.Send(ctx, data)
+// Named reliable streams — both peers call Open/Accept with the same name
+stream, _ := session.OpenStream(ctx, "game-state")
+stream.Send(data)
 
-peerCh, _ := conn.AcceptChannel(ctx)
-data, _ := peerCh.Recv(ctx)
+peerStream, _ := session.AcceptStream(ctx, "game-state")
+data, _ := peerStream.Recv(ctx)
 
-// Datagram channels — named, unreliable, both sides create by name
-video := conn.DatagramChannel("camera-front")
+// Datagram channels — pre-declared by name in RegisterArgs/ConnectArgs.Datagrams
+video := session.Datagram("video")
 video.Send(frame)
 frame, _ := video.Recv(ctx)
 ```
 
-Each streaming channel gets its own QUIC stream (no head-of-line
-blocking between channels). Datagram channels share the QUIC datagram
-pipe with a 2-byte channel ID prefix for demuxing.
-
-## LAN Upgrade
-
-When both peers are on the same LAN, traffic transparently switches
-from the relay to a direct QUIC connection:
-
-```go
-// Backend: start a LAN server and register with the relay.
-lan, _ := pigeon.NewLANServer("", nil)  // random port, self-signed cert
-defer lan.Close()
-
-backend, _ := pigeon.Register(ctx, relayURL, pigeon.Config{
-    LANServer: lan,
-})
-backend.SetChannel(ch)  // triggers LAN address advertisement
-
-// Client: enable LAN upgrade.
-client, _ := pigeon.Connect(ctx, relayURL, instanceID, pigeon.Config{
-    LAN: true,
-})
-client.SetChannel(ch)
-// LAN upgrade happens automatically in the background.
-```
-
-The LANServer is a standalone QUIC listener that can serve multiple
-clients. When a client receives the LAN offer (via the encrypted relay
-channel), it dials the backend directly, verifies via a
-challenge/response, and atomically swaps the Conn's transport. All
-subsequent Send/Recv/SendDatagram/RecvDatagram go via LAN.
+Each named stream is its own QUIC stream on the session's connection (no
+head-of-line blocking between streams). Each datagram carries the AEAD
+ciphertext of `[varint channel-id][payload]` on the session's own
+end-to-end connection, which the relay forwards opaquely.
 
 ## Fault Injection Testing
 
@@ -326,22 +306,27 @@ are included).
 
 **Endpoints (HTTP/3 over WebTransport):**
 
-| Route              | Description                               |
-|--------------------|-------------------------------------------|
-| `GET /health`      | Health check (returns `{"status":"ok"}`)  |
-| `GET /register`    | Backend registers (WebTransport session)  |
-| `GET /ws/{id}`     | Client connects by instance ID            |
+| Route              | Description                                                  |
+|--------------------|--------------------------------------------------------------|
+| `GET /health`      | Health check (returns `{"status":"ok"}`)                     |
+| `GET /pigeon`      | Single entry point; the role (register / listen / connect) is set by the greeting on the primary stream |
+
+Native clients use raw QUIC (ALPN `"pigeon"`) on the QUIC port instead of
+WebTransport; the same greeting selects the role.
 
 ## Configuration
 
 | Flag / Env var | Default | Description |
 |----------------|---------|-------------|
-| `--port` / `PORT` | `443` | Listening port (UDP + TCP) |
+| `--port` / `PORT` | `443` | WebTransport listening port (UDP + TCP) |
+| `--quic-port` / `QUIC_PORT` | `4433` | Raw QUIC listening port (native clients) |
 | `--domain` | — | Domain for automatic Let's Encrypt TLS (e.g. `carrier-pigeon.fly.dev`) |
 | `--acme-email` | — | Email for Let's Encrypt account |
 | `--cert` | — | TLS certificate file (PEM); if `--domain` is not set |
 | `--key` | — | TLS private key file (PEM); used with `--cert` |
-| `PIGEON_TOKEN` | — | Bearer token required for `/register`; open if unset. Wires through the default `BearerTokenAuth` verifier; replace with any custom `pigeon.Auth` for more complex admission policies. |
+| `--cert-validity` | `365` | Self-signed certificate validity in days (use ≤14 for WebTransport `serverCertificateHashes`) |
+| `--lan` | — | LAN listener address for direct connections (e.g. `:0`); not yet wired into the relay flow |
+| `PIGEON_TOKEN` | — | Bearer token required for backend registration; open if unset. Wires through the default `BearerTokenAuth` verifier; replace with any custom `pigeon.Auth` for more complex admission policies. |
 | `--version` | — | Print version and exit |
 | `--help-agent` | — | Print usage + agent guide |
 
