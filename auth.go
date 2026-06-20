@@ -25,10 +25,10 @@ import (
 // of them depending on the deployment.
 type RegisterRequest struct {
 	// Token is the greeting-level credential, if any. For raw QUIC
-	// it is the optional token field of register / register-mux. For
-	// WebTransport it is the Bearer credential from the Authorization
-	// header (or the ?token= query parameter). Empty if no token was
-	// presented.
+	// it is the optional token field of the register / listen
+	// greeting. For WebTransport it is the Bearer credential from the
+	// Authorization header (or the ?token= query parameter). Empty if
+	// no token was presented.
 	Token string
 
 	// InstanceID is the backend-requested instance ID. Empty means
