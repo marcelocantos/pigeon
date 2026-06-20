@@ -34,175 +34,11 @@ import (
 // Return (nil, false) to reject the client.
 type PairingResolver func(deviceID string) (*PairingRecord, bool)
 
-// Listener wraps pigeon_listener. It accepts paired clients over a
-// registered Go transport and produces a *Session per client.
-//
-// The transport must already have completed the PIGEON_ROLE_REGISTER_MUX
-// greeting — NewListener does NOT perform registration.
-//
-// Memory: the Listener owns every *Session it returns from Accept/Step.
-// Do not call Close on a Listener-returned session; Listener.Close frees
-// them all.
-type Listener struct {
-	c        *C.pigeon_listener
-	ref      *GoTransportRef // keeps the Go transport alive
-	resolveH *resolveHandle  // holds the resolve callback
-}
-
-// NewListener constructs a Listener over a registered Go transport.
-// resolve is invoked synchronously on the accept thread when a new client
-// primary arrives. datagrams declares the named channels available on
-// each accepted session (both peers must declare the same map).
-func NewListener(
-	tr GoTransport,
-	instanceID string,
-	resolve PairingResolver,
-	datagrams []DatagramChannel,
-) (*Listener, error) {
-	if tr == nil {
-		return nil, errors.New("cwire: NewListener: nil transport")
-	}
-	if resolve == nil {
-		return nil, errors.New("cwire: NewListener: nil resolver")
-	}
-	if len(datagrams) > 16 {
-		return nil, errors.New("cwire: NewListener: too many datagram channels")
-	}
-
-	ref := NewGoTransportRef(tr)
-
-	var t C.pigeon_transport
-	C.cwire_make_go_transport(unsafe.Pointer(ref.cudata), &t)
-
-	// Marshal datagram channel definitions.
-	var defs [16]C.pigeon_dgchannel_def
-	for i, dc := range datagrams {
-		if len(dc.Name) >= 64 {
-			ref.Close()
-			return nil, errors.New("cwire: NewListener: datagram channel name too long")
-		}
-		nb := []byte(dc.Name)
-		for j := range nb {
-			defs[i].name[j] = C.char(nb[j])
-		}
-		defs[i].channel_id = C.uint64_t(dc.ID)
-	}
-
-	var cInstanceID *C.char
-	if instanceID != "" {
-		cInstanceID = C.CString(instanceID)
-		defer C.free(unsafe.Pointer(cInstanceID))
-	}
-
-	// Bridge the PairingResolver through a cgo.Handle so the C callback
-	// can call back into Go without unsafe.Pointer ↔ uintptr round-trips.
-	rh := newResolveHandle(resolve)
-
-	var defsPtr *C.pigeon_dgchannel_def
-	if len(datagrams) > 0 {
-		defsPtr = &defs[0]
-	}
-
-	var cListener *C.pigeon_listener
-	rv := C.pigeon_listener_init(
-		&cListener,
-		&t,
-		cInstanceID,
-		(*[0]byte)(C.cwire_resolve_trampoline),
-		rh.ptr(),
-		defsPtr,
-		C.size_t(len(datagrams)),
-	)
-	if rv != 0 {
-		rh.delete()
-		ref.Close()
-		return nil, errors.New("cwire: pigeon_listener_init failed")
-	}
-
-	return &Listener{c: cListener, ref: ref, resolveH: rh}, nil
-}
-
-// InstanceID returns the listener's relay-assigned instance ID.
-func (l *Listener) InstanceID() string {
-	if l == nil || l.c == nil {
-		return ""
-	}
-	p := C.pigeon_listener_instance_id(l.c)
-	if p == nil {
-		return ""
-	}
-	return C.GoString(p)
-}
-
-// Accept blocks until the next paired client completes the activation
-// handshake and returns its session. Sub-streams that arrive for
-// already-accepted clients during the pump are dispatched into those
-// sessions' incoming-stream queues.
-//
-// Returns (nil, err) on transport failure or listener shutdown.
-// The returned session is owned by the Listener — do not call Close on it.
-func (l *Listener) Accept() (*Session, error) {
-	if l == nil || l.c == nil {
-		return nil, errors.New("cwire: Listener.Accept: closed")
-	}
-	var cSess *C.pigeon_session
-	rv := C.pigeon_listener_accept(l.c, &cSess)
-	if rv != 0 {
-		return nil, errors.New("cwire: pigeon_listener_accept failed")
-	}
-	return listenerSession(cSess), nil
-}
-
-// Step consumes exactly one inbound stream from the transport and
-// dispatches it. Returns:
-//   - (*Session, nil) when a new client primary completes activation
-//   - (nil, nil)      when a sub-stream was dispatched, a malformed header
-//     was dropped, or a primary was rejected
-//   - (nil, err)      on transport failure or listener shutdown
-//
-// The returned session is owned by the Listener — do not call Close on it.
-func (l *Listener) Step() (*Session, error) {
-	if l == nil || l.c == nil {
-		return nil, errors.New("cwire: Listener.Step: closed")
-	}
-	var cSess *C.pigeon_session
-	rv := C.pigeon_listener_step(l.c, &cSess)
-	switch rv {
-	case 1:
-		return listenerSession(cSess), nil
-	case 0:
-		return nil, nil
-	default:
-		return nil, errors.New("cwire: pigeon_listener_step failed")
-	}
-}
-
-// Close tears down the listener and all child sessions. Safe to call
-// multiple times. The underlying transport is not closed — the caller
-// owns it.
-func (l *Listener) Close() error {
-	if l == nil {
-		return nil
-	}
-	if l.c != nil {
-		C.pigeon_listener_close(l.c)
-		l.c = nil
-	}
-	if l.resolveH != nil {
-		l.resolveH.delete()
-		l.resolveH = nil
-	}
-	if l.ref != nil {
-		l.ref.Close()
-		l.ref = nil
-	}
-	return nil
-}
-
-// AcceptIncomingStream polls the session's incoming-stream queue for
-// a buffered sub-stream with the given name. Returns (nil, nil) if none
-// is queued yet — this is non-blocking. Application code that needs to
-// wait should call Listener.Step/Accept to advance the pump, then retry.
+// AcceptIncomingStream pulls the next peer-opened sub-stream with the
+// given name off the session's own QUIC pipe (T45: each session owns
+// its connection, so there is no listener demux to pump). Streams that
+// arrive with a different name are buffered for a later matching call.
+// Returns (nil, err) on transport failure or shutdown.
 func (s *Session) AcceptIncomingStream(name string) (*Stream, error) {
 	if s == nil || s.c == nil {
 		return nil, errors.New("cwire: AcceptIncomingStream: nil session")
@@ -212,7 +48,7 @@ func (s *Session) AcceptIncomingStream(name string) (*Stream, error) {
 	st := &Stream{session: s}
 	rv := C.pigeon_session_accept_incoming_stream(s.c, cName, &st.c)
 	if rv != 0 {
-		return nil, nil // not queued yet; caller should retry after pump
+		return nil, errors.New("cwire: pigeon_session_accept_incoming_stream failed")
 	}
 	return st, nil
 }
@@ -370,18 +206,6 @@ func ConnectOnTransport(
 	}
 	s.open = true
 	return s, nil
-}
-
-// listenerSession wraps a C pigeon_session pointer returned from the
-// listener. These sessions are owned by the listener; their Close is a
-// no-op so the caller can still defer-close them safely.
-func listenerSession(c *C.pigeon_session) *Session {
-	if c == nil {
-		return nil
-	}
-	// open=false so Session.Close will not call pigeon_session_close or
-	// free the pointer — the listener owns both.
-	return &Session{c: c, open: false}
 }
 
 // --- Resolve trampoline bridge ---

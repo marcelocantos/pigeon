@@ -1537,43 +1537,16 @@ int pigeon_channel_decrypt(pigeon_channel *ch,
 //
 
 
-int pigeon_wire_stream_header_encode(bool is_backend, uint32_t client_tag, const char *name, size_t name_len, uint8_t *out, size_t out_len)
+int pigeon_wire_stream_header_encode(const char *name, size_t name_len, uint8_t *out, size_t out_len)
 {
     size_t off = 0;
-    if (is_backend) {
-        if (off + 4 > out_len) return -1;
-        out[off++] = (uint8_t)(client_tag >> 24);
-        out[off++] = (uint8_t)(client_tag >> 16);
-        out[off++] = (uint8_t)(client_tag >> 8);
-        out[off++] = (uint8_t)(client_tag);
-        { int _n = pigeon_uvarint_encode((uint64_t)name_len, out + off, out_len - off); if (_n < 0) return -1; off += (size_t)_n; }
-        if (off + name_len > out_len) return -1;
-        if (name_len > 0) { if (!name) return -1; memcpy(out + off, name, name_len); off += name_len; }
-    } else {
-        { int _n = pigeon_uvarint_encode((uint64_t)name_len, out + off, out_len - off); if (_n < 0) return -1; off += (size_t)_n; }
-        if (off + name_len > out_len) return -1;
-        if (name_len > 0) { if (!name) return -1; memcpy(out + off, name, name_len); off += name_len; }
-    }
+    { int _n = pigeon_uvarint_encode((uint64_t)name_len, out + off, out_len - off); if (_n < 0) return -1; off += (size_t)_n; }
+    if (off + name_len > out_len) return -1;
+    if (name_len > 0) { if (!name) return -1; memcpy(out + off, name, name_len); off += name_len; }
     return (int)off;
 }
 
-int pigeon_wire_stream_header_decode_backend(const uint8_t *buf, size_t buf_len, uint32_t *client_tag, char *name_buf, size_t name_buf_len, size_t *name_len_out)
-{
-    size_t off = 0;
-    if (buf_len - off < 4) return -1;
-    if (client_tag) *client_tag = ((uint32_t)buf[off] << 24) | ((uint32_t)buf[off+1] << 16) | ((uint32_t)buf[off+2] << 8) | (uint32_t)buf[off+3];
-    off += 4;
-    { uint64_t _len = 0; int _n = pigeon_uvarint_decode(buf + off, buf_len - off, &_len); if (_n <= 0) return -1; off += (size_t)_n;
-      if (_len > buf_len - off) return -1;
-      if (_len + 1 > name_buf_len) return -1;
-      if (_len > 0) memcpy(name_buf, buf + off, (size_t)_len);
-      name_buf[_len] = '\0';
-      if (name_len_out) *name_len_out = (size_t)_len;
-      off += (size_t)_len; }
-    return (int)off;
-}
-
-int pigeon_wire_stream_header_decode_client(const uint8_t *buf, size_t buf_len, char *name_buf, size_t name_buf_len, size_t *name_len_out)
+int pigeon_wire_stream_header_decode(const uint8_t *buf, size_t buf_len, char *name_buf, size_t name_buf_len, size_t *name_len_out)
 {
     size_t off = 0;
     { uint64_t _len = 0; int _n = pigeon_uvarint_decode(buf + off, buf_len - off, &_len); if (_n <= 0) return -1; off += (size_t)_n;
@@ -1618,12 +1591,42 @@ int pigeon_wire_relay_greeting_encode_connect(const char *instance_id, size_t in
     return (int)off;
 }
 
-int pigeon_wire_relay_greeting_encode_register_mux(const char *token, const char *instance_id, uint8_t *out, size_t out_len)
+int pigeon_wire_relay_greeting_encode_register(const char *token, const char *instance_id, uint8_t *out, size_t out_len)
 {
     size_t off = 0;
-    const size_t prefix_len = 12;
+    const size_t prefix_len = 8;
     if (off + prefix_len > out_len) return -1;
-    memcpy(out + off, "register-mux", prefix_len);
+    memcpy(out + off, "register", prefix_len);
+    off += prefix_len;
+    const char *parts[2];
+    size_t part_lens[2];
+    bool any_non_empty = false;
+    parts[0] = token;
+    part_lens[0] = (token ? strlen(token) : 0);
+    if (parts[0] && part_lens[0] > 0) any_non_empty = true;
+    parts[1] = instance_id;
+    part_lens[1] = (instance_id ? strlen(instance_id) : 0);
+    if (parts[1] && part_lens[1] > 0) any_non_empty = true;
+    if (any_non_empty) {
+        for (int i = 0; i < 2; i++) {
+            if (off + 1 > out_len) return -1;
+            out[off++] = ':';
+            if (parts[i] && part_lens[i] > 0) {
+                if (off + part_lens[i] > out_len) return -1;
+                memcpy(out + off, parts[i], part_lens[i]);
+                off += part_lens[i];
+            }
+        }
+    }
+    return (int)off;
+}
+
+int pigeon_wire_relay_greeting_encode_listen(const char *token, const char *instance_id, uint8_t *out, size_t out_len)
+{
+    size_t off = 0;
+    const size_t prefix_len = 6;
+    if (off + prefix_len > out_len) return -1;
+    memcpy(out + off, "listen", prefix_len);
     off += prefix_len;
     const char *parts[2];
     size_t part_lens[2];
@@ -1652,9 +1655,20 @@ int pigeon_wire_relay_greeting_decode(const uint8_t *buf, size_t buf_len, pigeon
 {
     if (instance_id_len_out) *instance_id_len_out = 0;
     if (token_len_out) *token_len_out = 0;
-    if (buf_len >= 12 && memcmp(buf, "register-mux", 12) == 0) {
-        *out_variant = RELAY_GREETING_REGISTER_MUX;
-        size_t off = 12;
+    if (buf_len >= 8 && memcmp(buf, "connect:", 8) == 0) {
+        *out_variant = RELAY_GREETING_CONNECT;
+        size_t off = 8;
+        size_t instance_id_n = buf_len - off;
+        if (instance_id_n + 1 > instance_id_buf_len) return -1;
+        if (instance_id_n > 0) memcpy(instance_id_buf, buf + off, instance_id_n);
+        instance_id_buf[instance_id_n] = '\0';
+        if (instance_id_len_out) *instance_id_len_out = instance_id_n;
+        off = buf_len;
+        return (int)buf_len;
+    }
+    if (buf_len >= 8 && memcmp(buf, "register", 8) == 0) {
+        *out_variant = RELAY_GREETING_REGISTER;
+        size_t off = 8;
         if (off < buf_len) {
             if (buf[off] != ':') return -1;
             off++;
@@ -1687,15 +1701,39 @@ int pigeon_wire_relay_greeting_decode(const uint8_t *buf, size_t buf_len, pigeon
         }
         return (int)buf_len;
     }
-    if (buf_len >= 8 && memcmp(buf, "connect:", 8) == 0) {
-        *out_variant = RELAY_GREETING_CONNECT;
-        size_t off = 8;
-        size_t instance_id_n = buf_len - off;
-        if (instance_id_n + 1 > instance_id_buf_len) return -1;
-        if (instance_id_n > 0) memcpy(instance_id_buf, buf + off, instance_id_n);
-        instance_id_buf[instance_id_n] = '\0';
-        if (instance_id_len_out) *instance_id_len_out = instance_id_n;
-        off = buf_len;
+    if (buf_len >= 6 && memcmp(buf, "listen", 6) == 0) {
+        *out_variant = RELAY_GREETING_LISTEN;
+        size_t off = 6;
+        if (off < buf_len) {
+            if (buf[off] != ':') return -1;
+            off++;
+            size_t part_start = off;
+            size_t part_idx = 0;
+            const size_t expected = 2;
+            for (; off <= buf_len; off++) {
+                bool atEnd = (off == buf_len);
+                if (atEnd || (part_idx + 1 < expected && buf[off] == ':')) {
+                    size_t part_len = off - part_start;
+                    switch (part_idx) {
+                    case 0:
+                        if (part_len + 1 > token_buf_len) return -1;
+                        if (part_len > 0) memcpy(token_buf, buf + part_start, part_len);
+                        token_buf[part_len] = '\0';
+                        if (token_len_out) *token_len_out = part_len;
+                        break;
+                    case 1:
+                        if (part_len + 1 > instance_id_buf_len) return -1;
+                        if (part_len > 0) memcpy(instance_id_buf, buf + part_start, part_len);
+                        instance_id_buf[part_len] = '\0';
+                        if (instance_id_len_out) *instance_id_len_out = part_len;
+                        break;
+                    }
+                    part_idx++;
+                    part_start = off + 1;
+                    if (atEnd) break;
+                }
+            }
+        }
         return (int)buf_len;
     }
     *out_variant = RELAY_GREETING_UNKNOWN;
@@ -1880,17 +1918,19 @@ int pigeon_uvarint_decode(const uint8_t *buf, size_t buf_len, uint64_t *out)
     return 0; // truncated
 }
 
-// Stream-header encoder/decoders are protogen-generated in
-// c/src/wire_gen.c — pigeon_wire_stream_header_{encode,decode_backend,
-// decode_client}. Call sites use the generated names directly; we no
-// longer hand-roll them here.
+// Stream-header encoder/decoder are protogen-generated in
+// c/src/wire_gen.c — pigeon_wire_stream_header_{encode,decode}. Under
+// T45's remote-Listen L1 model each accepted client rides its own
+// end-to-end QUIC pipe, so the header is just [varint name-len][name]
+// with no backend/client variant and no 4-byte clientTag prefix. Call
+// sites use the generated names directly; we no longer hand-roll them
+// here.
 
-// AEAD-wrapped datagram (backend side: [4-byte tag][AEAD(plaintext)]).
-// The *plaintext* layout is protogen-generated
-// (pigeon_wire_datagram_plaintext_encode); this wrapper layers AEAD on
-// top and adds the optional clientTag prefix the relay routes by.
+// AEAD-wrapped datagram: wire = AEAD(plaintext). The *plaintext* layout
+// is protogen-generated (pigeon_wire_datagram_plaintext_encode); this
+// wrapper layers AEAD on top. Under T45 there is no clientTag prefix —
+// each session owns its own QUIC pipe, so the pipe is the demux.
 int pigeon_encode_datagram(pigeon_channel *ch,
-                           bool is_backend, uint32_t client_tag,
                            uint64_t channel_id,
                            const uint8_t *payload, size_t payload_len,
                            uint8_t *out, size_t out_len)
@@ -1909,49 +1949,26 @@ int pigeon_encode_datagram(pigeon_channel *ch,
                                                           plain, plain_cap);
     if (plain_len < 0) { free(plain); return -1; }
 
-    // Wire = (optional 4-byte tag) ++ AEAD(plain).
-    size_t off = 0;
-    if (is_backend) {
-        if (off + 4 > out_len) { free(plain); return -1; }
-        out[off++] = (uint8_t)(client_tag >> 24);
-        out[off++] = (uint8_t)(client_tag >> 16);
-        out[off++] = (uint8_t)(client_tag >> 8);
-        out[off++] = (uint8_t)(client_tag);
-    }
     int ct = pigeon_channel_encrypt(ch, plain, (size_t)plain_len,
-                                    out + off, out_len - off);
+                                    out, out_len);
     free(plain);
     if (ct < 0) return -1;
-    return (int)off + ct;
+    return ct;
 }
 
 int pigeon_decode_datagram(pigeon_channel *ch,
-                           bool is_backend,
                            const uint8_t *wire, size_t wire_len,
-                           uint32_t *client_tag,
                            uint64_t *channel_id,
                            uint8_t *payload_buf, size_t payload_buf_len)
 {
     if (!ch || !ch->established) return -1;
-
-    size_t off = 0;
-    if (is_backend) {
-        if (wire_len < 4) return -1;
-        if (client_tag) {
-            *client_tag = ((uint32_t)wire[0] << 24)
-                        | ((uint32_t)wire[1] << 16)
-                        | ((uint32_t)wire[2] <<  8)
-                        |  (uint32_t)wire[3];
-        }
-        off = 4;
-    }
 
     // AEAD-decrypt into a heap scratch buffer, then decode the
     // protogen plaintext format. Heap-allocated for the same reason as
     // pigeon_encode_datagram above (T38).
     uint8_t *plain = (uint8_t *)malloc(PIGEON_MAX_MSG);
     if (!plain) return -1;
-    int pn = pigeon_channel_decrypt(ch, wire + off, wire_len - off,
+    int pn = pigeon_channel_decrypt(ch, wire, wire_len,
                                     plain, PIGEON_MAX_MSG);
     if (pn < 0) { free(plain); return -1; }
 
@@ -2017,8 +2034,8 @@ static int pigeon_session_ensure_scratch(pigeon_session *s)
 {
     if (s->scratch_a && s->scratch_b) return 0;
     // Sized for the largest single send/recv: AEAD ciphertext expansion
-    // is ~32 bytes (8-byte seq + 16-byte tag + slack); datagrams add a
-    // 4-byte clientTag prefix. 64 bytes of slack is comfortable.
+    // is ~32 bytes (8-byte seq + 16-byte tag + slack). 64 bytes of
+    // slack is comfortable.
     size_t sz = PIGEON_MAX_MSG + 64;
     if (!s->scratch_a) s->scratch_a = (uint8_t *)malloc(sz);
     if (!s->scratch_b) s->scratch_b = (uint8_t *)malloc(sz);
@@ -2034,16 +2051,35 @@ static int pigeon_session_ensure_scratch(pigeon_session *s)
 void pigeon_session_close(pigeon_session *s)
 {
     if (!s) return;
+    // Close any peer-opened sub-streams this session buffered but the
+    // application never picked up.
+    for (size_t i = 0; i < PIGEON_SESSION_MAX_INCOMING; i++) {
+        if (s->incoming[i].in_use && s->incoming[i].handle != NULL
+                && s->transport.close_stream != NULL) {
+            (void)s->transport.close_stream(s->transport.userdata,
+                                            s->incoming[i].handle);
+        }
+        s->incoming[i].in_use = false;
+        s->incoming[i].handle = NULL;
+    }
     free(s->scratch_a); s->scratch_a = NULL;
     free(s->scratch_b); s->scratch_b = NULL;
     s->scratch_size = 0;
+    // Tear down an adopted listen transport (pigeon_listener_accept).
+    // owner_close drops the QUIC connection; owner_free releases the
+    // heap box. Run once, then clear so a second close is a no-op.
+    if (s->owner != NULL) {
+        if (s->owner_close != NULL) s->owner_close(s->owner);
+        if (s->owner_free  != NULL) s->owner_free(s->owner);
+        s->owner       = NULL;
+        s->owner_close = NULL;
+        s->owner_free  = NULL;
+    }
 }
 
 int pigeon_session_init(pigeon_session *s,
                         const pigeon_transport *transport,
                         const pigeon_channel *channel,
-                        bool is_backend,
-                        uint32_t client_tag,
                         const pigeon_dgchannel_def *datagrams,
                         size_t datagram_count)
 {
@@ -2053,8 +2089,6 @@ int pigeon_session_init(pigeon_session *s,
     memset(s, 0, sizeof(*s));
     s->transport  = *transport;
     s->channel    = *channel;
-    s->is_backend = is_backend;
-    s->client_tag = client_tag;
 
     // Validate the (name, id) list: no duplicate ids, no id == 0
     // (reserved), no name overflow.
@@ -2084,10 +2118,10 @@ int pigeon_session_open_stream(pigeon_session *s,
     if (s->transport.open_stream(s->transport.userdata, &h) != 0) return -1;
 
     // Compose the unencrypted name-binding header and write it as the
-    // first message on the stream.
+    // first message on the stream. Under T45 the header is just
+    // [varint name-len][name] — no clientTag prefix.
     uint8_t hdr[PIGEON_MAX_STREAM_HEADER];
-    int hn = pigeon_wire_stream_header_encode(s->is_backend, s->client_tag,
-                                         name, name_len, hdr, sizeof(hdr));
+    int hn = pigeon_wire_stream_header_encode(name, name_len, hdr, sizeof(hdr));
     if (hn < 0) {
         if (s->transport.close_stream) s->transport.close_stream(s->transport.userdata, h);
         return -1;
@@ -2193,7 +2227,6 @@ int pigeon_datagram_send(pigeon_datagram *d,
     if (pigeon_session_ensure_scratch(sess) != 0) return -1;
 
     int wn = pigeon_encode_datagram(&sess->channel,
-                                    sess->is_backend, sess->client_tag,
                                     d->channel_id,
                                     payload, payload_len,
                                     sess->scratch_a, sess->scratch_size);
@@ -2217,8 +2250,8 @@ int pigeon_datagram_recv(pigeon_datagram *d,
     }
     if (got == 0) return -1; // recv timed out with no datagram available
     uint64_t cid = 0;
-    int pn = pigeon_decode_datagram(&sess->channel, sess->is_backend,
-                                    sess->scratch_a, got, NULL, &cid,
+    int pn = pigeon_decode_datagram(&sess->channel,
+                                    sess->scratch_a, got, &cid,
                                     buf, buf_len);
     if (pn < 0) return -1;
     if (cid != d->channel_id) {
@@ -2282,14 +2315,21 @@ int pigeon_connect_on_transport(const pigeon_transport *transport,
     }
     if (peer_instance_id == NULL) return -1;
 
-    // 1. Write the empty-name primary stream header on the primary stream.
-    //    Client side ⇒ no 4-byte clientTag prefix, name length 0.
-    uint8_t hdr[PIGEON_MAX_STREAM_HEADER];
-    int hn = pigeon_wire_stream_header_encode(false, 0, NULL, 0, hdr, sizeof(hdr));
-    if (hn < 0) return -1;
-    if (transport->send_on_stream(transport->userdata, primary_handle,
-                                  hdr, (size_t)hn) != 0) {
-        return -1;
+    // Under T45 the relay's "ok" ack means this QUIC connection is
+    // already bridged end-to-end onto a backend listen, so the primary
+    // is a clean pipe straight to the backend — no relay-level framing.
+    //
+    // 1. Pairing mode has no activation handshake; the backend gates
+    //    Session creation on a real client match by reading one empty
+    //    "arrival marker" message on the primary (see Go's Connect /
+    //    Listener.activate). Activation mode skips the marker: its first
+    //    primary message IS the auth_request, which already serves as
+    //    the gate.
+    if (pairing_mode) {
+        if (transport->send_on_stream(transport->userdata, primary_handle,
+                                      NULL, 0) != 0) {
+            return -1;
+        }
     }
 
     // 2. Run the client-side activation handshake (or skip in pairing mode).
@@ -2325,9 +2365,8 @@ int pigeon_connect_on_transport(const pigeon_transport *transport,
     // established is false, which pigeon_stream_send / _datagram_send
     // already reject. The caller switches to a derived channel later.
 
-    // 3. Initialise the session (client side, no clientTag).
+    // 3. Initialise the session (client side).
     if (pigeon_session_init(out_session, transport, &channel,
-                            /*is_backend=*/false, /*client_tag=*/0,
                             datagrams, datagram_count) != 0) {
         return -1;
     }
@@ -2768,124 +2807,92 @@ int pigeon_pair_initiator(
 // --- Multi-client listener ---
 
 //
-// Multi-client listener (T32.2). Mirrors Go's pigeon.Register /
-// pigeon.Listener.Accept in api.go — a backend registers once with
-// the relay (PIGEON_ROLE_REGISTER_MUX); thereafter every paired
-// client that connects on the shared QUIC connection produces a
-// fresh pigeon_session.
+// Multi-client listener (T45 remote-Listen L1). Mirrors Go's
+// pigeon.Register / pigeon.Listener.Accept in api.go.
 //
-// Threading model: synchronous inline demux on the calling thread.
-// pigeon_listener_accept blocks on transport->accept_stream, reads
-// the [4-byte clientTag][varint name-len][name] header that the
-// relay prepends, and either:
+// Under T45 each accepted client rides its OWN end-to-end QUIC pipe:
+// the backend holds one register control connection open for the
+// instance's lifetime, then dials a fresh `listen` connection per
+// client. The relay matches each arriving client to a parked listen
+// and bridges the two connections opaquely, so there is no shared
+// connection and no per-client clientTag demux.
 //
-//   * tag is new + name empty -> primary stream for a new client.
-//     Run T32.1's pigeon_run_backend_activation against the
-//     registered pairing callback, derive an AEAD channel from the
-//     resolved PairingRecord, allocate a pigeon_session, register
-//     it under its tag in the demux table, and return it.
+// The listener does not own the per-client transports directly. It
+// holds a dial-listen callback that produces a fresh bridged listen
+// transport on each accept (ngtcp2 dialer in production,
+// loopback dialer in tests). pigeon_listener_accept:
 //
-//   * tag is known -> sub-stream for an existing client. Park the
-//     stream + name on the session's per-session incoming-stream
-//     queue (the listener's pump keeps looping until the next new
-//     primary).
+//   1. dials a listen connection and waits for the relay to bridge a
+//      client onto it;
+//   2. runs T32.1's pigeon_run_backend_activation on the bridged
+//      primary against the registered pairing callback;
+//   3. derives an AEAD channel from the resolved PairingRecord and
+//      builds a pigeon_session that ADOPTS the listen transport
+//      (closing it on pigeon_session_close).
 //
-// The hash table is a 16-slot open-addressing linear-probing map.
-// The C SDK targets small N (a personal-device-count of paired
-// clients per backend), so 16 slots is plenty and keeps the data
-// structure trivial.
+// Memory: each accepted session owns its listen transport; the caller
+// owns the session and releases it with pigeon_session_close. The
+// register control transport is owned by the listener and torn down by
+// pigeon_listener_close.
 
 
 
 // --- Per-listener state ---
 
-typedef struct {
-    bool            in_use;
-    uint32_t        client_tag;
-    pigeon_session *session;
-} listener_slot;
-
 struct pigeon_listener {
-    pigeon_transport          transport;
+    // Register control transport. Kept open for the instance's
+    // lifetime; no traffic flows on it.
+    pigeon_transport          control;
     char                      instance_id[64];
 
+    // Listen-dialer: produces a fresh bridged listen transport on each
+    // accept. owner_close / owner_free tear down the adopted transport
+    // when its session closes.
+    pigeon_listen_dialer      dial_listen;
+    void                     *dial_userdata;
+    void                    (*dial_userdata_free)(void *); // optional
+    pigeon_listen_owner_fn    owner_close;
+    pigeon_listen_owner_fn    owner_free;
+
     // Pairing callback (device-id -> PairingRecord lookup) wired in
-    // at init time. Invoked synchronously from the accept pump.
+    // at init time. Invoked synchronously from the accept path.
     pigeon_resolve_device_fn  resolve;
     void                     *resolve_userdata;
 
-    // Datagram channel definitions copied into each accepted
-    // session.
+    // Datagram channel definitions copied into each accepted session.
     pigeon_dgchannel_def      datagrams[PIGEON_MAX_DATAGRAM_CHANNELS];
     size_t                    datagram_count;
 
-    // Per-tag demux table. Fixed-size open-addressing linear
-    // probing; sized to PIGEON_LISTENER_MAX_CLIENTS slots.
-    listener_slot             slots[PIGEON_LISTENER_MAX_CLIENTS];
-
-    // Optional owned-transport closer. When the high-level
-    // pigeon_register wires up an ngtcp2 transport on behalf of the
-    // caller, it parks a closer + free callback here so
-    // pigeon_listener_close tears the transport down. NULL when the
-    // caller owns the transport (the low-level pigeon_listener_init
-    // path).
-    void  (*owned_transport_close)(void *t);
-    void  (*owned_transport_free)(void *t);
-    void   *owned_transport;
+    // Optional owned register-control closer. When the high-level
+    // pigeon_register wires up an ngtcp2 control transport on behalf of
+    // the caller, it parks a closer + free callback here so
+    // pigeon_listener_close tears the control connection down. NULL
+    // when the caller owns the control transport (the low-level
+    // pigeon_listener_init path).
+    void  (*owned_control_close)(void *t);
+    void  (*owned_control_free)(void *t);
+    void   *owned_control;
 
     bool                      closed;
 };
 
-// --- Hash table helpers ---
-//
-// 32-bit tag fold. The relay assigns sequential client tags so even
-// a trivial modulo distributes them well; mix in a fixnum-style
-// multiplier so an adversarial workload that picks colliding tags
-// doesn't fall off a cliff.
-
-static size_t slot_index(uint32_t tag, size_t probe)
-{
-    uint32_t hash = tag * 2654435761u; // Knuth fibonacci hash
-    return ((size_t)hash + probe) % PIGEON_LISTENER_MAX_CLIENTS;
-}
-
-// Find an in-use slot with the given tag, or return NULL.
-static listener_slot *slot_lookup(pigeon_listener *l, uint32_t tag)
-{
-    for (size_t probe = 0; probe < PIGEON_LISTENER_MAX_CLIENTS; probe++) {
-        listener_slot *s = &l->slots[slot_index(tag, probe)];
-        if (!s->in_use) return NULL; // open addressing: first empty -> miss
-        if (s->client_tag == tag) return s;
-    }
-    return NULL;
-}
-
-// Find a free slot to host the given tag, or NULL if the table is
-// full. Assumes the tag is not already present.
-static listener_slot *slot_insert(pigeon_listener *l, uint32_t tag)
-{
-    for (size_t probe = 0; probe < PIGEON_LISTENER_MAX_CLIENTS; probe++) {
-        listener_slot *s = &l->slots[slot_index(tag, probe)];
-        if (!s->in_use) return s;
-    }
-    return NULL;
-}
-
 // --- Session lifecycle ---
 
 // Allocate and initialise a pigeon_session for an activated client.
-// Returns NULL on allocation failure; on success the caller registers
-// it in the demux table.
+// The session ADOPTS `transport` (a fresh listen connection) and its
+// owner cookie / teardown hooks. Returns NULL on failure.
 static pigeon_session *make_session(pigeon_listener *l,
-                                    uint32_t tag,
+                                    const pigeon_transport *transport,
+                                    pigeon_stream_handle *primary,
+                                    void *owner,
                                     const pigeon_pairing_record *rec)
 {
     pigeon_session *s = (pigeon_session *)calloc(1, sizeof(*s));
     if (!s) return NULL;
 
-    // Derive the session AEAD channel from the resolved
-    // PairingRecord. Mirrors api.go's rec.DeriveChannel(
-    // "backend->client", "client->backend") on the Listener side.
+    // Derive the session AEAD channel from the resolved PairingRecord.
+    // Mirrors api.go's DeriveSessionChannel on the Listener side:
+    // send=backend->client, recv=client->backend.
     uint8_t send_key[32], recv_key[32];
     if (pigeon_derive_session_key(rec->local_private_key,
                                   rec->peer_public_key,
@@ -2906,99 +2913,45 @@ static pigeon_session *make_session(pigeon_listener *l,
     pigeon_channel ch;
     pigeon_channel_init(&ch, send_key, recv_key, PIGEON_MODE_STRICT);
 
-    if (pigeon_session_init(s, &l->transport, &ch,
-                            /*is_backend=*/true, tag,
+    if (pigeon_session_init(s, transport, &ch,
                             l->datagrams, l->datagram_count) != 0) {
         free(s);
         return NULL;
     }
+    s->primary      = primary;
+    s->owner        = owner;
+    s->owner_close  = l->owner_close;
+    s->owner_free   = l->owner_free;
     return s;
-}
-
-// Free a session: scratch buffers, any unpicked-up incoming sub-
-// streams, then the struct itself. Safe on NULL.
-static void free_session(pigeon_listener *l, pigeon_session *s)
-{
-    if (!s) return;
-    for (size_t i = 0; i < PIGEON_SESSION_MAX_INCOMING; i++) {
-        if (s->incoming[i].in_use && s->incoming[i].handle != NULL
-                && l->transport.close_stream != NULL) {
-            (void)l->transport.close_stream(l->transport.userdata,
-                                            s->incoming[i].handle);
-        }
-        s->incoming[i].in_use = false;
-        s->incoming[i].handle = NULL;
-    }
-    pigeon_session_close(s);
-    free(s);
-}
-
-// --- Header decoding ---
-//
-// Read the [4-byte tag][varint name-len][name] header that backends
-// see on every inbound stream. The relay prepended the tag; the
-// originating client wrote the (name-len, name) part.
-
-static int read_backend_header(pigeon_listener *l,
-                               pigeon_stream_handle *handle,
-                               uint32_t *out_tag,
-                               char *out_name, size_t out_name_cap,
-                               size_t *out_name_len)
-{
-    uint8_t hdr[PIGEON_MAX_STREAM_HEADER];
-    size_t  hdr_len = 0;
-    if (l->transport.recv_on_stream(l->transport.userdata, handle,
-                                    hdr, sizeof(hdr), &hdr_len) != 0) {
-        return -1;
-    }
-    return pigeon_wire_stream_header_decode_backend(hdr, hdr_len,
-                                               out_tag,
-                                               out_name, out_name_cap,
-                                               out_name_len);
-}
-
-// --- Queueing a sub-stream into a session ---
-
-static void queue_substream(pigeon_session *s,
-                            pigeon_stream_handle *handle,
-                            const char *name)
-{
-    for (size_t i = 0; i < PIGEON_SESSION_MAX_INCOMING; i++) {
-        if (!s->incoming[i].in_use) {
-            s->incoming[i].in_use = true;
-            s->incoming[i].handle = handle;
-            size_t nl = strlen(name);
-            if (nl >= PIGEON_MAX_NAME_LEN) nl = PIGEON_MAX_NAME_LEN - 1;
-            memcpy(s->incoming[i].name, name, nl);
-            s->incoming[i].name[nl] = '\0';
-            return;
-        }
-    }
-    // Queue full: drop the stream (close it so the peer doesn't
-    // wedge waiting for a reader). Matches "warn and drop" behaviour
-    // the Go side falls back to under sustained queue pressure.
 }
 
 // --- Public API ---
 
 int pigeon_listener_init(pigeon_listener **out,
-                         const pigeon_transport *transport,
+                         const pigeon_transport *control,
                          const char *instance_id,
+                         pigeon_listen_dialer dial_listen,
+                         void *dial_userdata,
+                         pigeon_listen_owner_fn owner_close,
+                         pigeon_listen_owner_fn owner_free,
                          pigeon_resolve_device_fn pairing,
                          void *pairing_userdata,
                          const pigeon_dgchannel_def *datagrams,
                          size_t datagram_count)
 {
-    if (!out || !transport || !pairing) return -1;
+    if (!out || !control || !dial_listen || !pairing) return -1;
     if (datagram_count > PIGEON_MAX_DATAGRAM_CHANNELS) return -1;
-    if (!transport->accept_stream || !transport->recv_on_stream) return -1;
 
     pigeon_listener *l = (pigeon_listener *)calloc(1, sizeof(*l));
     if (!l) return -1;
 
-    l->transport         = *transport;
-    l->resolve           = pairing;
-    l->resolve_userdata  = pairing_userdata;
+    l->control          = *control;
+    l->dial_listen      = dial_listen;
+    l->dial_userdata    = dial_userdata;
+    l->owner_close      = owner_close;
+    l->owner_free       = owner_free;
+    l->resolve          = pairing;
+    l->resolve_userdata = pairing_userdata;
     if (instance_id) {
         size_t n = strlen(instance_id);
         if (n >= sizeof(l->instance_id)) n = sizeof(l->instance_id) - 1;
@@ -3031,171 +2984,116 @@ const char *pigeon_listener_instance_id(const pigeon_listener *l)
     return l->instance_id;
 }
 
-int pigeon_listener_step(pigeon_listener *l, pigeon_session **out_session)
+int pigeon_listener_accept(pigeon_listener *l, pigeon_session **out_session)
 {
     if (!l || !out_session) return -1;
     if (l->closed) return -1;
 
     *out_session = NULL;
 
-    pigeon_stream_handle *handle = NULL;
-    if (l->transport.accept_stream(l->transport.userdata, &handle) != 0) {
+    // 1. Dial a fresh listen connection and wait for the relay to
+    //    bridge a client onto it.
+    pigeon_transport      tr;
+    pigeon_stream_handle *primary = NULL;
+    void                 *owner   = NULL;
+    if (l->dial_listen(l->dial_userdata, &tr, &primary, &owner) != 0) {
         return -1;
     }
 
-    uint32_t tag = 0;
-    char     name[PIGEON_MAX_NAME_LEN] = {0};
-    size_t   name_len = 0;
-    if (read_backend_header(l, handle, &tag, name, sizeof(name), &name_len) < 0) {
-        if (l->transport.close_stream) {
-            l->transport.close_stream(l->transport.userdata, handle);
-        }
-        return 0; // malformed header from one client shouldn't sink the
-                  // whole listener — caller can loop again.
-    }
-
-    listener_slot *existing = slot_lookup(l, tag);
-    if (existing != NULL) {
-        if (name_len == 0) {
-            // Duplicate primary for a tag we already activated:
-            // protocol error, drop.
-            if (l->transport.close_stream) {
-                l->transport.close_stream(l->transport.userdata, handle);
-            }
-            return 0;
-        }
-        queue_substream(existing->session, handle, name);
-        return 0;
-    }
-
-    if (name_len != 0) {
-        // First-seen tag with a named sub-stream — no Session to
-        // route to. Drop the stream.
-        if (l->transport.close_stream) {
-            l->transport.close_stream(l->transport.userdata, handle);
-        }
-        return 0;
-    }
-
-    // New client primary: run the activation handshake on this
-    // stream against the listener's resolver.
+    // 2. Run the activation handshake on the bridged primary against
+    //    the listener's resolver. The client's auth_request is the
+    //    first message on the bridged pipe, so it doubles as the
+    //    "a client really matched" gate.
     pigeon_backend_machine machine;
     char     device_id[PIGEON_AUTH_MAX_DEVICE_ID + 1] = {0};
     pigeon_pairing_record  record;
-    int rc = pigeon_run_backend_activation(&l->transport, handle,
+    int rc = pigeon_run_backend_activation(&tr, primary,
                                            l->resolve,
                                            l->resolve_userdata,
                                            &machine,
                                            device_id, sizeof(device_id),
                                            &record);
     if (rc != 0) {
-        // -1 (wire failure) or 1 (decoded but rejected): close
-        // the primary and keep accepting. Matches the Go-side
-        // behaviour: rejected clients don't materialise a Session.
-        if (l->transport.close_stream) {
-            l->transport.close_stream(l->transport.userdata, handle);
-        }
-        return 0;
-    }
-
-    // Allocate the session, derive the AEAD channel, register it
-    // in the demux table BEFORE returning so any sub-stream the
-    // client opens immediately after activation finds the tag in
-    // the map when the next pump iteration lands.
-    listener_slot *slot = slot_insert(l, tag);
-    if (!slot) {
-        // Table full: cap reached.
-        if (l->transport.close_stream) {
-            l->transport.close_stream(l->transport.userdata, handle);
-        }
+        // -1 (wire failure) or 1 (decoded but rejected): tear down the
+        // listen connection. Matches the Go-side behaviour: rejected
+        // clients don't materialise a Session.
+        if (l->owner_close && owner) l->owner_close(owner);
+        if (l->owner_free  && owner) l->owner_free(owner);
         return -1;
     }
-    pigeon_session *sess = make_session(l, tag, &record);
+
+    // 3. Build the session, deriving its AEAD channel and adopting the
+    //    listen transport (and its owner cookie).
+    pigeon_session *sess = make_session(l, &tr, primary, owner, &record);
     if (!sess) {
-        if (l->transport.close_stream) {
-            l->transport.close_stream(l->transport.userdata, handle);
-        }
+        if (l->owner_close && owner) l->owner_close(owner);
+        if (l->owner_free  && owner) l->owner_free(owner);
         return -1;
     }
-    slot->in_use     = true;
-    slot->client_tag = tag;
-    slot->session    = sess;
-
-    // Bind (don't close) the activation primary. Matches Go's
-    // Listener.acceptPrimary: the primary is kept open so the relay
-    // bridge's per-client primary forwarding goroutine stays alive
-    // — closing it here tears the whole client connection down on
-    // the relay side. The primary stream is owned by the transport;
-    // pigeon_listener_close drops the transport which closes all
-    // its streams as a unit.
-    sess->primary = handle;
 
     *out_session = sess;
-    return 1;
-}
-
-int pigeon_listener_accept(pigeon_listener *l, pigeon_session **out_session)
-{
-    if (!l || !out_session) return -1;
-    while (!l->closed) {
-        pigeon_session *s = NULL;
-        int rc = pigeon_listener_step(l, &s);
-        if (rc < 0) return rc;
-        if (rc == 1) {
-            *out_session = s;
-            return 0;
-        }
-        // rc == 0: sub-stream dispatched or malformed header — keep pumping.
-    }
-    return -1;
+    return 0;
 }
 
 void pigeon_listener_close(pigeon_listener *l)
 {
     if (!l) return;
     l->closed = true;
-    for (size_t i = 0; i < PIGEON_LISTENER_MAX_CLIENTS; i++) {
-        if (l->slots[i].in_use) {
-            free_session(l, l->slots[i].session);
-            l->slots[i].in_use = false;
-            l->slots[i].session = NULL;
+    if (l->owned_control != NULL) {
+        if (l->owned_control_close != NULL) {
+            l->owned_control_close(l->owned_control);
         }
+        if (l->owned_control_free != NULL) {
+            l->owned_control_free(l->owned_control);
+        }
+        l->owned_control = NULL;
     }
-    if (l->owned_transport != NULL) {
-        if (l->owned_transport_close != NULL) {
-            l->owned_transport_close(l->owned_transport);
-        }
-        if (l->owned_transport_free != NULL) {
-            l->owned_transport_free(l->owned_transport);
-        }
-        l->owned_transport = NULL;
+    if (l->dial_userdata_free != NULL && l->dial_userdata != NULL) {
+        l->dial_userdata_free(l->dial_userdata);
+        l->dial_userdata = NULL;
     }
     free(l);
 }
 
-// Internal hook for pigeon_register (and any other transport-owning
-// wrapper) to park the underlying transport so pigeon_listener_close
-// tears it down. Not declared in the public header — wrappers in this
-// library forward-declare it.
-void pigeon_listener_set_owned_transport(
+// Internal hook for pigeon_register (and any other control-transport-
+// owning wrapper) to park the register control transport so
+// pigeon_listener_close tears it down. Not declared in the public
+// header — wrappers in this library forward-declare it.
+void pigeon_listener_set_owned_control(
         pigeon_listener *l,
         void *transport,
         void (*close_fn)(void *),
         void (*free_fn)(void *))
 {
     if (!l) return;
-    l->owned_transport       = transport;
-    l->owned_transport_close = close_fn;
-    l->owned_transport_free  = free_fn;
+    l->owned_control       = transport;
+    l->owned_control_close = close_fn;
+    l->owned_control_free  = free_fn;
 }
 
-// --- Session-level: drain a buffered incoming sub-stream ---
+// Internal hook: park a free callback for the listen-dialer's userdata
+// so pigeon_listener_close releases it. Not in the public header.
+void pigeon_listener_set_dial_userdata_free(
+        pigeon_listener *l,
+        void (*free_fn)(void *))
+{
+    if (!l) return;
+    l->dial_userdata_free = free_fn;
+}
+
+// --- Session-level: accept a peer-opened sub-stream by name ---
+//
+// Each session owns its own QUIC pipe, so this accepts directly from
+// the session's transport. Streams whose name doesn't match are
+// buffered into the session's incoming queue for a later matching call.
 
 int pigeon_session_accept_incoming_stream(pigeon_session *s,
                                           const char *name,
                                           pigeon_stream *out_stream)
 {
     if (!s || !name || !out_stream) return -1;
+
+    // First, drain any previously-buffered sub-stream that matches.
     for (size_t i = 0; i < PIGEON_SESSION_MAX_INCOMING; i++) {
         if (s->incoming[i].in_use
                 && strcmp(s->incoming[i].name, name) == 0) {
@@ -3210,7 +3108,63 @@ int pigeon_session_accept_incoming_stream(pigeon_session *s,
             return 0;
         }
     }
-    return -1;
+
+    if (!s->transport.accept_stream || !s->transport.recv_on_stream) {
+        return -1;
+    }
+
+    // Pull streams off this session's transport until the requested
+    // name arrives. Non-matching streams are buffered.
+    for (;;) {
+        pigeon_stream_handle *handle = NULL;
+        if (s->transport.accept_stream(s->transport.userdata, &handle) != 0) {
+            return -1;
+        }
+        uint8_t hdr[PIGEON_MAX_STREAM_HEADER];
+        size_t  hdr_len = 0;
+        if (s->transport.recv_on_stream(s->transport.userdata, handle,
+                                        hdr, sizeof(hdr), &hdr_len) != 0) {
+            if (s->transport.close_stream) {
+                s->transport.close_stream(s->transport.userdata, handle);
+            }
+            continue;
+        }
+        char   sname[PIGEON_MAX_NAME_LEN] = {0};
+        size_t sname_len = 0;
+        if (pigeon_wire_stream_header_decode(hdr, hdr_len,
+                                             sname, sizeof(sname),
+                                             &sname_len) < 0) {
+            if (s->transport.close_stream) {
+                s->transport.close_stream(s->transport.userdata, handle);
+            }
+            continue;
+        }
+        if (strcmp(sname, name) == 0) {
+            out_stream->session = s;
+            out_stream->handle  = handle;
+            memcpy(out_stream->name, sname, sname_len);
+            out_stream->name[sname_len] = '\0';
+            return 0;
+        }
+        // Different name: buffer it for a later matching call.
+        bool buffered = false;
+        for (size_t i = 0; i < PIGEON_SESSION_MAX_INCOMING; i++) {
+            if (!s->incoming[i].in_use) {
+                s->incoming[i].in_use = true;
+                s->incoming[i].handle = handle;
+                memcpy(s->incoming[i].name, sname, sname_len);
+                s->incoming[i].name[sname_len] = '\0';
+                buffered = true;
+                break;
+            }
+        }
+        if (!buffered) {
+            // Queue full: drop the stream so the peer doesn't wedge.
+            if (s->transport.close_stream) {
+                s->transport.close_stream(s->transport.userdata, handle);
+            }
+        }
+    }
 }
 
 // --- In-process loopback transport ---

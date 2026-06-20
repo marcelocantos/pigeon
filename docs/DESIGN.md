@@ -68,8 +68,9 @@ What the relay sees:
   they change). QUIC migration moves the path; that fact is observable
   to the relay.
 - The size, timing, and direction of each stream message and datagram.
-- Routing tags (the 4-byte clientTag prefix on multi-client backends).
-- The relay greeting (`connect:<id>`, `register-mux:[token]:[id]`).
+- The relay greeting (`connect:<id>`, `register:[token]:[id]`,
+  `listen:[token]:[id]`). Each client rides its own end-to-end QUIC
+  connection, so there is no per-client routing tag for the relay to see.
 
 What the relay does **not** see:
 
@@ -99,8 +100,8 @@ returns a non-nil error to refuse the registration. The zero `Auth`
 means "accept all" — explicit open-relay mode.
 
 Two helpers ship as defaults: `pigeon.BearerTokenAuth(token)`
-(constant-time-compares a presented register-mux greeting token or
-WebTransport `Authorization: Bearer` credential) and
+(constant-time-compares a presented `register` / `listen` greeting
+token or WebTransport `Authorization: Bearer` credential) and
 `pigeon.MutualTLSAuth(*x509.CertPool)` (requires the peer to have
 presented a client certificate signed by one of the roots; caller is
 responsible for setting `tls.Config.ClientAuth` and `ClientCAs`). The
@@ -277,16 +278,16 @@ L4. **Multiplexing.** The application surface — `OpenStream("name")`,
    are derived from the L2-established `PairingRecord`. Same
    semantics across languages; idiomatic per-language surface.
 
-**Current state vs. target.** L1 currently has two parallel bridging
-modes (`bridgeClientPair` for 1:1, `bridgeClientMux` for N-clients
-with per-client tag prefix) and pigeon has two parallel session-
-shaped types (legacy `Conn` carrying L2+L3 plumbing; modern
-`Session` carrying L4 over a thinner L1 with no L3). The target above
-collapses both: single bridging mode at L1 (mux subsumed into the
-remote-Listen model), single session type carrying the L4 surface
-above an L3 layer that explicitly upgrades from relay. Migration is
-tracked under T39 sub-targets. Pairing's transition from
-`pigeon.Conn` to the modern API rides on L2's pairing-mode landing.
+**Current state vs. target.** L1 is now the single remote-Listen
+bridging mode described above (🎯T45): the relay has one `bridge`
+that byte-shovels a client's QUIC connection to a parked backend
+`listen` connection, each accepted client gets its own end-to-end
+pipe, and the `register-mux` greeting + 4-byte `clientTag` prefix +
+per-client demux dispatcher are gone across every SDK. The legacy
+`Conn` type was already retired under T39.6, so `Session` is the sole
+session-shaped type. The remaining L1-adjacent gap is L3: the
+path-management *spec* is landed (🎯T39.7) but the runtime still ships
+relay-only — LAN/STUN promotion (🎯T43) is follow-up work.
 
 ---
 
@@ -328,9 +329,11 @@ Protogen's input language describes:
   sub-states. Output: an executor for each target language,
   encoders/decoders for every transitionable message, a TLA+ spec, a
   PlantUML diagram.
-- **One-shot byte formats.** Examples: relay greeting strings, the
-  4-byte clientTag prefix, the per-stream `[varint name-len][name]`
-  binding header. Output: encoder + decoder for each target language.
+- **One-shot byte formats.** Examples: relay greeting strings
+  (`register` / `listen` / `connect`), the per-stream
+  `[varint name-len][name]` binding header, the
+  `[varint channel-id][payload]` datagram plaintext. Output: encoder +
+  decoder for each target language.
 
 **Two state machines, verified independently.** Pairing and session
 have completely different lifecycles — pairing is one-shot per device
@@ -616,15 +619,13 @@ than running ad-hoc Go code.
 
 **Largest open architectural gaps:**
 
-1. **L1 has two parallel bridging modes today.** `bridgeClientPair`
-   (1:1, used by pairing) and `bridgeClientMux` (N-clients with
-   per-client tag prefix, used by sessions) are parallel
-   implementations of what should be a single `register / listen /
-   accept / connect` model with each accepted client getting its own
-   end-to-end QUIC pipe (§3 L1). Collapsing the two deletes the
-   `clientTag` concept across the entire codebase, the dual greeting
-   parser on the relay, and the legacy `pigeon.Conn` type. Tracked
-   under T39 sub-targets.
+1. ~~**L1 has two parallel bridging modes today.**~~ Closed under
+   🎯T45. L1 is now the single `register / listen / connect`
+   remote-Listen model — each accepted client gets its own end-to-end
+   QUIC pipe, and the `register-mux` greeting, the 4-byte `clientTag`
+   prefix, the dual greeting parser, and the per-client demux
+   dispatcher are deleted across every SDK (Go, Swift, Kotlin, C, TS).
+   The legacy `pigeon.Conn` type was retired earlier under T39.6.
 2. **L2 doesn't yet support pairing-mode.** Today's `Register` /
    `Connect` always force the auth_request / auth_ok handshake, which
    needs a `PairingRecord`. Pairing therefore can't use the modern

@@ -9,7 +9,6 @@ import (
 	"fmt"
 	"log/slog"
 	"net"
-	"strings"
 	"sync"
 	"time"
 
@@ -157,62 +156,39 @@ func (s *QUICServer) acceptLoop() error {
 }
 
 func (s *QUICServer) handleConnection(conn *quic.Conn) {
-	// Accept the first bidirectional stream (the handshake stream).
 	stream, err := conn.AcceptStream(conn.Context())
 	if err != nil {
 		slog.Error("quic: accept stream failed", "err", err)
 		conn.CloseWithError(1, "failed to accept stream")
 		return
 	}
-
-	// Read the handshake message to determine role.
 	handshake, err := readMessage(stream)
 	if err != nil {
 		slog.Error("quic: read handshake failed", "err", err)
 		conn.CloseWithError(1, "failed to read handshake")
 		return
 	}
-
-	msg := string(handshake)
-	switch {
-	case strings.HasPrefix(msg, "register-mux"):
-		dec, err := DecodeRelayGreeting(handshake)
-		if err != nil {
-			slog.Error("quic: bad register-mux handshake", "err", err)
-			conn.CloseWithError(1, "bad handshake")
-			return
-		}
-		s.handleRegister(conn, stream, dec.Token, dec.InstanceId, true)
-	case msg == "register" || strings.HasPrefix(msg, "register:"):
-		// Legacy pair-mode "register[:TOKEN[:INSTANCE_ID]]" wire — not
-		// part of the post-T40 protogen union (which only covers the
-		// mux-mode register-mux variant). Parse inline.
-		var token, requestedID string
-		body := msg
-		if strings.HasPrefix(body, "register:") {
-			parts := strings.SplitN(body[len("register:"):], ":", 2)
-			token = parts[0]
-			if len(parts) > 1 {
-				requestedID = parts[1]
-			}
-		}
-		s.handleRegister(conn, stream, token, requestedID, false)
-	case strings.HasPrefix(msg, "connect:"):
-		dec, err := DecodeRelayGreeting(handshake)
-		if err != nil {
-			slog.Error("quic: bad connect handshake", "err", err)
-			conn.CloseWithError(1, "bad handshake")
-			return
-		}
-		s.handleConnect(conn, stream, dec.InstanceId)
+	dec, err := DecodeRelayGreeting(handshake)
+	if err != nil {
+		slog.Error("quic: bad handshake", "err", err)
+		conn.CloseWithError(1, "bad handshake")
+		return
+	}
+	sess := &quicSession{conn: conn, stream: stream}
+	switch dec.Variant {
+	case RelayGreetingRegister:
+		s.handleRegister(conn, sess, dec.Token, dec.InstanceId)
+	case RelayGreetingListen:
+		s.handleListen(conn, sess, dec.Token, dec.InstanceId)
+	case RelayGreetingConnect:
+		s.handleConnect(conn, sess, dec.InstanceId)
 	default:
-		slog.Error("quic: unknown handshake", "msg", msg)
-		conn.CloseWithError(1, "unknown handshake")
+		slog.Error("quic: unknown greeting variant", "variant", dec.Variant)
+		conn.CloseWithError(1, "unknown greeting")
 	}
 }
 
-func (s *QUICServer) handleRegister(conn *quic.Conn, stream *quic.Stream, token, requestedID string, muxMode bool) {
-
+func (s *QUICServer) handleRegister(conn *quic.Conn, sess *quicSession, token, requestedID string) {
 	if s.auth.VerifyRegister != nil {
 		tlsState := conn.ConnectionState().TLS
 		req := &RegisterRequest{
@@ -227,38 +203,66 @@ func (s *QUICServer) handleRegister(conn *quic.Conn, stream *quic.Stream, token,
 			return
 		}
 	}
-
 	id := requestedID
 	if id == "" {
 		id = generateID()
 	}
-
-	// Send the instance ID back to the backend.
-	if err := writeMessage(stream, []byte(id)); err != nil {
+	if err := sess.WriteMessage([]byte(id)); err != nil {
 		slog.Error("quic register: write ID failed", "err", err)
 		conn.CloseWithError(1, "failed to write ID")
 		return
 	}
-
-	sess := &quicSession{conn: conn, stream: stream}
-	inst := &instance{id: id, session: sess, muxMode: muxMode}
+	inst := newInstance(id, sess)
 	s.hub.register(inst)
 	defer s.hub.unregister(id)
-
 	slog.Info("instance registered", "id", id, "transport", "quic")
-
-	// Keep alive until backend disconnects.
 	<-conn.Context().Done()
 	slog.Info("instance disconnected", "id", id)
 }
 
-func (s *QUICServer) handleConnect(conn *quic.Conn, stream *quic.Stream, instanceID string) {
+func (s *QUICServer) handleListen(conn *quic.Conn, sess *quicSession, token, instanceID string) {
+	if instanceID == "" {
+		slog.Error("quic listen: missing instance ID")
+		conn.CloseWithError(1, "missing instance ID")
+		return
+	}
+	if s.auth.VerifyRegister != nil {
+		tlsState := conn.ConnectionState().TLS
+		req := &RegisterRequest{
+			Token:      token,
+			InstanceID: instanceID,
+			TLS:        &tlsState,
+			QUICConn:   conn,
+		}
+		if err := s.auth.VerifyRegister(conn.Context(), req); err != nil {
+			slog.Warn("quic listen: unauthorized", "err", err)
+			conn.CloseWithError(1, "unauthorized")
+			return
+		}
+	}
+	inst := s.hub.get(instanceID)
+	if inst == nil {
+		slog.Warn("quic listen: instance not found", "id", instanceID)
+		conn.CloseWithError(1, "instance not found")
+		return
+	}
+	if err := sess.WriteMessage([]byte(instanceID)); err != nil {
+		slog.Error("quic listen: write ack failed", "err", err)
+		conn.CloseWithError(1, "write ack failed")
+		return
+	}
+	if err := inst.parkListen(conn.Context(), sess); err != nil {
+		slog.Info("quic listen: park ended", "id", instanceID, "err", err)
+		conn.CloseWithError(0, "")
+	}
+}
+
+func (s *QUICServer) handleConnect(conn *quic.Conn, sess *quicSession, instanceID string) {
 	if len(instanceID) == 0 || len(instanceID) > 64 {
 		slog.Error("quic connect: invalid instance ID", "id", instanceID)
 		conn.CloseWithError(1, "invalid instance ID")
 		return
 	}
-
 	if s.auth.VerifyConnect != nil {
 		tlsState := conn.ConnectionState().TLS
 		req := &ConnectRequest{
@@ -272,20 +276,26 @@ func (s *QUICServer) handleConnect(conn *quic.Conn, stream *quic.Stream, instanc
 			return
 		}
 	}
-
 	inst := s.hub.get(instanceID)
 	if inst == nil {
-		slog.Error("quic connect: instance not found", "id", instanceID)
+		slog.Warn("quic connect: instance not found", "id", instanceID)
 		conn.CloseWithError(1, "instance not found")
 		return
 	}
-
+	listen, err := inst.matchListen(conn.Context())
+	if err != nil {
+		slog.Warn("quic connect: no listener", "id", instanceID, "err", err)
+		conn.CloseWithError(1, "no listener")
+		return
+	}
+	if err := sess.WriteMessage([]byte("ok")); err != nil {
+		slog.Error("quic connect: write ack failed", "err", err)
+		conn.CloseWithError(1, "write ack failed")
+		_ = listen.Close()
+		return
+	}
 	slog.Info("client connected", "instance", instanceID, "transport", "quic")
-
-	clientSess := &quicSession{conn: conn, stream: stream}
-	defer conn.CloseWithError(0, "")
-
-	bridgeClient(inst, clientSess)
+	bridge(inst, sess, listen)
 }
 
 // Close shuts down the QUIC server. It closes the listener and the

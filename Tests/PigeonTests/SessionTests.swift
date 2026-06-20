@@ -15,41 +15,76 @@ import CPigeon
 final class SessionTests: XCTestCase {
 
     // MARK: - Wire vectors (cross-language)
+    //
+    // Under the T45 remote-Listen L1 wire model every stream header is a
+    // symmetric [uvarint name-len][name] — there is no longer a backend
+    // variant with a 4-byte clientTag prefix (each Session rides its own
+    // end-to-end connection, so the relay never tags streams). These
+    // vectors match wire_vectors_test.go and the C / Kotlin / TS suites.
 
-    func testEmptyClientStreamHeader() throws {
-        // Empty-name primary client stream encodes to a single 0 byte.
-        let bytes = PigeonWire.encodeStreamHeader(
-            isBackend: false, clientTag: 0, name: ""
-        )
+    func testEmptyStreamHeader() throws {
+        // Empty-name primary stream encodes to a single 0 byte.
+        let bytes = PigeonWire.encodeStreamHeader(name: "")
         XCTAssertEqual([UInt8](bytes), [0x00])
-        let decoded = try PigeonWire.decodeStreamHeaderClient(bytes)
+        let decoded = try PigeonWire.decodeStreamHeader(bytes)
         XCTAssertEqual(decoded.name, "")
         XCTAssertEqual(decoded.consumed, 1)
     }
 
-    func testNamedClientStreamHeader() throws {
+    func testChatStreamHeader() throws {
+        // "chat" -> [0x04, 'c','h','a','t']
+        let bytes = PigeonWire.encodeStreamHeader(name: "chat")
+        XCTAssertEqual([UInt8](bytes),
+                       [0x04, 0x63, 0x68, 0x61, 0x74])
+        let decoded = try PigeonWire.decodeStreamHeader(bytes)
+        XCTAssertEqual(decoded.name, "chat")
+        XCTAssertEqual(decoded.consumed, 5)
+    }
+
+    func testControlStreamHeader() throws {
         // "control" -> [0x07, 'c','o','n','t','r','o','l']
-        let bytes = PigeonWire.encodeStreamHeader(
-            isBackend: false, clientTag: 0, name: "control"
-        )
+        let bytes = PigeonWire.encodeStreamHeader(name: "control")
         XCTAssertEqual([UInt8](bytes),
                        [0x07, 0x63, 0x6f, 0x6e, 0x74, 0x72, 0x6f, 0x6c])
-        let decoded = try PigeonWire.decodeStreamHeaderClient(bytes)
+        let decoded = try PigeonWire.decodeStreamHeader(bytes)
         XCTAssertEqual(decoded.name, "control")
         XCTAssertEqual(decoded.consumed, 8)
     }
 
-    func testBackendStreamHeader() throws {
-        // tag=0x01020304, name="chat" -> 01 02 03 04 04 'c' 'h' 'a' 't'
-        let bytes = PigeonWire.encodeStreamHeader(
-            isBackend: true, clientTag: 0x01020304, name: "chat"
-        )
-        XCTAssertEqual([UInt8](bytes),
-                       [0x01, 0x02, 0x03, 0x04, 0x04, 0x63, 0x68, 0x61, 0x74])
-        let decoded = try PigeonWire.decodeStreamHeaderBackend(bytes)
-        XCTAssertEqual(decoded.clientTag, 0x01020304)
-        XCTAssertEqual(decoded.name, "chat")
-        XCTAssertEqual(decoded.consumed, 9)
+    // MARK: - Relay greeting vectors
+
+    func testGreetingRegister() throws {
+        // Bare register (no token, no id) -> "register".
+        XCTAssertEqual(
+            String(decoding: PigeonWire.encodeRelayGreetingRegister(token: "", instanceId: ""), as: UTF8.self),
+            "register")
+        // With token -> "register:tok:".
+        XCTAssertEqual(
+            String(decoding: PigeonWire.encodeRelayGreetingRegister(token: "tok", instanceId: ""), as: UTF8.self),
+            "register:tok:")
+        let dec = try PigeonWire.decodeRelayGreeting(Data("register:tok:id7".utf8))
+        XCTAssertEqual(dec.variant, .register)
+        XCTAssertEqual(dec.token, "tok")
+        XCTAssertEqual(dec.instanceId, "id7")
+    }
+
+    func testGreetingListen() throws {
+        XCTAssertEqual(
+            String(decoding: PigeonWire.encodeRelayGreetingListen(token: "", instanceId: "id7"), as: UTF8.self),
+            "listen::id7")
+        let dec = try PigeonWire.decodeRelayGreeting(Data("listen::id7".utf8))
+        XCTAssertEqual(dec.variant, .listen)
+        XCTAssertEqual(dec.token, "")
+        XCTAssertEqual(dec.instanceId, "id7")
+    }
+
+    func testGreetingConnect() throws {
+        XCTAssertEqual(
+            String(decoding: PigeonWire.encodeRelayGreetingConnect(instanceId: "id7"), as: UTF8.self),
+            "connect:id7")
+        let dec = try PigeonWire.decodeRelayGreeting(Data("connect:id7".utf8))
+        XCTAssertEqual(dec.variant, .connect)
+        XCTAssertEqual(dec.instanceId, "id7")
     }
 
     // MARK: - Uvarint round-trips
@@ -83,11 +118,11 @@ final class SessionTests: XCTestCase {
         LoopbackTransport.pair(ta, tb)
 
         let sa = try PigeonSession(
-            masterKey: key, isBackend: false, clientTag: 0,
+            masterKey: key, isBackend: false,
             datagramChannels: [], transport: ta
         )
         let sb = try PigeonSession(
-            masterKey: key, isBackend: false, clientTag: 0,
+            masterKey: key, isBackend: false,
             datagramChannels: [], transport: tb
         )
 
@@ -96,7 +131,7 @@ final class SessionTests: XCTestCase {
         // its first message. We accept it and adopt it on B.
         let aChat = try await sa.openStream(name: "chat")
         let accepted = try tb.acceptWithHeader()
-        let decoded = try PigeonWire.decodeStreamHeaderClient(accepted.header)
+        let decoded = try PigeonWire.decodeStreamHeader(accepted.header)
         XCTAssertEqual(decoded.name, "chat")
         let bChat = sb.adoptAcceptedStream(name: "chat", handle: accepted.handle)
 
@@ -130,11 +165,11 @@ final class SessionTests: XCTestCase {
         ]
 
         let sa = try PigeonSession(
-            masterKey: key, isBackend: false, clientTag: 0,
+            masterKey: key, isBackend: false,
             datagramChannels: chans, transport: ta
         )
         let sb = try PigeonSession(
-            masterKey: key, isBackend: false, clientTag: 0,
+            masterKey: key, isBackend: false,
             datagramChannels: chans, transport: tb
         )
 
@@ -150,7 +185,7 @@ final class SessionTests: XCTestCase {
         let key = Data(repeating: 0xAB, count: 32)
         let t = LoopbackTransport()
         let s = try PigeonSession(
-            masterKey: key, isBackend: false, clientTag: 0,
+            masterKey: key, isBackend: false,
             datagramChannels: [
                 DatagramChannelDef(name: "ping", channelID: 1),
             ],
@@ -168,11 +203,11 @@ final class SessionTests: XCTestCase {
         LoopbackTransport.pair(ta, tb)
 
         let sa = try PigeonSession(
-            masterKey: key, isBackend: false, clientTag: 0,
+            masterKey: key, isBackend: false,
             datagramChannels: [], transport: ta
         )
         let sb = try PigeonSession(
-            masterKey: key, isBackend: false, clientTag: 0,
+            masterKey: key, isBackend: false,
             datagramChannels: [], transport: tb
         )
 

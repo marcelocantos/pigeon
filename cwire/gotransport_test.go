@@ -156,12 +156,12 @@ func TestGoTransportStreamRoundTrip(t *testing.T) {
 	refB := cwire.NewGoTransportRef(pb)
 	defer refB.Close()
 
-	sa, err := cwire.NewGoSession(refA, chA, false, 0, nil)
+	sa, err := cwire.NewGoSession(refA, chA, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer sa.Close()
-	sb, err := cwire.NewGoSession(refB, chB, true, 0x01020304, nil)
+	sb, err := cwire.NewGoSession(refB, chB, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -172,7 +172,7 @@ func TestGoTransportStreamRoundTrip(t *testing.T) {
 	if err != nil {
 		t.Fatalf("OpenStream: %v", err)
 	}
-	sbStream, _, name, err := sb.AcceptStreamFromGo(refB)
+	sbStream, name, err := sb.AcceptStreamFromGo(refB)
 	if err != nil {
 		t.Fatalf("AcceptStream: %v", err)
 	}
@@ -224,16 +224,15 @@ func TestGoTransportDatagramRoundTrip(t *testing.T) {
 
 	dgChans := []cwire.DatagramChannel{{Name: "telemetry", ID: 7}}
 
-	// Both sides are configured as clients so the wire has no
-	// 4-byte tag prefix in either direction. The smoke test isn't
-	// modelling a relay between them — it's exercising the cgo
-	// callbacks for send_datagram / recv_datagram.
-	sa, err := cwire.NewGoSession(refA, chA, false, 0, dgChans)
+	// Under T45 both peers are symmetric — the datagram wire has no
+	// tag prefix. The smoke test isn't modelling a relay between them —
+	// it's exercising the cgo callbacks for send_datagram / recv_datagram.
+	sa, err := cwire.NewGoSession(refA, chA, dgChans)
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer sa.Close()
-	sb, err := cwire.NewGoSession(refB, chB, false, 0, dgChans)
+	sb, err := cwire.NewGoSession(refB, chB, dgChans)
 	if err != nil {
 		t.Fatal(err)
 	}

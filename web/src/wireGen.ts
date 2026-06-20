@@ -23,25 +23,12 @@ export function decodeUvarint(buf: Uint8Array, offset = 0): [bigint, number] {
   throw new Error("uvarint: truncated");
 }
 
-export function encodeStreamHeader(isBackend: boolean, clientTag: number, name: string): Uint8Array {
+export function encodeStreamHeader(name: string): Uint8Array {
   const parts: Uint8Array[] = [];
-  if (isBackend) {
-    {
-      const t = new Uint8Array(4);
-      new DataView(t.buffer).setUint32(0, clientTag, false);
-      parts.push(t);
-    }
-    {
-      const bytes = new TextEncoder().encode(name);
-      parts.push(encodeUvarint(BigInt(bytes.length)));
-      parts.push(bytes);
-    }
-  } else {
-    {
-      const bytes = new TextEncoder().encode(name);
-      parts.push(encodeUvarint(BigInt(bytes.length)));
-      parts.push(bytes);
-    }
+  {
+    const bytes = new TextEncoder().encode(name);
+    parts.push(encodeUvarint(BigInt(bytes.length)));
+    parts.push(bytes);
   }
   let total = 0; for (const p of parts) total += p.length;
   const out = new Uint8Array(total); let off = 0;
@@ -49,32 +36,12 @@ export function encodeStreamHeader(isBackend: boolean, clientTag: number, name: 
   return out;
 }
 
-export interface StreamHeaderBackendDecoded {
-  clientTag: number;
+export interface StreamHeaderDecoded {
   name: string;
   consumed: number;
 }
 
-export function decodeStreamHeaderBackend(buf: Uint8Array): StreamHeaderBackendDecoded {
-  let off = 0;
-  if (buf.length - off < 4) throw new Error("truncated u32 client_tag");
-  const clientTag = new DataView(buf.buffer, buf.byteOffset + off, 4).getUint32(0, false);
-  off += 4;
-  const [_lenU, _ln] = decodeUvarint(buf, off);
-  off += _ln;
-  const _len = Number(_lenU);
-  if (buf.length - off < _len) throw new Error("truncated string");
-  const name = new TextDecoder().decode(buf.subarray(off, off + _len));
-  off += _len;
-  return { clientTag, name, consumed: off };
-}
-
-export interface StreamHeaderClientDecoded {
-  name: string;
-  consumed: number;
-}
-
-export function decodeStreamHeaderClient(buf: Uint8Array): StreamHeaderClientDecoded {
+export function decodeStreamHeader(buf: Uint8Array): StreamHeaderDecoded {
   let off = 0;
   const [_lenU, _ln] = decodeUvarint(buf, off);
   off += _ln;
@@ -110,7 +77,7 @@ export function decodeDatagramPlaintext(buf: Uint8Array): DatagramPlaintextDecod
   return { channelId, payload, consumed: off };
 }
 
-export const enum RelayGreetingVariant { Connect = "connect", RegisterMux = "register_mux" }
+export const enum RelayGreetingVariant { Connect = "connect", Register = "register", Listen = "listen" }
 
 export interface RelayGreetingDecoded {
   variant: RelayGreetingVariant;
@@ -124,8 +91,16 @@ export function encodeRelayGreetingConnect(instanceId: string): Uint8Array {
   return new TextEncoder().encode(s);
 }
 
-export function encodeRelayGreetingRegisterMux(token: string, instanceId: string): Uint8Array {
-  let s = "register-mux";
+export function encodeRelayGreetingRegister(token: string, instanceId: string): Uint8Array {
+  let s = "register";
+  const parts = [token, instanceId];
+  const anyNonEmpty = parts.some((p) => p !== "");
+  if (anyNonEmpty) { for (const p of parts) { s += ":"; s += p; } }
+  return new TextEncoder().encode(s);
+}
+
+export function encodeRelayGreetingListen(token: string, instanceId: string): Uint8Array {
+  let s = "listen";
   const parts = [token, instanceId];
   const anyNonEmpty = parts.some((p) => p !== "");
   if (anyNonEmpty) { for (const p of parts) { s += ":"; s += p; } }
@@ -134,8 +109,12 @@ export function encodeRelayGreetingRegisterMux(token: string, instanceId: string
 
 export function decodeRelayGreeting(buf: Uint8Array): RelayGreetingDecoded {
   const s = new TextDecoder().decode(buf);
-  if (s.startsWith("register-mux")) {
-    const rest = s.slice(12);
+  if (s.startsWith("connect:")) {
+    const rest = s.slice(8);
+    return { variant: RelayGreetingVariant.Connect, instanceId: rest, token: "" };
+  }
+  if (s.startsWith("register")) {
+    const rest = s.slice(8);
     let suffix: string[];
     if (rest === "") {
       suffix = new Array(2).fill("");
@@ -152,11 +131,27 @@ export function decodeRelayGreeting(buf: Uint8Array): RelayGreetingDecoded {
         while (suffix.length < 2) suffix.push("");
       }
     }
-    return { variant: RelayGreetingVariant.RegisterMux, instanceId: suffix[1], token: suffix[0] };
+    return { variant: RelayGreetingVariant.Register, instanceId: suffix[1], token: suffix[0] };
   }
-  if (s.startsWith("connect:")) {
-    const rest = s.slice(8);
-    return { variant: RelayGreetingVariant.Connect, instanceId: rest, token: "" };
+  if (s.startsWith("listen")) {
+    const rest = s.slice(6);
+    let suffix: string[];
+    if (rest === "") {
+      suffix = new Array(2).fill("");
+    } else {
+      if (!rest.startsWith(":")) throw new Error("relay_greeting: malformed");
+      const body = rest.slice(1);
+      const parts = body.split(":");
+      if (parts.length > 2) {
+        const merged = parts.slice(1).join(":");
+        suffix = parts.slice(0, 1);
+        suffix.push(merged);
+      } else {
+        suffix = parts.slice();
+        while (suffix.length < 2) suffix.push("");
+      }
+    }
+    return { variant: RelayGreetingVariant.Listen, instanceId: suffix[1], token: suffix[0] };
   }
   throw new Error("relay_greeting: unrecognised prefix");
 }

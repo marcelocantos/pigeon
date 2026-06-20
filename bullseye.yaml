@@ -1523,9 +1523,10 @@ targets:
     discovered: 2026-05-02
   T45:
     name: 'Relay''s L1 collapses to the remote-Listen model: register / listen / accept / connect with per-client end-to-end QUIC pipes, replacing the register-mux greeting and the clientTag prefix scheme'
-    status: identified
+    status: achieved
     value: 0.0
     cost: 0.0
+    actual_cost: 13.0
     acceptance:
     - 'The relay''s wire greeting set becomes one verb family: `register:<id>` (backend control), `listen:<id>` (backend opens a slot), `connect:<id>` (client requests a backend). The legacy `register-mux[:token[:id]]` greeting and the legacy bare `connect:<id>` 1:1 form (already removed under T39.6) are gone. New greetings are protogen-specified per docs/DESIGN.md §4.'
     - Per accepted client, the backend has its own end-to-end QUIC connection to the relay (each `listen` is a parked backend-side QUIC connection that becomes a client-bridge once matched). The 4-byte clientTag prefix on streams and datagrams is deleted across the codebase — the per-client demux moves out of the application layer because each client has its own QUIC pipe.
@@ -1544,6 +1545,7 @@ targets:
     - T40
     origin: manual
     discovered: 2026-05-10
+    achieved: 2026-06-20
   T46:
     name: Fly.io deploy Dockerfile builds the relay with cwire (CGO) so the deploy job goes green
     status: achieved

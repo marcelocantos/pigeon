@@ -9,46 +9,47 @@
 #   varint        — Go-style unsigned varint (1..10 bytes)
 #   string_to_end — remaining bytes, decoded as UTF-8 string
 #
-# Two of the three formats have a "backend variant" toggle: the same
-# encoder takes an `is_backend` bool, and the backend variant prepends a
-# 4-byte clientTag the relay routes by. Decoders are dual-shaped because
-# the receiving side already knows its role.
-#
-# The relay greeting is the awkward one: it's an ASCII colon-delimited
-# union of variants. We model it as one named variant per code path
-# rather than torturing the field DSL into describing arbitrary
-# colon-separated unions.
+# The relay greeting is an ASCII colon-delimited union of variants. We
+# model it as one named variant per code path rather than torturing the
+# field DSL into describing arbitrary colon-separated unions.
 name: pigeon_wire
 
 formats:
 
   # T22 stream-name binding header — written as the first message on
-  # every stream the application opens. Backend side prepends the
-  # 4-byte clientTag the relay routes by; client side starts with the
-  # varint name length.
+  # every stream the application opens. Under T45's remote-Listen L1,
+  # each accepted client has its own end-to-end QUIC pipe; there is no
+  # backend/client variant and no 4-byte clientTag prefix.
   - name: stream_header
     desc: First message on every stream — binds the stream to a name.
-    variants:
-      - name: backend
-        fields:
-          - { name: client_tag, kind: u32_be }
-          - { name: name,       kind: string_with_varint_length }
-      - name: client
-        fields:
-          - { name: name,       kind: string_with_varint_length }
+    fields:
+      - { name: name, kind: string_with_varint_length }
 
   # Datagram channel-id framing — the *plaintext* layout before AEAD
   # encryption. AEAD itself is not part of this spec; the encoder
-  # returns the plaintext to be encrypted, and the wire framing
-  # (optional 4-byte tag on the backend side) is documented separately.
+  # returns the plaintext to be encrypted. Under T45 there is no
+  # backend-side clientTag prefix; the QUIC pipe IS the demux.
   - name: datagram_plaintext
     desc: Plaintext layout of a datagram before AEAD encryption.
     fields:
       - { name: channel_id, kind: varint }
       - { name: payload,    kind: bytes_to_end }
 
-  # Relay greeting. Two top-level variants — "connect:<id>" and
-  # "register-mux[:token[:id]]". The decoder returns a tagged union.
+  # Relay greeting. Three top-level variants under T45's remote-Listen
+  # L1 model:
+  #
+  #   register[:<token>[:<id>]]  — backend announces its identity.
+  #                                Control plane; no traffic flows on
+  #                                this connection.
+  #   listen[:<token>[:<id>]]    — backend parks a fresh QUIC connection
+  #                                for the relay to match against an
+  #                                arriving client.
+  #   connect:<id>               — client requests bridging to a
+  #                                registered backend identity.
+  #
+  # The legacy `register-mux` greeting and the per-client clientTag
+  # demux it required are gone — each accepted client gets its own
+  # end-to-end QUIC pipe.
   - name: relay_greeting
     desc: Relay-side greeting sent on the primary stream after dial.
     union:
@@ -56,15 +57,26 @@ formats:
         prefix: "connect:"
         fields:
           - { name: instance_id, kind: string_to_end }
-      - name: register_mux
-        prefix: "register-mux"
+      - name: register
+        prefix: "register"
         # Optional colon-separated [token, instance_id] suffix. The
-        # encoder takes both as strings; an empty token AND empty id
-        # produces the bare "register-mux" form. An empty token with a
-        # non-empty id produces "register-mux::<id>". A non-empty token
-        # with an empty id produces "register-mux:<token>:" (legacy QUIC
-        # backends emit this). Both non-empty produces
-        # "register-mux:<token>:<id>".
+        # encoder takes both as strings; both empty produces the bare
+        # "register" form (relay assigns an instance id and responds
+        # with it). Empty token, non-empty id → "register::<id>".
+        # Non-empty token, empty id → "register:<token>:". Both
+        # non-empty → "register:<token>:<id>". The token field is
+        # consumed by pigeon.Auth.VerifyRegister (T42).
+        colon_suffix:
+          - { name: token,       kind: string }
+          - { name: instance_id, kind: string }
+      - name: listen
+        prefix: "listen"
+        # Optional colon-separated [token, instance_id] suffix, same
+        # shape as register. The relay rejects a listen with empty
+        # instance_id — listen always targets a previously-registered
+        # backend. The token field is consumed by
+        # pigeon.Auth.VerifyRegister (T42) — listen authenticates the
+        # same way register does.
         colon_suffix:
           - { name: token,       kind: string }
           - { name: instance_id, kind: string }

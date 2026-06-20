@@ -366,8 +366,7 @@ Java_com_marcelocantos_pigeon_jni_PigeonNative_uvarintEncode(
 
 JNIEXPORT jbyteArray JNICALL
 Java_com_marcelocantos_pigeon_jni_PigeonNative_encodeStreamHeader(
-    JNIEnv *env, jclass cls,
-    jboolean isBackend, jint clientTag, jstring jname)
+    JNIEnv *env, jclass cls, jstring jname)
 {
     (void)cls;
     const char *name = NULL;
@@ -377,11 +376,7 @@ Java_com_marcelocantos_pigeon_jni_PigeonNative_encodeStreamHeader(
         name_len = strlen(name);
     }
     uint8_t out[PIGEON_MAX_STREAM_HEADER];
-    int n = pigeon_wire_stream_header_encode(
-        isBackend ? true : false,
-        (uint32_t)clientTag,
-        name, name_len,
-        out, sizeof(out));
+    int n = pigeon_wire_stream_header_encode(name, name_len, out, sizeof(out));
     if (jname) (*env)->ReleaseStringUTFChars(env, jname, name);
     if (n < 0) {
         throw_runtime(env, "pigeon_wire_stream_header_encode failed");
@@ -541,7 +536,6 @@ JNIEXPORT jlongArray JNICALL
 Java_com_marcelocantos_pigeon_jni_PigeonNative_newLoopbackPair(
     JNIEnv *env, jclass cls,
     jlong channelA, jlong channelB,
-    jboolean aIsBackend, jint aTag, jboolean bIsBackend, jint bTag,
     jobjectArray dgnames, jlongArray dgids)
 {
     (void)cls;
@@ -594,14 +588,12 @@ Java_com_marcelocantos_pigeon_jni_PigeonNative_newLoopbackPair(
     loop_make_transport(&tb, &lp->b);
 
     if (pigeon_session_init(&ha->session, &ta, cha,
-                            aIsBackend ? true : false, (uint32_t)aTag,
                             nchans ? chans : NULL, nchans) != 0) {
         free(ha); free(hb); free(lp);
         throw_runtime(env, "pigeon_session_init A failed");
         return NULL;
     }
     if (pigeon_session_init(&hb->session, &tb, chb,
-                            bIsBackend ? true : false, (uint32_t)bTag,
                             nchans ? chans : NULL, nchans) != 0) {
         free(ha); free(hb); free(lp);
         throw_runtime(env, "pigeon_session_init B failed");
@@ -661,9 +653,9 @@ Java_com_marcelocantos_pigeon_jni_PigeonNative_sessionOpenStream(
 }
 
 // Accept the next inbound stream on the loopback transport. Returns 0
-// if no stream is pending. Reads the header off it, decodes the name
-// (backend side strips the 4-byte tag), and returns a pigeon_stream*
-// already bound to the session.
+// if no stream is pending. Reads the [varint name-len][name] header off
+// it, decodes the name, and returns a pigeon_stream* already bound to
+// the session.
 //
 // out_name is filled in via a String[] passed by the caller (size 1).
 
@@ -688,25 +680,14 @@ Java_com_marcelocantos_pigeon_jni_PigeonNative_sessionAcceptStream(
         return 0;
     }
 
-    // Inbound header was written by the *peer*. If we're the client
-    // (is_backend == false), the peer is the backend and writes the
-    // 4-byte tag prefix. If we're the backend, the peer is the client
-    // and writes the no-tag form.
+    // Under T45 the header is just [varint name-len][name] — both peers
+    // are symmetric, no clientTag.
     char name[PIGEON_MAX_NAME_LEN] = {0};
     size_t name_len = 0;
-    if (!h->session.is_backend) {
-        uint32_t tag = 0;
-        if (pigeon_wire_stream_header_decode_backend(hdr, hn, &tag,
-                name, sizeof(name), &name_len) < 0) {
-            throw_runtime(env, "decode_backend_stream_header failed");
-            return 0;
-        }
-    } else {
-        if (pigeon_wire_stream_header_decode_client(hdr, hn,
-                name, sizeof(name), &name_len) < 0) {
-            throw_runtime(env, "decode_client_stream_header failed");
-            return 0;
-        }
+    if (pigeon_wire_stream_header_decode(hdr, hn,
+            name, sizeof(name), &name_len) < 0) {
+        throw_runtime(env, "decode_stream_header failed");
+        return 0;
     }
 
     pigeon_stream *ps = calloc(1, sizeof(pigeon_stream));
@@ -1139,7 +1120,6 @@ JNIEXPORT jlong JNICALL
 Java_com_marcelocantos_pigeon_jni_PigeonNative_sessionInitWithJniTransport(
     JNIEnv *env, jclass cls,
     jlong channelHandle, jobject transport,
-    jboolean isBackend, jint clientTag,
     jobjectArray dgnames, jlongArray dgids)
 {
     (void)cls;
@@ -1187,7 +1167,6 @@ Java_com_marcelocantos_pigeon_jni_PigeonNative_sessionInitWithJniTransport(
     jni_make_transport(&t, u);
 
     if (pigeon_session_init(&h->session, &t, ch,
-                            isBackend ? true : false, (uint32_t)clientTag,
                             nchans ? chans : NULL, nchans) != 0) {
         jni_transport_udata_free(u);
         h->jni_transport = NULL;
@@ -1238,22 +1217,14 @@ Java_com_marcelocantos_pigeon_jni_PigeonNative_sessionAcceptStreamGeneric(
         return 0;
     }
 
+    // Under T45 the header is just [varint name-len][name] — both peers
+    // are symmetric, no clientTag.
     char name[PIGEON_MAX_NAME_LEN] = {0};
     size_t name_len = 0;
-    if (!h->session.is_backend) {
-        // Peer is the backend — header carries the 4-byte tag prefix.
-        uint32_t tag = 0;
-        if (pigeon_wire_stream_header_decode_backend(hdr, hn, &tag,
-                name, sizeof(name), &name_len) < 0) {
-            throw_runtime(env, "decode_backend_stream_header failed");
-            return 0;
-        }
-    } else {
-        if (pigeon_wire_stream_header_decode_client(hdr, hn,
-                name, sizeof(name), &name_len) < 0) {
-            throw_runtime(env, "decode_client_stream_header failed");
-            return 0;
-        }
+    if (pigeon_wire_stream_header_decode(hdr, hn,
+            name, sizeof(name), &name_len) < 0) {
+        throw_runtime(env, "decode_stream_header failed");
+        return 0;
     }
 
     pigeon_stream *ps = calloc(1, sizeof(pigeon_stream));

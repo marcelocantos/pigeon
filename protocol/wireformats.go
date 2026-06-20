@@ -18,9 +18,11 @@ import (
 //
 //   - Plain: a single ordered list of fields (one encoder, one decoder).
 //   - Variants: same fields-list shape but two variants distinguished by
-//     a role flag (today: backend prepends a 4-byte clientTag, client
-//     doesn't). Encoder dispatches on the bool; decoders are split into
-//     two functions because the receiver already knows its role.
+//     a role flag. Encoder dispatches on the bool; decoders are split
+//     into two functions because the receiver already knows its role.
+//     (No live format uses this shape since T45 removed the backend
+//     clientTag prefix; the framework keeps it for future role-split
+//     formats.)
 //   - Union: ASCII colon-delimited prefix dispatch (the relay greeting).
 //     Each variant has a literal prefix and an optional ordered list of
 //     colon-separated string suffix fields. Encoder is per-variant;

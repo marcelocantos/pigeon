@@ -208,11 +208,14 @@ type RunBackendActivationArgs struct {
 	// Return (record, true) to accept, (nil, false) to reject.
 	ResolveFn func(deviceID string) (*PairingRecord, bool)
 
-	// SkipPrimaryHeader, when true, reads and discards the primary stream
-	// header before running the activation handshake. The pigeon_listener
-	// path strips the header externally (so callers pass a pre-positioned
-	// stream); direct test usage typically needs this set to true because
-	// pigeon_connect_on_transport writes the header as its first action.
+	// SkipPrimaryHeader, when true, reads and discards one leading
+	// message on the primary stream before running the activation
+	// handshake.
+	//
+	// Under T45 activation mode no longer writes a primary stream header
+	// (the client's auth_request is the first message on the bridged
+	// pipe), so this should normally be left false. It is retained for
+	// callers that interpose a leading framing message of their own.
 	SkipPrimaryHeader bool
 }
 

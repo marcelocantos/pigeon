@@ -28,10 +28,10 @@ import (
 //
 // Threading model: the C ABI is single-threaded per transport. Each
 // test pins backend operations to one goroutine and each client to
-// its own goroutine. The backend goroutine drives both the listener
-// pump (pigeon_listener_step) and the session work (recv/send on
-// streams and datagrams) on the same OS thread — pigeon_session
-// shares the listener's transport, so any cross-goroutine call would
+// its own goroutine. Under T45 each accepted session rides its own
+// QUIC connection, so the backend goroutine drives Accept (which dials
+// a fresh listen + runs activation) and the per-session work on the
+// same OS thread — any cross-goroutine call on one transport would
 // race the ngtcp2 state.
 
 // --- Fixtures (mirror e2e_test.go but tuned for the C SDK) ---
@@ -148,31 +148,23 @@ func mintBond(t *testing.T, tmp, relayURL, suffix string) *bond {
 	return &bond{backendID: bid, clientID: cid, backendView: bv, clientView: cv}
 }
 
-// pumpAcceptStream drives pigeon_listener_step in a loop until the
-// peer-opened sub-stream identified by `name` lands in the session's
-// incoming-stream queue. Each step processes one inbound transport
-// stream — either dispatching a sub-stream to a queue (rc=0) or
-// surfacing an unexpected second primary (rc=1, which we treat as an
-// error in tests that pre-baked the client count).
+// pumpAcceptStream blocks until the peer-opened sub-stream identified
+// by `name` arrives on the session's own QUIC pipe (T45: each accepted
+// client rides its own connection, so the session accepts directly
+// from its transport — there is no listener demux to pump).
 //
-// The C SDK is single-threaded per transport, so all calls happen on
-// the calling goroutine. transport_accept_stream has an internal
-// 5-second timeout — in a healthy round-trip the sub-stream packets
-// have already arrived by the time we call here, so step returns
-// quickly. The deadline below is the all-up budget.
+// transport_accept_stream has an internal timeout; in a healthy
+// round-trip the sub-stream packets have already arrived by the time
+// we call here. The l / deadline args are retained for signature
+// compatibility with the call sites.
 func pumpAcceptStream(l *listenerHandle, sess *sessionHandle, name string, deadline time.Duration) (*streamHandle, error) {
-	end := time.Now().Add(deadline)
-	for {
-		if st, err := sess.acceptStream(name); err == nil {
-			return st, nil
-		}
-		if time.Now().After(end) {
-			return nil, fmt.Errorf("acceptStream(%q): deadline exceeded", name)
-		}
-		if err := l.step(); err != nil {
-			return nil, fmt.Errorf("listener.step: %w", err)
-		}
+	_ = l
+	_ = deadline
+	st, err := sess.acceptStream(name)
+	if err != nil {
+		return nil, fmt.Errorf("acceptStream(%q): %w", name, err)
 	}
+	return st, nil
 }
 
 // --- Test 1: single client ↔ single backend, named-stream round-trip ---

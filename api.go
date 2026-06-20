@@ -6,16 +6,32 @@ package pigeon
 import (
 	"context"
 	"crypto/tls"
-	"encoding/binary"
 	"errors"
 	"fmt"
 	"io"
 	"log/slog"
 	"sync"
+	"time"
 	"unsafe"
 
 	"github.com/marcelocantos/pigeon/crypto"
 	"github.com/marcelocantos/pigeon/cwire"
+)
+
+const (
+	// listenPoolSize is how many listen connections the backend keeps
+	// parked at the relay (see docs/DESIGN.md §3 L1). Each is an idle
+	// QUIC connection awaiting a client; the pool bounds how many
+	// clients can be mid-handshake concurrently. Activation is
+	// sub-second, so a small pool serves typical connect rates without
+	// making clients wait — when all slots are busy, the relay simply
+	// blocks the next client until a worker frees up and re-parks.
+	listenPoolSize = 4
+
+	// listenRetryBackoff paces re-dials after a transient listen dial
+	// failure (relay briefly unavailable) so a flapping relay doesn't
+	// spin the pool.
+	listenRetryBackoff = 500 * time.Millisecond
 )
 
 // RegisterArgs configures a backend's listener.
@@ -69,22 +85,25 @@ type ConnectArgs struct {
 	Datagrams map[string]uint64
 }
 
-// Listener is the backend-side acceptor for paired clients.
+// Listener is the backend-side acceptor for paired clients. Under the
+// remote-Listen L1 model (docs/DESIGN.md §3), it holds one register
+// control connection open for the instance's lifetime and keeps a pool
+// of listen connections parked at the relay. The relay matches each
+// arriving client to a parked listen and bridges the two QUIC
+// connections end-to-end, so every accepted Session rides its own pipe —
+// there is no shared connection or per-client tag demux.
 type Listener struct {
 	args       *RegisterArgs
-	transport  *transport
+	control    *transport
 	instanceID string
-
-	// cwireRef pins the goTransportAdapter wrapping l.transport for the
-	// lifetime of the Listener. Set only in activation mode (args.Pairing
-	// != nil); nil in pairing mode where no backend activation runs.
-	cwireRef *cwire.GoTransportRef
+	relay      string
+	cfg        Config
 
 	ctx    context.Context
 	cancel context.CancelFunc
 
-	mu       sync.Mutex
-	sessions map[uint32]*Session // keyed by relay-assigned clientTag
+	mu     sync.Mutex
+	parked map[*transport]struct{} // listen conns not yet owned by a Session
 
 	accepted chan acceptResult
 
@@ -97,11 +116,8 @@ type acceptResult struct {
 }
 
 // Register publishes a backend on the relay and returns a Listener that
-// yields one Session per accepted client. The Listener owns a single
-// QUIC connection to the relay across its lifetime; each Accept call
-// returns the next paired client without re-registering.
-// Register publishes a backend on the relay. Two modes, distinguished
-// by whether args.Pairing is supplied:
+// yields one Session per accepted client. Two modes, distinguished by
+// whether args.Pairing is supplied:
 //
 //   - **Activation mode** (args.Pairing != nil): each accepted client
 //     runs the auth_request / auth_ok handshake against args.Pairing
@@ -144,31 +160,30 @@ func Register(ctx context.Context, args *RegisterArgs) (*Listener, string, error
 	if !pairingMode {
 		cfg.InstanceID = args.Identity.InstanceID()
 	}
-	tr, err := dialAcceptor(ctx, args.Relay, cfg)
+	control, err := dialRegister(ctx, args.Relay, cfg)
 	if err != nil {
 		return nil, "", fmt.Errorf("relay register: %w", err)
 	}
+	// Subsequent listen dials reuse the assigned ID, not the requested
+	// one (which is empty in pairing mode).
+	cfg.InstanceID = control.instanceID
 
 	lctx, cancel := context.WithCancel(ctx)
 	l := &Listener{
 		args:       args,
-		transport:  tr,
-		instanceID: tr.instanceID,
+		control:    control,
+		instanceID: control.instanceID,
+		relay:      args.Relay,
+		cfg:        cfg,
 		ctx:        lctx,
 		cancel:     cancel,
-		sessions:   make(map[uint32]*Session),
+		parked:     make(map[*transport]struct{}),
 		accepted:   make(chan acceptResult, 8),
 	}
-	if !pairingMode {
-		// One adapter + ref for the whole Listener; acceptPrimary adopts
-		// each new client primary stream against this ref before handing
-		// it to cwire.RunBackendActivation.
-		adapter := newGoTransportAdapter(lctx, tr)
-		l.cwireRef = cwire.NewGoTransportRef(adapter)
+	for range listenPoolSize {
+		go l.acceptWorker()
 	}
-	go l.acceptLoop()
-	go l.datagramLoop()
-	return l, tr.instanceID, nil
+	return l, control.instanceID, nil
 }
 
 // ID returns the stable instance ID this Listener advertises.
@@ -189,187 +204,164 @@ func (l *Listener) Accept(ctx context.Context) (*Session, error) {
 	}
 }
 
-// Close releases the Listener and the underlying relay session.
+// Close releases the Listener: it tears down the register control
+// connection and every idle listen connection still parked at the relay.
+// Already-accepted Sessions are independently owned and are not affected
+// — close them via Session.Close.
 func (l *Listener) Close() error {
 	l.closeOnce.Do(func() {
 		l.cancel()
-		_ = l.transport.Close()
-		if l.cwireRef != nil {
-			l.cwireRef.Close()
-			l.cwireRef = nil
+		_ = l.control.Close()
+		l.mu.Lock()
+		for tr := range l.parked {
+			_ = tr.Close()
 		}
+		l.parked = nil
+		l.mu.Unlock()
 	})
 	return nil
 }
 
-// acceptLoop reads incoming streams from the relay and demuxes by the
-// 4-byte clientTag header the relay prepends. New tag → primary stream
-// → run connect-hello/ack and create a Session. Existing tag → sub-stream
-// → deliver to the matching Session.
-func (l *Listener) acceptLoop() {
-	for {
-		stream, err := l.transport.AcceptStream(l.ctx)
+// acceptWorker maintains one slot in the listen pool: it dials a listen
+// connection, parks it at the relay, runs the L2 handshake once a client
+// is bridged onto it, hands the resulting Session to Accept, then loops
+// to re-park a fresh listen. listenPoolSize of these run concurrently.
+func (l *Listener) acceptWorker() {
+	for l.ctx.Err() == nil {
+		tr, err := dialListen(l.ctx, l.relay, l.instanceID, l.cfg)
 		if err != nil {
-			if l.ctx.Err() == nil {
-				slog.Debug("listener: accept stream", "err", err)
+			if l.ctx.Err() != nil {
+				return
 			}
-			return
+			slog.Debug("listener: dial listen", "err", err)
+			select {
+			case <-time.After(listenRetryBackoff):
+			case <-l.ctx.Done():
+				return
+			}
+			continue
 		}
-		header, err := readMessage(stream)
+		l.trackListen(tr)
+		sess, err := l.activate(tr)
 		if err != nil {
-			slog.Warn("listener: read stream header", "err", err)
-			_ = stream.Close()
-			continue
-		}
-		tag, name, err := DecodeStreamHeaderBackend(header)
-		if err != nil {
-			slog.Warn("listener: parse stream header", "err", err)
-			_ = stream.Close()
-			continue
-		}
-		l.mu.Lock()
-		sess, exists := l.sessions[tag]
-		l.mu.Unlock()
-		if exists {
-			// Sub-stream for an existing client: dispatch by name into
-			// the Session's incoming-stream queue.
-			sess.deliverIncomingStream(name, stream)
-			continue
-		}
-		if name != "" {
-			slog.Warn("listener: unknown tag with non-empty name", "tag", tag, "name", name)
-			_ = stream.Close()
-			continue
-		}
-		// New client: primary stream — run L2 handshake (or skip in
-		// pairing-mode) and register the Session synchronously, so any
-		// sub-stream the client opens immediately afterward (e.g. the
-		// pairing ceremony's "ceremony" stream) finds the tag → Session
-		// mapping in place when acceptLoop dispatches it.
-		l.acceptPrimary(tag, stream)
-	}
-}
-
-// acceptPrimary runs the L2 handshake on a newly arrived client
-// primary stream and registers the resulting Session. In activation
-// mode (l.args.Pairing != nil) this drives the spec's Paired →
-// AuthCheck → SessionActive flow against args.Pairing's lookup; in
-// pairing mode (l.args.Pairing == nil) the handshake is skipped and
-// the raw stream is wrapped as a no-AEAD Session for the pairing
-// ceremony to use directly. See docs/DESIGN.md §3 L2.
-func (l *Listener) acceptPrimary(tag uint32, stream io.ReadWriteCloser) {
-	var (
-		channel      *cwire.Channel
-		deviceID     string
-		cwirePrimary unsafe.Pointer
-		rec          *crypto.PairingRecord
-	)
-	if l.args.Pairing != nil {
-		// Activation runs in libpigeon via cwire — the auth_request /
-		// auth_ok wire exchange uses the persistent cwireRef adapter and
-		// a per-stream handle adopted from this primary. The Go-side
-		// runBackendActivation + sessionMachine plumbing is gone from
-		// this path (T34c.3c).
-		cwirePrimary = registerStream(stream)
-		// Translate the public Pairing func ([id] → *crypto.PairingRecord, error)
-		// to the cwire resolver shape ([id] → *cwire.PairingRecord, bool) and
-		// capture the matched *crypto.PairingRecord for Go-side channel
-		// derivation below.
-		result, err := cwire.RunBackendActivation(&cwire.RunBackendActivationArgs{
-			Ref:    l.cwireRef,
-			Stream: cwirePrimary,
-			ResolveFn: func(deviceID string) (*cwire.PairingRecord, bool) {
-				r, err := l.args.Pairing(deviceID)
-				if err != nil || r == nil {
-					return nil, false
-				}
-				rec = r
-				return pairingRecordToCwire(r), true
-			},
-		})
-		if err != nil {
+			l.untrackListen(tr)
+			_ = tr.Close()
+			if l.ctx.Err() != nil {
+				return
+			}
 			slog.Warn("listener: activation", "err", err)
-			removeStream(cwirePrimary)
-			_ = stream.Close()
-			l.accepted <- acceptResult{err: err}
-			return
+			select {
+			case l.accepted <- acceptResult{err: err}:
+			case <-l.ctx.Done():
+				return
+			}
+			continue
 		}
-		if !result.Accepted {
-			removeStream(cwirePrimary)
-			_ = stream.Close()
-			l.accepted <- acceptResult{err: fmt.Errorf("activation rejected device %q", result.DeviceID)}
-			return
-		}
-		if rec == nil {
-			removeStream(cwirePrimary)
-			_ = stream.Close()
-			l.accepted <- acceptResult{err: errors.New("activation succeeded but no record captured")}
-			return
-		}
-		channel, err = cwire.DeriveSessionChannel(pairingRecordToCwire(rec), true)
-		if err != nil {
-			removeStream(cwirePrimary)
-			_ = stream.Close()
-			l.accepted <- acceptResult{err: fmt.Errorf("derive session channel: %w", err)}
-			return
-		}
-		deviceID = result.DeviceID
-	}
-
-	sess := newSession(l.ctx, l.transport, channel, deviceID, tag, l.args.Datagrams, true)
-	sess.cwirePrimary = cwirePrimary
-	sess.bindPrimary(stream)
-
-	l.mu.Lock()
-	l.sessions[tag] = sess
-	l.mu.Unlock()
-
-	// Hand the Session off to whichever goroutine is in Accept.
-	// Run async so acceptLoop can continue processing further sub-
-	// streams (the ceremony's "ceremony" stream lands here too) while
-	// the application is still arranging its Accept call.
-	go func() {
+		l.untrackListen(tr) // Session owns tr from here.
 		select {
 		case l.accepted <- acceptResult{session: sess}:
 		case <-l.ctx.Done():
 			_ = sess.Close()
-		}
-	}()
-}
-
-// datagramLoop reads incoming datagrams from the relay, parses the
-// 4-byte clientTag prefix the relay prepends, and dispatches to the
-// owning Session's datagram pump.
-func (l *Listener) datagramLoop() {
-	for {
-		data, err := l.transport.ReceiveDatagram(l.ctx)
-		if err != nil {
-			if l.ctx.Err() == nil {
-				slog.Debug("listener: receive datagram", "err", err)
-			}
 			return
 		}
-		if len(data) < 4 {
-			slog.Warn("listener: datagram too short for tag", "len", len(data))
-			continue
-		}
-		tag := binary.BigEndian.Uint32(data[:4])
-		l.mu.Lock()
-		sess, ok := l.sessions[tag]
-		l.mu.Unlock()
-		if !ok {
-			slog.Debug("listener: datagram for unknown tag", "tag", tag)
-			continue
-		}
-		sess.deliverIncomingDatagram(data[4:])
 	}
 }
 
-// removeSession is called by Session.Close to drop the Listener's reference.
-func (l *Listener) removeSession(tag uint32) {
+func (l *Listener) trackListen(tr *transport) {
 	l.mu.Lock()
-	delete(l.sessions, tag)
+	if l.parked != nil {
+		l.parked[tr] = struct{}{}
+	}
 	l.mu.Unlock()
+}
+
+func (l *Listener) untrackListen(tr *transport) {
+	l.mu.Lock()
+	delete(l.parked, tr)
+	l.mu.Unlock()
+}
+
+// activate runs the L2 handshake on a freshly-bridged listen connection
+// and builds the resulting Session. In activation mode (l.args.Pairing
+// != nil) it drives the auth_request / auth_ok exchange in libpigeon via
+// cwire against args.Pairing's lookup, deriving an AEAD channel from the
+// matched record. In pairing mode (l.args.Pairing == nil) the handshake
+// is skipped and the bridged primary is wrapped as a no-AEAD Session for
+// the pairing ceremony to use directly. See docs/DESIGN.md §3 L2.
+func (l *Listener) activate(tr *transport) (*Session, error) {
+	if l.args.Pairing == nil {
+		// Pairing mode has no activation handshake to block on, so wait
+		// for the client's arrival marker on the bridged primary before
+		// producing a Session — otherwise a worker would hand back a
+		// Session for a listen the relay hasn't matched to any client
+		// yet. (Activation mode gets this gating for free: its first
+		// primary read is the client's auth_request.) See Connect.
+		if _, err := readMessage(tr.primary); err != nil {
+			return nil, fmt.Errorf("await client: %w", err)
+		}
+		sess := newSession(l.ctx, tr, nil, "", l.args.Datagrams, true)
+		sess.ownsTransport = true
+		sess.bindPrimary(tr.primary)
+		go sess.acceptLoop()
+		go sess.datagramLoop()
+		return sess, nil
+	}
+
+	// Each accepted client has its own end-to-end QUIC connection, so —
+	// exactly like the client side in Connect — activation runs over a
+	// per-connection cwire adapter/ref that loops back to tr.primary
+	// through writeMessage/readMessage.
+	adapter := newGoTransportAdapter(l.ctx, tr)
+	ref := cwire.NewGoTransportRef(adapter)
+	cwirePrimary := adapter.adoptPrimary(tr.primary)
+
+	var rec *crypto.PairingRecord
+	result, err := cwire.RunBackendActivation(&cwire.RunBackendActivationArgs{
+		Ref:    ref,
+		Stream: cwirePrimary,
+		// Translate the public Pairing func ([id] → *crypto.PairingRecord, error)
+		// to the cwire resolver shape ([id] → *cwire.PairingRecord, bool) and
+		// capture the matched *crypto.PairingRecord for Go-side channel
+		// derivation below.
+		ResolveFn: func(deviceID string) (*cwire.PairingRecord, bool) {
+			r, err := l.args.Pairing(deviceID)
+			if err != nil || r == nil {
+				return nil, false
+			}
+			rec = r
+			return pairingRecordToCwire(r), true
+		},
+	})
+	if err != nil {
+		removeStream(cwirePrimary)
+		ref.Close()
+		return nil, fmt.Errorf("activation: %w", err)
+	}
+	if !result.Accepted {
+		removeStream(cwirePrimary)
+		ref.Close()
+		return nil, fmt.Errorf("activation rejected device %q", result.DeviceID)
+	}
+	if rec == nil {
+		removeStream(cwirePrimary)
+		ref.Close()
+		return nil, errors.New("activation succeeded but no record captured")
+	}
+	channel, err := cwire.DeriveSessionChannel(pairingRecordToCwire(rec), true)
+	if err != nil {
+		removeStream(cwirePrimary)
+		ref.Close()
+		return nil, fmt.Errorf("derive session channel: %w", err)
+	}
+
+	sess := newSession(l.ctx, tr, channel, result.DeviceID, l.args.Datagrams, true)
+	sess.ownsTransport = true
+	sess.cwireRef = ref
+	sess.cwirePrimary = cwirePrimary
+	sess.bindPrimary(tr.primary)
+	go sess.acceptLoop()
+	go sess.datagramLoop()
+	return sess, nil
 }
 
 // Connect dials the backend identified by args.InstanceID and returns a
@@ -413,14 +405,19 @@ func Connect(ctx context.Context, args *ConnectArgs) (*Session, error) {
 		return nil, fmt.Errorf("relay connect: %w", err)
 	}
 
-	// Primary stream is the one the relay handshake already used. The
-	// header carries an empty name, which (after the relay prepends the
-	// clientTag) tells the backend "this is a new client primary".
-	if err := writeMessage(tr.primary, EncodeStreamHeader(false, 0, "")); err != nil {
-		_ = tr.Close()
-		return nil, fmt.Errorf("write primary header: %w", err)
+	// The dial's "ok" ack means the relay has bridged this connection
+	// end-to-end onto a backend listen, so tr.primary is now a clean
+	// pipe straight to the backend — no relay-level framing. Activation
+	// (or, in pairing mode, the ceremony) is the first thing on it.
+	if pairingMode {
+		// Pairing mode has no activation handshake; send an empty arrival
+		// marker so the backend's accept worker knows a client is bridged
+		// onto its listen and produces the Session (see Listener.activate).
+		if err := writeMessage(tr.primary, nil); err != nil {
+			_ = tr.Close()
+			return nil, fmt.Errorf("relay connect: ready: %w", err)
+		}
 	}
-
 	var (
 		channel      *cwire.Channel
 		cwireRef     *cwire.GoTransportRef
@@ -429,8 +426,7 @@ func Connect(ctx context.Context, args *ConnectArgs) (*Session, error) {
 	if !pairingMode {
 		// Activation runs in libpigeon via cwire — it speaks the auth_request /
 		// auth_ok wire exchange over the adapter, which loops back to tr.primary
-		// through writeMessage/readMessage. The Go-side runClientActivation +
-		// sessionMachine plumbing is gone from this path (T34c.3b).
+		// through writeMessage/readMessage.
 		adapter := newGoTransportAdapter(ctx, tr)
 		cwireRef = cwire.NewGoTransportRef(adapter)
 		cwirePrimary = adapter.adoptPrimary(tr.primary)
@@ -449,15 +445,13 @@ func Connect(ctx context.Context, args *ConnectArgs) (*Session, error) {
 		}
 	}
 
-	sCtx, cancel := context.WithCancel(ctx)
-	sess := newSession(sCtx, tr, channel, args.InstanceID, 0, args.Datagrams, false)
-	sess.cancel = cancel
+	sess := newSession(ctx, tr, channel, args.InstanceID, args.Datagrams, false)
 	sess.ownsTransport = true
 	sess.cwireRef = cwireRef
 	sess.cwirePrimary = cwirePrimary
 	sess.bindPrimary(tr.primary)
-	go sess.clientAcceptLoop()
-	go sess.clientDatagramLoop()
+	go sess.acceptLoop()
+	go sess.datagramLoop()
 	return sess, nil
 }
 
@@ -480,6 +474,11 @@ func validateDatagrams(m map[string]uint64) error {
 // Session is an end-to-end encrypted session between two paired peers,
 // scoped to a single client. It carries one or more named, reliable
 // stream channels (OpenStream) and pre-agreed datagram channels (Datagram).
+//
+// Each Session owns its own end-to-end QUIC connection to the peer
+// (bridged opaquely by the relay), so both sides run a symmetric
+// sub-stream accept loop and datagram pump over that connection — there
+// is no relay-assigned client tag or shared-connection demux.
 type Session struct {
 	ctx    context.Context
 	cancel context.CancelFunc
@@ -487,18 +486,14 @@ type Session struct {
 	transport     *transport
 	channel       *cwire.Channel
 	peerID        string
-	clientTag     uint32 // 0 on client side; relay-assigned on backend side
 	isBackend     bool
-	ownsTransport bool // client side owns its transport; backend Sessions don't
-
-	listener *Listener // backend side only
+	ownsTransport bool
 
 	primary io.ReadWriteCloser
 
 	// cwireRef pins the goTransportAdapter against the cgo handle table
-	// for the lifetime of the session. Owned by client-side sessions
-	// (activation mode); nil on pairing-mode sessions and on backend-side
-	// sessions (the Listener owns the backend ref).
+	// for the lifetime of the session. Owned per-connection on both
+	// sides (activation mode); nil on pairing-mode sessions.
 	cwireRef *cwire.GoTransportRef
 
 	// cwirePrimary is the opaque stream handle adopted by the adapter
@@ -506,7 +501,7 @@ type Session struct {
 	cwirePrimary unsafe.Pointer
 
 	// Stream rendezvous: pendingOpens map name → waiter; bufferedStreams
-	// holds streams that arrived before a local OpenStream caller.
+	// holds streams that arrived before a local AcceptStream caller.
 	streamMu        sync.Mutex
 	pendingOpens    map[string][]chan io.ReadWriteCloser
 	bufferedStreams map[string][]io.ReadWriteCloser
@@ -518,7 +513,7 @@ type Session struct {
 	closeOnce sync.Once
 }
 
-func newSession(ctx context.Context, tr *transport, channel *cwire.Channel, peerID string, tag uint32, dgConfig map[string]uint64, isBackend bool) *Session {
+func newSession(ctx context.Context, tr *transport, channel *cwire.Channel, peerID string, dgConfig map[string]uint64, isBackend bool) *Session {
 	sCtx, cancel := context.WithCancel(ctx)
 	s := &Session{
 		ctx:             sCtx,
@@ -526,7 +521,6 @@ func newSession(ctx context.Context, tr *transport, channel *cwire.Channel, peer
 		transport:       tr,
 		channel:         channel,
 		peerID:          peerID,
-		clientTag:       tag,
 		isBackend:       isBackend,
 		pendingOpens:    make(map[string][]chan io.ReadWriteCloser),
 		bufferedStreams: make(map[string][]io.ReadWriteCloser),
@@ -553,12 +547,10 @@ func (s *Session) bindPrimary(stream io.ReadWriteCloser) {
 func (s *Session) PeerID() string { return s.peerID }
 
 // OpenStream opens a fresh, reliable, ordered, message-framed channel
-// identified by `name`. Both peers must call OpenStream with the same
-// name; the matching call on the peer unblocks when the name binds.
-//
-// On the backend side this opens a new QUIC stream toward the client
-// (with the relay routing by clientTag); on the client side it opens
-// a new QUIC stream toward the relay.
+// identified by `name`. Both peers must call OpenStream/AcceptStream with
+// the same name; the matching call on the peer unblocks when the name
+// binds. The stream is a new QUIC stream on this session's connection;
+// the relay forwards it opaquely to the peer.
 func (s *Session) OpenStream(ctx context.Context, name string) (*Stream, error) {
 	if name == "" {
 		return nil, errors.New("OpenStream: name must be non-empty")
@@ -567,7 +559,7 @@ func (s *Session) OpenStream(ctx context.Context, name string) (*Stream, error) 
 	if err != nil {
 		return nil, fmt.Errorf("open quic stream: %w", err)
 	}
-	if err := writeMessage(rwc, EncodeStreamHeader(s.isBackend, s.clientTag, name)); err != nil {
+	if err := writeMessage(rwc, EncodeStreamHeader(name)); err != nil {
 		_ = rwc.Close()
 		return nil, fmt.Errorf("write stream header: %w", err)
 	}
@@ -615,8 +607,8 @@ func (s *Session) removePending(name string, ch chan io.ReadWriteCloser) {
 	}
 }
 
-// deliverIncomingStream is called by the transport layer when a new
-// peer-opened stream's name handshake has been read.
+// deliverIncomingStream is called by acceptLoop when a new peer-opened
+// stream's name handshake has been read.
 func (s *Session) deliverIncomingStream(name string, rwc io.ReadWriteCloser) {
 	s.streamMu.Lock()
 	if q := s.pendingOpens[name]; len(q) > 0 {
@@ -630,6 +622,52 @@ func (s *Session) deliverIncomingStream(name string, rwc io.ReadWriteCloser) {
 	s.streamMu.Unlock()
 }
 
+// acceptLoop reads each sub-stream the peer opens on this session's
+// connection, reads its name header, and delivers it by name. Runs on
+// both sides — each session owns its own connection, so there is no
+// shared-connection demux. The primary stream is consumed by activation
+// (or used directly in pairing mode) and is never delivered here.
+func (s *Session) acceptLoop() {
+	for {
+		rwc, err := s.transport.AcceptStream(s.ctx)
+		if err != nil {
+			if s.ctx.Err() == nil {
+				slog.Debug("session: accept stream", "err", err)
+			}
+			return
+		}
+		header, err := readMessage(rwc)
+		if err != nil {
+			slog.Warn("session: read sub-stream header", "err", err)
+			_ = rwc.Close()
+			continue
+		}
+		name, err := DecodeStreamHeader(header)
+		if err != nil {
+			slog.Warn("session: parse sub-stream header", "err", err)
+			_ = rwc.Close()
+			continue
+		}
+		s.deliverIncomingStream(name, rwc)
+	}
+}
+
+// datagramLoop pumps incoming datagrams into the right Datagram by
+// channel-id. Runs on both sides; each datagram is the AEAD ciphertext
+// the peer sent, with no relay framing.
+func (s *Session) datagramLoop() {
+	for {
+		data, err := s.transport.ReceiveDatagram(s.ctx)
+		if err != nil {
+			if s.ctx.Err() == nil {
+				slog.Debug("session: receive datagram", "err", err)
+			}
+			return
+		}
+		s.deliverIncomingDatagram(data)
+	}
+}
+
 // Primary returns the primary stream wrapped as a *Stream. Meaningful
 // in pairing-mode where the activation handshake is skipped and the
 // primary is otherwise unused — pairing.go and the cross-language
@@ -637,10 +675,9 @@ func (s *Session) deliverIncomingStream(name string, rwc io.ReadWriteCloser) {
 // primary without opening a sub-stream (the modern client side might
 // not support multi-stream QUIC, e.g. Swift NWConnection).
 //
-// In activation-mode the primary is consumed by runBackendActivation /
-// runClientActivation on Session construction; reading from it after
-// activation will block. Primary() is safe to call regardless, but
-// only useful in pairing-mode.
+// In activation-mode the primary is consumed by activation on Session
+// construction; reading from it after activation will block. Primary()
+// is safe to call regardless, but only useful in pairing-mode.
 func (s *Session) Primary() *Stream {
 	return &Stream{name: "", rwc: s.primary, channel: s.channel}
 }
@@ -704,53 +741,7 @@ func (s *Session) deliverIncomingDatagram(payload []byte) {
 	}
 }
 
-// clientAcceptLoop runs on the client side: reads each new sub-stream
-// the backend opens (rare in v1) and delivers by name.
-func (s *Session) clientAcceptLoop() {
-	for {
-		rwc, err := s.transport.AcceptStream(s.ctx)
-		if err != nil {
-			if s.ctx.Err() == nil {
-				slog.Debug("session: accept stream", "err", err)
-			}
-			return
-		}
-		header, err := readMessage(rwc)
-		if err != nil {
-			slog.Warn("session: read sub-stream header", "err", err)
-			_ = rwc.Close()
-			continue
-		}
-		name, err := DecodeStreamHeaderClient(header)
-		if err != nil {
-			slog.Warn("session: parse sub-stream header", "err", err)
-			_ = rwc.Close()
-			continue
-		}
-		s.deliverIncomingStream(name, rwc)
-	}
-}
-
-// clientDatagramLoop runs on the client side: pumps incoming datagrams
-// into the right Datagram by channel-id (no clientTag prefix on the
-// client side — relay strips it).
-func (s *Session) clientDatagramLoop() {
-	for {
-		data, err := s.transport.ReceiveDatagram(s.ctx)
-		if err != nil {
-			if s.ctx.Err() == nil {
-				slog.Debug("session: receive datagram", "err", err)
-			}
-			return
-		}
-		s.deliverIncomingDatagram(data)
-	}
-}
-
-// Close tears down the Session. The SessionMachine is advanced
-// through the spec's RelayConnected → Paired transition before the
-// underlying QUIC primary is torn down so the spec model has a
-// defined post-close state.
+// Close tears down the Session and its underlying QUIC connection.
 func (s *Session) Close() error {
 	s.closeOnce.Do(func() {
 		s.cancel()
@@ -764,9 +755,6 @@ func (s *Session) Close() error {
 		if s.cwireRef != nil {
 			s.cwireRef.Close()
 			s.cwireRef = nil
-		}
-		if s.listener != nil {
-			s.listener.removeSession(s.clientTag)
 		}
 		if s.ownsTransport && s.transport != nil {
 			_ = s.transport.Close()
@@ -866,19 +854,13 @@ type Datagram struct {
 }
 
 // Send transmits a single datagram on this channel. The wire format is
-// AEAD([varint channel-id][payload]); on the backend side a 4-byte
-// clientTag prefix is added by the Session for relay routing.
+// AEAD([varint channel-id][payload]); the relay forwards it opaquely on
+// this session's own connection, so no routing prefix is added.
 func (d *Datagram) Send(payload []byte) error {
 	plain := EncodeDatagramPlaintext(d.id, payload)
 	ct, err := d.session.channel.Encrypt(plain)
 	if err != nil {
 		return fmt.Errorf("datagram: encrypt: %w", err)
-	}
-	if d.session.isBackend {
-		framed := make([]byte, 4+len(ct))
-		binary.BigEndian.PutUint32(framed[:4], d.session.clientTag)
-		copy(framed[4:], ct)
-		return d.session.transport.SendDatagram(framed)
 	}
 	return d.session.transport.SendDatagram(ct)
 }
@@ -902,8 +884,7 @@ func (d *Datagram) Recv(ctx context.Context) ([]byte, error) {
 func (d *Datagram) Name() string { return d.name }
 
 // Wire helpers are protogen-generated in wire_gen.go from
-// protocol/wireformats.yaml — EncodeStreamHeader,
-// DecodeStreamHeaderBackend, DecodeStreamHeaderClient,
+// protocol/wireformats.yaml — EncodeStreamHeader, DecodeStreamHeader,
 // EncodeDatagramPlaintext, DecodeDatagramPlaintext,
-// EncodeRelayGreetingConnect/RegisterMux, DecodeRelayGreeting. Do
+// EncodeRelayGreetingConnect/Register/Listen, DecodeRelayGreeting. Do
 // not add hand-rolled equivalents here — extend the YAML instead.

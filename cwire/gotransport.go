@@ -99,9 +99,9 @@ func (r *GoTransportRef) Close() {
 
 // NewGoSession constructs a pigeon_session over a GoTransport. The
 // supplied ref must remain valid for the lifetime of the returned
-// Session. `isBackend`, `clientTag`, and `datagrams` mirror the
-// loopback constructor.
-func NewGoSession(ref *GoTransportRef, ch *Channel, isBackend bool, clientTag uint32, datagrams []DatagramChannel) (*Session, error) {
+// Session. `datagrams` mirrors the loopback constructor. Under T45
+// both peers are symmetric — there is no clientTag.
+func NewGoSession(ref *GoTransportRef, ch *Channel, datagrams []DatagramChannel) (*Session, error) {
 	if ref == nil || ref.cudata == nil {
 		return nil, errors.New("cwire: nil GoTransportRef")
 	}
@@ -128,16 +128,11 @@ func NewGoSession(ref *GoTransportRef, ch *Channel, isBackend bool, clientTag ui
 	}
 
 	s := &Session{c: (*C.pigeon_session)(C.cwire_calloc_session())}
-	var cIsBackend C.bool
-	if isBackend {
-		cIsBackend = C.bool(true)
-	}
 	var defsPtr *C.pigeon_dgchannel_def
 	if len(datagrams) > 0 {
 		defsPtr = &defs[0]
 	}
 	rv := C.pigeon_session_init(s.c, &t, ch.c,
-		cIsBackend, C.uint32_t(clientTag),
 		defsPtr, C.size_t(len(datagrams)))
 	if rv != 0 {
 		C.free(unsafe.Pointer(s.c))
@@ -147,51 +142,37 @@ func NewGoSession(ref *GoTransportRef, ch *Channel, isBackend bool, clientTag ui
 	return s, nil
 }
 
-// AcceptStream pulls the next peer-opened stream from the Go
-// transport, then reads the unencrypted name-binding header so the
+// AcceptStreamFromGo pulls the next peer-opened stream from the Go
+// transport, then reads the [varint name-len][name] header so the
 // caller has a fully-attached *Stream. Mirrors the loopback helper.
-func (s *Session) AcceptStreamFromGo(ref *GoTransportRef) (*Stream, uint32, string, error) {
+func (s *Session) AcceptStreamFromGo(ref *GoTransportRef) (*Stream, string, error) {
 	if ref == nil || ref.cudata == nil {
-		return nil, 0, "", errors.New("cwire: nil GoTransportRef")
+		return nil, "", errors.New("cwire: nil GoTransportRef")
 	}
 	t := ref.handle.Value().(GoTransport)
 	h, err := t.AcceptStream()
 	if err != nil {
-		return nil, 0, "", err
+		return nil, "", err
 	}
 	hdr, err := t.RecvOnStream(h)
 	if err != nil {
-		return nil, 0, "", err
+		return nil, "", err
 	}
-	tag, name, _, derr := DecodeBackendStreamHeader(hdr)
+	name, _, derr := DecodeStreamHeader(hdr)
 	if derr != nil {
-		name2, _, derr2 := DecodeClientStreamHeader(hdr)
-		if derr2 != nil {
-			return nil, 0, "", derr
-		}
-		st := &Stream{session: s}
-		st.c.session = s.c
-		st.c.handle = (*C.pigeon_stream_handle)(h)
-		if len(name2) >= 64 {
-			return nil, 0, "", errors.New("cwire: accepted name too long")
-		}
-		for i := range name2 {
-			st.c.name[i] = C.char(name2[i])
-		}
-		st.c.name[len(name2)] = 0
-		return st, 0, name2, nil
+		return nil, "", derr
 	}
 	st := &Stream{session: s}
 	st.c.session = s.c
 	st.c.handle = (*C.pigeon_stream_handle)(h)
 	if len(name) >= 64 {
-		return nil, 0, "", errors.New("cwire: accepted name too long")
+		return nil, "", errors.New("cwire: accepted name too long")
 	}
 	for i := range name {
 		st.c.name[i] = C.char(name[i])
 	}
 	st.c.name[len(name)] = 0
-	return st, tag, name, nil
+	return st, name, nil
 }
 
 // --- //export'd trampolines ---

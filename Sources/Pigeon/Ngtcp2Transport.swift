@@ -6,14 +6,24 @@
 // exposes it to the Swift Session/Stream/Datagram façade through the
 // PigeonTransport vtable bridging in Transport.swift.
 //
-// Two roles are supported, mirroring the C-side `pigeon_role`:
+// Three roles are supported, mirroring the C-side `pigeon_role` under
+// the T45 remote-Listen L1 model (docs/DESIGN.md §3):
 //
 //   * .connect(peerInstanceID:) — client-side: opens a QUIC connection
-//     to the relay and asks it to route to a registered backend by ID.
-//   * .registerMux(selfInstanceID:) — backend-side multi-client: opens
-//     the QUIC connection and runs the register-mux handshake. The
-//     relay echoes back the assigned instance ID into the transport
-//     struct.
+//     to the relay and asks it to bridge to a registered backend by ID.
+//     The relay returns an "ok" ack once it has matched a backend
+//     listen; this transport's primary then carries the session.
+//   * .register(selfInstanceID:) — backend control connection: runs the
+//     `register` handshake; the relay assigns/echoes the instance ID
+//     and holds the connection open for the instance's lifetime.
+//   * .listen(instanceID:) — backend listen slot: runs the `listen`
+//     handshake; the relay parks the connection and bridges the next
+//     arriving client onto it end-to-end. Each accepted client rides
+//     its own listen connection — no per-client tag demux.
+//
+// Greetings are emitted by the C layer (pigeon_ngtcp2_transport_init →
+// PIGEON_ROLE_{CONNECT,REGISTER,LISTEN}), which speaks the remote-Listen
+// wire and consumes the relay's connect "ok" ack.
 //
 // Lifetime: Ngtcp2Transport is a reference type (class). The underlying
 // C struct lives on the heap (allocated in this Swift object) so its
@@ -57,11 +67,19 @@ public enum Ngtcp2Role: Sendable {
     /// relay to the registered backend with that ID.
     case connect(peerInstanceID: String)
 
-    /// Backend side, multi-client. The transport runs the
-    /// register-mux handshake; the relay assigns (or echoes) the
-    /// instance ID. After init, read it via
+    /// Backend control connection. Runs the `register` handshake; the
+    /// relay assigns (or echoes) the instance ID and holds this
+    /// connection open for the instance's lifetime (no client traffic
+    /// flows on it). After init, read the ID via
     /// `Ngtcp2Transport.instanceID`.
-    case registerMux(selfInstanceID: String? = nil, token: String? = nil)
+    case register(selfInstanceID: String? = nil, token: String? = nil)
+
+    /// Backend listen slot. Runs the `listen` handshake against an
+    /// already-registered instance; the relay parks the connection and
+    /// bridges the next arriving client onto it end-to-end. Each
+    /// accepted client rides its own listen connection — there is no
+    /// per-client tag demux (docs/DESIGN.md §3 L1).
+    case listen(instanceID: String, token: String? = nil)
 }
 
 /// QUIC transport for PigeonSession, backed by the vendored ngtcp2 +
@@ -75,8 +93,8 @@ public final class Ngtcp2Transport: PigeonTransport, @unchecked Sendable {
     private var closed: Bool = false
 
     /// The instance ID associated with this transport. For
-    /// `.connect`, this is the peer's ID. For `.registerMux`, it is
-    /// the relay-assigned (or echoed self-assigned) ID after the
+    /// `.connect`, this is the peer's ID. For `.register` / `.listen`,
+    /// it is the relay-assigned (or echoed self-assigned) ID after the
     /// handshake completes.
     public let instanceID: String
 
@@ -88,7 +106,7 @@ public final class Ngtcp2Transport: PigeonTransport, @unchecked Sendable {
     /// - Parameters:
     ///   - host: relay hostname or IP (required).
     ///   - port: relay UDP port (e.g. "4433").
-    ///   - role: connect (client) or register-mux (backend).
+    ///   - role: connect (client), register or listen (backend).
     ///   - verifyPeer: enable server certificate verification.
     ///     Defaults to false to accept the development relay's
     ///     self-signed certificate.
@@ -124,9 +142,13 @@ public final class Ngtcp2Transport: PigeonTransport, @unchecked Sendable {
             cRole = PIGEON_ROLE_CONNECT
             instanceArg = peerID
             tokenArg = nil
-        case .registerMux(let selfID, let token):
-            cRole = PIGEON_ROLE_REGISTER_MUX
+        case .register(let selfID, let token):
+            cRole = PIGEON_ROLE_REGISTER
             instanceArg = selfID
+            tokenArg = token
+        case .listen(let instID, let token):
+            cRole = PIGEON_ROLE_LISTEN
+            instanceArg = instID
             tokenArg = token
         }
 
@@ -170,7 +192,7 @@ public final class Ngtcp2Transport: PigeonTransport, @unchecked Sendable {
 
         // Read back the (possibly-relay-assigned) instance ID from
         // the transport struct via the C-side accessor. For .connect
-        // this echoes the input; for .registerMux this is the value
+        // this echoes the input; for .register / .listen this is the value
         // assigned by the relay.
         let idC = pigeon_ngtcp2_transport_instance_id(tPtr)
         self.instanceID = idC.map { String(cString: $0) } ?? ""
