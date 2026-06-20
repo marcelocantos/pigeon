@@ -113,10 +113,6 @@ type listenerHandle struct {
 	handle     cgo.Handle
 	box        *resolveBox
 	instanceID string
-	// pendingSessions buffers sessions surfaced by step() while the
-	// caller was pumping for a sub-stream on an already-accepted
-	// session. Accept() drains this first before calling into C.
-	pendingSessions []*sessionHandle
 }
 
 func (l *listenerHandle) Close() {
@@ -135,45 +131,16 @@ func (l *listenerHandle) Close() {
 	}
 }
 
-// Accept blocks until the next paired client connects and returns
-// the resulting session. Sessions surfaced by step() while the caller
-// was pumping for sub-streams are returned first (FIFO). The session
-// is owned by the listener — do not call sessionClose on it;
-// pigeon_listener_close tears down all sessions.
+// Accept dials a fresh listen connection, waits for the relay to
+// bridge a client onto it, runs activation, and returns the resulting
+// session bound to that pipe (T45 remote-Listen L1). The session is
+// heap-allocated and owned by the caller — release it with Close().
 func (l *listenerHandle) Accept() (*sessionHandle, error) {
-	if len(l.pendingSessions) > 0 {
-		s := l.pendingSessions[0]
-		l.pendingSessions = l.pendingSessions[1:]
-		return s, nil
-	}
 	var s *C.pigeon_session
 	if rv := C.pigeon_listener_accept(l.c, &s); rv != 0 {
 		return nil, errors.New("pigeon_listener_accept failed")
 	}
-	return &sessionHandle{c: s, ownedByListener: true}, nil
-}
-
-// step runs one pigeon_listener_step iteration. If a brand-new
-// client primary completes, the session is parked on
-// pendingSessions so the next Accept() returns it; the caller of
-// step() doesn't need to handle it. Returns nil on a normal step
-// (sub-stream dispatched, header dropped, or session parked) and
-// an error on transport failure / listener shutdown.
-//
-// Used by pumpAcceptStream in tests that need to drive the demux
-// pump while waiting for a peer-opened sub-stream to land in an
-// already-accepted session's incoming-stream queue.
-func (l *listenerHandle) step() error {
-	var s *C.pigeon_session
-	rv := C.pigeon_listener_step(l.c, &s)
-	if rv < 0 {
-		return errors.New("pigeon_listener_step failed")
-	}
-	if rv == 1 {
-		l.pendingSessions = append(l.pendingSessions,
-			&sessionHandle{c: s, ownedByListener: true})
-	}
-	return nil
+	return &sessionHandle{c: s, ownedByCaller: true}, nil
 }
 
 // --- pigeon_connect ---
@@ -224,8 +191,21 @@ func (c *connectionHandle) Session() *sessionHandle {
 // --- session / stream / datagram ---
 
 type sessionHandle struct {
-	c               *C.pigeon_session
-	ownedByListener bool
+	c             *C.pigeon_session
+	ownedByCaller bool // listener-returned sessions are heap-allocated & caller-owned
+}
+
+// Close tears down a caller-owned (listener-returned) session: closes
+// its scratch buffers + own listen transport, then frees the struct.
+// No-op for connection-owned sessions (pigeon_connect_close handles
+// those).
+func (s *sessionHandle) Close() {
+	if s == nil || s.c == nil || !s.ownedByCaller {
+		return
+	}
+	C.pigeon_session_close(s.c)
+	C.free(unsafe.Pointer(s.c))
+	s.c = nil
 }
 
 // openStream opens a new named stream toward the peer. Mirrors
@@ -240,18 +220,16 @@ func (s *sessionHandle) openStream(name string) (*streamHandle, error) {
 	return st, nil
 }
 
-// acceptStream pulls the next peer-opened sub-stream of the given
-// name from the listener-fed incoming queue. Returns an error if
-// no matching stream is buffered. The session API is single-
-// threaded; the typical pattern is to call listener.Accept (which
-// pumps the demux) and then this in a loop until the stream
-// arrives.
+// acceptStream blocks until the peer opens a sub-stream with the given
+// name on this session's own QUIC pipe (T45: each session owns its
+// connection). Streams with other names are buffered for later
+// matching calls. Returns an error on transport failure / shutdown.
 func (s *sessionHandle) acceptStream(name string) (*streamHandle, error) {
 	cName := C.CString(name)
 	defer C.free(unsafe.Pointer(cName))
 	st := &streamHandle{}
 	if rv := C.pigeon_session_accept_incoming_stream(s.c, cName, &st.c); rv != 0 {
-		return nil, fmt.Errorf("pigeon_session_accept_incoming_stream(%q): no buffered stream", name)
+		return nil, fmt.Errorf("pigeon_session_accept_incoming_stream(%q) failed", name)
 	}
 	return st, nil
 }

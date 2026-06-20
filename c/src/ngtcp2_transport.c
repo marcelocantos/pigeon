@@ -1053,36 +1053,36 @@ static int init_quic(pigeon_ngtcp2_transport *t)
     return 0;
 }
 
-// Build the pigeon handshake string for this transport's role.
+// Build the pigeon greeting for this transport's role using the
+// protogen-generated relay_greeting encoders (T45 remote-Listen L1).
 //
-// CONNECT:        "connect:<instance_id>"
-// REGISTER_MUX:   "register-mux"                      (no token, no id)
-//                 "register-mux::<instance_id>"       (id only)
-//                 "register-mux:<token>:"             (token only)
-//                 "register-mux:<token>:<instance_id>" (both)
+// CONNECT:   "connect:<instance_id>"
+// REGISTER:  "register[:<token>[:<instance_id>]]"
+// LISTEN:    "listen[:<token>[:<instance_id>]]"
 //
-// Returns the message length on success, or -1 on overflow.
+// The register/listen encoders collapse the optional token/instance_id
+// suffix exactly as the Go EncodeRelayGreeting{Register,Listen} do.
+// Returns the message length on success, or -1 on overflow / bad role.
 static int build_handshake(const pigeon_ngtcp2_transport *t,
                            char *out, size_t out_len)
 {
-    bool have_token = t->token[0] != '\0';
-    bool have_id    = t->instance_id[0] != '\0';
+    const char *token = (t->token[0] != '\0') ? t->token : NULL;
+    const char *id    = (t->instance_id[0] != '\0') ? t->instance_id : NULL;
     int n;
 
     switch (t->role) {
     case PIGEON_ROLE_CONNECT:
-        n = snprintf(out, out_len, "connect:%s", t->instance_id);
+        n = pigeon_wire_relay_greeting_encode_connect(
+                t->instance_id, strlen(t->instance_id),
+                (uint8_t *)out, out_len);
         break;
-    case PIGEON_ROLE_REGISTER_MUX:
-        if (have_token && have_id) {
-            n = snprintf(out, out_len, "register-mux:%s:%s", t->token, t->instance_id);
-        } else if (have_id) {
-            n = snprintf(out, out_len, "register-mux::%s", t->instance_id);
-        } else if (have_token) {
-            n = snprintf(out, out_len, "register-mux:%s:", t->token);
-        } else {
-            n = snprintf(out, out_len, "register-mux");
-        }
+    case PIGEON_ROLE_REGISTER:
+        n = pigeon_wire_relay_greeting_encode_register(
+                token, id, (uint8_t *)out, out_len);
+        break;
+    case PIGEON_ROLE_LISTEN:
+        n = pigeon_wire_relay_greeting_encode_listen(
+                token, id, (uint8_t *)out, out_len);
         break;
     default:
         return -1;
@@ -1114,6 +1114,44 @@ static int send_pigeon_handshake(pigeon_ngtcp2_transport *t)
     return write_stream(t, t->stream_id, frame, 4 + payload_len, 0);
 }
 
+// Read the relay's framed greeting ack from the primary stream (still
+// the legacy t->recv_buf — must run before the primary is promoted to
+// a multi-channel slot). Under T45 every role gets a reply:
+//   REGISTER → the assigned instance ID (stored into t->instance_id),
+//   LISTEN   → the instance-ID ack (consumed),
+//   CONNECT  → an "ok" ack confirming the end-to-end bridge (consumed).
+// Returns 0 on success, -1 on overflow / transport error.
+static int read_greeting_ack(pigeon_ngtcp2_transport *t)
+{
+    uint8_t hdr[4];
+    size_t got = 0;
+    if (transport_recv_stream(t, hdr, 4, &got) != 0 || got != 4) {
+        set_error(t, "read greeting ack length");
+        return -1;
+    }
+    uint32_t plen = ((uint32_t)hdr[0] << 24) | ((uint32_t)hdr[1] << 16)
+                  | ((uint32_t)hdr[2] << 8)  |  (uint32_t)hdr[3];
+    if (plen >= sizeof(t->instance_id)) {
+        set_error(t, "greeting ack too long");
+        return -1;
+    }
+    uint8_t payload[64];
+    got = 0;
+    if (plen > 0 &&
+        (transport_recv_stream(t, payload, plen, &got) != 0 || got != plen)) {
+        set_error(t, "read greeting ack payload");
+        return -1;
+    }
+    if (t->role == PIGEON_ROLE_REGISTER) {
+        // The relay assigns (or echoes) the instance ID; adopt it so
+        // the listener and listen dials use the canonical value.
+        memcpy(t->instance_id, payload, plen);
+        t->instance_id[plen] = '\0';
+    }
+    // LISTEN / CONNECT acks are consumed for their gating effect only.
+    return 0;
+}
+
 // ---- Public API ----
 
 int pigeon_ngtcp2_transport_init(pigeon_ngtcp2_transport *t,
@@ -1123,10 +1161,11 @@ int pigeon_ngtcp2_transport_init(pigeon_ngtcp2_transport *t,
         if (t) set_error(t, "invalid arguments");
         return -1;
     }
-    // CONNECT requires a peer instance_id; REGISTER_MUX accepts NULL/"".
-    if (cfg->role == PIGEON_ROLE_CONNECT &&
+    // CONNECT and LISTEN require an instance_id (the peer / backend to
+    // reach); REGISTER accepts NULL/"" (the relay assigns one).
+    if ((cfg->role == PIGEON_ROLE_CONNECT || cfg->role == PIGEON_ROLE_LISTEN) &&
         (!cfg->instance_id || cfg->instance_id[0] == '\0')) {
-        if (t) set_error(t, "instance_id required for CONNECT role");
+        if (t) set_error(t, "instance_id required for CONNECT/LISTEN role");
         return -1;
     }
 
@@ -1191,7 +1230,7 @@ int pigeon_ngtcp2_transport_init(pigeon_ngtcp2_transport *t,
         }
     }
 
-    // 6. Send pigeon protocol handshake.
+    // 6. Send pigeon protocol greeting.
     if (send_pigeon_handshake(t) != 0) {
         pigeon_ngtcp2_transport_close(t);
         return -1;
@@ -1201,6 +1240,15 @@ int pigeon_ngtcp2_transport_init(pigeon_ngtcp2_transport *t,
         return -1;
     }
     t->handshake_done = 1;
+
+    // 6b. Read the relay's framed greeting ack on the primary (T45):
+    //     REGISTER → assigned instance ID, LISTEN/CONNECT → ack. Must
+    //     happen before the primary is promoted to a multi-channel slot
+    //     (it reads the legacy t->recv_buf).
+    if (read_greeting_ack(t) != 0) {
+        pigeon_ngtcp2_transport_close(t);
+        return -1;
+    }
 
     // 7. Wire up the vtable.
     t->transport.userdata       = t;

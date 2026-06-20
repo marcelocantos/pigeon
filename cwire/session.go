@@ -150,9 +150,8 @@ type DatagramChannel struct {
 }
 
 // NewLoopbackSession constructs a Session over a loopback endpoint.
-// `isBackend` toggles the 4-byte clientTag prefix on outbound stream
-// headers and datagrams.
-func NewLoopbackSession(lb *Loopback, ch *Channel, isBackend bool, clientTag uint32, datagrams []DatagramChannel) (*Session, error) {
+// Under T45 both peers are symmetric — there is no clientTag.
+func NewLoopbackSession(lb *Loopback, ch *Channel, datagrams []DatagramChannel) (*Session, error) {
 	if lb == nil || lb.c == nil {
 		return nil, errors.New("cwire: nil loopback")
 	}
@@ -182,16 +181,11 @@ func NewLoopbackSession(lb *Loopback, ch *Channel, isBackend bool, clientTag uin
 	s := &Session{
 		c: (*C.pigeon_session)(C.cwire_calloc_session()),
 	}
-	var cIsBackend C.bool
-	if isBackend {
-		cIsBackend = C.bool(true)
-	}
 	var defsPtr *C.pigeon_dgchannel_def
 	if len(datagrams) > 0 {
 		defsPtr = &defs[0]
 	}
 	rv := C.pigeon_session_init(s.c, &t, ch.c,
-		cIsBackend, C.uint32_t(clientTag),
 		defsPtr, C.size_t(len(datagrams)))
 	if rv != 0 {
 		C.free(unsafe.Pointer(s.c))
@@ -235,39 +229,34 @@ func (s *Session) OpenStream(name string) (*Stream, error) {
 	return st, nil
 }
 
-// AcceptStream is a tiny convenience used in tests: drain the next
-// peer-opened stream from the loopback transport and read its
-// header. Returns the handle wrapped in a *Stream and the (decoded)
-// header name. Production code would do this via
-// pigeon_decode_*_stream_header on the raw header buffer.
-func (lb *Loopback) AcceptStreamWithHeader(s *Session) (*Stream, uint32, string, error) {
-	var hdr [4 + 10 + 256]byte
+// AcceptStreamWithHeader is a tiny convenience used in tests: drain the
+// next peer-opened stream from the loopback transport and read its
+// [varint name-len][name] header. Returns the handle wrapped in a
+// *Stream and the decoded header name. Production code would do this
+// via pigeon_wire_stream_header_decode on the raw header buffer.
+func (lb *Loopback) AcceptStreamWithHeader(s *Session) (*Stream, string, error) {
+	var hdr [10 + 256]byte
 	var hdrLen C.size_t
 	st := &Stream{session: s}
 	rv := C.pigeon_loopback_accept_with_header(lb.c, &st.c.handle,
 		(*C.uint8_t)(unsafe.Pointer(&hdr[0])), C.size_t(len(hdr)), &hdrLen)
 	if rv != 0 {
-		return nil, 0, "", errors.New("cwire: accept_with_header failed")
+		return nil, "", errors.New("cwire: accept_with_header failed")
 	}
 	st.c.session = s.c
-	tag, name, _, err := DecodeBackendStreamHeader(hdr[:int(hdrLen)])
+	name, _, err := DecodeStreamHeader(hdr[:int(hdrLen)])
 	if err != nil {
-		// Fall back to client-side header (no tag).
-		name2, _, err2 := DecodeClientStreamHeader(hdr[:int(hdrLen)])
-		if err2 != nil {
-			return nil, 0, "", err
-		}
-		return st, 0, name2, nil
+		return nil, "", err
 	}
 	// Copy name into the C struct's name field (NUL-terminated).
 	if len(name) >= 64 {
-		return nil, 0, "", errors.New("cwire: accepted name too long")
+		return nil, "", errors.New("cwire: accepted name too long")
 	}
 	for i := range name {
 		st.c.name[i] = C.char(name[i])
 	}
 	st.c.name[len(name)] = 0
-	return st, tag, name, nil
+	return st, name, nil
 }
 
 // Send AEAD-encrypts and writes a message on the stream.
