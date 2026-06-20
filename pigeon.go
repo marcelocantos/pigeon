@@ -1,18 +1,20 @@
 // Copyright 2026 Marcelo Cantos
 // SPDX-License-Identifier: Apache-2.0
 
-// Package pigeon provides client-side connectivity to a pigeon relay server.
-// Backends call Register to obtain an instance ID; clients call Connect
-// with a known instance ID. Both return a Conn for bidirectional
-// message exchange over QUIC.
+// Package pigeon provides client-side connectivity to a pigeon relay server
+// and the relay server library itself.
 //
-// By default, Register and Connect use raw QUIC (ALPN "pigeon") for
-// native clients. Use WithWebTransport() for browser-oriented paths
-// that require WebTransport (HTTP/3).
+// Backends call Register to obtain a Listener and a stable instance ID;
+// each Listener.Accept returns one Session for a newly paired client.
+// Clients call Connect with a known instance ID and receive a Session.
+// A Session carries named, reliable, message-framed streams (Primary,
+// OpenStream/AcceptStream) and pre-declared datagram channels (Datagram),
+// all end-to-end encrypted — the relay forwards only ciphertext and never
+// sees session keys.
 //
-// After establishing an encrypted channel (via crypto.Channel), call
-// Conn.SetChannel to enable automatic encryption on the primary stream,
-// and Conn.SetDatagramChannel for encrypted datagrams.
+// The relay bridges native clients over raw QUIC (ALPN "pigeon") and
+// browsers over WebTransport (HTTP/3); see WebTransportServer and
+// NewQUICServer for the server side.
 //
 // Sub-packages provide E2E encryption (crypto/), protocol state machines
 // (protocol/), and QR code rendering (qr/).
@@ -55,9 +57,9 @@ type Config struct {
 	// connections.
 	QUICPort string
 
-	// LANServer, if set, advertises a local LAN listener to connecting
-	// clients. Use with Register — when SetChannel is called, the LAN
-	// address is sent to the peer via the encrypted relay channel.
+	// LANServer, if set, advertises a local LAN listener for direct peer
+	// connections. Automatic LAN upgrade is not currently exposed through
+	// the Session API (see the relay's --lan flag and NewLANServer).
 	LANServer *LANServer
 
 	// LAN enables LAN upgrade on the client side. When the backend

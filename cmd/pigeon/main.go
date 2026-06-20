@@ -8,14 +8,16 @@
 //
 // Endpoints (WebTransport, HTTP/3):
 //
-//	GET /health             — health check
-//	GET /register           — backend connects here (WebTransport session)
-//	GET /ws/<instance-id>   — client connects here (WebTransport session)
+//	GET /health   — health check
+//	GET /pigeon   — single entry point; the role (register / listen /
+//	                connect) is set by the greeting on the primary stream
 //
-// Raw QUIC (ALPN "pigeon"):
+// Raw QUIC (ALPN "pigeon"): connect and send a RelayGreeting whose
+// variant selects the role:
 //
-//	Handshake "register" or "register:<token>" — backend registration
-//	Handshake "connect:<instance-id>"          — client connection
+//	register              — backend control connection (optional token)
+//	listen                — backend parks a connection awaiting a client
+//	connect:<instance-id> — client connection, bridged to a parked listen
 package main
 
 import (
