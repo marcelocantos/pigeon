@@ -37,9 +37,9 @@ jobs:
             runner: ubuntu-24.04-arm
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
-      - uses: actions/setup-go@v5
+      - uses: actions/setup-go@v6
         with:
           go-version-file: go.mod
 
@@ -53,7 +53,7 @@ jobs:
 
       - name: Cache vendored libsodium build
         id: cache-libsodium
-        uses: actions/cache@v4
+        uses: actions/cache@v5
         with:
           path: c/vendor/build
           key: libsodium-${{ matrix.os }}-${{ matrix.arch }}-${{ steps.libsodium-sha.outputs.sha }}-${{ hashFiles('c/vendor/build.sh') }}
