@@ -25,11 +25,7 @@ class SessionLoopbackTest {
         val key = ByteArray(32) { it.toByte() }
         val chA = Channel.shared(key)
         val chB = Channel.shared(key)
-        val (a, b) = Session.loopbackPair(
-            chA, chB,
-            aIsBackend = true, aTag = 0xcafef00d.toInt(),
-            bIsBackend = false, bTag = 0,
-        )
+        val (a, b) = Session.loopbackPair(chA, chB)
         try {
             // A opens "chat"; B accepts the next inbound stream.
             val aChat = a.openStream("chat")
@@ -60,11 +56,7 @@ class SessionLoopbackTest {
         val key = ByteArray(32) { (it + 7).toByte() }
         val chA = Channel.shared(key)
         val chB = Channel.shared(key)
-        val (a, b) = Session.loopbackPair(
-            chA, chB,
-            aIsBackend = false, aTag = 0,
-            bIsBackend = false, bTag = 0,
-        )
+        val (a, b) = Session.loopbackPair(chA, chB)
         try {
             // Nothing was opened: accept must yield null without blocking.
             assertNull(b.acceptStream())
@@ -83,14 +75,9 @@ class SessionLoopbackTest {
             DatagramChannelDef("ping", 1L),
             DatagramChannelDef("metric", 2L),
         )
-        // Both sides client-mode here (matching the C test, which
-        // skips the 4-byte tag prefix to make the round-trip easy).
-        val (a, b) = Session.loopbackPair(
-            chA, chB,
-            aIsBackend = false, aTag = 0,
-            bIsBackend = false, bTag = 0,
-            datagramChannels = chans,
-        )
+        // Post-T45 sessions are symmetric — each rides its own end-to-end
+        // connection, so there is no backend / client tag to set.
+        val (a, b) = Session.loopbackPair(chA, chB, datagramChannels = chans)
         try {
             val aPing = a.getDatagram("ping")
             val bPing = b.getDatagram("ping")
@@ -113,11 +100,7 @@ class SessionLoopbackTest {
         val key = ByteArray(32) { (it - 4).toByte() }
         val chA = Channel.shared(key)
         val chB = Channel.shared(key)
-        val (a, b) = Session.loopbackPair(
-            chA, chB,
-            aIsBackend = true, aTag = 0x11223344,
-            bIsBackend = false, bTag = 0,
-        )
+        val (a, b) = Session.loopbackPair(chA, chB)
         try {
             val aS = a.openStreamBlocking("control")
             val bS = b.acceptStreamBlocking()

@@ -69,12 +69,11 @@ object PigeonNative {
     @JvmStatic external fun uvarintEncode(v: Long): ByteArray
 
     /**
-     * Encode the post-T22 stream-header. Backend side prepends the
-     * 4-byte clientTag; client side starts with the varint name length.
+     * Encode the stream-header: `[uvarint name-len][name]`. Post-T45 the
+     * 4-byte clientTag prefix is gone — each session rides its own
+     * end-to-end QUIC connection, so the header is symmetric on both sides.
      */
     @JvmStatic external fun encodeStreamHeader(
-        isBackend: Boolean,
-        clientTag: Int,
         name: String,
     ): ByteArray
 
@@ -105,6 +104,10 @@ object PigeonNative {
      * recv key. The caller still owns the channel handles and must
      * free them after both sessions are closed.
      *
+     * Post-T45 the two sessions are symmetric — there is no backend /
+     * client tag, because each session rides its own end-to-end QUIC
+     * connection rather than a tag-multiplexed shared one.
+     *
      * `dgChannelNames` and `dgChannelIds` declare the agreed-upon
      * datagram channel table; both peers must declare the same list.
      * Pass null/empty to skip datagram channels.
@@ -112,10 +115,6 @@ object PigeonNative {
     @JvmStatic external fun newLoopbackPair(
         channelA: Long,
         channelB: Long,
-        aIsBackend: Boolean,
-        aTag: Int,
-        bIsBackend: Boolean,
-        bTag: Int,
         dgChannelNames: Array<String>?,
         dgChannelIds: LongArray?,
     ): LongArray
@@ -188,12 +187,13 @@ object PigeonNative {
      * The session retains a global ref to `transport` until
      * [sessionFree]; the caller can drop its local reference safely
      * once this method returns.
+     *
+     * Post-T45 the session is symmetric — there is no backend / client
+     * tag, because each session rides its own end-to-end QUIC connection.
      */
     @JvmStatic external fun sessionInitWithJniTransport(
         channelHandle: Long,
         transport: Any,
-        isBackend: Boolean,
-        clientTag: Int,
         dgChannelNames: Array<String>?,
         dgChannelIds: LongArray?,
     ): Long

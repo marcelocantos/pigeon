@@ -83,8 +83,28 @@ class PigeonConnTest {
         }.also { it.start() }
 
         val handshake = readMessage(server.inputStream)
-        assertEquals("register:secret-token", String(handshake))
+        // Post-T45 the register greeting carries both fields once either
+        // is non-empty: `register:<token>:<instanceID>` (id empty here).
+        assertEquals("register:secret-token:", String(handshake))
         writeMessage(server.outputStream, "id-456".toByteArray())
+
+        thread.join(5000)
+    }
+
+    @Test
+    fun `listen handshake`() {
+        val (client, server) = createTransportPair()
+
+        val thread = Thread {
+            listen(client, "target-instance")
+        }.also { it.start() }
+
+        val handshake = readMessage(server.inputStream)
+        // listen greeting echoes the instance ID in the id field:
+        // `listen::<instanceID>` (token empty).
+        assertEquals("listen::target-instance", String(handshake))
+        // Relay acks with the instance ID before parking.
+        writeMessage(server.outputStream, "target-instance".toByteArray())
 
         thread.join(5000)
     }
@@ -99,6 +119,9 @@ class PigeonConnTest {
 
         val handshake = readMessage(server.inputStream)
         assertEquals("connect:target-instance", String(handshake))
+        // Post-T45 connect waits for the relay's "ok" ack (the bridge is
+        // live once it returns).
+        writeMessage(server.outputStream, "ok".toByteArray())
 
         thread.join(5000)
     }
@@ -257,8 +280,14 @@ class PigeonConnTest {
 
     @Test
     fun `close delegates to transport`() {
-        val (clientTransport, _) = createTransportPair()
+        val (clientTransport, server) = createTransportPair()
+        val thread = Thread {
+            // Drain the connect greeting and ack so connect() returns.
+            readMessage(server.inputStream)
+            writeMessage(server.outputStream, "ok".toByteArray())
+        }.also { it.start() }
         val conn = connect(clientTransport, "some-id")
+        thread.join(5000)
         conn.close()
         assertEquals(true, clientTransport.closed)
     }
