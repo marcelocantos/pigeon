@@ -9,76 +9,62 @@ import (
 )
 
 // TestStreamHeaderWireVectors locks the on-the-wire byte representation
-// of the post-T22 stream-header encoding so that every cross-language
-// SDK (c/test/test_pigeon.c::test_stream_header, the Swift / Kotlin /
-// TS suites) can hard-code the same expected bytes and verify cross-
-// language equivalence by construction. Post-T40 the encoder /decoder
-// are protogen-generated in wire_gen.go; this test exercises the
-// generated functions directly.
+// of the stream-header encoding so that every cross-language SDK
+// (c/test/test_pigeon.c::test_stream_header, the Swift / Kotlin / TS
+// suites) can hard-code the same expected bytes and verify cross-
+// language equivalence by construction. The encoder / decoder are
+// protogen-generated in wire_gen.go from protocol/wireformats.yaml.
+//
+// Post-T45 the header is just [varint name-len][name] — the 4-byte
+// clientTag prefix is gone, because each session rides its own
+// end-to-end QUIC connection rather than a tag-multiplexed shared one.
 //
 // If this test changes, the corresponding per-language test vectors
 // MUST be updated in lockstep — they are intentionally hand-mirrored
 // as the cheapest cross-language wire-byte interop check we can run today.
 func TestStreamHeaderWireVectors(t *testing.T) {
 	cases := []struct {
-		name      string
-		isBackend bool
-		tag       uint32
-		channel   string
-		want      []byte
+		name    string
+		channel string
+		want    []byte
 	}{
 		{
-			name:      "backend chat tag=0x01020304",
-			isBackend: true, tag: 0x01020304, channel: "chat",
-			// 4-byte tag + varint(4) + "chat"
-			want: []byte{0x01, 0x02, 0x03, 0x04, 0x04, 'c', 'h', 'a', 't'},
+			name:    "chat",
+			channel: "chat",
+			// varint(4) + "chat"
+			want: []byte{0x04, 'c', 'h', 'a', 't'},
 		},
 		{
-			name:      "client primary (empty name)",
-			isBackend: false, tag: 0, channel: "",
-			want: []byte{0x00},
+			name:    "empty name",
+			channel: "",
+			want:    []byte{0x00},
 		},
 		{
-			name:      "client control",
-			isBackend: false, tag: 0, channel: "control",
-			want: []byte{0x07, 'c', 'o', 'n', 't', 'r', 'o', 'l'},
+			name:    "control",
+			channel: "control",
+			want:    []byte{0x07, 'c', 'o', 'n', 't', 'r', 'o', 'l'},
 		},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			got := EncodeStreamHeader(tc.isBackend, tc.tag, tc.channel)
+			got := EncodeStreamHeader(tc.channel)
 			if !bytes.Equal(got, tc.want) {
 				t.Fatalf("EncodeStreamHeader: got %x want %x", got, tc.want)
 			}
-
-			// Round-trip via the matching decoder.
-			if tc.isBackend {
-				tag, name, err := DecodeStreamHeaderBackend(got)
-				if err != nil {
-					t.Fatalf("decode: %v", err)
-				}
-				if tag != tc.tag {
-					t.Fatalf("decode tag: got 0x%x want 0x%x", tag, tc.tag)
-				}
-				if name != tc.channel {
-					t.Fatalf("decode name: got %q want %q", name, tc.channel)
-				}
-			} else {
-				name, err := DecodeStreamHeaderClient(got)
-				if err != nil {
-					t.Fatalf("decode: %v", err)
-				}
-				if name != tc.channel {
-					t.Fatalf("decode name: got %q want %q", name, tc.channel)
-				}
+			name, err := DecodeStreamHeader(got)
+			if err != nil {
+				t.Fatalf("decode: %v", err)
+			}
+			if name != tc.channel {
+				t.Fatalf("decode name: got %q want %q", name, tc.channel)
 			}
 		})
 	}
 }
 
 // TestRelayGreetingWireVectors locks the relay greeting variants. The
-// register-mux form has four wire shapes depending on which of (token,
-// instance_id) are present; the encoder picks the right one.
+// register and listen forms share four wire shapes depending on which of
+// (token, instance_id) are present; the encoder picks the right one.
 func TestRelayGreetingWireVectors(t *testing.T) {
 	t.Run("connect", func(t *testing.T) {
 		got := EncodeRelayGreetingConnect("xyz123")
@@ -97,37 +83,49 @@ func TestRelayGreetingWireVectors(t *testing.T) {
 			t.Fatalf("instance: %q", dec.InstanceId)
 		}
 	})
-	cases := []struct {
+
+	suffixCases := []struct {
 		name     string
 		token    string
 		instance string
-		want     string
+		bare     string // expected wire for the "register"/"listen" prefix
 	}{
-		{"bare", "", "", "register-mux"},
-		{"id only", "", "id-7", "register-mux::id-7"},
-		{"token only", "secret", "", "register-mux:secret:"},
-		{"both", "tok", "id-2", "register-mux:tok:id-2"},
+		{"bare", "", "", ""},
+		{"id only", "", "id-7", "::id-7"},
+		{"token only", "secret", "", ":secret:"},
+		{"both", "tok", "id-2", ":tok:id-2"},
 	}
-	for _, tc := range cases {
-		t.Run("register-mux/"+tc.name, func(t *testing.T) {
-			got := EncodeRelayGreetingRegisterMux(tc.token, tc.instance)
-			if string(got) != tc.want {
-				t.Fatalf("got %q want %q", got, tc.want)
-			}
-			dec, err := DecodeRelayGreeting(got)
-			if err != nil {
-				t.Fatalf("decode: %v", err)
-			}
-			if dec.Variant != RelayGreetingRegisterMux {
-				t.Fatalf("variant: %v", dec.Variant)
-			}
-			if dec.Token != tc.token {
-				t.Fatalf("token: got %q want %q", dec.Token, tc.token)
-			}
-			if dec.InstanceId != tc.instance {
-				t.Fatalf("instance: got %q want %q", dec.InstanceId, tc.instance)
-			}
-		})
+	variants := []struct {
+		prefix  string
+		variant RelayGreetingVariant
+		encode  func(token, instance string) []byte
+	}{
+		{"register", RelayGreetingRegister, EncodeRelayGreetingRegister},
+		{"listen", RelayGreetingListen, EncodeRelayGreetingListen},
+	}
+	for _, v := range variants {
+		for _, tc := range suffixCases {
+			t.Run(v.prefix+"/"+tc.name, func(t *testing.T) {
+				want := v.prefix + tc.bare
+				got := v.encode(tc.token, tc.instance)
+				if string(got) != want {
+					t.Fatalf("got %q want %q", got, want)
+				}
+				dec, err := DecodeRelayGreeting(got)
+				if err != nil {
+					t.Fatalf("decode: %v", err)
+				}
+				if dec.Variant != v.variant {
+					t.Fatalf("variant: %v", dec.Variant)
+				}
+				if dec.Token != tc.token {
+					t.Fatalf("token: got %q want %q", dec.Token, tc.token)
+				}
+				if dec.InstanceId != tc.instance {
+					t.Fatalf("instance: got %q want %q", dec.InstanceId, tc.instance)
+				}
+			})
+		}
 	}
 }
 

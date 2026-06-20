@@ -14,6 +14,7 @@ import (
 	"log/slog"
 	"net"
 	"net/http"
+	"strings"
 	"sync"
 	"time"
 
@@ -92,6 +93,17 @@ func (s *wtSession) Context() context.Context {
 
 func (s *wtSession) Close() error {
 	return s.session.CloseWithError(0, "")
+}
+
+// bearerToken extracts a relay credential from a WebTransport upgrade
+// request: the "Bearer " Authorization header, or failing that the
+// ?token= query parameter. Returns "" when neither is present.
+func bearerToken(r *http.Request) string {
+	const prefix = "Bearer "
+	if h := r.Header.Get("Authorization"); strings.HasPrefix(h, prefix) {
+		return h[len(prefix):]
+	}
+	return r.URL.Query().Get("token")
 }
 
 // generateID generates a random 128-bit instance ID as a hex string.
@@ -226,12 +238,19 @@ func (s *WebTransportServer) handlePigeon(w http.ResponseWriter, r *http.Request
 		session.CloseWithError(0, "bad handshake")
 		return
 	}
+	// Browser WebTransport clients can't set a greeting token but can
+	// set the Authorization header; fall back to it so BearerTokenAuth
+	// (which reads req.Token) works for both. See RegisterRequest.Token.
+	token := dec.Token
+	if token == "" {
+		token = bearerToken(r)
+	}
 	sess := &wtSession{session: session, stream: stream}
 	switch dec.Variant {
 	case RelayGreetingRegister:
-		s.handleRegister(r, sess, dec.Token, dec.InstanceId)
+		s.handleRegister(r, sess, token, dec.InstanceId)
 	case RelayGreetingListen:
-		s.handleListen(r, sess, dec.Token, dec.InstanceId)
+		s.handleListen(r, sess, token, dec.InstanceId)
 	case RelayGreetingConnect:
 		s.handleConnect(r, sess, dec.InstanceId)
 	default:
