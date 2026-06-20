@@ -15,6 +15,17 @@
 //     relay echoes back the assigned instance ID into the transport
 //     struct.
 //
+// T45 status: the relay and the Swift-level relay client (PigeonConn,
+// WireGen greetings) are on the remote-Listen L1 wire (register control
+// connection + listen pool + per-client end-to-end bridge; see
+// docs/DESIGN.md §3 L1). This transport's greetings are emitted by the
+// C layer (pigeon_ngtcp2_transport_init → PIGEON_ROLE_*), which still
+// speaks the pre-T45 register-mux wire and does not consume the relay's
+// connect "ok" ack. The role names below therefore still mirror the C
+// `pigeon_role`; they migrate to register / listen / connect once the C
+// SDK transport is ported (the cross-language E2E test that drives this
+// path is skipped until then — see RelayE2ETests).
+//
 // Lifetime: Ngtcp2Transport is a reference type (class). The underlying
 // C struct lives on the heap (allocated in this Swift object) so its
 // address stays stable for the lifetime of the Swift object — that

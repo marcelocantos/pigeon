@@ -84,12 +84,20 @@ public struct DatagramChannelDef: Sendable, Hashable {
 
 /// One peer-to-peer association: backend ↔ paired client (or vice-
 /// versa from the client side). Owns the AEAD channel derived from
-/// the PairingRecord, the role discriminator (backend/client) and
-/// the relay-assigned clientTag (backend side only), plus a fixed-
-/// size table of pre-declared datagram channels.
+/// the PairingRecord, the role discriminator (backend/client) and the
+/// `clientTag`, plus a fixed-size table of pre-declared datagram
+/// channels.
 ///
 /// Mirrors the Go peer-library `Session` — same shape, same
 /// constraints (datagrams pre-declared, streams opened on demand).
+///
+/// T45 note: under the remote-Listen L1 wire each Session rides its own
+/// end-to-end connection, so there is no relay-assigned per-client tag —
+/// the Go SDK has dropped `clientTag` entirely. This Swift façade is a
+/// thin wrapper over libpigeon (`pigeon_session_init`), whose C ABI
+/// still carries a `client_tag` parameter until the C SDK is ported, so
+/// the field is retained here purely as a passthrough (default 0). It no
+/// longer participates in any Swift-side framing.
 public final class PigeonSession: @unchecked Sendable {
     // Heap-allocated C session struct. We hold it via
     // UnsafeMutablePointer so its address is stable for the

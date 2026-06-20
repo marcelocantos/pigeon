@@ -68,31 +68,50 @@ final class PigeonRelayTests: XCTestCase {
         }
     }
 
-    // MARK: - Handshake message construction
+    // MARK: - Relay greeting construction (T45)
+    //
+    // Greetings now go through the protogen-generated PigeonWire
+    // encoders; PigeonConn.register / .listen / .connect call these
+    // directly. Vectors match wire_vectors_test.go.
 
-    func testHandshakeRegisterNoToken() {
-        let msg = buildHandshakeMessage(role: "register")
-        XCTAssertEqual(msg, "register")
+    private func greeting(_ data: Data) -> String {
+        String(decoding: data, as: UTF8.self)
     }
 
-    func testHandshakeRegisterWithToken() {
-        let msg = buildHandshakeMessage(role: "register", token: "secret123")
-        XCTAssertEqual(msg, "register:secret123")
+    func testGreetingRegisterBare() {
+        XCTAssertEqual(
+            greeting(PigeonWire.encodeRelayGreetingRegister(token: "", instanceId: "")),
+            "register")
     }
 
-    func testHandshakeConnect() {
-        let msg = buildHandshakeMessage(role: "connect", instanceID: "abc123")
-        XCTAssertEqual(msg, "connect:abc123")
+    func testGreetingRegisterWithToken() {
+        XCTAssertEqual(
+            greeting(PigeonWire.encodeRelayGreetingRegister(token: "secret123", instanceId: "")),
+            "register:secret123:")
     }
 
-    func testHandshakeConnectEmptyID() {
-        let msg = buildHandshakeMessage(role: "connect", instanceID: "")
-        XCTAssertEqual(msg, "connect:")
+    func testGreetingListenIDOnly() {
+        XCTAssertEqual(
+            greeting(PigeonWire.encodeRelayGreetingListen(token: "", instanceId: "id-7")),
+            "listen::id-7")
     }
 
-    func testHandshakeConnectNilID() {
-        let msg = buildHandshakeMessage(role: "connect")
-        XCTAssertEqual(msg, "connect:")
+    func testGreetingListenTokenAndID() {
+        XCTAssertEqual(
+            greeting(PigeonWire.encodeRelayGreetingListen(token: "tok", instanceId: "id-2")),
+            "listen:tok:id-2")
+    }
+
+    func testGreetingConnect() {
+        XCTAssertEqual(
+            greeting(PigeonWire.encodeRelayGreetingConnect(instanceId: "abc123")),
+            "connect:abc123")
+    }
+
+    func testGreetingConnectEmptyID() {
+        XCTAssertEqual(
+            greeting(PigeonWire.encodeRelayGreetingConnect(instanceId: "")),
+            "connect:")
     }
 }
 
