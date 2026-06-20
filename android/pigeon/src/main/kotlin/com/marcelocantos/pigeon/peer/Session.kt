@@ -104,8 +104,6 @@ class Channel internal constructor(internal val handle: Long) : AutoCloseable {
 class Session internal constructor(
     private val handleRef: AtomicLong,
     private val channel: Channel,
-    val isBackend: Boolean,
-    val clientTag: Int,
     private val useGenericAccept: Boolean = false,
 ) : AutoCloseable {
 
@@ -166,16 +164,6 @@ class Session internal constructor(
 
     companion object {
         /**
-         * Create two sessions wired together over an in-process
-         * loopback transport. Returns the (a, b) pair. Convenient
-         * for tests; not for production.
-         *
-         * `aIsBackend` and `aTag` configure the backend-side framing
-         * for session A; the matching `b*` parameters do the same for
-         * session B. Both sessions get the same datagram-channel
-         * declarations.
-         */
-        /**
          * Build a session over a JVM-callback transport (T36).
          *
          * `transport` must implement [JniQuicTransport]; libpigeon
@@ -189,16 +177,14 @@ class Session internal constructor(
          * application's responsibility (closing the session does NOT
          * call `transport.close()`).
          *
-         * `isBackend` and `clientTag` mirror [loopbackPair]; the
-         * combination of the two governs how stream-header framing
-         * looks on outbound streams (backend prepends the 4-byte
-         * clientTag prefix).
+         * Post-T45 the session is symmetric — there is no backend /
+         * client tag, because each session rides its own end-to-end
+         * QUIC connection. Stream-header framing is `[uvarint name-len]
+         * [name]` on both sides.
          */
         fun fromTransport(
             channel: Channel,
             transport: JniQuicTransport,
-            isBackend: Boolean,
-            clientTag: Int,
             datagramChannels: List<DatagramChannelDef> = emptyList(),
         ): Session {
             val names = if (datagramChannels.isEmpty()) null
@@ -207,20 +193,24 @@ class Session internal constructor(
                 else LongArray(datagramChannels.size) { datagramChannels[it].id }
             val handle = PigeonNative.sessionInitWithJniTransport(
                 channel.handle, transport,
-                isBackend, clientTag,
                 names, ids,
             )
-            return Session(AtomicLong(handle), channel, isBackend, clientTag,
-                useGenericAccept = true)
+            return Session(AtomicLong(handle), channel, useGenericAccept = true)
         }
 
+        /**
+         * Create two sessions wired together over an in-process loopback
+         * transport. Returns the (a, b) pair. Convenient for tests; not
+         * for production.
+         *
+         * Post-T45 the two sessions are symmetric — there is no backend /
+         * client tag, because each session rides its own end-to-end QUIC
+         * connection. Both sessions get the same datagram-channel
+         * declarations.
+         */
         fun loopbackPair(
             channelA: Channel,
             channelB: Channel,
-            aIsBackend: Boolean,
-            aTag: Int,
-            bIsBackend: Boolean,
-            bTag: Int,
             datagramChannels: List<DatagramChannelDef> = emptyList(),
         ): Pair<Session, Session> {
             val names = if (datagramChannels.isEmpty()) null
@@ -229,12 +219,10 @@ class Session internal constructor(
                 else LongArray(datagramChannels.size) { datagramChannels[it].id }
             val handles = PigeonNative.newLoopbackPair(
                 channelA.handle, channelB.handle,
-                aIsBackend, aTag,
-                bIsBackend, bTag,
                 names, ids,
             )
-            val a = Session(AtomicLong(handles[0]), channelA, aIsBackend, aTag)
-            val b = Session(AtomicLong(handles[1]), channelB, bIsBackend, bTag)
+            val a = Session(AtomicLong(handles[0]), channelA)
+            val b = Session(AtomicLong(handles[1]), channelB)
             return a to b
         }
     }

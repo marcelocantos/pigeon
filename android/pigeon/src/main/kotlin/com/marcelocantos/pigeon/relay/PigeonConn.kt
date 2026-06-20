@@ -4,6 +4,7 @@
 package com.marcelocantos.pigeon.relay
 
 import com.marcelocantos.pigeon.crypto.E2EChannel
+import com.marcelocantos.pigeon.crypto.PigeonWire
 import java.io.InputStream
 import java.io.OutputStream
 import java.net.HttpURLConnection
@@ -132,25 +133,70 @@ class PigeonConn internal constructor(
 /**
  * Register as a backend with the relay.
  *
- * Sends the register handshake over [transport] and reads the
- * relay-assigned instance ID.
+ * Under the T45 remote-Listen L1 model this opens the backend's control
+ * connection: the relay assigns (or echoes) the instance ID and holds the
+ * connection open for the instance's lifetime as a liveness signal. No
+ * client traffic flows on it — each accepted client rides its own listen
+ * connection (see [listen]).
+ *
+ * Sends the `register[:token[:instanceID]]` greeting over [transport] and
+ * reads the relay-assigned instance ID.
  *
  * @param transport a QUIC transport connected to the relay with ALPN "pigeon"
  * @param token optional bearer token for authentication
- * @return a [PigeonConn] ready for bidirectional messaging
+ * @param instanceID optional requested instance ID (relay echoes it back)
+ * @return a [PigeonConn] holding the control connection
  */
-fun register(transport: QuicTransport, token: String? = null, host: String? = null): PigeonConn {
+fun register(
+    transport: QuicTransport,
+    token: String? = null,
+    host: String? = null,
+    instanceID: String = "",
+): PigeonConn {
     if (host != null) wakeRelay(host)
-    val handshake = if (token != null) "register:$token" else "register"
-    writeMessage(transport.outputStream, handshake.toByteArray())
+    val greeting = PigeonWire.encodeRelayGreetingRegister(token ?: "", instanceID)
+    writeMessage(transport.outputStream, greeting)
     val id = readMessage(transport.inputStream)
     return PigeonConn(transport, String(id))
 }
 
 /**
+ * Park a listen connection at the relay for the given instance.
+ *
+ * The relay acks with the instance ID, then parks the connection until a
+ * client matches it, at which point the relay bridges the two whole
+ * connections end-to-end. The returned [PigeonConn] then carries that one
+ * client's traffic.
+ *
+ * Sends the `listen[:token[:instanceID]]` greeting over [transport].
+ *
+ * @param transport a QUIC transport connected to the relay with ALPN "pigeon"
+ * @param instanceID the instance to listen on (from [register])
+ * @param token optional bearer token for authentication
+ * @return a [PigeonConn] bound to the bridged client once one arrives
+ */
+fun listen(
+    transport: QuicTransport,
+    instanceID: String,
+    token: String? = null,
+    host: String? = null,
+): PigeonConn {
+    if (host != null) wakeRelay(host)
+    val greeting = PigeonWire.encodeRelayGreetingListen(token ?: "", instanceID)
+    writeMessage(transport.outputStream, greeting)
+    // Ack carries the instance ID; the connection then parks until a
+    // client is bridged onto it.
+    readMessage(transport.inputStream)
+    return PigeonConn(transport, instanceID)
+}
+
+/**
  * Connect as a client to a specific backend instance.
  *
- * Sends the connect handshake over [transport].
+ * Sends the `connect:<instanceID>` greeting over [transport] and reads the
+ * relay's "ok" ack, which returns only once the relay has matched a parked
+ * backend listen and the end-to-end bridge is live — so the caller can
+ * begin talking to the backend immediately afterward.
  *
  * @param transport a QUIC transport connected to the relay with ALPN "pigeon"
  * @param instanceID the relay-assigned instance ID of the target backend
@@ -158,7 +204,10 @@ fun register(transport: QuicTransport, token: String? = null, host: String? = nu
  */
 fun connect(transport: QuicTransport, instanceID: String, host: String? = null): PigeonConn {
     if (host != null) wakeRelay(host)
-    writeMessage(transport.outputStream, "connect:$instanceID".toByteArray())
+    writeMessage(transport.outputStream, PigeonWire.encodeRelayGreetingConnect(instanceID))
+    // "ok" ack means the relay has bridged this connection onto a backend
+    // listen end-to-end.
+    readMessage(transport.inputStream)
     return PigeonConn(transport, instanceID)
 }
 

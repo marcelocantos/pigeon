@@ -60,17 +60,19 @@ class PigeonNativeTest {
     }
 
     @Test
-    fun streamHeaderEmptyNamePrimary() {
-        // Pinned vector: client primary is `[0x00]` (single varint zero).
-        val hdr = PigeonNative.encodeStreamHeader(false, 0, "")
+    fun streamHeaderEmptyName() {
+        // Pinned vector: empty-name header is `[0x00]` (single varint zero).
+        // Post-T45 the header is symmetric `[uvarint name-len][name]` —
+        // no clientTag prefix.
+        val hdr = PigeonNative.encodeStreamHeader("")
         assertContentEquals(byteArrayOf(0x00), hdr,
-            "empty-name primary header must be a single zero byte")
+            "empty-name header must be a single zero byte")
     }
 
     @Test
-    fun streamHeaderClientControl() {
-        // Pinned vector: "control" client header.
-        val hdr = PigeonNative.encodeStreamHeader(false, 0, "control")
+    fun streamHeaderControl() {
+        // Pinned vector: "control" header.
+        val hdr = PigeonNative.encodeStreamHeader("control")
         assertContentEquals(
             byteArrayOf(0x07, 'c'.code.toByte(), 'o'.code.toByte(), 'n'.code.toByte(),
                 't'.code.toByte(), 'r'.code.toByte(), 'o'.code.toByte(), 'l'.code.toByte()),
@@ -79,12 +81,11 @@ class PigeonNativeTest {
     }
 
     @Test
-    fun streamHeaderBackendChat() {
-        // Pinned vector: backend "chat" stream with tag 0x01020304.
-        val hdr = PigeonNative.encodeStreamHeader(true, 0x01020304, "chat")
+    fun streamHeaderChat() {
+        // Pinned vector: "chat" header — `varint(4) + "chat"`.
+        val hdr = PigeonNative.encodeStreamHeader("chat")
         assertContentEquals(
             byteArrayOf(
-                0x01, 0x02, 0x03, 0x04,         // tag (BE)
                 0x04,                            // varint(4)
                 'c'.code.toByte(), 'h'.code.toByte(),
                 'a'.code.toByte(), 't'.code.toByte(),

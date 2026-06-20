@@ -63,10 +63,6 @@ class JniKwikE2ETest {
     private fun startHarness(
         clientChannel: Channel,
         serverChannel: Channel,
-        clientIsBackend: Boolean,
-        clientTag: Int,
-        serverIsBackend: Boolean,
-        serverTag: Int,
         datagramChannels: List<DatagramChannelDef> = emptyList(),
     ): Harness {
         // Bind a UDP socket explicitly so we can read the bound port —
@@ -102,7 +98,6 @@ class JniKwikE2ETest {
                 conn.setDatagramHandler { data -> transport.acceptIncomingDatagram(data) }
                 val session = Session.fromTransport(
                     serverChannel, transport,
-                    isBackend = serverIsBackend, clientTag = serverTag,
                     datagramChannels = datagramChannels,
                 )
                 serverReady.complete(ServerSide(conn, transport, session))
@@ -157,7 +152,6 @@ class JniKwikE2ETest {
 
         val clientSession = Session.fromTransport(
             clientChannel, clientTransport,
-            isBackend = clientIsBackend, clientTag = clientTag,
             datagramChannels = datagramChannels,
         )
 
@@ -181,8 +175,6 @@ class JniKwikE2ETest {
         val h = startHarness(
             clientChannel = chClient,
             serverChannel = chServer,
-            clientIsBackend = true, clientTag = 0xabcd1234.toInt(),
-            serverIsBackend = false, serverTag = 0,
         )
         h.use {
             val cChat = h.clientSession.openStreamBlocking("chat")
@@ -209,8 +201,6 @@ class JniKwikE2ETest {
         val h = startHarness(
             clientChannel = chClient,
             serverChannel = chServer,
-            clientIsBackend = true, clientTag = 0x55667788,
-            serverIsBackend = false, serverTag = 0,
         )
         h.use {
             val names = listOf("control", "data", "diagnostics")
@@ -242,8 +232,6 @@ class JniKwikE2ETest {
         val h = startHarness(
             clientChannel = chClient,
             serverChannel = chServer,
-            clientIsBackend = false, clientTag = 0,
-            serverIsBackend = false, serverTag = 0,
             datagramChannels = chans,
         )
         h.use {

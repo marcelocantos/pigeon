@@ -121,10 +121,8 @@ class JniTransportLoopbackTest {
         val chA = Channel.shared(key)
         val chB = Channel.shared(key)
         val (tA, tB) = LoopbackJvmTransport.pair()
-        val a = Session.fromTransport(chA, tA,
-            isBackend = true, clientTag = 0xcafef00d.toInt())
-        val b = Session.fromTransport(chB, tB,
-            isBackend = false, clientTag = 0)
+        val a = Session.fromTransport(chA, tA)
+        val b = Session.fromTransport(chB, tB)
         try {
             // A opens "chat"; B accepts the new inbound stream. The C
             // side wrote the unencrypted name-binding header through
@@ -160,10 +158,8 @@ class JniTransportLoopbackTest {
         val chA = Channel.shared(key)
         val chB = Channel.shared(key)
         val (tA, tB) = LoopbackJvmTransport.pair()
-        val a = Session.fromTransport(chA, tA,
-            isBackend = false, clientTag = 0)
-        val b = Session.fromTransport(chB, tB,
-            isBackend = false, clientTag = 0)
+        val a = Session.fromTransport(chA, tA)
+        val b = Session.fromTransport(chB, tB)
         try {
             // Nothing opened — acceptStreamBlocking sees the empty
             // accept-queue and returns 0 from acceptStream(), which
@@ -187,13 +183,10 @@ class JniTransportLoopbackTest {
             DatagramChannelDef("metric", 2L),
         )
         val (tA, tB) = LoopbackJvmTransport.pair()
-        // Both sides client-mode here (matches the C-side
-        // SessionLoopbackTest.datagramRoundTripPing setup, which skips
-        // the 4-byte tag prefix for round-trip simplicity).
-        val a = Session.fromTransport(chA, tA,
-            isBackend = false, clientTag = 0, datagramChannels = chans)
-        val b = Session.fromTransport(chB, tB,
-            isBackend = false, clientTag = 0, datagramChannels = chans)
+        // Post-T45 sessions are symmetric — each rides its own end-to-end
+        // connection, so there is no backend / client tag to set.
+        val a = Session.fromTransport(chA, tA, datagramChannels = chans)
+        val b = Session.fromTransport(chB, tB, datagramChannels = chans)
         try {
             val aPing = a.getDatagram("ping")
             val bPing = b.getDatagram("ping")
@@ -221,10 +214,8 @@ class JniTransportLoopbackTest {
         val chA = Channel.shared(key)
         val chB = Channel.shared(key)
         val (tA, tB) = LoopbackJvmTransport.pair()
-        val a = Session.fromTransport(chA, tA,
-            isBackend = true, clientTag = 0x11223344)
-        val b = Session.fromTransport(chB, tB,
-            isBackend = false, clientTag = 0)
+        val a = Session.fromTransport(chA, tA)
+        val b = Session.fromTransport(chB, tB)
         try {
             // Open three independent streams, accept each, and round-
             // trip a tagged payload through each. Exercises the
