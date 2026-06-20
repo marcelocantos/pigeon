@@ -7,32 +7,29 @@
 // (Session/Stream/Datagram) so callers can think of pigeon as one
 // protocol with several language bindings.
 //
-// Wire (post-T22, client side only — the relay strips/adds the
-// 4-byte clientTag prefix on the backend side, so the browser sees no
-// tag):
+// Wire (T45 remote-Listen L1 — each client has its own end-to-end
+// WebTransport connection, bridged opaquely by the relay; there is no
+// relay-assigned client tag or shared-connection demux):
 //
 //   - Bidi stream framing: each application message is sent as a
 //     length-prefixed frame [4-byte big-endian length][payload].
-//   - First message on every stream is the unencrypted stream-header
-//     [varint name-len][name-bytes]; the empty-name header [0x00]
-//     identifies the per-client primary stream. Sub-stream headers
-//     carry a non-empty name.
-//   - After the header, every subsequent message on a stream is
+//   - First message on every sub-stream is the unencrypted stream-header
+//     [varint name-len][name-bytes]. The primary stream (used for the
+//     relay greeting) is the per-connection control stream and carries
+//     no application stream-header.
+//   - After the header, every subsequent message on a sub-stream is
 //     AEAD-encrypted with the Session's crypto.Channel.
-//   - Datagrams are AEAD([varint channel-id][payload]); the channel-id
-//     is looked up from the pre-agreed name → id map both peers share.
+//   - Datagrams are AEAD([varint channel-id][payload]) sent directly;
+//     the channel-id is looked up from the pre-agreed name → id map both
+//     peers share. No routing prefix — the relay forwards opaquely.
 //
 // Connect handshake:
-//   1. WebTransport `${relayURL}/ws/${instanceID}`.
+//   1. WebTransport `${relayURL}/pigeon`.
 //   2. Open a bidirectional stream (the primary).
-//   3. Write length-prefixed "connect" handshake; read length-prefixed
-//      "ok" ack.
-//   4. Write length-prefixed [varint 0] empty-name stream header (this
-//      tells the backend, via the relay's tag prefix, "new client").
-//   5. Write length-prefixed connect-hello JSON
-//      {"client_instance_id": <client identity ID>}; read connect-ack
-//      JSON {"ok": true}. (Both unencrypted — the relay-tag → backend
-//      Session demux happens before the channel exists.)
+//   3. Write length-prefixed "connect:<instanceID>" greeting; read
+//      length-prefixed "ok" ack. The "ok" means the relay has matched a
+//      parked backend listen and bridged the two connections end-to-end,
+//      so the primary is now a clean pipe straight to the backend.
 
 import {
   E2EChannel,
@@ -41,9 +38,10 @@ import {
 } from "./crypto.js";
 import {
   encodeStreamHeader as wireEncodeStreamHeader,
-  decodeStreamHeaderClient as wireDecodeStreamHeaderClient,
+  decodeStreamHeader as wireDecodeStreamHeader,
   encodeDatagramPlaintext as wireEncodeDatagramPlaintext,
   decodeDatagramPlaintext as wireDecodeDatagramPlaintext,
+  encodeRelayGreetingConnect as wireEncodeRelayGreetingConnect,
 } from "./wireGen.js";
 
 // Re-export generated wire helpers under the names tests / consumers
@@ -56,12 +54,13 @@ export {
 // --- Public API types ----------------------------------------------
 
 /**
- * The identity an app passes to connect(). Only `instanceID` is
- * actually consumed by the wire today (it's sent in the connect-hello
- * so the backend can look up the matching PairingRecord). `publicKey`
- * and `deriveSharedSecret` are kept on the interface to mirror the Go
- * side and reserve room for future negotiation that doesn't go through
- * a stored PairingRecord.
+ * The identity an app passes to connect(). Kept on the interface to
+ * mirror the Go side (ConnectArgs.Identity) and reserve room for the
+ * activation handshake; under the T45 model the browser client derives
+ * its AEAD channel directly from the supplied PairingRecord, so none of
+ * these fields ride the relay greeting. `publicKey` and
+ * `deriveSharedSecret` remain available for future negotiation that
+ * doesn't go through a stored PairingRecord.
  */
 export interface Identity {
   publicKey: Uint8Array;
@@ -102,19 +101,18 @@ export interface ConnectArgs {
 const MAX_MESSAGE_SIZE = 1 << 20; // 1 MiB
 
 /**
- * Encode a client-side stream-header: [varint name-len][name-bytes].
- * Empty name → just [0x00] (the per-client primary stream marker).
- * Thin shim over the generated `encodeStreamHeader` that pins the
- * is_backend=false / client_tag=0 client-side variant the browser
- * always speaks.
+ * Encode a sub-stream header: [varint name-len][name-bytes]. Empty name
+ * → just [0x00]. Thin shim over the generated `encodeStreamHeader`; the
+ * T45 header carries only the name (no client tag — each connection is a
+ * dedicated end-to-end pipe).
  */
 export function encodeStreamHeader(name: string): Uint8Array {
-  return wireEncodeStreamHeader(false, 0, name);
+  return wireEncodeStreamHeader(name);
 }
 
-/** Decode a client-side stream-header. Returns [name, bytesConsumed]. */
+/** Decode a sub-stream header. Returns [name, bytesConsumed]. */
 export function decodeStreamHeader(buf: Uint8Array): [string, number] {
-  const d = wireDecodeStreamHeaderClient(buf);
+  const d = wireDecodeStreamHeader(buf);
   return [d.name, d.consumed];
 }
 
@@ -556,16 +554,6 @@ export class Session {
 
 // --- connect -------------------------------------------------------
 
-/** Wire shape sent on the primary just after the relay handshake. */
-interface ConnectHello {
-  client_instance_id: string;
-}
-
-interface ConnectAck {
-  ok: boolean;
-  reason?: string;
-}
-
 /**
  * Connect to a paired backend through the pigeon WebTransport relay.
  *
@@ -573,10 +561,17 @@ interface ConnectAck {
  * ready for openStream/datagram traffic. The returned Session's
  * cryptoChannel is derived from the supplied PairingRecord (client →
  * backend / backend → client direction).
+ *
+ * Under the T45 remote-Listen L1 model the relay exposes a single
+ * `/pigeon` endpoint; the greeting on the primary stream selects the
+ * role. A browser is a client, so it sends `connect:<instanceID>`. The
+ * "ok" ack means the relay has matched a parked backend listen and
+ * bridged the two connections end-to-end — the primary is then a clean
+ * pipe straight to the backend with no relay framing.
  */
 export async function connect(args: ConnectArgs): Promise<Session> {
   const baseURL = args.relayURL.replace(/^https?:/, "https:").replace(/\/$/, "");
-  const url = `${baseURL}/ws/${encodeURIComponent(args.instanceID)}`;
+  const url = `${baseURL}/pigeon`;
 
   const wtOpts: WebTransportOptions = {};
   if (args.serverCertificateHashes) {
@@ -586,35 +581,20 @@ export async function connect(args: ConnectArgs): Promise<Session> {
   const transport = new WebTransport(url, wtOpts);
   await transport.ready;
 
-  // Open the primary stream, run the relay-level handshake
-  // ("connect"/"ok") and the application-level handshake (empty-name
-  // stream-header + connect-hello/ack). All four exchanges are sent
-  // length-prefixed via writeFrame; the relay only inspects the first
-  // ("connect" → "ok"), then transparently forwards the rest.
+  // Open the primary stream and run the relay-level greeting handshake
+  // ("connect:<id>" → "ok"). The greeting is sent length-prefixed via
+  // writeFrame; the relay consumes it, matches a parked listen, writes
+  // "ok", then transparently bridges the rest of the connection.
   const stream = await transport.createBidirectionalStream();
   const writer = stream.writable.getWriter();
   const reader = new FramedReader(stream.readable.getReader());
 
-  // Relay handshake.
-  await writeFrame(writer, new TextEncoder().encode("connect"));
+  await writeFrame(writer, wireEncodeRelayGreetingConnect(args.instanceID));
   const ack = await reader.readMessage();
   const ackStr = new TextDecoder().decode(ack);
   if (ackStr !== "ok") {
     transport.close();
     throw new Error(`relay handshake: expected "ok", got ${JSON.stringify(ackStr)}`);
-  }
-
-  // Application handshake — empty-name stream-header marks "this is the
-  // client primary" so the backend's listener can demux on the relay's
-  // tag prefix.
-  await writeFrame(writer, encodeStreamHeader(""));
-  const hello: ConnectHello = { client_instance_id: args.identity.instanceID };
-  await writeFrame(writer, new TextEncoder().encode(JSON.stringify(hello)));
-  const helloAckRaw = await reader.readMessage();
-  const helloAck: ConnectAck = JSON.parse(new TextDecoder().decode(helloAckRaw));
-  if (!helloAck.ok) {
-    transport.close();
-    throw new Error(`backend rejected connection: ${helloAck.reason ?? "(no reason)"}`);
   }
 
   // Derive the AEAD channel from the PairingRecord. Same info strings

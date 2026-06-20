@@ -14,6 +14,10 @@ export default defineConfig({
   use: {
     // Chromium is the only browser with WebTransport support.
     browserName: "chromium",
+    // Use the full Chromium build (channel: "chromium") rather than the
+    // default headless-shell. WebTransport/HTTP3 behaves identically, and
+    // it sidesteps environments where only the full browser is installed.
+    channel: "chromium",
     headless: true,
   },
   projects: [
@@ -21,6 +25,7 @@ export default defineConfig({
       name: "chromium",
       use: {
         browserName: "chromium",
+        channel: "chromium",
         launchOptions: {
           args: [
             // Playwright's bundled Chromium may not trust system CAs.
