@@ -198,10 +198,10 @@ func TestConnectActivationRoundTrip(t *testing.T) {
 			return
 		}
 		backendRes, backendErr = cwire.RunBackendActivation(&cwire.RunBackendActivationArgs{
-			Ref:               refB,
-			Stream:            stream,
-			SkipPrimaryHeader: true, // pigeon_connect_on_transport writes the
-			// primary header first; drain it before reading auth_request.
+			Ref:    refB,
+			Stream: stream,
+			// Under T45 activation mode writes no primary header — the
+			// client's auth_request is the first message on the pipe.
 			ResolveFn: func(id string) (*cwire.PairingRecord, bool) {
 				if id == deviceID {
 					return backendRec, true
@@ -234,12 +234,9 @@ func TestConnectActivationRoundTrip(t *testing.T) {
 	if err != nil {
 		t.Fatalf("DeriveSessionChannel (backend): %v", err)
 	}
-	// In a direct (no-relay) in-process test, the backend session must use
-	// is_backend=false and clientTag=0, just like pigeon_connect_on_transport
-	// sets on the client side. In production, the relay adds the 4-byte
-	// clientTag prefix; here we bypass the relay so both sides use the same
-	// framing.
-	backendSess, err := cwire.NewGoSession(refB, backendCh, false, 0, dgs)
+	// Under T45 both peers are symmetric: each owns its own end-to-end
+	// pipe and the stream/datagram framing carries no clientTag prefix.
+	backendSess, err := cwire.NewGoSession(refB, backendCh, dgs)
 	if err != nil {
 		t.Fatalf("NewGoSession (backend): %v", err)
 	}
@@ -252,7 +249,7 @@ func TestConnectActivationRoundTrip(t *testing.T) {
 	}
 	defer cStream.Close()
 
-	bStream, _, name, err := backendSess.AcceptStreamFromGo(refB)
+	bStream, name, err := backendSess.AcceptStreamFromGo(refB)
 	if err != nil {
 		t.Fatalf("backend AcceptStreamFromGo: %v", err)
 	}

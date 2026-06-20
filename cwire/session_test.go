@@ -39,12 +39,12 @@ func TestSessionStreamRoundTripViaCgo(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	sA, err := cwire.NewLoopbackSession(la, chA, true, 0xcafef00d, nil)
+	sA, err := cwire.NewLoopbackSession(la, chA, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer sA.Close()
-	sB, err := cwire.NewLoopbackSession(lb, chB, false, 0, nil)
+	sB, err := cwire.NewLoopbackSession(lb, chB, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -56,16 +56,13 @@ func TestSessionStreamRoundTripViaCgo(t *testing.T) {
 	}
 	defer chat.Close()
 
-	st, tag, name, err := lb.AcceptStreamWithHeader(sB)
+	st, name, err := lb.AcceptStreamWithHeader(sB)
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer st.Close()
 	if name != "chat" {
 		t.Fatalf("name: got %q want %q", name, "chat")
-	}
-	if tag != 0xcafef00d {
-		t.Fatalf("tag: got %#x want 0xcafef00d", tag)
 	}
 
 	if err := chat.Send([]byte("hello")); err != nil {
@@ -112,16 +109,14 @@ func TestSessionDatagramRoundTripViaCgo(t *testing.T) {
 		{Name: "metric", ID: 2},
 	}
 
-	// Both sides use is_backend=false so the wire isn't tag-prefixed
-	// (the loopback transport doesn't run a relay that would route by
-	// tag). Tag-prefix coverage is in TestDatagramRoundTripViaC in
-	// cwire_test.go.
-	sA, err := cwire.NewLoopbackSession(la, chA, false, 0, dgs)
+	// Under T45 both peers are symmetric — the datagram wire is just
+	// AEAD([varint channel-id][payload]) with no tag prefix.
+	sA, err := cwire.NewLoopbackSession(la, chA, dgs)
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer sA.Close()
-	sB, err := cwire.NewLoopbackSession(lb, chB, false, 0, dgs)
+	sB, err := cwire.NewLoopbackSession(lb, chB, dgs)
 	if err != nil {
 		t.Fatal(err)
 	}

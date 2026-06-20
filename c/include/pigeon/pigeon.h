@@ -210,9 +210,10 @@ uint32_t pigeon_read_frame_length(const uint8_t *buf);
 // covers uint64). Matches encoding/binary.MaxVarintLen64.
 #define PIGEON_MAX_VARINT_LEN 10
 
-// Maximum size of an unencrypted stream-header (backend side):
-// 4 bytes (clientTag, big-endian uint32) + varint name-len + 256 bytes name.
-#define PIGEON_MAX_STREAM_HEADER (4 + PIGEON_MAX_VARINT_LEN + 256)
+// Maximum size of an unencrypted stream-header: varint name-len +
+// 256 bytes name. Under T45 there is no clientTag prefix — each
+// session rides its own end-to-end QUIC pipe.
+#define PIGEON_MAX_STREAM_HEADER (PIGEON_MAX_VARINT_LEN + 256)
 
 // Encode an unsigned varint (Go's binary.PutUvarint format) into buf.
 // Returns number of bytes written, or -1 if buf_len is insufficient.
@@ -224,53 +225,45 @@ int pigeon_uvarint_encode(uint64_t v, uint8_t *buf, size_t buf_len);
 // Returns 0 if buf is too short, -1 if the encoding overflows uint64.
 int pigeon_uvarint_decode(const uint8_t *buf, size_t buf_len, uint64_t *out);
 
-// Stream-header encoders/decoders moved to wire_gen.h (protogen-
+// Stream-header encoder/decoder moved to wire_gen.h (protogen-
 // generated from protocol/wireformats.yaml): see
-// pigeon_wire_stream_header_encode,
-// pigeon_wire_stream_header_decode_backend,
-// pigeon_wire_stream_header_decode_client.
+// pigeon_wire_stream_header_encode, pigeon_wire_stream_header_decode.
+// Under T45 the header is just [varint name-len][name].
 
 // Compose a datagram payload for a named channel:
 //   plain    = [varint channel-id][payload]
-//   wire     = AEAD(plain)                    on the client side
-//   wire     = [4-byte tag-BE][AEAD(plain)]   on the backend side
+//   wire     = AEAD(plain)
 // `out` must be sized for the final wire bytes. The pigeon_channel
-// supplied performs the AEAD encryption in place after the optional tag
-// prefix. Returns total wire bytes written, or -1 on error.
+// supplied performs the AEAD encryption. Under T45 there is no
+// clientTag prefix — each session owns its own QUIC pipe. Returns total
+// wire bytes written, or -1 on error.
 int pigeon_encode_datagram(pigeon_channel *ch,
-                           bool is_backend, uint32_t client_tag,
                            uint64_t channel_id,
                            const uint8_t *payload, size_t payload_len,
                            uint8_t *out, size_t out_len);
 
-// Decode a datagram in the post-T22 framing. On the backend side strips
-// the 4-byte tag prefix first and returns it via *client_tag. AEAD-
-// decrypts using the supplied channel. On success writes the channel id
-// to *channel_id and the application payload to `payload_buf`; returns
-// the payload length. -1 on AEAD failure or any framing error.
+// Decode a datagram in the post-T45 framing: AEAD-decrypt using the
+// supplied channel, then parse the [varint channel-id][payload]
+// plaintext. On success writes the channel id to *channel_id and the
+// application payload to `payload_buf`; returns the payload length.
+// -1 on AEAD failure or any framing error.
 int pigeon_decode_datagram(pigeon_channel *ch,
-                           bool is_backend,
                            const uint8_t *wire, size_t wire_len,
-                           uint32_t *client_tag,
                            uint64_t *channel_id,
                            uint8_t *payload_buf, size_t payload_buf_len);
 
 // --- Multi-channel session API (post-T22) ---
 //
 // A pigeon_session is a single peer-to-peer association: backend ↔
-// one paired client (or vice-versa from the client side). It owns the
-// AEAD channel derived from the PairingRecord, the role-discriminator
-// (backend/client) and the relay-assigned clientTag (backend side
-// only), plus a small fixed-size table of pre-declared datagram
+// one paired client (or vice-versa from the client side). Under T45's
+// remote-Listen L1 model each session owns its own end-to-end QUIC
+// pipe (the relay bridges the two connections opaquely), so both sides
+// are symmetric — there is no role discriminator and no relay-assigned
+// clientTag. The session owns the AEAD channel derived from the
+// PairingRecord plus a small fixed-size table of pre-declared datagram
 // channels (name → varint id, agreed by both peers up-front). Streams
 // are opened on demand and live as long as the underlying transport
 // stream.
-//
-// This API does NOT include a pigeon_listener (multi-client demux on
-// the backend side); that's a separate concern that needs the
-// transport's accept_stream loop to dispatch by clientTag. For now,
-// pigeon_session is constructed by application code that knows whether
-// it's the backend or client side.
 
 #define PIGEON_MAX_DATAGRAM_CHANNELS 16
 #define PIGEON_MAX_NAME_LEN 64
@@ -286,10 +279,16 @@ typedef struct {
     uint64_t channel_id;
 } pigeon_dgchannel_def;
 
+// pigeon_listen_owner_fn closes / frees the resources behind the
+// owner cookie a listen-dialer hands to an adopted Session (see the
+// Listener API below). Declared here so the pigeon_session struct can
+// hold the teardown hooks.
+typedef void (*pigeon_listen_owner_fn)(void *owner);
+
 typedef struct {
     // PairingRecord-derived AEAD channel. Encrypts every stream message
     // (after the unencrypted name-binding header) and every datagram
-    // payload (before the optional clientTag prefix).
+    // payload.
     //
     // In pairing mode (no PairingRecord; pre-pairing handshake), the
     // channel's `established` flag is false and stream/datagram APIs
@@ -298,14 +297,20 @@ typedef struct {
     // a channel and re-init the session for the post-pairing wire.
     pigeon_channel channel;
 
-    // Role discriminator. is_backend == true means this Session is the
-    // server-side half of the pair; outbound stream/datagram framing
-    // includes the 4-byte clientTag prefix the relay routes by.
-    bool          is_backend;
-    uint32_t      client_tag;
-
-    // Transport vtable + opaque userdata.
+    // Transport vtable + opaque userdata. Under T45 each session rides
+    // its own end-to-end QUIC pipe.
     pigeon_transport transport;
+
+    // Optional owned-transport teardown hooks. When a Session is built
+    // by pigeon_listener_accept it ADOPTS the listen transport produced
+    // by the listen-dialer: owner is the dialer's opaque cookie, and
+    // pigeon_session_close invokes owner_close then owner_free on it.
+    // NULL on Sessions whose transport the caller owns separately (the
+    // lower-level pigeon_session_init path and the pigeon_connect
+    // wrapper, which closes the transport itself).
+    void                  *owner;
+    pigeon_listen_owner_fn owner_close;
+    pigeon_listen_owner_fn owner_free;
 
     // Primary stream handle, populated by pigeon_connect_on_transport /
     // (T32.2) pigeon_listener_accept. NULL when the session was built
@@ -324,9 +329,9 @@ typedef struct {
 
     // Heap-allocated scratch buffers used by the per-call I/O wrappers
     // (pigeon_stream_send/recv, pigeon_datagram_send/recv). Sized at
-    // PIGEON_MAX_MSG + AEAD overhead (max 64 bytes for tag + nonce
-    // prefix + 4-byte clientTag prefix on datagrams). Allocated lazily
-    // on first send/recv; freed by pigeon_session_close.
+    // PIGEON_MAX_MSG + AEAD overhead (max 64 bytes for nonce prefix +
+    // tag). Allocated lazily on first send/recv; freed by
+    // pigeon_session_close.
     //
     // Why heap: the previous stack-allocated [PIGEON_MAX_MSG + 64]
     // arrays (≈ 1 MiB) overflow the default thread-stack size on every
@@ -338,12 +343,12 @@ typedef struct {
     uint8_t      *scratch_b;
     size_t        scratch_size;
 
-    // Sub-streams that arrived for this session's clientTag while the
-    // listener was pumping the demux for another client. Populated by
-    // pigeon_listener_accept; drained by
-    // pigeon_session_accept_incoming_stream. The C ABI is single-
-    // threaded so no lock is needed — the listener's pump and the
-    // caller's accept are sequential on the same thread.
+    // Sub-streams the peer opened on this session's own QUIC pipe that
+    // arrived while the application was waiting for a differently-named
+    // stream. Filled by pigeon_session_accept_incoming_stream as it
+    // pulls streams off this session's transport; drained by name on a
+    // later matching call. The C ABI is single-threaded so no lock is
+    // needed.
     struct {
         pigeon_stream_handle *handle;
         char                  name[PIGEON_MAX_NAME_LEN];
@@ -373,14 +378,12 @@ typedef struct {
 int pigeon_session_init(pigeon_session *s,
                         const pigeon_transport *transport,
                         const pigeon_channel *channel,
-                        bool is_backend,
-                        uint32_t client_tag,
                         const pigeon_dgchannel_def *datagrams,
                         size_t datagram_count);
 
 // Open a fresh named stream toward the peer. Writes the
-// [optional 4-byte tag][varint name-len][name] header as the first
-// message on the new stream. Returns 0 on success.
+// [varint name-len][name] header as the first message on the new
+// stream. Returns 0 on success.
 int pigeon_session_open_stream(pigeon_session *s,
                                const char *name,
                                pigeon_stream *out_stream);
@@ -466,9 +469,8 @@ int pigeon_stream_close(pigeon_stream *s);
 // the pigeon_session struct can still be re-initialised afterwards.
 void pigeon_session_close(pigeon_session *s);
 
-// Send one datagram on the named channel. Wraps with the post-T22
-// framing (AEAD([varint id][payload]) + optional 4-byte tag prefix on
-// backend side). Returns 0 on success.
+// Send one datagram on the named channel. Wraps with the post-T45
+// framing (AEAD([varint id][payload])). Returns 0 on success.
 int pigeon_datagram_send(pigeon_datagram *d,
                          const uint8_t *payload, size_t payload_len);
 
@@ -559,33 +561,31 @@ int pigeon_pairing_record_deserialize(pigeon_pairing_record *rec,
 
 // --- Multi-client Listener (post-T32.2) ---
 //
-// The Listener mirrors Go's pigeon.Register / Listener.Accept. A
-// backend registers once with the relay (PIGEON_ROLE_REGISTER_MUX);
-// thereafter every paired client that connects produces a fresh
-// pigeon_session that the Listener hands back to the caller via
-// pigeon_listener_accept.
+// The Listener mirrors Go's pigeon.Register / Listener.Accept under
+// T45's remote-Listen L1 model (docs/DESIGN.md §3). A backend holds
+// one register control connection open for the instance's lifetime,
+// then dials a fresh `listen` connection per client. The relay matches
+// each arriving client to a parked listen and bridges the two QUIC
+// connections end-to-end, so every accepted Session rides its OWN
+// pipe — there is no shared connection or per-client clientTag demux.
+//
+// The listener does not own the transports itself; instead it holds a
+// `dial_listen` callback that produces a fresh listen transport on
+// each accept. pigeon_register wires this to an ngtcp2 dialer
+// (PIGEON_ROLE_LISTEN); tests wire it to a loopback dialer. The
+// callback owns the heap memory for each transport and the listener
+// hands that ownership to the resulting Session.
 //
 // Threading: per docs/DESIGN.md §5, the C ABI is "single-threaded,
 // caller-owns-concurrency". pigeon_listener_accept does its work
-// synchronously on the calling thread — there is no internal accept-
-// loop thread. The caller drives the pump by re-entering
-// pigeon_listener_accept; sub-streams that arrive for an already-
-// accepted client are buffered into that session's per-session
-// incoming-stream queue (see pigeon_session_accept_incoming_stream
-// below) so the demux is race-free without locks.
+// synchronously on the calling thread — it dials a listen, runs the
+// activation handshake, and returns one Session bound to that pipe.
 //
-// Memory: the Listener owns every pigeon_session it returns. Calling
-// pigeon_listener_close tears down all child sessions (their scratch
-// buffers and any buffered incoming sub-streams) before freeing the
-// listener itself. Application code therefore must not call
-// pigeon_session_close on a Listener-returned session — the listener
-// will do that when it shuts down.
-
-// Maximum number of concurrent paired clients per listener. The C
-// SDK targets small N (pigeon's normal deployment shape: a small
-// number of personal devices reaching a backend), so a fixed 16-slot
-// hash table is plenty and keeps the data structure simple.
-#define PIGEON_LISTENER_MAX_CLIENTS 16
+// Memory: each accepted Session OWNS its own listen transport and
+// closes it on pigeon_session_close. The application is responsible
+// for closing accepted Sessions (call pigeon_session_close). The
+// register control connection is owned by the listener and torn down
+// by pigeon_listener_close.
 
 // Opaque listener handle. Definition lives in c/src/listener.c.
 typedef struct pigeon_listener pigeon_listener;
@@ -600,26 +600,51 @@ typedef int (*pigeon_resolve_device_fn)(void *userdata,
                                         const char *device_id,
                                         void *out_record);
 
-// Initialise a listener over an externally-built backend transport.
-// The transport must already be registered with the relay
-// (PIGEON_ROLE_REGISTER_MUX completed). `instance_id` is the relay-
-// assigned (or self-assigned) instance ID this listener advertises;
-// the caller passes it through verbatim.
+// pigeon_listen_dialer dials one fresh `listen` connection for the
+// instance and waits for the relay to bridge a client onto it. On
+// success it must:
+//   * fill *out_transport with the listen connection's transport vtable,
+//   * write the bridged primary stream handle into *out_primary,
+//   * write an opaque owner cookie into *out_owner (passed back to the
+//     close/free hooks when the Session that adopts this transport is
+//     torn down).
+// Returns 0 on success, -1 on dial/bridge failure. Invoked
+// synchronously from pigeon_listener_accept on the caller's thread.
+typedef int (*pigeon_listen_dialer)(void *userdata,
+                                    pigeon_transport *out_transport,
+                                    pigeon_stream_handle **out_primary,
+                                    void **out_owner);
+
+// (pigeon_listen_owner_fn is declared above, next to the
+// pigeon_session struct that stores the teardown hooks.) owner_close
+// is called first (tear down the QUIC connection), then owner_free
+// (release the heap).
+
+// Initialise a listener around a register control transport and a
+// listen-dialer. The control transport is kept open for the instance's
+// lifetime (no traffic flows on it). `instance_id` is the relay-
+// assigned (or self-assigned) instance ID this listener advertises.
 //
-// `pairing` is the per-client device-id → PairingRecord lookup. It
-// is invoked synchronously on the listener-accept thread (= the
-// caller's thread) whenever a new client primary arrives. Returns 0
-// on success (out_record populated), -1 to reject the client.
-// `pairing_userdata` is passed through opaquely.
+// `dial_listen` / `dial_userdata` produce a fresh bridged listen
+// connection on each accept (see pigeon_listen_dialer). `owner_close`
+// / `owner_free` tear down the per-listen transport when its Session
+// closes.
 //
-// `datagrams` declares the named datagram channels available on
-// each accepted session. Both peers must declare the same map.
-// Returns 0 on success and writes the listener handle into *out;
-// the listener is heap-allocated and must be released with
+// `pairing` is the per-client device-id → PairingRecord lookup,
+// invoked synchronously on the accept thread when a client's
+// auth_request arrives. `datagrams` declares the named datagram
+// channels available on each accepted session.
+//
+// Returns 0 on success and writes the listener handle into *out; the
+// listener is heap-allocated and must be released with
 // pigeon_listener_close. Returns -1 on validation failure.
 int pigeon_listener_init(pigeon_listener **out,
-                         const pigeon_transport *transport,
+                         const pigeon_transport *control,
                          const char *instance_id,
+                         pigeon_listen_dialer dial_listen,
+                         void *dial_userdata,
+                         pigeon_listen_owner_fn owner_close,
+                         pigeon_listen_owner_fn owner_free,
                          pigeon_resolve_device_fn pairing,
                          void *pairing_userdata,
                          const pigeon_dgchannel_def *datagrams,
@@ -629,70 +654,52 @@ int pigeon_listener_init(pigeon_listener **out,
 // remains valid for the listener's lifetime.
 const char *pigeon_listener_instance_id(const pigeon_listener *l);
 
-// Block on the listener's transport until the next paired client
-// connects, run the auth_request / auth_ok activation handshake
+// Dial a fresh listen connection, wait for the relay to bridge a
+// client onto it, run the auth_request / auth_ok activation handshake
 // against the resolver supplied to pigeon_listener_init, and return
-// the resulting session. Sub-streams that arrive for already-
-// accepted clients during this pump are dispatched to the matching
-// session's incoming-stream queue (see
-// pigeon_session_accept_incoming_stream).
+// the resulting session bound to that pipe.
 //
-// Returns 0 on success and writes the session pointer into
-// *out_session (owned by the listener — do not call
-// pigeon_session_close on it). Returns -1 on transport failure or
-// listener shutdown.
+// Returns 0 on success and writes the heap-allocated session pointer
+// into *out_session. The session owns its listen transport; the caller
+// owns the session and must release it with pigeon_session_close
+// (which closes the underlying transport). Returns -1 on dial /
+// activation failure or listener shutdown.
 int pigeon_listener_accept(pigeon_listener *l, pigeon_session **out_session);
 
-// Single-step variant of pigeon_listener_accept. Consumes exactly one
-// inbound stream from the transport and dispatches it according to
-// the listener's demux rules. Useful when the caller wants to drive
-// the pump in a loop and observe sub-stream dispatches between new-
-// primary arrivals (e.g. live tests that need the pump to advance
-// while waiting for a peer-opened sub-stream to land in an existing
-// session's incoming-stream queue).
-//
-// Returns 1 and writes the new session into *out_session when a new
-// client primary completes activation; returns 0 (with
-// *out_session = NULL) when the step dispatched a sub-stream, dropped
-// a malformed header, or rejected a primary; returns -1 on transport
-// failure or listener shutdown.
-int pigeon_listener_step(pigeon_listener *l, pigeon_session **out_session);
-
-// Tear down the listener: close every child session (free their
-// scratch buffers and any buffered incoming sub-streams) and free
-// the listener struct itself. Idempotent on NULL. The underlying
-// transport is NOT closed — the caller built it and owns it.
+// Tear down the listener: close the register control transport and
+// free the listener struct itself. Idempotent on NULL. Sessions
+// already returned by pigeon_listener_accept are independently owned
+// and unaffected — close them via pigeon_session_close.
 void pigeon_listener_close(pigeon_listener *l);
 
-// Pull the next buffered peer-opened sub-stream from a session's
-// incoming-stream queue. Sub-streams are placed in the queue by the
-// listener's accept pump as they arrive for known client tags.
+// Pull the next peer-opened sub-stream with the given name off this
+// session's own QUIC pipe. Streams that arrive with a different name
+// are buffered for a later matching call. Returns 0 on success and
+// populates out_stream, -1 if the transport fails or shuts down.
 //
-// Matches the requested name: returns 0 on success and populates
-// out_stream. Returns -1 if no buffered sub-stream with that name
-// is currently queued. This is a non-blocking poll — application
-// code that wants to wait for a peer-opened stream should call
-// pigeon_listener_accept (which advances the demux) and re-try.
+// Because each session owns its connection, this accepts directly
+// from the session's transport — there is no listener demux to pump.
 int pigeon_session_accept_incoming_stream(pigeon_session *s,
                                           const char *name,
                                           pigeon_stream *out_stream);
 
 // --- pigeon_register convenience (high-level) ---
 //
-// `pigeon_register` is a thin wrapper that brings up an ngtcp2
-// transport (PIGEON_ROLE_REGISTER_MUX) and hands it off to
-// pigeon_listener_init. It lives in a separate compilation unit
-// (c/src/listener_ngtcp2.c) because it depends on ngtcp2 + quictls
-// (vendored under c/vendor/), which the amalgamated build does not
-// link. Builds that need this entry point link c/src/listener.c +
-// c/src/listener_ngtcp2.c + c/src/ngtcp2_transport.c against the
-// vendored libs (see test-c-ngtcp2 in the Makefile).
+// `pigeon_register` is a thin wrapper that dials the register control
+// connection (PIGEON_ROLE_REGISTER) and wires an ngtcp2 listen-dialer
+// (PIGEON_ROLE_LISTEN) into pigeon_listener_init. It lives in a
+// separate compilation unit (c/src/listener_ngtcp2.c) because it
+// depends on ngtcp2 + quictls (vendored under c/vendor/), which the
+// amalgamated build does not link. Builds that need this entry point
+// link c/src/listener.c + c/src/listener_ngtcp2.c +
+// c/src/ngtcp2_transport.c against the vendored libs (see
+// test-c-ngtcp2 in the Makefile).
 //
 // On success, writes the listener handle into *out_listener, the
 // relay-assigned instance ID into out_instance_id (NUL-terminated;
-// truncated if the buffer is too small), and returns 0. The
-// listener owns the ngtcp2 transport from this point on —
-// pigeon_listener_close tears it down.
+// truncated if the buffer is too small), and returns 0. The listener
+// owns the register control transport; pigeon_listener_close tears it
+// down. Each accepted Session owns its own listen transport.
 int pigeon_register(const char *relay_host,
                     const char *relay_port,
                     const char *self_instance_id,  // may be NULL
@@ -708,10 +715,11 @@ int pigeon_register(const char *relay_host,
 //
 // `pigeon_connect` is the client-side mirror of `pigeon_register`:
 // brings up an ngtcp2 transport (PIGEON_ROLE_CONNECT), binds the
-// primary QUIC stream as a multi-channel slot, and runs the empty-
-// name primary header + auth_request / auth_ok activation handshake
-// via pigeon_connect_on_transport. Lives in the same compilation
-// unit as pigeon_register because both depend on the ngtcp2 transport.
+// primary QUIC stream as a multi-channel slot, and runs the
+// auth_request / auth_ok activation handshake (pairing mode: an empty
+// arrival marker) via pigeon_connect_on_transport. Lives in the same
+// compilation unit as pigeon_register because both depend on the
+// ngtcp2 transport.
 //
 // On success, *out_conn points to a freshly allocated pigeon_connection
 // that owns the underlying ngtcp2 transport and the resulting

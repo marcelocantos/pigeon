@@ -181,17 +181,19 @@ int pigeon_uvarint_decode(const uint8_t *buf, size_t buf_len, uint64_t *out)
     return 0; // truncated
 }
 
-// Stream-header encoder/decoders are protogen-generated in
-// c/src/wire_gen.c — pigeon_wire_stream_header_{encode,decode_backend,
-// decode_client}. Call sites use the generated names directly; we no
-// longer hand-roll them here.
+// Stream-header encoder/decoder are protogen-generated in
+// c/src/wire_gen.c — pigeon_wire_stream_header_{encode,decode}. Under
+// T45's remote-Listen L1 model each accepted client rides its own
+// end-to-end QUIC pipe, so the header is just [varint name-len][name]
+// with no backend/client variant and no 4-byte clientTag prefix. Call
+// sites use the generated names directly; we no longer hand-roll them
+// here.
 
-// AEAD-wrapped datagram (backend side: [4-byte tag][AEAD(plaintext)]).
-// The *plaintext* layout is protogen-generated
-// (pigeon_wire_datagram_plaintext_encode); this wrapper layers AEAD on
-// top and adds the optional clientTag prefix the relay routes by.
+// AEAD-wrapped datagram: wire = AEAD(plaintext). The *plaintext* layout
+// is protogen-generated (pigeon_wire_datagram_plaintext_encode); this
+// wrapper layers AEAD on top. Under T45 there is no clientTag prefix —
+// each session owns its own QUIC pipe, so the pipe is the demux.
 int pigeon_encode_datagram(pigeon_channel *ch,
-                           bool is_backend, uint32_t client_tag,
                            uint64_t channel_id,
                            const uint8_t *payload, size_t payload_len,
                            uint8_t *out, size_t out_len)
@@ -210,49 +212,26 @@ int pigeon_encode_datagram(pigeon_channel *ch,
                                                           plain, plain_cap);
     if (plain_len < 0) { free(plain); return -1; }
 
-    // Wire = (optional 4-byte tag) ++ AEAD(plain).
-    size_t off = 0;
-    if (is_backend) {
-        if (off + 4 > out_len) { free(plain); return -1; }
-        out[off++] = (uint8_t)(client_tag >> 24);
-        out[off++] = (uint8_t)(client_tag >> 16);
-        out[off++] = (uint8_t)(client_tag >> 8);
-        out[off++] = (uint8_t)(client_tag);
-    }
     int ct = pigeon_channel_encrypt(ch, plain, (size_t)plain_len,
-                                    out + off, out_len - off);
+                                    out, out_len);
     free(plain);
     if (ct < 0) return -1;
-    return (int)off + ct;
+    return ct;
 }
 
 int pigeon_decode_datagram(pigeon_channel *ch,
-                           bool is_backend,
                            const uint8_t *wire, size_t wire_len,
-                           uint32_t *client_tag,
                            uint64_t *channel_id,
                            uint8_t *payload_buf, size_t payload_buf_len)
 {
     if (!ch || !ch->established) return -1;
-
-    size_t off = 0;
-    if (is_backend) {
-        if (wire_len < 4) return -1;
-        if (client_tag) {
-            *client_tag = ((uint32_t)wire[0] << 24)
-                        | ((uint32_t)wire[1] << 16)
-                        | ((uint32_t)wire[2] <<  8)
-                        |  (uint32_t)wire[3];
-        }
-        off = 4;
-    }
 
     // AEAD-decrypt into a heap scratch buffer, then decode the
     // protogen plaintext format. Heap-allocated for the same reason as
     // pigeon_encode_datagram above (T38).
     uint8_t *plain = (uint8_t *)malloc(PIGEON_MAX_MSG);
     if (!plain) return -1;
-    int pn = pigeon_channel_decrypt(ch, wire + off, wire_len - off,
+    int pn = pigeon_channel_decrypt(ch, wire, wire_len,
                                     plain, PIGEON_MAX_MSG);
     if (pn < 0) { free(plain); return -1; }
 
@@ -318,8 +297,8 @@ static int pigeon_session_ensure_scratch(pigeon_session *s)
 {
     if (s->scratch_a && s->scratch_b) return 0;
     // Sized for the largest single send/recv: AEAD ciphertext expansion
-    // is ~32 bytes (8-byte seq + 16-byte tag + slack); datagrams add a
-    // 4-byte clientTag prefix. 64 bytes of slack is comfortable.
+    // is ~32 bytes (8-byte seq + 16-byte tag + slack). 64 bytes of
+    // slack is comfortable.
     size_t sz = PIGEON_MAX_MSG + 64;
     if (!s->scratch_a) s->scratch_a = (uint8_t *)malloc(sz);
     if (!s->scratch_b) s->scratch_b = (uint8_t *)malloc(sz);
@@ -335,16 +314,35 @@ static int pigeon_session_ensure_scratch(pigeon_session *s)
 void pigeon_session_close(pigeon_session *s)
 {
     if (!s) return;
+    // Close any peer-opened sub-streams this session buffered but the
+    // application never picked up.
+    for (size_t i = 0; i < PIGEON_SESSION_MAX_INCOMING; i++) {
+        if (s->incoming[i].in_use && s->incoming[i].handle != NULL
+                && s->transport.close_stream != NULL) {
+            (void)s->transport.close_stream(s->transport.userdata,
+                                            s->incoming[i].handle);
+        }
+        s->incoming[i].in_use = false;
+        s->incoming[i].handle = NULL;
+    }
     free(s->scratch_a); s->scratch_a = NULL;
     free(s->scratch_b); s->scratch_b = NULL;
     s->scratch_size = 0;
+    // Tear down an adopted listen transport (pigeon_listener_accept).
+    // owner_close drops the QUIC connection; owner_free releases the
+    // heap box. Run once, then clear so a second close is a no-op.
+    if (s->owner != NULL) {
+        if (s->owner_close != NULL) s->owner_close(s->owner);
+        if (s->owner_free  != NULL) s->owner_free(s->owner);
+        s->owner       = NULL;
+        s->owner_close = NULL;
+        s->owner_free  = NULL;
+    }
 }
 
 int pigeon_session_init(pigeon_session *s,
                         const pigeon_transport *transport,
                         const pigeon_channel *channel,
-                        bool is_backend,
-                        uint32_t client_tag,
                         const pigeon_dgchannel_def *datagrams,
                         size_t datagram_count)
 {
@@ -354,8 +352,6 @@ int pigeon_session_init(pigeon_session *s,
     memset(s, 0, sizeof(*s));
     s->transport  = *transport;
     s->channel    = *channel;
-    s->is_backend = is_backend;
-    s->client_tag = client_tag;
 
     // Validate the (name, id) list: no duplicate ids, no id == 0
     // (reserved), no name overflow.
@@ -385,10 +381,10 @@ int pigeon_session_open_stream(pigeon_session *s,
     if (s->transport.open_stream(s->transport.userdata, &h) != 0) return -1;
 
     // Compose the unencrypted name-binding header and write it as the
-    // first message on the stream.
+    // first message on the stream. Under T45 the header is just
+    // [varint name-len][name] — no clientTag prefix.
     uint8_t hdr[PIGEON_MAX_STREAM_HEADER];
-    int hn = pigeon_wire_stream_header_encode(s->is_backend, s->client_tag,
-                                         name, name_len, hdr, sizeof(hdr));
+    int hn = pigeon_wire_stream_header_encode(name, name_len, hdr, sizeof(hdr));
     if (hn < 0) {
         if (s->transport.close_stream) s->transport.close_stream(s->transport.userdata, h);
         return -1;
@@ -494,7 +490,6 @@ int pigeon_datagram_send(pigeon_datagram *d,
     if (pigeon_session_ensure_scratch(sess) != 0) return -1;
 
     int wn = pigeon_encode_datagram(&sess->channel,
-                                    sess->is_backend, sess->client_tag,
                                     d->channel_id,
                                     payload, payload_len,
                                     sess->scratch_a, sess->scratch_size);
@@ -518,8 +513,8 @@ int pigeon_datagram_recv(pigeon_datagram *d,
     }
     if (got == 0) return -1; // recv timed out with no datagram available
     uint64_t cid = 0;
-    int pn = pigeon_decode_datagram(&sess->channel, sess->is_backend,
-                                    sess->scratch_a, got, NULL, &cid,
+    int pn = pigeon_decode_datagram(&sess->channel,
+                                    sess->scratch_a, got, &cid,
                                     buf, buf_len);
     if (pn < 0) return -1;
     if (cid != d->channel_id) {
@@ -583,14 +578,21 @@ int pigeon_connect_on_transport(const pigeon_transport *transport,
     }
     if (peer_instance_id == NULL) return -1;
 
-    // 1. Write the empty-name primary stream header on the primary stream.
-    //    Client side ⇒ no 4-byte clientTag prefix, name length 0.
-    uint8_t hdr[PIGEON_MAX_STREAM_HEADER];
-    int hn = pigeon_wire_stream_header_encode(false, 0, NULL, 0, hdr, sizeof(hdr));
-    if (hn < 0) return -1;
-    if (transport->send_on_stream(transport->userdata, primary_handle,
-                                  hdr, (size_t)hn) != 0) {
-        return -1;
+    // Under T45 the relay's "ok" ack means this QUIC connection is
+    // already bridged end-to-end onto a backend listen, so the primary
+    // is a clean pipe straight to the backend — no relay-level framing.
+    //
+    // 1. Pairing mode has no activation handshake; the backend gates
+    //    Session creation on a real client match by reading one empty
+    //    "arrival marker" message on the primary (see Go's Connect /
+    //    Listener.activate). Activation mode skips the marker: its first
+    //    primary message IS the auth_request, which already serves as
+    //    the gate.
+    if (pairing_mode) {
+        if (transport->send_on_stream(transport->userdata, primary_handle,
+                                      NULL, 0) != 0) {
+            return -1;
+        }
     }
 
     // 2. Run the client-side activation handshake (or skip in pairing mode).
@@ -626,9 +628,8 @@ int pigeon_connect_on_transport(const pigeon_transport *transport,
     // established is false, which pigeon_stream_send / _datagram_send
     // already reject. The caller switches to a derived channel later.
 
-    // 3. Initialise the session (client side, no clientTag).
+    // 3. Initialise the session (client side).
     if (pigeon_session_init(out_session, transport, &channel,
-                            /*is_backend=*/false, /*client_tag=*/0,
                             datagrams, datagram_count) != 0) {
         return -1;
     }

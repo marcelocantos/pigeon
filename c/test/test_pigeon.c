@@ -1020,75 +1020,62 @@ static void test_uvarint(void)
 
 static void test_stream_header(void)
 {
-    TEST("stream-header encode/decode (backend + client)");
+    TEST("stream-header encode/decode (T45: [varint name-len][name])");
 
-    // Backend: tag=0x01020304 ("\x01\x02\x03\x04"), name="chat" (length 4 -> varint 0x04).
-    // Expected wire: 01 02 03 04 04 'c' 'h' 'a' 't' = 9 bytes.
+    // "chat" (length 4 -> varint 0x04). Expected wire: 04 'c' 'h' 'a' 't'.
     {
         uint8_t out[32];
-        int n = pigeon_wire_stream_header_encode(true, 0x01020304u, "chat", 4,
-                                            out, sizeof(out));
-        if (n != 9) { FAIL("backend encode wrong length"); return; }
-        const uint8_t want[] = {0x01,0x02,0x03,0x04, 0x04, 'c','h','a','t'};
-        if (memcmp(out, want, 9) != 0) { FAIL("backend encode bytes mismatch"); return; }
+        int n = pigeon_wire_stream_header_encode("chat", 4, out, sizeof(out));
+        if (n != 5) { FAIL("chat encode wrong length"); return; }
+        const uint8_t want[] = {0x04, 'c','h','a','t'};
+        if (memcmp(out, want, 5) != 0) { FAIL("chat encode bytes mismatch"); return; }
 
-        uint32_t tag = 0;
         char name[32]; size_t name_len = 0;
-        int consumed = pigeon_wire_stream_header_decode_backend(out, (size_t)n,
-                                                           &tag, name, sizeof(name),
-                                                           &name_len);
-        if (consumed != 9) { FAIL("backend decode consumed wrong"); return; }
-        if (tag != 0x01020304u) { FAIL("backend decode tag mismatch"); return; }
-        if (name_len != 4 || strcmp(name, "chat") != 0) { FAIL("backend decode name mismatch"); return; }
+        int consumed = pigeon_wire_stream_header_decode(out, (size_t)n,
+                                                        name, sizeof(name),
+                                                        &name_len);
+        if (consumed != 5) { FAIL("chat decode consumed wrong"); return; }
+        if (name_len != 4 || strcmp(name, "chat") != 0) { FAIL("chat decode name mismatch"); return; }
     }
 
-    // Client primary: empty name -> [0x00] (just the varint 0).
+    // Primary: empty name -> [0x00] (just the varint 0).
     {
         uint8_t out[32];
-        int n = pigeon_wire_stream_header_encode(false, 0, NULL, 0, out, sizeof(out));
-        if (n != 1) { FAIL("client empty encode wrong length"); return; }
-        if (out[0] != 0x00) { FAIL("client empty encode byte"); return; }
+        int n = pigeon_wire_stream_header_encode(NULL, 0, out, sizeof(out));
+        if (n != 1) { FAIL("empty encode wrong length"); return; }
+        if (out[0] != 0x00) { FAIL("empty encode byte"); return; }
 
         char name[8]; size_t name_len = 1;
-        int consumed = pigeon_wire_stream_header_decode_client(out, (size_t)n,
-                                                          name, sizeof(name),
-                                                          &name_len);
-        if (consumed != 1) { FAIL("client empty decode consumed"); return; }
-        if (name_len != 0 || name[0] != '\0') { FAIL("client empty decode name"); return; }
+        int consumed = pigeon_wire_stream_header_decode(out, (size_t)n,
+                                                        name, sizeof(name),
+                                                        &name_len);
+        if (consumed != 1) { FAIL("empty decode consumed"); return; }
+        if (name_len != 0 || name[0] != '\0') { FAIL("empty decode name"); return; }
     }
 
-    // Client named: "control" (length 7 -> varint 0x07).
+    // Named: "control" (length 7 -> varint 0x07).
     {
         uint8_t out[32];
-        int n = pigeon_wire_stream_header_encode(false, 0, "control", 7, out, sizeof(out));
-        if (n != 8) { FAIL("client named encode wrong length"); return; }
+        int n = pigeon_wire_stream_header_encode("control", 7, out, sizeof(out));
+        if (n != 8) { FAIL("control encode wrong length"); return; }
         const uint8_t want[] = {0x07, 'c','o','n','t','r','o','l'};
-        if (memcmp(out, want, 8) != 0) { FAIL("client named encode bytes"); return; }
+        if (memcmp(out, want, 8) != 0) { FAIL("control encode bytes"); return; }
 
         char name[16]; size_t name_len = 0;
-        int consumed = pigeon_wire_stream_header_decode_client(out, (size_t)n,
-                                                          name, sizeof(name),
-                                                          &name_len);
-        if (consumed != 8) { FAIL("client named decode consumed"); return; }
-        if (name_len != 7 || strcmp(name, "control") != 0) { FAIL("client named decode name"); return; }
-    }
-
-    // Backend decode rejects a too-short buffer (< 4 bytes for tag).
-    {
-        uint8_t buf[3] = {0,0,0};
-        uint32_t tag = 0; char name[8]; size_t nl = 0;
-        if (pigeon_wire_stream_header_decode_backend(buf, 3, &tag, name, sizeof(name), &nl) >= 0) {
-            FAIL("backend decode should reject buf<4"); return;
-        }
+        int consumed = pigeon_wire_stream_header_decode(out, (size_t)n,
+                                                        name, sizeof(name),
+                                                        &name_len);
+        if (consumed != 8) { FAIL("control decode consumed"); return; }
+        if (name_len != 7 || strcmp(name, "control") != 0) { FAIL("control decode name"); return; }
     }
 
     // Decode rejects a name longer than name_buf (must leave room for NUL).
     {
         uint8_t out[32];
-        int n = pigeon_wire_stream_header_encode(false, 0, "abcdef", 6, out, sizeof(out));
+        int n = pigeon_wire_stream_header_encode("abcdef", 6, out, sizeof(out));
         if (n != 7) { FAIL("setup"); return; }
         char small[6]; size_t nl = 0;
-        if (pigeon_wire_stream_header_decode_client(out, (size_t)n, small, sizeof(small), &nl) >= 0) {
+        if (pigeon_wire_stream_header_decode(out, (size_t)n, small, sizeof(small), &nl) >= 0) {
             FAIL("decode should fail when name_buf too small for NUL"); return;
         }
     }
@@ -1098,62 +1085,50 @@ static void test_stream_header(void)
 
 static void test_datagram_framing(void)
 {
-    TEST("datagram framing: AEAD([varint id][payload]) + optional 4-byte tag");
+    TEST("datagram framing: AEAD([varint id][payload]) (T45: no tag prefix)");
 
     uint8_t key[32];
     randombytes_buf(key, 32);
 
-    // Two ends sharing the same symmetric key: client sends, backend receives.
+    // Two ends sharing the same symmetric key: one sends, the other receives.
     pigeon_channel send_ch, recv_ch;
     pigeon_channel_init(&send_ch, key, key, PIGEON_MODE_DATAGRAMS);
     pigeon_channel_init(&recv_ch, key, key, PIGEON_MODE_DATAGRAMS);
 
-    // --- client side (no tag prefix) ---
     {
         const uint8_t payload[] = "hello";
         uint8_t wire[256];
-        int wn = pigeon_encode_datagram(&send_ch, /*is_backend=*/false, 0,
-                                        /*channel_id=*/1,
+        int wn = pigeon_encode_datagram(&send_ch, /*channel_id=*/1,
                                         payload, sizeof(payload) - 1,
                                         wire, sizeof(wire));
-        if (wn < 0) { FAIL("client encode datagram"); return; }
+        if (wn < 0) { FAIL("encode datagram"); return; }
 
         uint64_t cid = 0; uint8_t out[256];
-        int pn = pigeon_decode_datagram(&recv_ch, /*is_backend=*/false,
-                                        wire, (size_t)wn,
-                                        NULL, &cid,
-                                        out, sizeof(out));
-        if (pn != (int)(sizeof(payload) - 1)) { FAIL("client decode wrong len"); return; }
-        if (cid != 1) { FAIL("client decode channel id"); return; }
-        if (memcmp(out, payload, sizeof(payload) - 1) != 0) { FAIL("client decode payload"); return; }
+        int pn = pigeon_decode_datagram(&recv_ch, wire, (size_t)wn,
+                                        &cid, out, sizeof(out));
+        if (pn != (int)(sizeof(payload) - 1)) { FAIL("decode wrong len"); return; }
+        if (cid != 1) { FAIL("decode channel id"); return; }
+        if (memcmp(out, payload, sizeof(payload) - 1) != 0) { FAIL("decode payload"); return; }
     }
 
-    // --- backend side (4-byte tag prefix on wire) ---
+    // Multi-byte channel id (300 -> varint ac 02).
     randombytes_buf(key, 32);
     pigeon_channel_init(&send_ch, key, key, PIGEON_MODE_DATAGRAMS);
     pigeon_channel_init(&recv_ch, key, key, PIGEON_MODE_DATAGRAMS);
     {
         const uint8_t payload[] = "ping";
         uint8_t wire[256];
-        int wn = pigeon_encode_datagram(&send_ch, /*is_backend=*/true,
-                                        /*client_tag=*/0xdeadbeefu,
-                                        /*channel_id=*/2,
+        int wn = pigeon_encode_datagram(&send_ch, /*channel_id=*/300,
                                         payload, sizeof(payload) - 1,
                                         wire, sizeof(wire));
-        if (wn < 5) { FAIL("backend encode datagram (too short)"); return; }
-        if (wire[0] != 0xde || wire[1] != 0xad || wire[2] != 0xbe || wire[3] != 0xef) {
-            FAIL("backend wire tag prefix mismatch"); return;
-        }
+        if (wn < 0) { FAIL("encode datagram (multi-byte cid)"); return; }
 
-        uint32_t tag = 0; uint64_t cid = 0; uint8_t out[256];
-        int pn = pigeon_decode_datagram(&recv_ch, /*is_backend=*/true,
-                                        wire, (size_t)wn,
-                                        &tag, &cid,
-                                        out, sizeof(out));
-        if (pn != (int)(sizeof(payload) - 1)) { FAIL("backend decode wrong len"); return; }
-        if (tag != 0xdeadbeefu) { FAIL("backend decode tag"); return; }
-        if (cid != 2) { FAIL("backend decode channel id"); return; }
-        if (memcmp(out, payload, sizeof(payload) - 1) != 0) { FAIL("backend decode payload"); return; }
+        uint64_t cid = 0; uint8_t out[256];
+        int pn = pigeon_decode_datagram(&recv_ch, wire, (size_t)wn,
+                                        &cid, out, sizeof(out));
+        if (pn != (int)(sizeof(payload) - 1)) { FAIL("decode wrong len"); return; }
+        if (cid != 300) { FAIL("decode channel id"); return; }
+        if (memcmp(out, payload, sizeof(payload) - 1) != 0) { FAIL("decode payload"); return; }
     }
 
     PASS();
@@ -1401,13 +1376,11 @@ static void test_session_stream_roundtrip(void)
     loopback_make_transport(&ta, &ea);
     loopback_make_transport(&tb, &eb);
 
-    // A is the backend (writes 4-byte tag prefix on stream headers),
-    // B is the client (no tag on its own headers, but A-side headers
-    // arriving here will start with 4 bytes the test trusts the
-    // wire-helper to interpret).
+    // Under T45 both peers are symmetric: each owns its own pipe and
+    // writes the same [varint name-len][name] header.
     pigeon_session sa, sb;
-    if (pigeon_session_init(&sa, &ta, &ch_a, true,  0xcafef00du, NULL, 0) != 0) { FAIL("init A"); return; }
-    if (pigeon_session_init(&sb, &tb, &ch_b, false, 0,           NULL, 0) != 0) { FAIL("init B"); return; }
+    if (pigeon_session_init(&sa, &ta, &ch_a, NULL, 0) != 0) { FAIL("init A"); return; }
+    if (pigeon_session_init(&sb, &tb, &ch_b, NULL, 0) != 0) { FAIL("init B"); return; }
 
     // A opens "chat". B accepts the next incoming stream and reads its
     // header to confirm the name.
@@ -1418,11 +1391,10 @@ static void test_session_stream_roundtrip(void)
     if (tb.accept_stream(tb.userdata, &bh) != 0) { FAIL("B accept_stream"); return; }
     uint8_t hdr[PIGEON_MAX_STREAM_HEADER]; size_t hn = 0;
     if (tb.recv_on_stream(tb.userdata, bh, hdr, sizeof(hdr), &hn) != 0) { FAIL("B recv header"); return; }
-    uint32_t tag = 0; char name[32]; size_t nl = 0;
-    if (pigeon_wire_stream_header_decode_backend(hdr, hn, &tag, name, sizeof(name), &nl) < 0) {
+    char name[32]; size_t nl = 0;
+    if (pigeon_wire_stream_header_decode(hdr, hn, name, sizeof(name), &nl) < 0) {
         FAIL("B decode header"); return;
     }
-    if (tag != 0xcafef00du) { FAIL("tag mismatch"); return; }
     if (nl != 4 || strcmp(name, "chat") != 0) { FAIL("name mismatch"); return; }
 
     // Wrap B's accepted handle in a pigeon_stream and run send/recv
@@ -1471,28 +1443,16 @@ static void test_session_datagram_roundtrip(void)
     pigeon_dgchannel_def chans[] = { { "ping", 1 }, { "metric", 2 } };
 
     pigeon_session sa, sb;
-    if (pigeon_session_init(&sa, &ta, &ch_a, true,  0x11223344u, chans, 2) != 0) { FAIL("init A"); return; }
-    if (pigeon_session_init(&sb, &tb, &ch_b, false, 0,           chans, 2) != 0) { FAIL("init B"); return; }
+    if (pigeon_session_init(&sa, &ta, &ch_a, chans, 2) != 0) { FAIL("init A"); return; }
+    if (pigeon_session_init(&sb, &tb, &ch_b, chans, 2) != 0) { FAIL("init B"); return; }
 
     pigeon_datagram da_ping, db_ping, da_metric;
     if (pigeon_session_get_datagram(&sa, "ping",   &da_ping)   != 0) { FAIL("A ping"); return; }
     if (pigeon_session_get_datagram(&sb, "ping",   &db_ping)   != 0) { FAIL("B ping"); return; }
     if (pigeon_session_get_datagram(&sa, "metric", &da_metric) != 0) { FAIL("A metric"); return; }
 
-    // A (backend) sends ping; B (client) receives. Wire on the inbound
-    // side has the 4-byte tag prefix from the backend; pigeon_datagram_recv
-    // is_backend=false on B strips nothing (only the AEAD), so the tag
-    // bytes would be misinterpreted. The relay would normally strip the
-    // tag prefix before forwarding; we mimic that by toggling the
-    // session role for direct loopback testing — A treated as client
-    // for the send so no tag is prepended, B as backend if we wanted
-    // the tag preserved. For this test we keep both is_backend=false
-    // semantics on the wire: re-init with is_backend=false on both.
-    pigeon_session_init(&sa, &ta, &ch_a, false, 0, chans, 2);
-    pigeon_session_init(&sb, &tb, &ch_b, false, 0, chans, 2);
-    if (pigeon_session_get_datagram(&sa, "ping", &da_ping) != 0) { FAIL("re-A ping"); return; }
-    if (pigeon_session_get_datagram(&sb, "ping", &db_ping) != 0) { FAIL("re-B ping"); return; }
-
+    // Under T45 the datagram wire is just AEAD([varint channel-id]
+    // [payload]) — both peers are symmetric, no tag prefix to strip.
     if (pigeon_datagram_send(&da_ping, (const uint8_t *)"p1", 2) != 0) { FAIL("A send ping"); return; }
     uint8_t buf[32];
     int got = pigeon_datagram_recv(&db_ping, buf, sizeof(buf));
@@ -1682,22 +1642,19 @@ static void test_activation_unknown_device(void)
     PASS();
 }
 
-// --- Multi-client listener (T32.2) ---
+// --- Multi-client listener (T45 remote-Listen L1) ---
 //
-// Stand up the pigeon_listener over the in-test loopback transport
-// and drive two client threads through activation concurrently. The
-// listener has to demux by clientTag and hand back one
-// pigeon_session per client.
-//
-// The test loopback doesn't simulate the relay's tag-prepending, so
-// each "client" writes a backend-style stream header itself: tag is
-// chosen by the test driver to give the listener something to demux
-// on.
+// Under T45 each accepted client rides its OWN end-to-end pipe. The
+// listener holds a register control connection plus a dial-listen
+// callback that yields a fresh bridged listen connection per accept.
+// These tests wire a loopback dialer: each accept pops a pre-staged
+// loopback pair, the dialer returns the backend side, and a client
+// thread drives the matching client side through activation.
 
 // Listener resolver: accept any device id matching one of two
 // expected values. PairingRecord uses a real generated keypair so
 // make_session can run X25519 ECDH (libsodium's crypto_scalarmult
-// rejects all-zero inputs). The listener test exercises demux +
+// rejects all-zero inputs). The listener test exercises the dial +
 // activation flow, not the AEAD round-trip — the keys just have to
 // be a valid curve point pair.
 typedef struct {
@@ -1721,30 +1678,65 @@ static int listener_resolve(void *ud, const char *device_id, void *out_record)
     return 0;
 }
 
+// One staged per-client pipe: a loopback pair whose backend side the
+// dialer hands to the listener and whose client side a client thread
+// drives.
+#define LISTENER_TEST_MAX_PIPES 4
+typedef struct {
+    loopback_endpoint backend_ep;
+    loopback_endpoint client_ep;
+    pigeon_transport  client_tr;
+    bool              in_use;
+} listener_test_pipe;
+
+// Dialer context: a fixed pool of staged pipes; each accept consumes
+// the next one.
+typedef struct {
+    listener_test_pipe pipes[LISTENER_TEST_MAX_PIPES];
+    int                next;
+    int                count;
+} listener_dial_ctx;
+
+// pigeon_listen_dialer: hand the backend side of the next staged pipe
+// to the listener. The owner cookie is the pipe pointer (no teardown
+// needed — the pipes live on the test's stack).
+static int listener_test_dial(void *userdata,
+                              pigeon_transport *out_transport,
+                              pigeon_stream_handle **out_primary,
+                              void **out_owner)
+{
+    listener_dial_ctx *d = (listener_dial_ctx *)userdata;
+    if (d->next >= d->count) return -1;
+    listener_test_pipe *p = &d->pipes[d->next++];
+    // The client opened the primary stream before we dial; accept it on
+    // the backend side to recover the bridged primary handle.
+    pigeon_stream_handle *primary = NULL;
+    if (p->backend_ep.peer == NULL) return -1;
+    pigeon_transport tb;
+    loopback_make_transport(&tb, &p->backend_ep);
+    if (tb.accept_stream(tb.userdata, &primary) != 0) return -1;
+    *out_transport = tb;
+    *out_primary   = primary;
+    *out_owner     = p; // pipe lives on the stack — owner hooks are no-ops.
+    return 0;
+}
+
+static void listener_test_owner_noop(void *owner) { (void)owner; }
+
+// Drive one client through activation over its own pipe: open the
+// primary stream and run the client activation driver. No stream
+// header — activation mode's auth_request is the first message.
 typedef struct {
     pigeon_transport *transport;
-    uint32_t          tag;
     const char       *device_id;
     int               rc;
 } listener_client_args;
 
-// Drive one client through activation: open a stream, write the
-// backend-style stream header with our chosen tag, then run the
-// client activation driver.
 static void *run_listener_client(void *p)
 {
     listener_client_args *a = (listener_client_args *)p;
     pigeon_stream_handle *h = NULL;
     if (a->transport->open_stream(a->transport->userdata, &h) != 0) {
-        a->rc = -1;
-        return NULL;
-    }
-    uint8_t hdr[PIGEON_MAX_STREAM_HEADER];
-    int hn = pigeon_wire_stream_header_encode(true, a->tag, NULL, 0,
-                                         hdr, sizeof(hdr));
-    if (hn < 0) { a->rc = -1; return NULL; }
-    if (a->transport->send_on_stream(a->transport->userdata, h,
-                                     hdr, (size_t)hn) != 0) {
         a->rc = -1;
         return NULL;
     }
@@ -1754,44 +1746,54 @@ static void *run_listener_client(void *p)
     return NULL;
 }
 
-typedef struct {
-    pigeon_listener  *listener;
-    pigeon_session  **out_sessions;
-    int               n;
-    int               rc;
-} listener_accept_args;
-
-static void *run_listener_accept_loop(void *p)
+// Stage `n` pipes in the dial context and fill the client transports.
+static void stage_pipes(listener_dial_ctx *d, int n)
 {
-    listener_accept_args *a = (listener_accept_args *)p;
-    for (int i = 0; i < a->n; i++) {
-        if (pigeon_listener_accept(a->listener, &a->out_sessions[i]) != 0) {
-            a->rc = -1;
-            return NULL;
-        }
+    memset(d, 0, sizeof(*d));
+    d->count = n;
+    d->next = 0;
+    for (int i = 0; i < n; i++) {
+        listener_test_pipe *p = &d->pipes[i];
+        loopback_endpoint_init(&p->backend_ep, &p->client_ep);
+        loopback_endpoint_init(&p->client_ep, &p->backend_ep);
+        loopback_make_transport(&p->client_tr, &p->client_ep);
+        p->in_use = true;
     }
-    a->rc = 0;
-    return NULL;
+}
+
+static void drain_pipes(listener_dial_ctx *d)
+{
+    for (int i = 0; i < d->count; i++) {
+        loopback_endpoint_drain(&d->pipes[i].backend_ep);
+        loopback_endpoint_drain(&d->pipes[i].client_ep);
+    }
 }
 
 static void test_listener_two_clients(void)
 {
-    TEST("listener: two concurrent clients through activation");
-    loopback_endpoint listener_eb, listener_ec;
-    loopback_endpoint_init(&listener_eb, &listener_ec);
-    loopback_endpoint_init(&listener_ec, &listener_eb);
+    TEST("listener: two clients, each on its own bridged pipe (T45)");
 
-    pigeon_transport tb, tc;
-    loopback_make_transport(&tb, &listener_eb);
-    loopback_make_transport(&tc, &listener_ec);
+    // Register control connection (held open; no traffic). A plain
+    // loopback endpoint pair stands in for it.
+    loopback_endpoint ctrl_a, ctrl_b;
+    loopback_endpoint_init(&ctrl_a, &ctrl_b);
+    loopback_endpoint_init(&ctrl_b, &ctrl_a);
+    pigeon_transport ctrl_tr;
+    loopback_make_transport(&ctrl_tr, &ctrl_a);
 
     listener_resolve_ctx rctx = {
         .want_id_1 = "device-a",
         .want_id_2 = "device-b",
     };
     if (pigeon_generate_keypair(&rctx.kp) != 0) { FAIL("keypair"); return; }
+
+    listener_dial_ctx dctx;
+    stage_pipes(&dctx, 2);
+
     pigeon_listener *l = NULL;
-    if (pigeon_listener_init(&l, &tb, "backend-instance",
+    if (pigeon_listener_init(&l, &ctrl_tr, "backend-instance",
+                             listener_test_dial, &dctx,
+                             listener_test_owner_noop, listener_test_owner_noop,
                              listener_resolve, &rctx,
                              NULL, 0) != 0) {
         FAIL("listener_init"); return;
@@ -1800,18 +1802,10 @@ static void test_listener_two_clients(void)
         FAIL("instance id mismatch"); return;
     }
 
-    pigeon_session *sessions[2] = { NULL, NULL };
-    listener_accept_args lacc = {
-        .listener = l, .out_sessions = sessions, .n = 2, .rc = 0,
-    };
-    pthread_t tid_listener;
-    if (pthread_create(&tid_listener, NULL,
-                       run_listener_accept_loop, &lacc) != 0) {
-        FAIL("pthread_create listener"); return;
-    }
-
-    listener_client_args ca = { &tc, 0xa1a1a1a1u, "device-a", 0 };
-    listener_client_args cb = { &tc, 0xb2b2b2b2u, "device-b", 0 };
+    // Drive both clients concurrently; the listener accepts them one at
+    // a time (one per staged pipe) on this thread.
+    listener_client_args ca = { &dctx.pipes[0].client_tr, "device-a", 0 };
+    listener_client_args cb = { &dctx.pipes[1].client_tr, "device-b", 0 };
     pthread_t tid_a, tid_b;
     if (pthread_create(&tid_a, NULL, run_listener_client, &ca) != 0) {
         FAIL("pthread_create A"); return;
@@ -1819,131 +1813,105 @@ static void test_listener_two_clients(void)
     if (pthread_create(&tid_b, NULL, run_listener_client, &cb) != 0) {
         FAIL("pthread_create B"); return;
     }
+
+    pigeon_session *sessions[2] = { NULL, NULL };
+    if (pigeon_listener_accept(l, &sessions[0]) != 0) { FAIL("accept 0"); return; }
+    if (pigeon_listener_accept(l, &sessions[1]) != 0) { FAIL("accept 1"); return; }
+
     pthread_join(tid_a, NULL);
     pthread_join(tid_b, NULL);
-    pthread_join(tid_listener, NULL);
 
-    if (lacc.rc != 0) { FAIL("listener accept failed"); return; }
     if (ca.rc != 0)   { FAIL("client A activation failed"); return; }
     if (cb.rc != 0)   { FAIL("client B activation failed"); return; }
     if (!sessions[0] || !sessions[1]) { FAIL("missing session"); return; }
     if (sessions[0] == sessions[1])    { FAIL("same session twice"); return; }
 
-    // Demux contract: each accepted session is keyed by the
-    // client-supplied tag; the two tags A used (0xa1...) and B used
-    // (0xb2...) should end up in two different slots.
-    uint32_t tags[2] = { sessions[0]->client_tag, sessions[1]->client_tag };
-    bool seen_a = (tags[0] == 0xa1a1a1a1u || tags[1] == 0xa1a1a1a1u);
-    bool seen_b = (tags[0] == 0xb2b2b2b2u || tags[1] == 0xb2b2b2b2u);
-    if (!seen_a || !seen_b) { FAIL("tag demux mismatch"); return; }
+    // Each session rides its own transport — no shared demux. Confirm
+    // the two sessions bind to different (backend-side) endpoints.
+    if (sessions[0]->transport.userdata == sessions[1]->transport.userdata) {
+        FAIL("sessions share a transport"); return;
+    }
 
+    pigeon_session_close(sessions[0]); free(sessions[0]);
+    pigeon_session_close(sessions[1]); free(sessions[1]);
     pigeon_listener_close(l);
-    loopback_endpoint_drain(&listener_eb);
-    loopback_endpoint_drain(&listener_ec);
+    drain_pipes(&dctx);
+    loopback_endpoint_drain(&ctrl_a);
+    loopback_endpoint_drain(&ctrl_b);
     PASS();
 }
 
-// Verify a sub-stream that lands for an already-accepted client is
-// dispatched into that session's incoming-stream queue, and
-// pigeon_session_accept_incoming_stream drains it by name. The
-// listener pump only returns when a *new primary* arrives, so the
-// test queues sub-streams between two primary connections and
-// expects the second accept to surface a queue containing the
-// dispatched sub-stream.
+// Verify a peer-opened sub-stream on a session's own pipe is delivered
+// by pigeon_session_accept_incoming_stream (which now reads directly
+// from the session's transport — no listener demux).
 static void test_listener_substream_demux(void)
 {
-    TEST("listener: sub-stream between primaries lands in session queue");
-    loopback_endpoint listener_eb, listener_ec;
-    loopback_endpoint_init(&listener_eb, &listener_ec);
-    loopback_endpoint_init(&listener_ec, &listener_eb);
+    TEST("listener: sub-stream on a session's own pipe is delivered (T45)");
 
-    pigeon_transport tb, tc;
-    loopback_make_transport(&tb, &listener_eb);
-    loopback_make_transport(&tc, &listener_ec);
+    loopback_endpoint ctrl_a, ctrl_b;
+    loopback_endpoint_init(&ctrl_a, &ctrl_b);
+    loopback_endpoint_init(&ctrl_b, &ctrl_a);
+    pigeon_transport ctrl_tr;
+    loopback_make_transport(&ctrl_tr, &ctrl_a);
 
     listener_resolve_ctx rctx = {
         .want_id_1 = "device-first",
         .want_id_2 = "device-second",
     };
     if (pigeon_generate_keypair(&rctx.kp) != 0) { FAIL("keypair"); return; }
+
+    listener_dial_ctx dctx;
+    stage_pipes(&dctx, 1);
+
     pigeon_listener *l = NULL;
-    if (pigeon_listener_init(&l, &tb, "demux-listener",
+    if (pigeon_listener_init(&l, &ctrl_tr, "demux-listener",
+                             listener_test_dial, &dctx,
+                             listener_test_owner_noop, listener_test_owner_noop,
                              listener_resolve, &rctx,
                              NULL, 0) != 0) {
         FAIL("listener_init"); return;
     }
 
-    // Pre-stage everything the listener pump will consume in order:
-    //   1. client A primary  (tag 0xa1...)
-    //   2. client A sub-stream "logs" (tag 0xa1..., name="logs")
-    //   3. client B primary  (tag 0xb2...)
-    //
-    // The listener accept call returns after each primary; sub-
-    // streams that arrive between them are dispatched into the
-    // matching session's incoming queue.
-    pigeon_session *sessions[2] = { NULL, NULL };
-    listener_accept_args lacc = {
-        .listener = l, .out_sessions = sessions, .n = 2, .rc = 0,
-    };
-    pthread_t tid_listener;
-    if (pthread_create(&tid_listener, NULL,
-                       run_listener_accept_loop, &lacc) != 0) {
-        FAIL("pthread_create listener"); return;
-    }
-
-    listener_client_args ca = { &tc, 0xa1a1a1a1u, "device-first", 0 };
+    // Client A connects and activates.
+    listener_client_args ca = { &dctx.pipes[0].client_tr, "device-first", 0 };
     pthread_t tid_a;
     if (pthread_create(&tid_a, NULL, run_listener_client, &ca) != 0) {
         FAIL("pthread_create A"); return;
     }
+    pigeon_session *sess = NULL;
+    if (pigeon_listener_accept(l, &sess) != 0) { FAIL("accept"); return; }
     pthread_join(tid_a, NULL);
     if (ca.rc != 0) { FAIL("client A activation"); return; }
+    if (!sess)      { FAIL("missing session"); return; }
 
-    // Now interleave: client A opens a sub-stream "logs", then
-    // client B kicks off its primary.
+    // The client opens a "logs" sub-stream on its own pipe; the session
+    // should surface it via accept_incoming_stream.
     pigeon_stream_handle *sub = NULL;
-    if (tc.open_stream(tc.userdata, &sub) != 0) { FAIL("open sub"); return; }
+    if (dctx.pipes[0].client_tr.open_stream(dctx.pipes[0].client_tr.userdata, &sub) != 0) {
+        FAIL("open sub"); return;
+    }
     uint8_t hdr[PIGEON_MAX_STREAM_HEADER];
-    int hn = pigeon_wire_stream_header_encode(true, 0xa1a1a1a1u,
-                                         "logs", strlen("logs"),
-                                         hdr, sizeof(hdr));
+    int hn = pigeon_wire_stream_header_encode("logs", strlen("logs"),
+                                              hdr, sizeof(hdr));
     if (hn < 0) { FAIL("encode sub header"); return; }
-    if (tc.send_on_stream(tc.userdata, sub, hdr, (size_t)hn) != 0) {
+    if (dctx.pipes[0].client_tr.send_on_stream(dctx.pipes[0].client_tr.userdata,
+                                               sub, hdr, (size_t)hn) != 0) {
         FAIL("send sub header"); return;
     }
 
-    listener_client_args cb = { &tc, 0xb2b2b2b2u, "device-second", 0 };
-    pthread_t tid_b;
-    if (pthread_create(&tid_b, NULL, run_listener_client, &cb) != 0) {
-        FAIL("pthread_create B"); return;
-    }
-    pthread_join(tid_b, NULL);
-    pthread_join(tid_listener, NULL);
-    if (cb.rc != 0)   { FAIL("client B activation"); return; }
-    if (lacc.rc != 0) { FAIL("listener accept failed"); return; }
-
-    // sessions[0] is the device-first session (tag 0xa1...). Its
-    // incoming queue should hold the "logs" sub-stream.
-    pigeon_session *sess_a = NULL;
-    for (int i = 0; i < 2; i++) {
-        if (sessions[i] != NULL && sessions[i]->client_tag == 0xa1a1a1a1u) {
-            sess_a = sessions[i];
-            break;
-        }
-    }
-    if (!sess_a) { FAIL("device-first session missing"); return; }
-
     pigeon_stream out_stream;
-    if (pigeon_session_accept_incoming_stream(sess_a, "logs", &out_stream) != 0) {
+    if (pigeon_session_accept_incoming_stream(sess, "logs", &out_stream) != 0) {
         FAIL("sub-stream not delivered"); return;
     }
     if (strcmp(out_stream.name, "logs") != 0) {
         FAIL("sub-stream wrong name"); return;
     }
 
+    pigeon_session_close(sess); free(sess);
     pigeon_listener_close(l);
-    loopback_endpoint_drain(&listener_eb);
-    loopback_endpoint_drain(&listener_ec);
+    drain_pipes(&dctx);
+    loopback_endpoint_drain(&ctrl_a);
+    loopback_endpoint_drain(&ctrl_b);
     PASS();
 }
 
@@ -1974,33 +1942,15 @@ typedef struct {
     size_t                  device_id_cap;
     pigeon_pairing_record  *record;
     int                     rc;
-    int                     header_rc;     // result of reading the empty-name header
-    bool                    header_empty;  // whether the header decoded as empty-name
 } backend_connect_thread_args;
 
 static void *run_backend_connect_thread(void *p)
 {
     backend_connect_thread_args *a = (backend_connect_thread_args *)p;
 
-    // Read and validate the empty-name primary stream header that
-    // pigeon_connect_on_transport writes before running activation.
-    uint8_t hdr[PIGEON_MAX_STREAM_HEADER];
-    size_t  hn = 0;
-    if (a->transport->recv_on_stream(a->transport->userdata, a->stream,
-                                     hdr, sizeof(hdr), &hn) != 0) {
-        a->header_rc = -1;
-        return NULL;
-    }
-    char name[PIGEON_MAX_NAME_LEN];
-    size_t name_len = 0;
-    if (pigeon_wire_stream_header_decode_client(hdr, hn, name, sizeof(name), &name_len) < 0) {
-        a->header_rc = -1;
-        return NULL;
-    }
-    a->header_rc = 0;
-    a->header_empty = (name_len == 0);
-
-    // Now run the activation handshake.
+    // Under T45 activation mode writes no primary header — the client's
+    // auth_request is the first message on the bridged pipe. Run the
+    // activation handshake directly.
     a->rc = pigeon_run_backend_activation(a->transport, a->stream,
                                           activation_resolve, a->rctx,
                                           a->machine,
@@ -2065,16 +2015,14 @@ static void test_pigeon_connect_loopback(void)
         .device_id_cap  = sizeof(device_id_seen),
         .record         = &backend_rec,
         .rc             = 0,
-        .header_rc      = 0,
-        .header_empty   = false,
     };
     pthread_t tid;
     if (pthread_create(&tid, NULL, run_backend_connect_thread, &bargs) != 0) {
         FAIL("pthread_create"); return;
     }
 
-    // 3. Client side: pigeon_connect_on_transport drives the empty-name
-    //    header + client activation + channel derive + session init.
+    // 3. Client side: pigeon_connect_on_transport runs client activation
+    //    + channel derive + session init (T45: no primary header).
     pigeon_dgchannel_def dgs[] = { { "ping", 1 } };
     pigeon_session csess;
     int crc = pigeon_connect_on_transport(&tc, cs,
@@ -2085,8 +2033,6 @@ static void test_pigeon_connect_loopback(void)
                                           &csess);
     pthread_join(tid, NULL);
 
-    if (bargs.header_rc != 0)   { FAIL("backend: read primary header"); return; }
-    if (!bargs.header_empty)    { FAIL("backend: primary header not empty-name"); return; }
     if (bargs.rc != 0)          { FAIL("backend: activation"); return; }
     if (crc != 0)               { FAIL("client: pigeon_connect_on_transport"); return; }
     if (strcmp(device_id_seen, "client-device-1") != 0) {
@@ -2128,7 +2074,6 @@ static void test_pigeon_connect_loopback(void)
 
     pigeon_session bsess;
     if (pigeon_session_init(&bsess, &tb, &b_chan,
-                            /*is_backend=*/true, /*client_tag=*/0,
                             dgs, 1) != 0) { FAIL("backend session_init"); return; }
 
     // Accept the chat stream the client opened, read and decode its header.
@@ -2138,9 +2083,9 @@ static void test_pigeon_connect_loopback(void)
     if (tb.recv_on_stream(tb.userdata, b_chat, hbuf, sizeof(hbuf), &hlen) != 0) {
         FAIL("backend read chat header"); return;
     }
-    // Client side ⇒ header has no tag prefix.
+    // T45: header is just [varint name-len][name].
     char chat_name[PIGEON_MAX_NAME_LEN]; size_t cnl = 0;
-    if (pigeon_wire_stream_header_decode_client(hbuf, hlen, chat_name, sizeof(chat_name), &cnl) < 0) {
+    if (pigeon_wire_stream_header_decode(hbuf, hlen, chat_name, sizeof(chat_name), &cnl) < 0) {
         FAIL("backend decode chat header"); return;
     }
     if (cnl != 4 || strcmp(chat_name, "chat") != 0) { FAIL("chat name mismatch"); return; }
@@ -2192,17 +2137,15 @@ static void test_pigeon_connect_pairing_mode(void)
     if (csess.channel.established) { FAIL("channel should NOT be established"); return; }
     if (csess.primary != cs)       { FAIL("primary handle not bound"); return; }
 
-    // Verify the empty-name primary header was written. Read it on the
-    // backend side and decode.
+    // Under T45 pairing mode, the client writes one empty "arrival
+    // marker" message on the primary (Connect's writeMessage(nil)) so
+    // the backend can gate Session creation on a real client match.
+    // Read it on the backend side: it is a zero-length message.
     uint8_t hdr[PIGEON_MAX_STREAM_HEADER]; size_t hn = 0;
     if (tb.recv_on_stream(tb.userdata, bs, hdr, sizeof(hdr), &hn) != 0) {
-        FAIL("backend read primary header"); return;
+        FAIL("backend read arrival marker"); return;
     }
-    char name[PIGEON_MAX_NAME_LEN]; size_t nl = 0;
-    if (pigeon_wire_stream_header_decode_client(hdr, hn, name, sizeof(name), &nl) < 0) {
-        FAIL("backend decode primary header"); return;
-    }
-    if (nl != 0) { FAIL("primary header should be empty-name"); return; }
+    if (hn != 0) { FAIL("arrival marker should be empty"); return; }
 
     // Drive plaintext over the primary via Session.Primary() (pairing-
     // ceremony idiom). Backend stays raw — read straight off the

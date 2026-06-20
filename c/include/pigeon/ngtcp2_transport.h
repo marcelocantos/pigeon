@@ -9,14 +9,18 @@
 // Protocol
 // --------
 // The pigeon relay server speaks raw QUIC with ALPN "pigeon".  There is
-// no HTTP/3 layer — clients use a simple bespoke handshake:
+// no HTTP/3 layer — clients use a simple bespoke greeting (T45
+// remote-Listen L1; see protocol/wireformats.yaml):
 //
 //   1. Open a QUIC connection to the relay.
 //   2. Open one bidirectional QUIC stream (stream 0).
-//   3. Send a length-prefixed message: "connect:<instance-id>"
-//      where length is a 4-byte big-endian uint32.
-//   4. Use that stream for all subsequent pigeon_transport stream calls.
-//   5. Send/receive QUIC datagrams for pigeon_transport datagram calls.
+//   3. Send a length-prefixed greeting on it (4-byte big-endian length):
+//      "connect:<id>", "register[:<token>[:<id>]]", or
+//      "listen[:<token>[:<id>]]" per the transport's role.
+//   4. Read the relay's framed ack: the assigned instance ID (register),
+//      the instance-ID ack (listen), or "ok" (connect, once bridged).
+//   5. Use that stream for all subsequent pigeon_transport stream calls.
+//   6. Send/receive QUIC datagrams for pigeon_transport datagram calls.
 //
 // Memory model
 // ------------
@@ -63,31 +67,42 @@ typedef void pigeon_ngtcp2_conn_handle;
 // Maximum pending received stream data.
 #define PIGEON_NGTCP2_RECV_BUF 65536
 
-// Role of this transport endpoint relative to the relay handshake.
+// Role of this transport endpoint relative to the relay handshake
+// (T45 remote-Listen L1; see protocol/wireformats.yaml).
 typedef enum {
     // Client side: send "connect:<instance_id>" on the primary stream.
-    // instance_id identifies the peer (backend) we want to reach.
+    // instance_id identifies the peer (backend) we want to reach. The
+    // relay matches a parked listen, writes an "ok" ack, then bridges
+    // this whole connection end-to-end to the backend's listen.
     PIGEON_ROLE_CONNECT = 0,
 
-    // Backend side, multi-client: send "register-mux[:<token>[:<instance_id>]]".
+    // Backend control side: send "register[:<token>[:<instance_id>]]".
     // instance_id is the (optional) self-assigned ID; the relay echoes
-    // back the actual assigned ID on the same stream. token is an
-    // (optional) bearer token. Either or both may be NULL/empty; the
-    // wire form collapses accordingly.
-    PIGEON_ROLE_REGISTER_MUX = 1,
+    // back the actual assigned ID on the same stream and holds the
+    // connection open for the instance's lifetime (no traffic flows on
+    // it). token is an (optional) bearer token. Either or both may be
+    // NULL/empty; the wire form collapses accordingly.
+    PIGEON_ROLE_REGISTER = 1,
+
+    // Backend listen side: send "listen[:<token>[:<instance_id>]]".
+    // instance_id targets a previously-registered backend; the relay
+    // acks with the instance ID, then parks this connection until a
+    // client matches, at which point it byte-bridges the two whole QUIC
+    // connections end-to-end.
+    PIGEON_ROLE_LISTEN = 2,
 } pigeon_role;
 
 // Configuration passed to pigeon_ngtcp2_transport_init.
 typedef struct {
     const char *host;           // relay hostname or IP (required)
     const char *port;           // relay UDP port, e.g. "4433" (required)
-    const char *instance_id;    // pigeon instance ID — required for CONNECT,
-                                // optional self-assigned ID for REGISTER_MUX
+    const char *instance_id;    // pigeon instance ID — required for CONNECT and
+                                // LISTEN; optional self-assigned ID for REGISTER
     int         verify_peer;    // 1 = verify server cert, 0 = skip (default 0)
     const char *ca_cert_file;   // path to CA bundle PEM (NULL = system default)
     int         timeout_ms;     // overall connect+handshake timeout in ms (0 = 10 000)
-    pigeon_role role;           // CONNECT (default) or REGISTER_MUX
-    const char *token;          // optional bearer token for REGISTER_MUX (NULL/"" = none)
+    pigeon_role role;           // CONNECT (default), REGISTER, or LISTEN
+    const char *token;          // optional bearer token for REGISTER/LISTEN (NULL/"" = none)
 } pigeon_ngtcp2_config;
 
 // Internal ring-buffer for stream receive data.
