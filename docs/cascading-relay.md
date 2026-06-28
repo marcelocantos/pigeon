@@ -1,5 +1,16 @@
 # Cascading Relay Architecture
 
+> **⚠ Superseded design — read [`multiplexing.md`](multiplexing.md) first.**
+> The agreed design makes a service a `Session` (sub-addressed `Connect`),
+> not a route-substream multiplex over one connection. That resolves the
+> "library vs app" and discovery open questions below (§5, §9 Q7) and
+> obsoletes the §4a sketch and the MultiClient/occupied-flag framing
+> (multi-client-per-backend is now the T45 remote-Listen model). This file
+> is retained as the original topology exploration and for the cascading
+> *deployment* shape; treat `multiplexing.md` and 🎯T44 / T44.1–.3 as
+> authoritative. It also predates T39/T45 and still references the deleted
+> `pigeon.Conn` API.
+>
 > **Status:** Exploration / design — no code changes yet.
 > **Motivation:** squz/ge (game project) needs a local development relay that
 > fronts multiple game servers. Players authenticate once against the local
