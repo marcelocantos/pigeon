@@ -35,9 +35,12 @@ session is the stable thing the application holds onto.
 - **Generic VPN.** Pigeon is not a routed network — it provides logical
   sessions between specifically paired peer pairs, not arbitrary IP
   reachability.
-- **Presence / pubsub / discovery.** Pigeon does not advertise who is
-  online, distribute pairings, or do app-layer fanout. Applications are
-  expected to layer their own semantics on top.
+- **Global presence / pubsub / fanout.** Pigeon does not advertise who is
+  online network-wide, distribute pairings, or do app-layer fanout;
+  applications layer their own semantics on top. (Bounded *route
+  enumeration* of a single already-paired backend, within an authenticated
+  session, is in scope as a mechanism + backend hook — see
+  `docs/multiplexing.md`. That is distinct from network-wide presence.)
 - **Anonymity.** Pigeon hides session *content* from the relay. It does
   not hide *that two parties are talking* or *which networks they are
   on*. See the threat model.
@@ -661,9 +664,11 @@ than running ad-hoc Go code.
 **Future explorations** (out of scope for v1, captured here so they're
 not lost):
 
-- **Cascading relay topology** — local relay acting as both backend to
-  a public relay and relay to game servers. See
-  `docs/cascading-relay.md`.
+- **Multi-service nodes (sub-addressing + discovery)** — a paired node
+  fronting multiple independently-addressed services over one pairing
+  (the ge/ged case; cascading relay is one deployment shape). Design
+  agreed in `docs/multiplexing.md`; tracked by 🎯T44 (+ T44.1–.3).
+  Original exploration: `docs/cascading-relay.md`.
 - **BLE proximity oracle** — Bluetooth RSSI as additive evidence
   alongside the pairing confirmation code. See
   `docs/investigations/bluetooth-proximity-oracle.md`.
