@@ -1637,6 +1637,18 @@ targets:
     context: 'LAN upgrade was orphaned when T39 (#31) deleted pigeon.Conn: RegisterArgs/ConnectArgs have no LAN fields, Config.LANServer/LAN are effectively dead on the public API, and the relay''s --lan flag only constructs a NewLANServer that is never wired in (`// TODO: wire into relay registration flow`, cmd/pigeon/main.go). The README "LAN Upgrade" section documented a non-compiling Conn-based API and was removed in the v0.24.0 doc-accuracy release; this target captures restoring the feature so that intent isn''t lost. The LANServer primitive (lan.go, with cert-hash for browser serverCertificateHashes) still exists and is tested, so the building blocks remain. Should fit the post-T45 remote-Listen L1 model and align with the T43 path-tier / candidate-pair work (LAN-direct is one tier alongside STUN-reflexive and relay).'
     origin: manual
     discovered: 2026-06-20
+  T49:
+    name: pigeon's AEAD channel never reuses an (key, nonce) pair under concurrent senders — send/recv counters are synchronized
+    status: identified
+    value: 13.0
+    cost: 5.0
+    acceptance:
+    - send_seq/recv_seq are updated atomically or under a lock across concurrent Stream and Datagram senders sharing one cwire.Channel
+    - go test -race shows no data race on the channel counters
+    - No two messages encrypted under one key can be assigned the same nonce
+    context: 'CRITICAL. c/src/crypto.c:160 (with Go api.go sharing one channel across all senders): send_seq is incremented with a non-atomic C increment under no Go lock, so concurrent Send can hand two messages the same nonce → data race and catastrophic AES-GCM nonce reuse. Unverified Fable-5 finder-stage candidate (adversarial verification interrupted by an API spend limit); verify before implementing. See docs/audit/fable-2026-07.md.'
+    origin: manual
+    discovered: 2026-07-02
   T5:
     name: Investigate Bluetooth as proximity oracle
     status: achieved
@@ -1651,6 +1663,87 @@ targets:
     origin: bootstrap from targets.md (T7)
     discovered: 2026-04-08
     achieved: 2026-04-15
+  T50:
+    name: pigeon derives a distinct per-session AEAD key so reconnects and concurrent sessions never reuse a nonce (T44.1)
+    status: identified
+    value: 13.0
+    cost: 5.0
+    acceptance:
+    - DeriveSessionChannel/DeriveChannel incorporate a per-session nonce or salt so two sessions under one PairingRecord get distinct keys
+    - A reconnect does not reuse the prior session's key with the counter reset to 0
+    - Bullseye T44.1's acceptance holds
+    context: 'CRITICAL. cwire/connect.go:355: session keys are a deterministic function of the static PairingRecord with fixed HKDF info, and each new channel resets send_seq to 0 — so every reconnect reuses nonce 0,1,2… under the identical key, and concurrent sessions derive identical keys. Unverified Fable-5 finder-stage candidate; verify before implementing. See docs/audit/fable-2026-07.md.'
+    origin: manual
+    discovered: 2026-07-02
+  T51:
+    name: pigeon reconnect authentication requires cryptographic proof of pairing, not a bare device_id
+    status: set_aside
+    value: 8.0
+    cost: 5.0
+    set_aside_reason: 'Refuted by two-lens re-verification (2026-07-03): the spec''d AuthRequiresCompletedPairing invariant is a device-membership check (received_device_id ∈ paired_devices), which the runtime upholds; the real security boundary is the AEAD channel keyed from the PairingRecord, which an attacker asserting a public device_id cannot cross. Documented as in-design (DESIGN.md: relay auth is orthogonal to AEAD security). Residual low-severity notes only: an integrator footgun (Session.PeerID exposed before the first AEAD round-trip) and unauthenticated resource commit (covered by resource-ceiling work). Not a high-severity auth bypass — false positive.'
+    acceptance:
+    - Runtime activation authenticates with a nonce/secret/signature bound to the pairing (matching the modeled SessionMachine authenticators)
+    - A peer presenting only a public device_id cannot reach SessionActive
+    context: 'HIGH. c/src/activation.c:225: reconnect reaches SessionActive on a plaintext device_id with no challenge/nonce/signature; the model''s secret/nonce authenticators are absent from the runtime wire format. Unverified Fable-5 finder-stage candidate; verify before implementing. See docs/audit/fable-2026-07.md.'
+    origin: manual
+    discovered: 2026-07-02
+  T52:
+    name: pigeon's SAS confirmation code resists a relay MitM grinding attack (commitment round + adequate entropy)
+    status: identified
+    value: 8.0
+    cost: 5.0
+    acceptance:
+    - The confirmation code uses a commitment round so neither side can grind its displayed code after seeing the other's public key
+    - Effective entropy is raised beyond ~20 bits, or the commitment makes grinding infeasible
+    context: 'HIGH. c/src/pairing.c:368: the 6-digit SAS has no commitment round and only ~20 bits, so a relay MitM can grind the two displayed codes to match, defeating MitM detection. Unverified Fable-5 finder-stage candidate; verify before implementing. See docs/audit/fable-2026-07.md.'
+    origin: manual
+    discovered: 2026-07-02
+  T53:
+    name: pigeon carries lossy datagrams and multiplexed streams without a single strict counter that one lost datagram can wedge
+    status: identified
+    value: 8.0
+    cost: 5.0
+    acceptance:
+    - Datagram traffic does not share a single strict in-order AEAD counter with streams
+    - A single lost or reordered datagram does not permanently reject subsequent legitimate traffic
+    - A second concurrent stream does not wedge the session
+    context: 'HIGH. cwire/connect.go:373: all named streams and inherently-lossy datagrams share one ModeStrict AEAD channel with one recv_seq, so one lost/reordered datagram (or any second stream) permanently rejects legitimate traffic. Unverified Fable-5 finder-stage candidate; verify before implementing. See docs/audit/fable-2026-07.md.'
+    origin: manual
+    discovered: 2026-07-02
+  T54:
+    name: pigeon Ceremony.Close aborts a pairing blocked on user confirmation, releasing its goroutine, cgo handles, and QUIC session
+    status: identified
+    value: 8.0
+    cost: 3.0
+    acceptance:
+    - Close cancels a pairing awaiting user confirmation and frees the goroutine, both cgo.Handles, and the QUIC session/FDs
+    - No leak remains on the initiator side after Close during a pending confirmation
+    context: 'HIGH. pairing/pairing.go:186: Ceremony.Close does not abort a pairing blocked awaiting user confirmation, leaking a goroutine, two cgo.Handles, and the QUIC session/FDs (permanent on the initiator side). Unverified Fable-5 finder-stage candidate; verify before implementing. See docs/audit/fable-2026-07.md.'
+    origin: manual
+    discovered: 2026-07-02
+  T55:
+    name: pigeon's Session Phase-1 security invariants are actually model-checked, with no tautological or dead guards
+    status: identified
+    value: 8.0
+    cost: 5.0
+    acceptance:
+    - TLC (or equivalent) checks NoTokenReuse, AuthRequiresCompletedPairing, NoNonceReuse, DeviceSecretSecrecy, and MitMPrevented against the session model
+    - NoNonceReuse is a non-trivial invariant and its nonce_fresh guard is live
+    context: 'HIGH. protocol/session.yaml:1313: the Session Phase-1 security invariants are model-checked by nothing; NoNonceReuse is a tautology and its nonce_fresh guard is dead. Unverified Fable-5 finder-stage candidate; verify before implementing. See docs/audit/fable-2026-07.md.'
+    origin: manual
+    discovered: 2026-07-02
+  T56:
+    name: pigeon relay register/unregister are ownership-checked so an instance ID cannot be hijacked or cross-cancelled
+    status: identified
+    value: 8.0
+    cost: 3.0
+    acceptance:
+    - hub.register refuses to claim an ID currently owned by a live connection (no last-writer-wins)
+    - hub.unregister removes only the entry owned by the departing connection
+    - Re-registering an ID never lets an old connection's teardown cancel the new live instance
+    context: 'HIGH (two finders converged). session.go:69 and :77: hub.register is last-writer-wins on a client-chosen ID and hub.unregister deletes/cancels by ID with no ownership check → instance-ID hijack and cross-cancel. Unverified Fable-5 finder-stage candidate; verify before implementing. See docs/audit/fable-2026-07.md.'
+    origin: manual
+    discovered: 2026-07-02
   T6:
     name: WebTransport relay
     status: achieved
