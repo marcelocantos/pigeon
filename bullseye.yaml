@@ -1677,9 +1677,10 @@ targets:
     discovered: 2026-07-02
   T51:
     name: pigeon reconnect authentication requires cryptographic proof of pairing, not a bare device_id
-    status: identified
+    status: set_aside
     value: 8.0
     cost: 5.0
+    set_aside_reason: 'Refuted by two-lens re-verification (2026-07-03): the spec''d AuthRequiresCompletedPairing invariant is a device-membership check (received_device_id ∈ paired_devices), which the runtime upholds; the real security boundary is the AEAD channel keyed from the PairingRecord, which an attacker asserting a public device_id cannot cross. Documented as in-design (DESIGN.md: relay auth is orthogonal to AEAD security). Residual low-severity notes only: an integrator footgun (Session.PeerID exposed before the first AEAD round-trip) and unauthenticated resource commit (covered by resource-ceiling work). Not a high-severity auth bypass — false positive.'
     acceptance:
     - Runtime activation authenticates with a nonce/secret/signature bound to the pairing (matching the modeled SessionMachine authenticators)
     - A peer presenting only a public device_id cannot reach SessionActive
