@@ -121,6 +121,27 @@ video.Send(frame)
 frame, err := video.Recv(ctx)
 ```
 
+## Multi-service nodes
+
+One paired node can front several independently-addressed services over a
+single pairing: pair once, then discover and join services by *route*. A
+service is a `Session` (not a multiplex over channels).
+
+- **`ConnectArgs.Route`** — client selects a service; empty = default.
+  Multiple `Connect` calls with one `PairingRecord` but different routes
+  yield independent concurrent Sessions.
+- **`Session.Route()`** — the accepted backend Session exposes the route it
+  was reached on, so the node dispatches (`route → service`).
+- **`RegisterArgs.Discover func(clientID) ([]RouteEntry, error)`** — the
+  node's discovery policy; `RouteEntry{Route, Metadata}` where `Metadata`
+  is opaque app bytes. Visibility (Discover) is independent of
+  connectability (accepting a routed `Connect`).
+- **`Session.Enumerate(ctx) ([]RouteEntry, error)`** — client-side: list a
+  node's visible routes (a snapshot; call again to refresh).
+
+The route rides the end-to-end activation handshake — the relay never sees
+it. Full design and deployment shapes: `docs/multiplexing.md`.
+
 ## Relay Authentication
 
 The relay server accepts a `pigeon.Auth` hook that controls which backends and clients it admits. Both fields are optional; the zero `Auth` means "accept all" (open relay).

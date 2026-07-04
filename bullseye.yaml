@@ -1689,7 +1689,7 @@ targets:
     - DeriveSessionChannel/DeriveChannel incorporate a per-session nonce or salt so two sessions under one PairingRecord get distinct keys
     - A reconnect does not reuse the prior session's key with the counter reset to 0
     - Bullseye T44.1's acceptance holds
-    context: 'CRITICAL. cwire/connect.go:355: session keys are a deterministic function of the static PairingRecord with fixed HKDF info, and each new channel resets send_seq to 0 — so every reconnect reuses nonce 0,1,2… under the identical key, and concurrent sessions derive identical keys. Unverified Fable-5 finder-stage candidate; verify before implementing. See docs/audit/fable-2026-07.md.'
+    context: 'CRITICAL. PARTIALLY FIXED in v0.25.0. The activation path — Go pigeon.Connect/Register and the C SDK — now folds a fresh per-session nonce from auth_request into DeriveSessionChannel''s HKDF info (🎯T44.1, retired), so activation-based reconnects and concurrent sessions under one PairingRecord derive distinct keys (verified by cwire/persession_test.go). Go production is fully safe: its crypto.DeriveChannel is test-only, and every live Go session goes through the nonced activation path. REMAINING (this target stays open): the deterministic artifact-reconnect path still reuses keys — Swift PigeonConn.connect(artifact:), Kotlin connectWithArtifact, and TS relay.ts derive the session channel via the nonce-less DeriveChannel primitive (client-to-server/server-to-client labels) with no activation handshake, so a reconnect there reuses the key with the GCM counter reset to 0. Fold a per-session salt into that path too (the audit''s explicit crypto.DeriveChannel fix). See docs/audit/fable-2026-07.md F2.'
     origin: manual
     discovered: 2026-07-02
   T51:
