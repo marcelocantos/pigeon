@@ -25,6 +25,11 @@ int pigeon_generate_keypair(pigeon_keypair *kp)
     return crypto_scalarmult_base(kp->public_key, kp->private_key) == 0 ? 0 : -1;
 }
 
+void pigeon_random_bytes(uint8_t *buf, size_t n)
+{
+    randombytes_buf(buf, n);
+}
+
 // Internal: HKDF-SHA256 extract + expand. libsodium doesn't have HKDF
 // natively, so we build it from HMAC-SHA256.
 static int hkdf_sha256(const uint8_t *ikm, size_t ikm_len,

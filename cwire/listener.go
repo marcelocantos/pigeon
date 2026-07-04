@@ -53,23 +53,24 @@ func (s *Session) AcceptIncomingStream(name string) (*Stream, error) {
 	return st, nil
 }
 
-// RunClientActivation drives the client-side of the activation exchange
-// on an already-opened stream: sends auth_request{device_id}, reads
-// auth_ok, and returns whether the activation was accepted.
-// The stream handle must have already been posted to the backend's
-// accept queue (i.e. the backend's transport->accept_stream will return it).
+// RunClientActivation drives the client-side of the activation exchange on
+// an already-opened stream: mints a fresh per-session nonce, sends
+// auth_request{device_id, nonce}, reads auth_ok, and returns the nonce
+// (nonceLen bytes) for DeriveSessionChannel. The stream handle must have
+// already been posted to the backend's accept queue (i.e. the backend's
+// transport->accept_stream will return it).
 //
 // This is used by tests that need to simulate a client without depending
 // on the parallel cwire.Connect implementation.
-func RunClientActivation(ref *GoTransportRef, handle unsafe.Pointer, deviceID string) error {
+func RunClientActivation(ref *GoTransportRef, handle unsafe.Pointer, deviceID, route string) ([]byte, error) {
 	if ref == nil || ref.cudata == nil {
-		return errors.New("cwire: RunClientActivation: nil ref")
+		return nil, errors.New("cwire: RunClientActivation: nil ref")
 	}
 	if handle == nil {
-		return errors.New("cwire: RunClientActivation: nil handle")
+		return nil, errors.New("cwire: RunClientActivation: nil handle")
 	}
 	if deviceID == "" {
-		return errors.New("cwire: RunClientActivation: empty deviceID")
+		return nil, errors.New("cwire: RunClientActivation: empty deviceID")
 	}
 
 	var t C.pigeon_transport
@@ -77,22 +78,27 @@ func RunClientActivation(ref *GoTransportRef, handle unsafe.Pointer, deviceID st
 
 	cDeviceID := C.CString(deviceID)
 	defer C.free(unsafe.Pointer(cDeviceID))
+	cRoute := C.CString(route)
+	defer C.free(unsafe.Pointer(cRoute))
 
 	// pigeon_client_machine is only needed as an output; we pass a
 	// zero-initialised one and discard it post-activation.
 	var machine C.pigeon_client_machine
+	var outNonce [nonceLen]C.uint8_t
 
 	rv := C.pigeon_run_client_activation(
 		unsafe.Pointer(&t),
 		handle,
 		cDeviceID,
+		cRoute,
 		unsafe.Pointer(&machine),
 		nil, 0,
+		&outNonce[0],
 	)
 	if rv != 0 {
-		return errors.New("cwire: pigeon_run_client_activation failed (rejected or wire error)")
+		return nil, errors.New("cwire: pigeon_run_client_activation failed (rejected or wire error)")
 	}
-	return nil
+	return C.GoBytes(unsafe.Pointer(&outNonce[0]), C.int(nonceLen)), nil
 }
 
 // ConnectOnTransport drives the client-side of the activation handshake on

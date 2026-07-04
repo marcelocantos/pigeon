@@ -1,7 +1,10 @@
 # Multi-service nodes: sub-addressing + discovery
 
-> **Status:** Design decisions — agreed, no code yet. Tracked by 🎯T44
-> (umbrella) and its sub-targets 🎯T44.1 / 🎯T44.2 / 🎯T44.3.
+> **Status:** Implemented (Go). Per-session keys (🎯T44.1), sub-addressing
+> (🎯T44.2), and discovery (🎯T44.3) are done and exercised end-to-end
+> (`e2e_test.go` `TestE2EMultiServiceNode`). Cross-SDK backend/session parity
+> (Swift/Kotlin/TS) and cascading relay-level routing are follow-on — see
+> §12. Tracked by 🎯T44 (umbrella) and its sub-targets.
 > **Supersedes** the route-substream multiplexing sketch in
 > [`cascading-relay.md`](cascading-relay.md) §4a and resolves its §5/§9
 > open questions.
@@ -201,3 +204,35 @@ the same thing. Do **not** add a generic `Router` type speculatively.
 | 🎯T44.3 | `enumerate` wireformat + `Discover` hook; visibility vs connectability |
 
 Dependency order: T44.1 → T44.2 → T44.3 → T44.
+
+## 12. Implementation status and deviations from this design
+
+Shipped (Go), verified by `make bullseye` (incl. C↔Go interop) and the
+`e2e_test.go` oracles `TestE2ERoutedSessions`, `TestE2EDiscovery`, and
+`TestE2EMultiServiceNode`:
+
+- **Per-session keys (T44.1)** — a fresh 16-byte client nonce rides
+  `auth_request` and is folded into the HKDF `info` on both sides
+  (`c/src/activation.c`, `cwire`, C SDK). Landed across the activation
+  ecosystem (C + Go + Swift `PigeonSession`, which routes through the C path).
+- **Sub-addressing (T44.2)** — `ConnectArgs.Route` / `Session.Route()`.
+
+Two deviations from the sketch above, made during implementation:
+
+- **The route rides the end-to-end `auth_request`, not the relay greeting
+  or a `wireformats.yaml` entry** (§3 left the wire unspecified; this is the
+  concrete choice). The relay never sees the route — better privacy, and it
+  serves the in-process-dispatch model directly. Cascading relay-level
+  routing (where a local relay *does* need the route in a greeting to pick a
+  downstream game-server backend) is the remaining piece of the cascading
+  deployment, not yet built.
+- **The `enumerate` codec is Go-side today, not `protocol/wireformats.yaml`**
+  (§5's mechanism-in-protocol goal). `RegisterArgs.Discover` + the reserved
+  discovery stream + the length-prefixed `{route, opaque-metadata}` list live
+  in `discovery.go`. Promoting the codec into `wireformats.yaml` so
+  Swift/Kotlin/TS get a consistent client `Enumerate` is follow-on, tracked
+  with the broader Swift/Kotlin/TS backend/session parity gap (DESIGN.md §9).
+
+Follow-on (not blocking the Go ge/ged use case): Swift/Kotlin/TS
+backend-side `Discover`/`Route()` parity; cascading relay-level route
+dispatch; optional live discovery subscription (still a §1 non-goal today).

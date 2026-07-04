@@ -143,6 +143,10 @@ void pigeon_init(pigeon_ctx *ctx, const pigeon_transport *transport);
 // Generate an X25519 key pair. Returns 0 on success, -1 on error.
 int pigeon_generate_keypair(pigeon_keypair *kp);
 
+// Fill buf with n cryptographically-secure random bytes. Used to mint the
+// per-session activation nonce (see PIGEON_AUTH_NONCE_LEN in activation.h).
+void pigeon_random_bytes(uint8_t *buf, size_t n);
+
 // Derive a 32-byte session key from local private key + peer public key.
 // info/info_len provide HKDF context. Output written to out_key (32 bytes).
 int pigeon_derive_session_key(const uint8_t *private_key,

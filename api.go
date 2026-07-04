@@ -44,6 +44,16 @@ type RegisterArgs struct {
 	// PairingRecord. Returning (nil, err) rejects the connection.
 	Pairing func(clientID string) (*crypto.PairingRecord, error)
 
+	// Discover, if set, makes this node answer route-enumeration requests
+	// (Session.Enumerate) from accepted clients (🎯T44.3). It returns the
+	// routes visible to the given client — the node's discovery policy.
+	// clientID is the peer's stable identifier (as resolved by Pairing).
+	// The list may differ per client (per-peer visibility) and is
+	// independent of connectability: a route may be listed but a Connect
+	// to it rejected, or unlisted but reachable by a client that knows it.
+	// nil disables discovery (enumerate requests go unanswered).
+	Discover func(clientID string) ([]RouteEntry, error)
+
 	// Relay is the relay URL (e.g. "https://relay.example.com").
 	Relay string
 
@@ -65,6 +75,15 @@ type ConnectArgs struct {
 	// InstanceID is the backend's stable identifier (carried in
 	// PairingRecord.PeerInstanceID after pairing).
 	InstanceID string
+
+	// Route is an optional sub-address selecting a service under a
+	// multi-service backend node (🎯T44.2). Empty selects the node's
+	// default service. The relay never sees it — it rides the end-to-end
+	// activation handshake. The accepted backend Session exposes it via
+	// Session.Route(), so the node can dispatch each session to the right
+	// service. Multiple Connect calls with the same Record but different
+	// routes yield independent concurrent Sessions.
+	Route string
 
 	// Record is the PairingRecord persisted from the pairing ceremony.
 	Record *crypto.PairingRecord
@@ -347,7 +366,7 @@ func (l *Listener) activate(tr *transport) (*Session, error) {
 		ref.Close()
 		return nil, errors.New("activation succeeded but no record captured")
 	}
-	channel, err := cwire.DeriveSessionChannel(pairingRecordToCwire(rec), true)
+	channel, err := cwire.DeriveSessionChannel(pairingRecordToCwire(rec), true, result.Nonce)
 	if err != nil {
 		removeStream(cwirePrimary)
 		ref.Close()
@@ -355,6 +374,8 @@ func (l *Listener) activate(tr *transport) (*Session, error) {
 	}
 
 	sess := newSession(l.ctx, tr, channel, result.DeviceID, l.args.Datagrams, true)
+	sess.route = result.Route
+	sess.discover = l.args.Discover
 	sess.ownsTransport = true
 	sess.cwireRef = ref
 	sess.cwirePrimary = cwirePrimary
@@ -430,13 +451,14 @@ func Connect(ctx context.Context, args *ConnectArgs) (*Session, error) {
 		adapter := newGoTransportAdapter(ctx, tr)
 		cwireRef = cwire.NewGoTransportRef(adapter)
 		cwirePrimary = adapter.adoptPrimary(tr.primary)
-		if err := cwire.RunClientActivation(cwireRef, cwirePrimary, args.Identity.InstanceID()); err != nil {
+		sessionNonce, actErr := cwire.RunClientActivation(cwireRef, cwirePrimary, args.Identity.InstanceID(), args.Route)
+		if actErr != nil {
 			removeStream(cwirePrimary)
 			cwireRef.Close()
 			_ = tr.Close()
-			return nil, fmt.Errorf("client activation: %w", err)
+			return nil, fmt.Errorf("client activation: %w", actErr)
 		}
-		channel, err = cwire.DeriveSessionChannel(pairingRecordToCwire(args.Record), false)
+		channel, err = cwire.DeriveSessionChannel(pairingRecordToCwire(args.Record), false, sessionNonce)
 		if err != nil {
 			removeStream(cwirePrimary)
 			cwireRef.Close()
@@ -446,6 +468,7 @@ func Connect(ctx context.Context, args *ConnectArgs) (*Session, error) {
 	}
 
 	sess := newSession(ctx, tr, channel, args.InstanceID, args.Datagrams, false)
+	sess.route = args.Route
 	sess.ownsTransport = true
 	sess.cwireRef = cwireRef
 	sess.cwirePrimary = cwirePrimary
@@ -486,6 +509,7 @@ type Session struct {
 	transport     *transport
 	channel       *cwire.Channel
 	peerID        string
+	route         string
 	isBackend     bool
 	ownsTransport bool
 
@@ -509,6 +533,10 @@ type Session struct {
 	// Datagrams are pre-declared by name → channel-id at construction.
 	dgConfig  map[string]uint64
 	datagrams map[uint64]*Datagram
+
+	// discover, on a backend session, answers Session.Enumerate requests on
+	// the reserved discovery stream (🎯T44.3); nil = discovery disabled.
+	discover func(clientID string) ([]RouteEntry, error)
 
 	closeOnce sync.Once
 }
@@ -545,6 +573,12 @@ func (s *Session) bindPrimary(stream io.ReadWriteCloser) {
 
 // PeerID returns the InstanceID of the remote peer.
 func (s *Session) PeerID() string { return s.peerID }
+
+// Route returns the sub-address this session was established on (🎯T44.2).
+// On the backend it is the route the client requested during activation; on
+// the client it is ConnectArgs.Route. Empty for the default service and for
+// pairing-mode sessions. A multi-service node dispatches on this.
+func (s *Session) Route() string { return s.route }
 
 // OpenStream opens a fresh, reliable, ordered, message-framed channel
 // identified by `name`. Both peers must call OpenStream/AcceptStream with
@@ -646,6 +680,12 @@ func (s *Session) acceptLoop() {
 		if err != nil {
 			slog.Warn("session: parse sub-stream header", "err", err)
 			_ = rwc.Close()
+			continue
+		}
+		if name == discoveryStreamName && s.discover != nil {
+			// 🎯T44.3: answer route enumeration internally instead of
+			// surfacing the reserved stream to the application.
+			go s.handleEnumerate(&Stream{name: name, rwc: rwc, channel: s.channel})
 			continue
 		}
 		s.deliverIncomingStream(name, rwc)

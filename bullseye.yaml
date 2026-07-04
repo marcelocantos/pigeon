@@ -1520,7 +1520,7 @@ targets:
     discovered: 2026-05-02
   T44:
     name: A paired node fronts multiple independently-addressed services over a single pairing
-    status: converging
+    status: achieved
     value: 0.0
     cost: 0.0
     acceptance:
@@ -1537,9 +1537,10 @@ targets:
     - T44.3
     origin: docs/DESIGN.md section 9 (future explorations); docs/cascading-relay.md is the deep exploration
     discovered: 2026-05-02
+    achieved: 2026-07-04
   T44.1:
     name: Concurrent sessions under one PairingRecord derive distinct AEAD keys
-    status: identified
+    status: achieved
     value: 0.0
     cost: 0.0
     acceptance:
@@ -1550,9 +1551,10 @@ targets:
     context: 'Hard correctness blocker for any multi-session-per-pairing capability. Today cwire.DeriveSessionChannel derives keys purely from (PairingRecord, direction string); two sessions from one record get identical keys, and with AES-256-GCM monotonic-counter nonces restarting at 0 that is catastrophic nonce reuse. The activation handshake already carries a fresh auth nonce (session.yaml: received_auth_nonce / auth_nonces_used / nonce_fresh) used today only for replay protection — fold it into HKDF. Independently good hygiene: reconnect sessions stop reusing keys too. Prerequisite for T44.2. See docs/multiplexing.md.'
     origin: manual
     discovered: 2026-06-28
+    achieved: 2026-07-04
   T44.2:
     name: A backend exposes sub-addressed routes; a client opens one isolated Session per route over a single pairing
-    status: identified
+    status: achieved
     value: 0.0
     cost: 0.0
     acceptance:
@@ -1567,9 +1569,10 @@ targets:
     - T44.1
     origin: manual
     discovered: 2026-06-28
+    achieved: 2026-07-04
   T44.3:
     name: Clients discover a backend's routes via a protocol enumerate RPC gated by a backend Discover hook
-    status: identified
+    status: achieved
     value: 0.0
     cost: 0.0
     acceptance:
@@ -1584,6 +1587,20 @@ targets:
     - T44.2
     origin: manual
     discovered: 2026-06-28
+    achieved: 2026-07-04
+  T44.4:
+    name: Cross-SDK parity and cascading for multi-service nodes
+    status: identified
+    value: 0.0
+    cost: 0.0
+    acceptance:
+    - Swift/Kotlin/TS expose the client route (ConnectArgs.Route / Session.Route() equivalents) and a backend Discover hook + Enumerate client — currently Go-only (Swift PigeonSession carries the route via the C path but has no route/Discover API).
+    - The enumerate request/response codec is promoted from Go-side discovery.go into protocol/wireformats.yaml so all SDKs share one generated wire format for route discovery.
+    - 'Cascading relay-level route dispatch: a local relay reads the route from the connect greeting (not only the end-to-end activation) so it can bridge a player to the correct downstream game-server *backend*, enabling services as separate processes.'
+    - An end-to-end test drives a non-Go client (Swift or Kotlin) through the enumerate + routed-join flow, and a cascading test drives one player through a local relay to two separate game-server backends selected by route.
+    context: 'T44 shipped the multi-service-node capability Go-first: per-session keys (T44.1), sub-addressing (T44.2), and discovery (T44.3), verified end-to-end by e2e_test.go TestE2EMultiServiceNode and released in v0.25.0. Two deliberate scope choices are the follow-on captured here: the route rides the end-to-end auth_request (the relay stays route-blind, which serves in-process dispatch but not cascading relay-level routing), and the enumerate codec is hand-coded Go-side. This target carries the deferred cross-SDK backend/session parity (Swift/Kotlin/TS were already behind per DESIGN.md §9 #6), the wireformats promotion of the enumerate codec, and cascading relay-level routing (services as separate backends). Full design and the deviations: docs/multiplexing.md §12.'
+    origin: manual
+    discovered: 2026-07-04
   T45:
     name: 'Relay''s L1 collapses to the remote-Listen model: register / listen / accept / connect with per-client end-to-end QUIC pipes, replacing the register-mux greeting and the clientTag prefix scheme'
     status: achieved
