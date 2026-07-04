@@ -66,6 +66,15 @@ type ConnectArgs struct {
 	// PairingRecord.PeerInstanceID after pairing).
 	InstanceID string
 
+	// Route is an optional sub-address selecting a service under a
+	// multi-service backend node (🎯T44.2). Empty selects the node's
+	// default service. The relay never sees it — it rides the end-to-end
+	// activation handshake. The accepted backend Session exposes it via
+	// Session.Route(), so the node can dispatch each session to the right
+	// service. Multiple Connect calls with the same Record but different
+	// routes yield independent concurrent Sessions.
+	Route string
+
 	// Record is the PairingRecord persisted from the pairing ceremony.
 	Record *crypto.PairingRecord
 
@@ -355,6 +364,7 @@ func (l *Listener) activate(tr *transport) (*Session, error) {
 	}
 
 	sess := newSession(l.ctx, tr, channel, result.DeviceID, l.args.Datagrams, true)
+	sess.route = result.Route
 	sess.ownsTransport = true
 	sess.cwireRef = ref
 	sess.cwirePrimary = cwirePrimary
@@ -430,7 +440,7 @@ func Connect(ctx context.Context, args *ConnectArgs) (*Session, error) {
 		adapter := newGoTransportAdapter(ctx, tr)
 		cwireRef = cwire.NewGoTransportRef(adapter)
 		cwirePrimary = adapter.adoptPrimary(tr.primary)
-		sessionNonce, actErr := cwire.RunClientActivation(cwireRef, cwirePrimary, args.Identity.InstanceID())
+		sessionNonce, actErr := cwire.RunClientActivation(cwireRef, cwirePrimary, args.Identity.InstanceID(), args.Route)
 		if actErr != nil {
 			removeStream(cwirePrimary)
 			cwireRef.Close()
@@ -447,6 +457,7 @@ func Connect(ctx context.Context, args *ConnectArgs) (*Session, error) {
 	}
 
 	sess := newSession(ctx, tr, channel, args.InstanceID, args.Datagrams, false)
+	sess.route = args.Route
 	sess.ownsTransport = true
 	sess.cwireRef = cwireRef
 	sess.cwirePrimary = cwirePrimary
@@ -487,6 +498,7 @@ type Session struct {
 	transport     *transport
 	channel       *cwire.Channel
 	peerID        string
+	route         string
 	isBackend     bool
 	ownsTransport bool
 
@@ -546,6 +558,12 @@ func (s *Session) bindPrimary(stream io.ReadWriteCloser) {
 
 // PeerID returns the InstanceID of the remote peer.
 func (s *Session) PeerID() string { return s.peerID }
+
+// Route returns the sub-address this session was established on (🎯T44.2).
+// On the backend it is the route the client requested during activation; on
+// the client it is ConnectArgs.Route. Empty for the default service and for
+// pairing-mode sessions. A multi-service node dispatches on this.
+func (s *Session) Route() string { return s.route }
 
 // OpenStream opens a fresh, reliable, ordered, message-framed channel
 // identified by `name`. Both peers must call OpenStream/AcceptStream with

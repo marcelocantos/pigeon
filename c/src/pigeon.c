@@ -617,7 +617,7 @@ int pigeon_connect_on_transport(const pigeon_transport *transport,
         pigeon_client_machine cm;
         uint8_t session_nonce[PIGEON_AUTH_NONCE_LEN];
         if (pigeon_run_client_activation(transport, primary_handle,
-                                         device_id, &cm,
+                                         device_id, /*route=*/"", &cm,
                                          NULL, 0, session_nonce) != 0) {
             return -1;
         }

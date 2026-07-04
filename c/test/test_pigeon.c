@@ -1547,7 +1547,8 @@ static void *run_backend_thread(void *p)
                                           activation_resolve, a->rctx,
                                           a->machine,
                                           a->device_id_seen, a->device_id_cap,
-                                          a->record, a->nonce);
+                                          a->record, a->nonce,
+                                          /*out_route=*/NULL, 0);
     return NULL;
 }
 
@@ -1579,7 +1580,7 @@ static void test_activation_known_device(void)
     }
 
     uint8_t cnonce[PIGEON_AUTH_NONCE_LEN];
-    int crc = pigeon_run_client_activation(&tc, cs, "device-known-1",
+    int crc = pigeon_run_client_activation(&tc, cs, "device-known-1", /*route=*/"",
                                            &cm, NULL, 0, cnonce);
     pthread_join(tid, NULL);
 
@@ -1628,7 +1629,7 @@ static void test_activation_unknown_device(void)
     }
 
     uint8_t cnonce[PIGEON_AUTH_NONCE_LEN];
-    int crc = pigeon_run_client_activation(&tc, cs, "device-stranger",
+    int crc = pigeon_run_client_activation(&tc, cs, "device-stranger", /*route=*/"",
                                            &cm, client_reason, sizeof(client_reason), cnonce);
     pthread_join(tid, NULL);
 
@@ -1745,7 +1746,7 @@ static void *run_listener_client(void *p)
     }
     pigeon_client_machine cm;
     uint8_t cnonce[PIGEON_AUTH_NONCE_LEN];
-    a->rc = pigeon_run_client_activation(a->transport, h, a->device_id,
+    a->rc = pigeon_run_client_activation(a->transport, h, a->device_id, /*route=*/"",
                                          &cm, NULL, 0, cnonce);
     return NULL;
 }
@@ -1960,7 +1961,8 @@ static void *run_backend_connect_thread(void *p)
                                           activation_resolve, a->rctx,
                                           a->machine,
                                           a->device_id_seen, a->device_id_cap,
-                                          a->record, a->nonce);
+                                          a->record, a->nonce,
+                                          /*out_route=*/NULL, 0);
     return NULL;
 }
 
@@ -2188,11 +2190,13 @@ static void test_activation_wire_roundtrip(void)
     // auth_request: tag 0x01, varint(len), device-id, 16-byte nonce.
     uint8_t nonce_in[PIGEON_AUTH_NONCE_LEN];
     for (size_t i = 0; i < PIGEON_AUTH_NONCE_LEN; i++) nonce_in[i] = (uint8_t)(i + 1);
-    int n = pigeon_encode_auth_request("device-wire-1", nonce_in, buf, sizeof(buf));
+    int n = pigeon_encode_auth_request("device-wire-1", nonce_in, "gs-42", buf, sizeof(buf));
     if (n < 0) { FAIL("encode auth_request"); return; }
     char id_out[64];
     uint8_t nonce_out[PIGEON_AUTH_NONCE_LEN];
-    if (pigeon_decode_auth_request(buf, (size_t)n, id_out, sizeof(id_out), nonce_out) != 0) {
+    char route_out[PIGEON_AUTH_MAX_ROUTE + 1];
+    if (pigeon_decode_auth_request(buf, (size_t)n, id_out, sizeof(id_out), nonce_out,
+                                   route_out, sizeof(route_out)) != 0) {
         FAIL("decode auth_request"); return;
     }
     if (strcmp(id_out, "device-wire-1") != 0) {
@@ -2200,6 +2204,9 @@ static void test_activation_wire_roundtrip(void)
     }
     if (memcmp(nonce_in, nonce_out, PIGEON_AUTH_NONCE_LEN) != 0) {
         FAIL("auth_request nonce roundtrip mismatch"); return;
+    }
+    if (strcmp(route_out, "gs-42") != 0) {
+        FAIL("auth_request route roundtrip mismatch"); return;
     }
 
     // auth_ok accepted: tag 0x02, 0x01.

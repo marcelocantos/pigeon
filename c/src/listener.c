@@ -221,7 +221,8 @@ int pigeon_listener_accept(pigeon_listener *l, pigeon_session **out_session)
                                            &machine,
                                            device_id, sizeof(device_id),
                                            &record,
-                                           session_nonce);
+                                           session_nonce,
+                                           /*out_route=*/NULL, 0);
     if (rc != 0) {
         // -1 (wire failure) or 1 (decoded but rejected): tear down the
         // listen connection. Matches the Go-side behaviour: rejected

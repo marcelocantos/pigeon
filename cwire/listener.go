@@ -62,7 +62,7 @@ func (s *Session) AcceptIncomingStream(name string) (*Stream, error) {
 //
 // This is used by tests that need to simulate a client without depending
 // on the parallel cwire.Connect implementation.
-func RunClientActivation(ref *GoTransportRef, handle unsafe.Pointer, deviceID string) ([]byte, error) {
+func RunClientActivation(ref *GoTransportRef, handle unsafe.Pointer, deviceID, route string) ([]byte, error) {
 	if ref == nil || ref.cudata == nil {
 		return nil, errors.New("cwire: RunClientActivation: nil ref")
 	}
@@ -78,6 +78,8 @@ func RunClientActivation(ref *GoTransportRef, handle unsafe.Pointer, deviceID st
 
 	cDeviceID := C.CString(deviceID)
 	defer C.free(unsafe.Pointer(cDeviceID))
+	cRoute := C.CString(route)
+	defer C.free(unsafe.Pointer(cRoute))
 
 	// pigeon_client_machine is only needed as an output; we pass a
 	// zero-initialised one and discard it post-activation.
@@ -88,6 +90,7 @@ func RunClientActivation(ref *GoTransportRef, handle unsafe.Pointer, deviceID st
 		unsafe.Pointer(&t),
 		handle,
 		cDeviceID,
+		cRoute,
 		unsafe.Pointer(&machine),
 		nil, 0,
 		&outNonce[0],

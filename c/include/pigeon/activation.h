@@ -69,24 +69,36 @@ extern "C" {
 // only: auth_ok carries no nonce.
 #define PIGEON_AUTH_NONCE_LEN     16
 
+// PIGEON_AUTH_MAX_ROUTE bounds the optional route sub-address a client
+// declares in auth_request to select a service under a multi-service node
+// (🎯T44.2). An empty route selects the node's default / control service.
+// The relay never sees the route — it rides the end-to-end activation
+// handshake, not the relay greeting.
+#define PIGEON_AUTH_MAX_ROUTE     128
+
 // --- Wire encoders / decoders ---
 
 // pigeon_encode_auth_request builds the binary payload for the client's
 // auth_request message:
-//   [tag][uvarint device-id len][device-id][PIGEON_AUTH_NONCE_LEN nonce].
-// `nonce` must point to PIGEON_AUTH_NONCE_LEN bytes. Returns the encoded
-// length on success, or -1 if buf_len is too small.
+//   [tag][uvarint device-id len][device-id][PIGEON_AUTH_NONCE_LEN nonce]
+//   [uvarint route len][route].
+// `nonce` must point to PIGEON_AUTH_NONCE_LEN bytes. `route` is a
+// NUL-terminated sub-address (may be "" for the default service). Returns
+// the encoded length on success, or -1 if buf_len is too small.
 int pigeon_encode_auth_request(const char *device_id,
                                const uint8_t *nonce,
+                               const char *route,
                                uint8_t *buf, size_t buf_len);
 
 // pigeon_decode_auth_request parses an auth_request payload, copies the
-// device ID (NUL-terminated) into out_device_id, and copies the
-// PIGEON_AUTH_NONCE_LEN-byte session nonce into out_nonce. Returns 0 on
-// success, -1 on malformed payload or oversized device id.
+// device ID (NUL-terminated) into out_device_id, copies the
+// PIGEON_AUTH_NONCE_LEN-byte session nonce into out_nonce, and copies the
+// NUL-terminated route into out_route (out_route_cap bytes). Returns 0 on
+// success, -1 on malformed payload or oversized device id / route.
 int pigeon_decode_auth_request(const uint8_t *payload, size_t payload_len,
                                char *out_device_id, size_t out_cap,
-                               uint8_t *out_nonce);
+                               uint8_t *out_nonce,
+                               char *out_route, size_t out_route_cap);
 
 // pigeon_encode_auth_ok builds the binary payload for the backend's
 // auth_ok reply. ok=true: [tag][0x01]; ok=false: [tag][0x00][uvarint
@@ -142,6 +154,11 @@ typedef int (*pigeon_resolve_device_fn)(void *userdata,
 // session nonce decoded from the client's auth_request; the caller folds it
 // into session-key derivation (🎯T44.1). out_nonce must point to at least
 // PIGEON_AUTH_NONCE_LEN bytes; it is untouched on the -1/1 paths.
+//
+// out_route (out_route_cap bytes) receives the NUL-terminated route
+// sub-address the client declared (🎯T44.2); it is "" for the default
+// service. Populated on the 0 and 1 paths (decoded before the auth
+// decision), emptied on wire-decode failure. Pass NULL/0 to ignore.
 int pigeon_run_backend_activation(const void *transport,
                                   void *stream,
                                   pigeon_resolve_device_fn resolve,
@@ -149,14 +166,18 @@ int pigeon_run_backend_activation(const void *transport,
                                   void *out_machine,
                                   char *out_device_id, size_t out_device_id_cap,
                                   void *out_record,
-                                  uint8_t *out_nonce);
+                                  uint8_t *out_nonce,
+                                  char *out_route, size_t out_route_cap);
 
 // pigeon_run_client_activation drives the client's per-client
 // SessionMachine through Reconnect -> SendAuth -> SessionActive.
 // Mints a fresh PIGEON_AUTH_NONCE_LEN-byte session nonce, writes
-// auth_request{device_id, nonce} to `stream`, reads the auth_ok reply,
-// and on acceptance populates `out_machine`. On rejection returns -1 and
-// (if out_reason is non-NULL) copies the backend's reason into out_reason.
+// auth_request{device_id, nonce, route} to `stream`, reads the auth_ok
+// reply, and on acceptance populates `out_machine`. `route` is a
+// NUL-terminated sub-address selecting a service under the peer node
+// (🎯T44.2); pass "" or NULL for the default service. On rejection returns
+// -1 and (if out_reason is non-NULL) copies the backend's reason into
+// out_reason.
 //
 // On success (return 0), out_nonce receives the minted session nonce; the
 // caller folds it into session-key derivation (🎯T44.1). out_nonce must
@@ -166,6 +187,7 @@ int pigeon_run_backend_activation(const void *transport,
 int pigeon_run_client_activation(const void *transport,
                                  void *stream,
                                  const char *device_id,
+                                 const char *route,
                                  void *out_machine,
                                  char *out_reason, size_t out_reason_cap,
                                  uint8_t *out_nonce);

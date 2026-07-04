@@ -30,7 +30,8 @@ package cwire
 //     pigeon_backend_machine *out_machine,
 //     char *out_device_id, size_t out_device_id_cap,
 //     pigeon_pairing_record *out_record,
-//     uint8_t *out_nonce)
+//     uint8_t *out_nonce,
+//     char *out_route, size_t out_route_cap)
 // {
 //     return pigeon_run_backend_activation(t, stream,
 //                                          cwire_resolve_trampoline,
@@ -38,7 +39,8 @@ package cwire
 //                                          out_machine,
 //                                          out_device_id, out_device_id_cap,
 //                                          out_record,
-//                                          out_nonce);
+//                                          out_nonce,
+//                                          out_route, out_route_cap);
 // }
 import "C"
 
@@ -57,6 +59,11 @@ type StreamHandle = unsafe.Pointer
 // folded into the session-key HKDF info so concurrent sessions under one
 // PairingRecord derive distinct keys (🎯T44.1).
 const nonceLen = 16
+
+// maxRoute is the maximum route sub-address length. Must equal
+// PIGEON_AUTH_MAX_ROUTE in c/include/pigeon/activation.h. The route selects
+// a service under a multi-service node (🎯T44.2).
+const maxRoute = 128
 
 // ConnectArgs bundles inputs for Connect so the signature stays flat and
 // extensible without functional options.
@@ -208,6 +215,11 @@ type BackendActivationResult struct {
 	// the backend derives the same per-session keys as the client.
 	// Populated only when Accepted is true.
 	Nonce []byte
+
+	// Route is the sub-address the client selected in auth_request
+	// (🎯T44.2); "" for the default service. Lets a multi-service node
+	// dispatch the accepted Session to the right service.
+	Route string
 }
 
 // RunBackendActivationArgs bundles inputs for RunBackendActivation.
@@ -278,6 +290,7 @@ func RunBackendActivation(args *RunBackendActivationArgs) (*BackendActivationRes
 	var outDeviceID [129]C.char
 	var outRec C.pigeon_pairing_record
 	var outNonce [nonceLen]C.uint8_t
+	var outRoute [maxRoute + 1]C.char
 
 	rv := C.cwire_run_backend_activation(
 		&ct,
@@ -287,6 +300,7 @@ func RunBackendActivation(args *RunBackendActivationArgs) (*BackendActivationRes
 		&outDeviceID[0], C.size_t(len(outDeviceID)),
 		&outRec,
 		&outNonce[0],
+		&outRoute[0], C.size_t(len(outRoute)),
 	)
 
 	deviceID := C.GoString(&outDeviceID[0])
@@ -298,6 +312,7 @@ func RunBackendActivation(args *RunBackendActivationArgs) (*BackendActivationRes
 			Accepted: true,
 			Record:   recordFromC(&outRec),
 			Nonce:    C.GoBytes(unsafe.Pointer(&outNonce[0]), C.int(nonceLen)),
+			Route:    C.GoString(&outRoute[0]),
 		}, nil
 	case 1:
 		return &BackendActivationResult{
