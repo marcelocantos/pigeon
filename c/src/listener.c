@@ -84,27 +84,35 @@ static pigeon_session *make_session(pigeon_listener *l,
                                     const pigeon_transport *transport,
                                     pigeon_stream_handle *primary,
                                     void *owner,
-                                    const pigeon_pairing_record *rec)
+                                    const pigeon_pairing_record *rec,
+                                    const uint8_t *nonce)
 {
     pigeon_session *s = (pigeon_session *)calloc(1, sizeof(*s));
     if (!s) return NULL;
 
     // Derive the session AEAD channel from the resolved PairingRecord.
     // Mirrors api.go's DeriveSessionChannel on the Listener side:
-    // send=backend->client, recv=client->backend.
+    // send=backend->client, recv=client->backend. The per-session nonce
+    // (from the client's auth_request) is folded into the HKDF info so
+    // concurrent sessions under one record derive distinct keys (🎯T44.1):
+    // info = direction-label || nonce.
+    uint8_t send_info[sizeof("backend->client") - 1 + PIGEON_AUTH_NONCE_LEN];
+    uint8_t recv_info[sizeof("client->backend") - 1 + PIGEON_AUTH_NONCE_LEN];
+    memcpy(send_info, "backend->client", sizeof("backend->client") - 1);
+    memcpy(send_info + sizeof("backend->client") - 1, nonce, PIGEON_AUTH_NONCE_LEN);
+    memcpy(recv_info, "client->backend", sizeof("client->backend") - 1);
+    memcpy(recv_info + sizeof("client->backend") - 1, nonce, PIGEON_AUTH_NONCE_LEN);
     uint8_t send_key[32], recv_key[32];
     if (pigeon_derive_session_key(rec->local_private_key,
                                   rec->peer_public_key,
-                                  (const uint8_t *)"backend->client",
-                                  strlen("backend->client"),
+                                  send_info, sizeof(send_info),
                                   send_key) != 0) {
         free(s);
         return NULL;
     }
     if (pigeon_derive_session_key(rec->local_private_key,
                                   rec->peer_public_key,
-                                  (const uint8_t *)"client->backend",
-                                  strlen("client->backend"),
+                                  recv_info, sizeof(recv_info),
                                   recv_key) != 0) {
         free(s);
         return NULL;
@@ -206,12 +214,14 @@ int pigeon_listener_accept(pigeon_listener *l, pigeon_session **out_session)
     pigeon_backend_machine machine;
     char     device_id[PIGEON_AUTH_MAX_DEVICE_ID + 1] = {0};
     pigeon_pairing_record  record;
+    uint8_t  session_nonce[PIGEON_AUTH_NONCE_LEN];
     int rc = pigeon_run_backend_activation(&tr, primary,
                                            l->resolve,
                                            l->resolve_userdata,
                                            &machine,
                                            device_id, sizeof(device_id),
-                                           &record);
+                                           &record,
+                                           session_nonce);
     if (rc != 0) {
         // -1 (wire failure) or 1 (decoded but rejected): tear down the
         // listen connection. Matches the Go-side behaviour: rejected
@@ -223,7 +233,7 @@ int pigeon_listener_accept(pigeon_listener *l, pigeon_session **out_session)
 
     // 3. Build the session, deriving its AEAD channel and adopting the
     //    listen transport (and its owner cookie).
-    pigeon_session *sess = make_session(l, &tr, primary, owner, &record);
+    pigeon_session *sess = make_session(l, &tr, primary, owner, &record, session_nonce);
     if (!sess) {
         if (l->owner_close && owner) l->owner_close(owner);
         if (l->owner_free  && owner) l->owner_free(owner);

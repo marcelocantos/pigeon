@@ -347,7 +347,7 @@ func (l *Listener) activate(tr *transport) (*Session, error) {
 		ref.Close()
 		return nil, errors.New("activation succeeded but no record captured")
 	}
-	channel, err := cwire.DeriveSessionChannel(pairingRecordToCwire(rec), true)
+	channel, err := cwire.DeriveSessionChannel(pairingRecordToCwire(rec), true, result.Nonce)
 	if err != nil {
 		removeStream(cwirePrimary)
 		ref.Close()
@@ -430,13 +430,14 @@ func Connect(ctx context.Context, args *ConnectArgs) (*Session, error) {
 		adapter := newGoTransportAdapter(ctx, tr)
 		cwireRef = cwire.NewGoTransportRef(adapter)
 		cwirePrimary = adapter.adoptPrimary(tr.primary)
-		if err := cwire.RunClientActivation(cwireRef, cwirePrimary, args.Identity.InstanceID()); err != nil {
+		sessionNonce, actErr := cwire.RunClientActivation(cwireRef, cwirePrimary, args.Identity.InstanceID())
+		if actErr != nil {
 			removeStream(cwirePrimary)
 			cwireRef.Close()
 			_ = tr.Close()
-			return nil, fmt.Errorf("client activation: %w", err)
+			return nil, fmt.Errorf("client activation: %w", actErr)
 		}
-		channel, err = cwire.DeriveSessionChannel(pairingRecordToCwire(args.Record), false)
+		channel, err = cwire.DeriveSessionChannel(pairingRecordToCwire(args.Record), false, sessionNonce)
 		if err != nil {
 			removeStream(cwirePrimary)
 			cwireRef.Close()

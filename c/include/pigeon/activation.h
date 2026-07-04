@@ -62,21 +62,31 @@ extern "C" {
 // rejected auth_ok. Keeps wire decode bounded.
 #define PIGEON_AUTH_MAX_REASON    256
 
+// PIGEON_AUTH_NONCE_LEN is the length of the fresh per-session nonce the
+// client mints and carries in auth_request. Both sides fold it into the
+// session-key HKDF info so that concurrent or reconnecting sessions under
+// one PairingRecord derive distinct AEAD keys (🎯T44.1). Client-contributed
+// only: auth_ok carries no nonce.
+#define PIGEON_AUTH_NONCE_LEN     16
+
 // --- Wire encoders / decoders ---
 
-// pigeon_encode_auth_request builds the binary payload for the
-// client's auth_request message: [tag][uvarint device-id len][device-id].
-// Returns the encoded length on success, or -1 if buf_len is too
-// small.
+// pigeon_encode_auth_request builds the binary payload for the client's
+// auth_request message:
+//   [tag][uvarint device-id len][device-id][PIGEON_AUTH_NONCE_LEN nonce].
+// `nonce` must point to PIGEON_AUTH_NONCE_LEN bytes. Returns the encoded
+// length on success, or -1 if buf_len is too small.
 int pigeon_encode_auth_request(const char *device_id,
+                               const uint8_t *nonce,
                                uint8_t *buf, size_t buf_len);
 
-// pigeon_decode_auth_request parses an auth_request payload and
-// copies the device ID (NUL-terminated) into out_device_id.
-// Returns 0 on success, -1 on malformed payload or oversized device
-// id.
+// pigeon_decode_auth_request parses an auth_request payload, copies the
+// device ID (NUL-terminated) into out_device_id, and copies the
+// PIGEON_AUTH_NONCE_LEN-byte session nonce into out_nonce. Returns 0 on
+// success, -1 on malformed payload or oversized device id.
 int pigeon_decode_auth_request(const uint8_t *payload, size_t payload_len,
-                               char *out_device_id, size_t out_cap);
+                               char *out_device_id, size_t out_cap,
+                               uint8_t *out_nonce);
 
 // pigeon_encode_auth_ok builds the binary payload for the backend's
 // auth_ok reply. ok=true: [tag][0x01]; ok=false: [tag][0x00][uvarint
@@ -127,27 +137,38 @@ typedef int (*pigeon_resolve_device_fn)(void *userdata,
 // pointer types here — see the comment block above. Pass real
 // pigeon_transport* / pigeon_stream_handle* / pigeon_backend_machine*
 // / pigeon_pairing_record* values (cast happens internally).
+//
+// On success (return 0), out_nonce receives the PIGEON_AUTH_NONCE_LEN-byte
+// session nonce decoded from the client's auth_request; the caller folds it
+// into session-key derivation (🎯T44.1). out_nonce must point to at least
+// PIGEON_AUTH_NONCE_LEN bytes; it is untouched on the -1/1 paths.
 int pigeon_run_backend_activation(const void *transport,
                                   void *stream,
                                   pigeon_resolve_device_fn resolve,
                                   void *resolve_userdata,
                                   void *out_machine,
                                   char *out_device_id, size_t out_device_id_cap,
-                                  void *out_record);
+                                  void *out_record,
+                                  uint8_t *out_nonce);
 
 // pigeon_run_client_activation drives the client's per-client
 // SessionMachine through Reconnect -> SendAuth -> SessionActive.
-// Writes auth_request{device_id} to `stream`, reads the auth_ok
-// reply, and on acceptance populates `out_machine`. On rejection
-// returns -1 and (if out_reason is non-NULL) copies the backend's
-// reason into out_reason.
+// Mints a fresh PIGEON_AUTH_NONCE_LEN-byte session nonce, writes
+// auth_request{device_id, nonce} to `stream`, reads the auth_ok reply,
+// and on acceptance populates `out_machine`. On rejection returns -1 and
+// (if out_reason is non-NULL) copies the backend's reason into out_reason.
+//
+// On success (return 0), out_nonce receives the minted session nonce; the
+// caller folds it into session-key derivation (🎯T44.1). out_nonce must
+// point to at least PIGEON_AUTH_NONCE_LEN bytes.
 //
 // Returns 0 on success, -1 on transport / decode / rejection.
 int pigeon_run_client_activation(const void *transport,
                                  void *stream,
                                  const char *device_id,
                                  void *out_machine,
-                                 char *out_reason, size_t out_reason_cap);
+                                 char *out_reason, size_t out_reason_cap,
+                                 uint8_t *out_nonce);
 
 #ifdef __cplusplus
 }

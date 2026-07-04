@@ -29,14 +29,16 @@ package cwire
 //     void *resolve_udata,
 //     pigeon_backend_machine *out_machine,
 //     char *out_device_id, size_t out_device_id_cap,
-//     pigeon_pairing_record *out_record)
+//     pigeon_pairing_record *out_record,
+//     uint8_t *out_nonce)
 // {
 //     return pigeon_run_backend_activation(t, stream,
 //                                          cwire_resolve_trampoline,
 //                                          resolve_udata,
 //                                          out_machine,
 //                                          out_device_id, out_device_id_cap,
-//                                          out_record);
+//                                          out_record,
+//                                          out_nonce);
 // }
 import "C"
 
@@ -49,6 +51,12 @@ import (
 // StreamHandle is an opaque stream pointer returned by GoTransport.OpenStream.
 // It wraps the C-side pigeon_stream_handle* as an unsafe.Pointer.
 type StreamHandle = unsafe.Pointer
+
+// nonceLen is the per-session activation nonce length. Must equal
+// PIGEON_AUTH_NONCE_LEN in c/include/pigeon/activation.h. The nonce is
+// folded into the session-key HKDF info so concurrent sessions under one
+// PairingRecord derive distinct keys (🎯T44.1).
+const nonceLen = 16
 
 // ConnectArgs bundles inputs for Connect so the signature stays flat and
 // extensible without functional options.
@@ -194,6 +202,12 @@ type BackendActivationResult struct {
 	// Record is the resolved PairingRecord for the accepted client.
 	// Nil when Accepted is false.
 	Record *PairingRecord
+
+	// Nonce is the per-session nonce decoded from the client's
+	// auth_request (nonceLen bytes). Pass it to DeriveSessionChannel so
+	// the backend derives the same per-session keys as the client.
+	// Populated only when Accepted is true.
+	Nonce []byte
 }
 
 // RunBackendActivationArgs bundles inputs for RunBackendActivation.
@@ -263,6 +277,7 @@ func RunBackendActivation(args *RunBackendActivationArgs) (*BackendActivationRes
 
 	var outDeviceID [129]C.char
 	var outRec C.pigeon_pairing_record
+	var outNonce [nonceLen]C.uint8_t
 
 	rv := C.cwire_run_backend_activation(
 		&ct,
@@ -271,6 +286,7 @@ func RunBackendActivation(args *RunBackendActivationArgs) (*BackendActivationRes
 		&machine,
 		&outDeviceID[0], C.size_t(len(outDeviceID)),
 		&outRec,
+		&outNonce[0],
 	)
 
 	deviceID := C.GoString(&outDeviceID[0])
@@ -281,6 +297,7 @@ func RunBackendActivation(args *RunBackendActivationArgs) (*BackendActivationRes
 			DeviceID: deviceID,
 			Accepted: true,
 			Record:   recordFromC(&outRec),
+			Nonce:    C.GoBytes(unsafe.Pointer(&outNonce[0]), C.int(nonceLen)),
 		}, nil
 	case 1:
 		return &BackendActivationResult{
@@ -313,21 +330,28 @@ func GenerateKeypair() (*Keypair, error) {
 	return out, nil
 }
 
-// DeriveSessionChannel derives the AEAD channel from a PairingRecord using the
-// same HKDF info strings as pigeon_connect_on_transport / the Go peer library:
+// DeriveSessionChannel derives the AEAD channel from a PairingRecord and the
+// per-session nonce exchanged during activation. The HKDF info is
+// direction-label || nonce (🎯T44.1), so concurrent/reconnecting sessions
+// under one PairingRecord derive distinct keys:
 //   - Client (isBackend=false): send="client->backend", recv="backend->client"
 //   - Backend (isBackend=true):  send="backend->client", recv="client->backend"
 //
+// `nonce` must be nonceLen bytes: the client's nonce returned by
+// RunClientActivation, or (on the backend) BackendActivationResult.Nonce.
 // Both sides must hold the other's public key as PeerPubKey for the ECDH to
-// agree. In tests where both sides hold the same record, passing opposite
-// isBackend flags makes the keys match (send on one side becomes recv on the
-// other).
-func DeriveSessionChannel(rec *PairingRecord, isBackend bool) (*Channel, error) {
+// agree, and both must fold in the same nonce. In tests where both sides hold
+// the same record, passing opposite isBackend flags with the same nonce makes
+// the keys match (send on one side becomes recv on the other).
+func DeriveSessionChannel(rec *PairingRecord, isBackend bool, nonce []byte) (*Channel, error) {
 	if rec == nil {
 		return nil, errors.New("cwire: DeriveSessionChannel: nil record")
 	}
 	if len(rec.LocalPrivKey) != 32 || len(rec.PeerPubKey) != 32 {
 		return nil, errors.New("cwire: DeriveSessionChannel: keys must be 32 bytes")
+	}
+	if len(nonce) != nonceLen {
+		return nil, fmt.Errorf("cwire: DeriveSessionChannel: nonce must be %d bytes", nonceLen)
 	}
 
 	var cRec C.pigeon_pairing_record
@@ -337,17 +361,15 @@ func DeriveSessionChannel(rec *PairingRecord, isBackend bool) (*Channel, error) 
 	const clientToBackend = "client->backend"
 	const backendToClient = "backend->client"
 
-	var sendInfo, recvInfo string
+	var sendLabel, recvLabel string
 	if isBackend {
-		sendInfo, recvInfo = backendToClient, clientToBackend
+		sendLabel, recvLabel = backendToClient, clientToBackend
 	} else {
-		sendInfo, recvInfo = clientToBackend, backendToClient
+		sendLabel, recvLabel = clientToBackend, backendToClient
 	}
-
-	sendInfoC := C.CString(sendInfo)
-	defer C.free(unsafe.Pointer(sendInfoC))
-	recvInfoC := C.CString(recvInfo)
-	defer C.free(unsafe.Pointer(recvInfoC))
+	// info = direction-label || per-session nonce.
+	sendInfo := append([]byte(sendLabel), nonce...)
+	recvInfo := append([]byte(recvLabel), nonce...)
 
 	var sendKey [32]C.uint8_t
 	var recvKey [32]C.uint8_t
@@ -355,14 +377,14 @@ func DeriveSessionChannel(rec *PairingRecord, isBackend bool) (*Channel, error) 
 	if C.pigeon_derive_session_key(
 		&cRec.local_private_key[0],
 		&cRec.peer_public_key[0],
-		(*C.uint8_t)(unsafe.Pointer(sendInfoC)), C.size_t(len(sendInfo)),
+		(*C.uint8_t)(unsafe.Pointer(&sendInfo[0])), C.size_t(len(sendInfo)),
 		&sendKey[0]) != 0 {
 		return nil, errors.New("cwire: DeriveSessionChannel: derive send key failed")
 	}
 	if C.pigeon_derive_session_key(
 		&cRec.local_private_key[0],
 		&cRec.peer_public_key[0],
-		(*C.uint8_t)(unsafe.Pointer(recvInfoC)), C.size_t(len(recvInfo)),
+		(*C.uint8_t)(unsafe.Pointer(&recvInfo[0])), C.size_t(len(recvInfo)),
 		&recvKey[0]) != 0 {
 		return nil, errors.New("cwire: DeriveSessionChannel: derive recv key failed")
 	}

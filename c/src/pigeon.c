@@ -546,15 +546,27 @@ int pigeon_session_primary(pigeon_session *s, pigeon_stream *out_stream)
 static int derive_session_channel(const pigeon_pairing_record *rec,
                                   const uint8_t *send_info, size_t send_info_len,
                                   const uint8_t *recv_info, size_t recv_info_len,
+                                  const uint8_t *nonce,
                                   uint8_t *out_send, uint8_t *out_recv)
 {
+    // Bind the per-session nonce into the HKDF info so concurrent /
+    // reconnecting sessions under one PairingRecord derive distinct keys
+    // (🎯T44.1). info = direction-label || nonce.
+    uint8_t send_full[64], recv_full[64];
+    if (send_info_len + PIGEON_AUTH_NONCE_LEN > sizeof(send_full)) return -1;
+    if (recv_info_len + PIGEON_AUTH_NONCE_LEN > sizeof(recv_full)) return -1;
+    memcpy(send_full, send_info, send_info_len);
+    memcpy(send_full + send_info_len, nonce, PIGEON_AUTH_NONCE_LEN);
+    memcpy(recv_full, recv_info, recv_info_len);
+    memcpy(recv_full + recv_info_len, nonce, PIGEON_AUTH_NONCE_LEN);
+
     if (pigeon_derive_session_key(rec->local_private_key,
                                   rec->peer_public_key,
-                                  send_info, send_info_len,
+                                  send_full, send_info_len + PIGEON_AUTH_NONCE_LEN,
                                   out_send) != 0) return -1;
     if (pigeon_derive_session_key(rec->local_private_key,
                                   rec->peer_public_key,
-                                  recv_info, recv_info_len,
+                                  recv_full, recv_info_len + PIGEON_AUTH_NONCE_LEN,
                                   out_recv) != 0) return -1;
     return 0;
 }
@@ -603,9 +615,10 @@ int pigeon_connect_on_transport(const pigeon_transport *transport,
     memset(&channel, 0, sizeof(channel));
     if (!pairing_mode) {
         pigeon_client_machine cm;
+        uint8_t session_nonce[PIGEON_AUTH_NONCE_LEN];
         if (pigeon_run_client_activation(transport, primary_handle,
                                          device_id, &cm,
-                                         NULL, 0) != 0) {
+                                         NULL, 0, session_nonce) != 0) {
             return -1;
         }
         // We don't retain the machine post-activation (matches Go's
@@ -619,6 +632,7 @@ int pigeon_connect_on_transport(const pigeon_transport *transport,
         if (derive_session_channel(record,
                                    (const uint8_t *)send_info, sizeof(send_info) - 1,
                                    (const uint8_t *)recv_info, sizeof(recv_info) - 1,
+                                   session_nonce,
                                    send_key, recv_key) != 0) {
             return -1;
         }

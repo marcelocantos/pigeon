@@ -1049,6 +1049,7 @@ static int auth_uvarint_decode(const uint8_t *buf, size_t buf_len,
 // ---------- wire encoders / decoders ----------
 
 int pigeon_encode_auth_request(const char *device_id,
+                               const uint8_t *nonce,
                                uint8_t *buf, size_t buf_len)
 {
     if (buf_len < 1) return -1;
@@ -1065,11 +1066,16 @@ int pigeon_encode_auth_request(const char *device_id,
     if (off + id_len > buf_len) return -1;
     memcpy(buf + off, device_id, id_len);
     off += id_len;
+
+    if (off + PIGEON_AUTH_NONCE_LEN > buf_len) return -1;
+    memcpy(buf + off, nonce, PIGEON_AUTH_NONCE_LEN);
+    off += PIGEON_AUTH_NONCE_LEN;
     return (int)off;
 }
 
 int pigeon_decode_auth_request(const uint8_t *payload, size_t payload_len,
-                               char *out_device_id, size_t out_cap)
+                               char *out_device_id, size_t out_cap,
+                               uint8_t *out_nonce)
 {
     if (payload_len < 1) return -1;
     if (payload[0] != PIGEON_AUTH_MSG_TAG_AUTH_REQUEST) return -1;
@@ -1078,11 +1084,12 @@ int pigeon_decode_auth_request(const uint8_t *payload, size_t payload_len,
     size_t consumed = 0;
     if (auth_uvarint_decode(payload + 1, payload_len - 1, &id_len, &consumed) != 0) return -1;
     if (id_len > PIGEON_AUTH_MAX_DEVICE_ID) return -1;
-    if (1 + consumed + id_len != payload_len) return -1;
+    if (1 + consumed + id_len + PIGEON_AUTH_NONCE_LEN != payload_len) return -1;
     if (id_len + 1 > out_cap) return -1;
 
     memcpy(out_device_id, payload + 1 + consumed, (size_t)id_len);
     out_device_id[id_len] = '\0';
+    memcpy(out_nonce, payload + 1 + consumed + (size_t)id_len, PIGEON_AUTH_NONCE_LEN);
     return 0;
 }
 
@@ -1167,7 +1174,8 @@ int pigeon_run_backend_activation(const void *transport_v,
                                   void *resolve_userdata,
                                   void *out_machine_v,
                                   char *out_device_id, size_t out_device_id_cap,
-                                  void *out_record)
+                                  void *out_record,
+                                  uint8_t *out_nonce)
 {
     const pigeon_transport *transport = (const pigeon_transport *)transport_v;
     pigeon_stream_handle   *stream    = (pigeon_stream_handle *)stream_v;
@@ -1183,8 +1191,10 @@ int pigeon_run_backend_activation(const void *transport_v,
         return -1;
     }
     char device_id[PIGEON_AUTH_MAX_DEVICE_ID + 1];
+    uint8_t nonce_buf[PIGEON_AUTH_NONCE_LEN];
     if (pigeon_decode_auth_request(buf, in_len,
-                                   device_id, sizeof(device_id)) != 0) {
+                                   device_id, sizeof(device_id),
+                                   nonce_buf) != 0) {
         return -1;
     }
     // Surface the decoded device ID to the caller before doing any
@@ -1250,6 +1260,7 @@ int pigeon_run_backend_activation(const void *transport_v,
     if (machine->state != PIGEON_BACKEND_SESSION_ACTIVE) {
         return -1;
     }
+    if (out_nonce) memcpy(out_nonce, nonce_buf, PIGEON_AUTH_NONCE_LEN);
     return 0;
 }
 
@@ -1257,7 +1268,8 @@ int pigeon_run_client_activation(const void *transport_v,
                                  void *stream_v,
                                  const char *device_id,
                                  void *out_machine_v,
-                                 char *out_reason, size_t out_reason_cap)
+                                 char *out_reason, size_t out_reason_cap,
+                                 uint8_t *out_nonce)
 {
     const pigeon_transport *transport = (const pigeon_transport *)transport_v;
     pigeon_stream_handle   *stream    = (pigeon_stream_handle *)stream_v;
@@ -1273,9 +1285,11 @@ int pigeon_run_client_activation(const void *transport_v,
     }
     if (machine->state != PIGEON_CLIENT_SEND_AUTH) return -1;
 
-    // Send auth_request.
+    // Mint a fresh per-session nonce and send auth_request{device_id, nonce}.
+    uint8_t nonce_buf[PIGEON_AUTH_NONCE_LEN];
+    pigeon_random_bytes(nonce_buf, PIGEON_AUTH_NONCE_LEN);
     uint8_t out[PIGEON_AUTH_MAX_PAYLOAD];
-    int n = pigeon_encode_auth_request(device_id, out, sizeof(out));
+    int n = pigeon_encode_auth_request(device_id, nonce_buf, out, sizeof(out));
     if (n < 0) return -1;
     if (transport->send_on_stream(transport->userdata, stream,
                                   out, (size_t)n) != 0) {
@@ -1301,6 +1315,7 @@ int pigeon_run_client_activation(const void *transport_v,
         return -1;
     }
     if (machine->state != PIGEON_CLIENT_SESSION_ACTIVE) return -1;
+    if (out_nonce) memcpy(out_nonce, nonce_buf, PIGEON_AUTH_NONCE_LEN);
     return 0;
 }
 
@@ -1327,6 +1342,11 @@ int pigeon_generate_keypair(pigeon_keypair *kp)
     // scalarmult base gives us the public key from a random secret.
     randombytes_buf(kp->private_key, 32);
     return crypto_scalarmult_base(kp->public_key, kp->private_key) == 0 ? 0 : -1;
+}
+
+void pigeon_random_bytes(uint8_t *buf, size_t n)
+{
+    randombytes_buf(buf, n);
 }
 
 // Internal: HKDF-SHA256 extract + expand. libsodium doesn't have HKDF
@@ -2283,15 +2303,27 @@ int pigeon_session_primary(pigeon_session *s, pigeon_stream *out_stream)
 static int derive_session_channel(const pigeon_pairing_record *rec,
                                   const uint8_t *send_info, size_t send_info_len,
                                   const uint8_t *recv_info, size_t recv_info_len,
+                                  const uint8_t *nonce,
                                   uint8_t *out_send, uint8_t *out_recv)
 {
+    // Bind the per-session nonce into the HKDF info so concurrent /
+    // reconnecting sessions under one PairingRecord derive distinct keys
+    // (🎯T44.1). info = direction-label || nonce.
+    uint8_t send_full[64], recv_full[64];
+    if (send_info_len + PIGEON_AUTH_NONCE_LEN > sizeof(send_full)) return -1;
+    if (recv_info_len + PIGEON_AUTH_NONCE_LEN > sizeof(recv_full)) return -1;
+    memcpy(send_full, send_info, send_info_len);
+    memcpy(send_full + send_info_len, nonce, PIGEON_AUTH_NONCE_LEN);
+    memcpy(recv_full, recv_info, recv_info_len);
+    memcpy(recv_full + recv_info_len, nonce, PIGEON_AUTH_NONCE_LEN);
+
     if (pigeon_derive_session_key(rec->local_private_key,
                                   rec->peer_public_key,
-                                  send_info, send_info_len,
+                                  send_full, send_info_len + PIGEON_AUTH_NONCE_LEN,
                                   out_send) != 0) return -1;
     if (pigeon_derive_session_key(rec->local_private_key,
                                   rec->peer_public_key,
-                                  recv_info, recv_info_len,
+                                  recv_full, recv_info_len + PIGEON_AUTH_NONCE_LEN,
                                   out_recv) != 0) return -1;
     return 0;
 }
@@ -2340,9 +2372,10 @@ int pigeon_connect_on_transport(const pigeon_transport *transport,
     memset(&channel, 0, sizeof(channel));
     if (!pairing_mode) {
         pigeon_client_machine cm;
+        uint8_t session_nonce[PIGEON_AUTH_NONCE_LEN];
         if (pigeon_run_client_activation(transport, primary_handle,
                                          device_id, &cm,
-                                         NULL, 0) != 0) {
+                                         NULL, 0, session_nonce) != 0) {
             return -1;
         }
         // We don't retain the machine post-activation (matches Go's
@@ -2356,6 +2389,7 @@ int pigeon_connect_on_transport(const pigeon_transport *transport,
         if (derive_session_channel(record,
                                    (const uint8_t *)send_info, sizeof(send_info) - 1,
                                    (const uint8_t *)recv_info, sizeof(recv_info) - 1,
+                                   session_nonce,
                                    send_key, recv_key) != 0) {
             return -1;
         }
@@ -2885,27 +2919,35 @@ static pigeon_session *make_session(pigeon_listener *l,
                                     const pigeon_transport *transport,
                                     pigeon_stream_handle *primary,
                                     void *owner,
-                                    const pigeon_pairing_record *rec)
+                                    const pigeon_pairing_record *rec,
+                                    const uint8_t *nonce)
 {
     pigeon_session *s = (pigeon_session *)calloc(1, sizeof(*s));
     if (!s) return NULL;
 
     // Derive the session AEAD channel from the resolved PairingRecord.
     // Mirrors api.go's DeriveSessionChannel on the Listener side:
-    // send=backend->client, recv=client->backend.
+    // send=backend->client, recv=client->backend. The per-session nonce
+    // (from the client's auth_request) is folded into the HKDF info so
+    // concurrent sessions under one record derive distinct keys (🎯T44.1):
+    // info = direction-label || nonce.
+    uint8_t send_info[sizeof("backend->client") - 1 + PIGEON_AUTH_NONCE_LEN];
+    uint8_t recv_info[sizeof("client->backend") - 1 + PIGEON_AUTH_NONCE_LEN];
+    memcpy(send_info, "backend->client", sizeof("backend->client") - 1);
+    memcpy(send_info + sizeof("backend->client") - 1, nonce, PIGEON_AUTH_NONCE_LEN);
+    memcpy(recv_info, "client->backend", sizeof("client->backend") - 1);
+    memcpy(recv_info + sizeof("client->backend") - 1, nonce, PIGEON_AUTH_NONCE_LEN);
     uint8_t send_key[32], recv_key[32];
     if (pigeon_derive_session_key(rec->local_private_key,
                                   rec->peer_public_key,
-                                  (const uint8_t *)"backend->client",
-                                  strlen("backend->client"),
+                                  send_info, sizeof(send_info),
                                   send_key) != 0) {
         free(s);
         return NULL;
     }
     if (pigeon_derive_session_key(rec->local_private_key,
                                   rec->peer_public_key,
-                                  (const uint8_t *)"client->backend",
-                                  strlen("client->backend"),
+                                  recv_info, sizeof(recv_info),
                                   recv_key) != 0) {
         free(s);
         return NULL;
@@ -3007,12 +3049,14 @@ int pigeon_listener_accept(pigeon_listener *l, pigeon_session **out_session)
     pigeon_backend_machine machine;
     char     device_id[PIGEON_AUTH_MAX_DEVICE_ID + 1] = {0};
     pigeon_pairing_record  record;
+    uint8_t  session_nonce[PIGEON_AUTH_NONCE_LEN];
     int rc = pigeon_run_backend_activation(&tr, primary,
                                            l->resolve,
                                            l->resolve_userdata,
                                            &machine,
                                            device_id, sizeof(device_id),
-                                           &record);
+                                           &record,
+                                           session_nonce);
     if (rc != 0) {
         // -1 (wire failure) or 1 (decoded but rejected): tear down the
         // listen connection. Matches the Go-side behaviour: rejected
@@ -3024,7 +3068,7 @@ int pigeon_listener_accept(pigeon_listener *l, pigeon_session **out_session)
 
     // 3. Build the session, deriving its AEAD channel and adopting the
     //    listen transport (and its owner cookie).
-    pigeon_session *sess = make_session(l, &tr, primary, owner, &record);
+    pigeon_session *sess = make_session(l, &tr, primary, owner, &record, session_nonce);
     if (!sess) {
         if (l->owner_close && owner) l->owner_close(owner);
         if (l->owner_free  && owner) l->owner_free(owner);

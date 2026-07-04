@@ -229,8 +229,10 @@ func TestConnectActivationRoundTrip(t *testing.T) {
 	defer clientSess.Close()
 
 	// Derive the backend session channel: isBackend=true swaps send/recv info
-	// strings so the keys are complementary to the client's channel.
-	backendCh, err := cwire.DeriveSessionChannel(backendRec, true)
+	// strings so the keys are complementary to the client's channel. Fold in
+	// the per-session nonce the client minted (decoded from auth_request) so
+	// both sides derive matching keys (🎯T44.1).
+	backendCh, err := cwire.DeriveSessionChannel(backendRec, true, backendRes.Nonce)
 	if err != nil {
 		t.Fatalf("DeriveSessionChannel (backend): %v", err)
 	}

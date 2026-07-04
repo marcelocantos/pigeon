@@ -64,6 +64,7 @@ static int auth_uvarint_decode(const uint8_t *buf, size_t buf_len,
 // ---------- wire encoders / decoders ----------
 
 int pigeon_encode_auth_request(const char *device_id,
+                               const uint8_t *nonce,
                                uint8_t *buf, size_t buf_len)
 {
     if (buf_len < 1) return -1;
@@ -80,11 +81,16 @@ int pigeon_encode_auth_request(const char *device_id,
     if (off + id_len > buf_len) return -1;
     memcpy(buf + off, device_id, id_len);
     off += id_len;
+
+    if (off + PIGEON_AUTH_NONCE_LEN > buf_len) return -1;
+    memcpy(buf + off, nonce, PIGEON_AUTH_NONCE_LEN);
+    off += PIGEON_AUTH_NONCE_LEN;
     return (int)off;
 }
 
 int pigeon_decode_auth_request(const uint8_t *payload, size_t payload_len,
-                               char *out_device_id, size_t out_cap)
+                               char *out_device_id, size_t out_cap,
+                               uint8_t *out_nonce)
 {
     if (payload_len < 1) return -1;
     if (payload[0] != PIGEON_AUTH_MSG_TAG_AUTH_REQUEST) return -1;
@@ -93,11 +99,12 @@ int pigeon_decode_auth_request(const uint8_t *payload, size_t payload_len,
     size_t consumed = 0;
     if (auth_uvarint_decode(payload + 1, payload_len - 1, &id_len, &consumed) != 0) return -1;
     if (id_len > PIGEON_AUTH_MAX_DEVICE_ID) return -1;
-    if (1 + consumed + id_len != payload_len) return -1;
+    if (1 + consumed + id_len + PIGEON_AUTH_NONCE_LEN != payload_len) return -1;
     if (id_len + 1 > out_cap) return -1;
 
     memcpy(out_device_id, payload + 1 + consumed, (size_t)id_len);
     out_device_id[id_len] = '\0';
+    memcpy(out_nonce, payload + 1 + consumed + (size_t)id_len, PIGEON_AUTH_NONCE_LEN);
     return 0;
 }
 
@@ -182,7 +189,8 @@ int pigeon_run_backend_activation(const void *transport_v,
                                   void *resolve_userdata,
                                   void *out_machine_v,
                                   char *out_device_id, size_t out_device_id_cap,
-                                  void *out_record)
+                                  void *out_record,
+                                  uint8_t *out_nonce)
 {
     const pigeon_transport *transport = (const pigeon_transport *)transport_v;
     pigeon_stream_handle   *stream    = (pigeon_stream_handle *)stream_v;
@@ -198,8 +206,10 @@ int pigeon_run_backend_activation(const void *transport_v,
         return -1;
     }
     char device_id[PIGEON_AUTH_MAX_DEVICE_ID + 1];
+    uint8_t nonce_buf[PIGEON_AUTH_NONCE_LEN];
     if (pigeon_decode_auth_request(buf, in_len,
-                                   device_id, sizeof(device_id)) != 0) {
+                                   device_id, sizeof(device_id),
+                                   nonce_buf) != 0) {
         return -1;
     }
     // Surface the decoded device ID to the caller before doing any
@@ -265,6 +275,7 @@ int pigeon_run_backend_activation(const void *transport_v,
     if (machine->state != PIGEON_BACKEND_SESSION_ACTIVE) {
         return -1;
     }
+    if (out_nonce) memcpy(out_nonce, nonce_buf, PIGEON_AUTH_NONCE_LEN);
     return 0;
 }
 
@@ -272,7 +283,8 @@ int pigeon_run_client_activation(const void *transport_v,
                                  void *stream_v,
                                  const char *device_id,
                                  void *out_machine_v,
-                                 char *out_reason, size_t out_reason_cap)
+                                 char *out_reason, size_t out_reason_cap,
+                                 uint8_t *out_nonce)
 {
     const pigeon_transport *transport = (const pigeon_transport *)transport_v;
     pigeon_stream_handle   *stream    = (pigeon_stream_handle *)stream_v;
@@ -288,9 +300,11 @@ int pigeon_run_client_activation(const void *transport_v,
     }
     if (machine->state != PIGEON_CLIENT_SEND_AUTH) return -1;
 
-    // Send auth_request.
+    // Mint a fresh per-session nonce and send auth_request{device_id, nonce}.
+    uint8_t nonce_buf[PIGEON_AUTH_NONCE_LEN];
+    pigeon_random_bytes(nonce_buf, PIGEON_AUTH_NONCE_LEN);
     uint8_t out[PIGEON_AUTH_MAX_PAYLOAD];
-    int n = pigeon_encode_auth_request(device_id, out, sizeof(out));
+    int n = pigeon_encode_auth_request(device_id, nonce_buf, out, sizeof(out));
     if (n < 0) return -1;
     if (transport->send_on_stream(transport->userdata, stream,
                                   out, (size_t)n) != 0) {
@@ -316,5 +330,6 @@ int pigeon_run_client_activation(const void *transport_v,
         return -1;
     }
     if (machine->state != PIGEON_CLIENT_SESSION_ACTIVE) return -1;
+    if (out_nonce) memcpy(out_nonce, nonce_buf, PIGEON_AUTH_NONCE_LEN);
     return 0;
 }
