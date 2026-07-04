@@ -274,6 +274,39 @@ head-of-line blocking between streams). Each datagram carries the AEAD
 ciphertext of `[varint channel-id][payload]` on the session's own
 end-to-end connection, which the relay forwards opaquely.
 
+## Multi-service nodes
+
+One paired node can front several independently-addressed services over a
+**single pairing** — pair once with the node, then discover and join its
+services by *route*. A service is a `Session` (not a multiplex over
+channels), so each gets its own connection, channels, and lifecycle.
+
+```go
+// Backend: pair once, expose routes + a discovery policy.
+listener, _, _ := pigeon.Register(ctx, &pigeon.RegisterArgs{
+    Identity: id, Pairing: resolve, Relay: relayURL,
+    Discover: func(clientID string) ([]pigeon.RouteEntry, error) {
+        return []pigeon.RouteEntry{{Route: "game-a", Metadata: []byte("Space Battle")}}, nil
+    },
+})
+for {
+    s, _ := listener.Accept(ctx)
+    go dispatch(s.Route(), s) // route → service
+}
+
+// Client: enumerate, then join a service by route (over the one pairing).
+ctrl, _ := pigeon.Connect(ctx, &pigeon.ConnectArgs{InstanceID: id, Record: rec, Identity: cid, Relay: relayURL})
+routes, _ := ctrl.Enumerate(ctx)              // [{game-a, "Space Battle"}]
+game, _ := pigeon.Connect(ctx, &pigeon.ConnectArgs{
+    InstanceID: id, Record: rec, Identity: cid, Relay: relayURL, Route: "game-a",
+})
+```
+
+The route rides the end-to-end activation handshake, so the relay never
+learns which service a client reached; route metadata is opaque
+application bytes. Design and deployment shapes (in-process dispatch vs
+cascading relay): [docs/multiplexing.md](docs/multiplexing.md).
+
 ## Fault Injection Testing
 
 The `faultproxy` package provides a transparent UDP proxy for testing
