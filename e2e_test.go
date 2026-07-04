@@ -329,6 +329,239 @@ func TestE2ERoutedSessions(t *testing.T) {
 	check(sessB, "game-b")
 }
 
+// TestE2EDiscovery is the 🎯T44.3 oracle: a node with a Discover hook answers
+// route enumeration over the control session, returning opaque per-route
+// metadata; and visibility (Discover) is independent of connectability — a
+// route the hook hides is still reachable by a client that knows it.
+func TestE2EDiscovery(t *testing.T) {
+	t.Parallel()
+	relayURL, teardown := startRelay(t)
+	defer teardown()
+	time.Sleep(200 * time.Millisecond)
+
+	bid, cid, brec, crec := pairingPair(t, relayURL)
+	pairings := map[string]*crypto.PairingRecord{cid.InstanceID(): brec}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+	tlsCfg := &tls.Config{InsecureSkipVerify: true}
+
+	// Discover advertises only "game-a" (with opaque metadata). "game-b"
+	// exists and is joinable but is hidden from discovery.
+	listener, _, err := pigeon.Register(ctx, &pigeon.RegisterArgs{
+		Identity: bid,
+		Pairing: func(id string) (*crypto.PairingRecord, error) {
+			rec, ok := pairings[id]
+			if !ok {
+				return nil, fmt.Errorf("unknown client %q", id)
+			}
+			return rec, nil
+		},
+		Discover: func(clientID string) ([]pigeon.RouteEntry, error) {
+			return []pigeon.RouteEntry{{Route: "game-a", Metadata: []byte("Space Battle")}}, nil
+		},
+		Relay: relayURL,
+		TLS:   tlsCfg,
+	})
+	if err != nil {
+		t.Fatalf("register: %v", err)
+	}
+	defer listener.Close()
+
+	go func() {
+		for {
+			sess, err := listener.Accept(ctx)
+			if err != nil {
+				return
+			}
+			go func(s *pigeon.Session) {
+				defer s.Close()
+				st, err := s.AcceptStream(ctx, "svc")
+				if err != nil {
+					return
+				}
+				for {
+					if _, err := st.Recv(ctx); err != nil {
+						return
+					}
+					if err := st.Send([]byte(s.Route())); err != nil {
+						return
+					}
+				}
+			}(sess)
+		}
+	}()
+
+	// Control session (default route "") — enumerate.
+	ctrl, err := pigeon.Connect(ctx, &pigeon.ConnectArgs{
+		InstanceID: bid.InstanceID(), Record: crec, Identity: cid, Relay: relayURL, TLS: tlsCfg,
+	})
+	if err != nil {
+		t.Fatalf("connect control: %v", err)
+	}
+	defer ctrl.Close()
+
+	routes, err := ctrl.Enumerate(ctx)
+	if err != nil {
+		t.Fatalf("enumerate: %v", err)
+	}
+	if len(routes) != 1 || routes[0].Route != "game-a" || string(routes[0].Metadata) != "Space Battle" {
+		t.Fatalf("enumerate = %+v, want [{game-a, Space Battle}]", routes)
+	}
+
+	joinAndCheck := func(route string) {
+		s, err := pigeon.Connect(ctx, &pigeon.ConnectArgs{
+			InstanceID: bid.InstanceID(), Record: crec, Identity: cid, Relay: relayURL, TLS: tlsCfg, Route: route,
+		})
+		if err != nil {
+			t.Fatalf("connect %q: %v", route, err)
+		}
+		defer s.Close()
+		st, err := s.OpenStream(ctx, "svc")
+		if err != nil {
+			t.Fatalf("open svc %q: %v", route, err)
+		}
+		if err := st.Send([]byte("hi")); err != nil {
+			t.Fatalf("send %q: %v", route, err)
+		}
+		got, err := st.Recv(ctx)
+		if err != nil {
+			t.Fatalf("recv %q: %v", route, err)
+		}
+		if string(got) != route {
+			t.Fatalf("route %q reached a service that saw %q", route, got)
+		}
+	}
+	joinAndCheck("game-a") // discovered route
+	joinAndCheck("game-b") // hidden but connectable: visibility != connectability
+}
+
+// TestE2EMultiServiceNode is the 🎯T44 umbrella oracle — the full ge/ged flow:
+// a client pairs once with a node, enumerates the running services, joins two
+// of them concurrently over that single pairing, exchanges interleaved traffic
+// on per-service streams (proving isolation / no cross-talk and distinct
+// per-session keys), and closing one service leaves the other live. The node
+// implements only routing (dispatch on Session.Route()) and the Discover hook.
+func TestE2EMultiServiceNode(t *testing.T) {
+	t.Parallel()
+	relayURL, teardown := startRelay(t)
+	defer teardown()
+	time.Sleep(200 * time.Millisecond)
+
+	bid, cid, brec, crec := pairingPair(t, relayURL)
+	pairings := map[string]*crypto.PairingRecord{cid.InstanceID(): brec}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	defer cancel()
+	tlsCfg := &tls.Config{InsecureSkipVerify: true}
+
+	listener, _, err := pigeon.Register(ctx, &pigeon.RegisterArgs{
+		Identity: bid,
+		Pairing: func(id string) (*crypto.PairingRecord, error) {
+			rec, ok := pairings[id]
+			if !ok {
+				return nil, fmt.Errorf("unknown client %q", id)
+			}
+			return rec, nil
+		},
+		Discover: func(clientID string) ([]pigeon.RouteEntry, error) {
+			return []pigeon.RouteEntry{
+				{Route: "game-a", Metadata: []byte("A")},
+				{Route: "game-b", Metadata: []byte("B")},
+			}, nil
+		},
+		Relay: relayURL,
+		TLS:   tlsCfg,
+	})
+	if err != nil {
+		t.Fatalf("register: %v", err)
+	}
+	defer listener.Close()
+
+	// Node: dispatch each accepted session by route — echo "<route>:<msg>".
+	go func() {
+		for {
+			sess, err := listener.Accept(ctx)
+			if err != nil {
+				return
+			}
+			go func(s *pigeon.Session) {
+				defer s.Close()
+				st, err := s.AcceptStream(ctx, "play")
+				if err != nil {
+					return
+				}
+				for {
+					msg, err := st.Recv(ctx)
+					if err != nil {
+						return
+					}
+					if err := st.Send([]byte(s.Route() + ":" + string(msg))); err != nil {
+						return
+					}
+				}
+			}(sess)
+		}
+	}()
+
+	connect := func(route string) *pigeon.Session {
+		s, err := pigeon.Connect(ctx, &pigeon.ConnectArgs{
+			InstanceID: bid.InstanceID(), Record: crec, Identity: cid, Relay: relayURL, TLS: tlsCfg, Route: route,
+		})
+		if err != nil {
+			t.Fatalf("connect %q: %v", route, err)
+		}
+		return s
+	}
+
+	// 1. Pair once and enumerate the running services.
+	ctrl := connect("")
+	routes, err := ctrl.Enumerate(ctx)
+	_ = ctrl.Close()
+	if err != nil {
+		t.Fatalf("enumerate: %v", err)
+	}
+	if len(routes) != 2 {
+		t.Fatalf("enumerate: got %d routes, want 2: %+v", len(routes), routes)
+	}
+
+	// 2. Join both discovered services concurrently over the one pairing.
+	sa := connect("game-a")
+	defer sa.Close()
+	sta, err := sa.OpenStream(ctx, "play")
+	if err != nil {
+		t.Fatalf("open play game-a: %v", err)
+	}
+	sb := connect("game-b")
+	defer sb.Close()
+	stb, err := sb.OpenStream(ctx, "play")
+	if err != nil {
+		t.Fatalf("open play game-b: %v", err)
+	}
+
+	rt := func(st *pigeon.Stream, route, msg string) {
+		if err := st.Send([]byte(msg)); err != nil {
+			t.Fatalf("send %s/%s: %v", route, msg, err)
+		}
+		got, err := st.Recv(ctx)
+		if err != nil {
+			t.Fatalf("recv %s/%s: %v", route, msg, err)
+		}
+		if want := route + ":" + msg; string(got) != want {
+			t.Fatalf("route %q: got %q want %q (cross-talk or mis-route)", route, got, want)
+		}
+	}
+	// Interleave to prove isolation between the two per-service sessions.
+	rt(sta, "game-a", "1")
+	rt(stb, "game-b", "1")
+	rt(sta, "game-a", "2")
+	rt(stb, "game-b", "2")
+
+	// 3. Closing one service leaves the other live.
+	_ = sa.Close()
+	rt(stb, "game-b", "3")
+}
+
 // TestE2EMultiStreamMultiDatagram exercises 2 stream channels (chat,
 // control) and 2 datagram channels (ping, metric) over a single client
 // session.

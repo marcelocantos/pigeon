@@ -44,6 +44,16 @@ type RegisterArgs struct {
 	// PairingRecord. Returning (nil, err) rejects the connection.
 	Pairing func(clientID string) (*crypto.PairingRecord, error)
 
+	// Discover, if set, makes this node answer route-enumeration requests
+	// (Session.Enumerate) from accepted clients (🎯T44.3). It returns the
+	// routes visible to the given client — the node's discovery policy.
+	// clientID is the peer's stable identifier (as resolved by Pairing).
+	// The list may differ per client (per-peer visibility) and is
+	// independent of connectability: a route may be listed but a Connect
+	// to it rejected, or unlisted but reachable by a client that knows it.
+	// nil disables discovery (enumerate requests go unanswered).
+	Discover func(clientID string) ([]RouteEntry, error)
+
 	// Relay is the relay URL (e.g. "https://relay.example.com").
 	Relay string
 
@@ -365,6 +375,7 @@ func (l *Listener) activate(tr *transport) (*Session, error) {
 
 	sess := newSession(l.ctx, tr, channel, result.DeviceID, l.args.Datagrams, true)
 	sess.route = result.Route
+	sess.discover = l.args.Discover
 	sess.ownsTransport = true
 	sess.cwireRef = ref
 	sess.cwirePrimary = cwirePrimary
@@ -523,6 +534,10 @@ type Session struct {
 	dgConfig  map[string]uint64
 	datagrams map[uint64]*Datagram
 
+	// discover, on a backend session, answers Session.Enumerate requests on
+	// the reserved discovery stream (🎯T44.3); nil = discovery disabled.
+	discover func(clientID string) ([]RouteEntry, error)
+
 	closeOnce sync.Once
 }
 
@@ -665,6 +680,12 @@ func (s *Session) acceptLoop() {
 		if err != nil {
 			slog.Warn("session: parse sub-stream header", "err", err)
 			_ = rwc.Close()
+			continue
+		}
+		if name == discoveryStreamName && s.discover != nil {
+			// 🎯T44.3: answer route enumeration internally instead of
+			// surfacing the reserved stream to the application.
+			go s.handleEnumerate(&Stream{name: name, rwc: rwc, channel: s.channel})
 			continue
 		}
 		s.deliverIncomingStream(name, rwc)
