@@ -1656,16 +1656,18 @@ targets:
     discovered: 2026-06-20
   T49:
     name: pigeon's AEAD channel never reuses an (key, nonce) pair under concurrent senders — send/recv counters are synchronized
-    status: identified
+    status: achieved
     value: 13.0
     cost: 5.0
+    actual_cost: 3.0
     acceptance:
     - send_seq/recv_seq are updated atomically or under a lock across concurrent Stream and Datagram senders sharing one cwire.Channel
     - go test -race shows no data race on the channel counters
     - No two messages encrypted under one key can be assigned the same nonce
-    context: 'CRITICAL. c/src/crypto.c:160 (with Go api.go sharing one channel across all senders): send_seq is incremented with a non-atomic C increment under no Go lock, so concurrent Send can hand two messages the same nonce → data race and catastrophic AES-GCM nonce reuse. Unverified Fable-5 finder-stage candidate (adversarial verification interrupted by an API spend limit); verify before implementing. See docs/audit/fable-2026-07.md.'
+    context: 'CRITICAL. c/src/crypto.c:160 (with Go api.go sharing one channel across all senders): send_seq is incremented with a non-atomic C increment under no Go lock, so concurrent Send can hand two messages the same nonce → data race and catastrophic AES-GCM nonce reuse. RESOLVED (Fable-5 remediation 2026-07-06, branch audit-pigeon-20260705): confirmed the production Session.channel is *cwire.Channel (api.go:510, built by DeriveSessionChannel) and the C send_seq++/recv_seq updates are non-atomic; added a sync.Mutex to cwire.Channel taken in Encrypt and Decrypt. Verified by cwire/channel_race_test.go — 16384 concurrent Encrypts produced 1964 colliding nonce prefixes without the lock (fail) and all-distinct with it (pass). See docs/audit/fable-2026-07.md F1.'
     origin: manual
     discovered: 2026-07-02
+    achieved: 2026-07-06
   T5:
     name: Investigate Bluetooth as proximity oracle
     status: achieved
@@ -1729,15 +1731,17 @@ targets:
     discovered: 2026-07-02
   T54:
     name: pigeon Ceremony.Close aborts a pairing blocked on user confirmation, releasing its goroutine, cgo handles, and QUIC session
-    status: identified
+    status: achieved
     value: 8.0
     cost: 3.0
+    actual_cost: 2.0
     acceptance:
     - Close cancels a pairing awaiting user confirmation and frees the goroutine, both cgo.Handles, and the QUIC session/FDs
     - No leak remains on the initiator side after Close during a pending confirmation
-    context: 'HIGH. pairing/pairing.go:186: Ceremony.Close does not abort a pairing blocked awaiting user confirmation, leaking a goroutine, two cgo.Handles, and the QUIC session/FDs (permanent on the initiator side). Unverified Fable-5 finder-stage candidate; verify before implementing. See docs/audit/fable-2026-07.md.'
+    context: 'HIGH. pairing/pairing.go:186: Ceremony.Close does not abort a pairing blocked awaiting user confirmation, leaking a goroutine, two cgo.Handles, and the QUIC session/FDs (permanent on the initiator side). RESOLVED (Fable-5 remediation 2026-07-06, branch audit-pigeon-20260705): gave each Ceremony its own cancelable context (rooted at the caller/Pairer ctx), threaded it into runInitiator/runAcceptor and the C confirm-callback select, and had Ceremony.Close cancel it (Initiate previously passed context.Background(), so Close could never release the confirm wait). Verified by pairing/close_abort_test.go — drives both sides to the confirm wait over an in-process relay, then Close without Confirm; the runInitiator/runAcceptor goroutines stay parked forever without the fix and unwind promptly with it. See docs/audit/fable-2026-07.md F6.'
     origin: manual
     discovered: 2026-07-02
+    achieved: 2026-07-06
   T55:
     name: pigeon's Session Phase-1 security invariants are actually model-checked, with no tautological or dead guards
     status: identified
@@ -1751,16 +1755,18 @@ targets:
     discovered: 2026-07-02
   T56:
     name: pigeon relay register/unregister are ownership-checked so an instance ID cannot be hijacked or cross-cancelled
-    status: identified
+    status: achieved
     value: 8.0
     cost: 3.0
+    actual_cost: 2.0
     acceptance:
     - hub.register refuses to claim an ID currently owned by a live connection (no last-writer-wins)
     - hub.unregister removes only the entry owned by the departing connection
     - Re-registering an ID never lets an old connection's teardown cancel the new live instance
-    context: 'HIGH (two finders converged). session.go:69 and :77: hub.register is last-writer-wins on a client-chosen ID and hub.unregister deletes/cancels by ID with no ownership check → instance-ID hijack and cross-cancel. Unverified Fable-5 finder-stage candidate; verify before implementing. See docs/audit/fable-2026-07.md.'
+    context: 'HIGH (two finders converged). session.go:69 and :77: hub.register is last-writer-wins on a client-chosen ID and hub.unregister deletes/cancels by ID with no ownership check → instance-ID hijack and cross-cancel. RESOLVED (Fable-5 remediation 2026-07-06, branch audit-pigeon-20260705): register now refuses to displace a live instance (existing entry with ctx not yet cancelled) and returns an error the handlers turn into a connection close; unregister takes the *instance and deletes/cancels only on pointer-identity ownership, so a stale teardown never evicts a re-registered live instance. A dead slot may still be taken over. Verified by hub_ownership_test.go (TestHubRegisterRejectsLiveIDHijack, TestHubUnregisterOwnershipNoCrossCancel). See docs/audit/fable-2026-07.md F8/F9.'
     origin: manual
     discovered: 2026-07-02
+    achieved: 2026-07-06
   T6:
     name: WebTransport relay
     status: achieved

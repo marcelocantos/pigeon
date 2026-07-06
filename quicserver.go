@@ -207,14 +207,18 @@ func (s *QUICServer) handleRegister(conn *quic.Conn, sess *quicSession, token, r
 	if id == "" {
 		id = generateID()
 	}
+	inst := newInstance(id, sess)
+	if err := s.hub.register(inst); err != nil {
+		slog.Warn("quic register: instance ID in use", "id", id, "err", err)
+		conn.CloseWithError(1, "instance ID in use")
+		return
+	}
+	defer s.hub.unregister(inst)
 	if err := sess.WriteMessage([]byte(id)); err != nil {
 		slog.Error("quic register: write ID failed", "err", err)
 		conn.CloseWithError(1, "failed to write ID")
 		return
 	}
-	inst := newInstance(id, sess)
-	s.hub.register(inst)
-	defer s.hub.unregister(id)
 	slog.Info("instance registered", "id", id, "transport", "quic")
 	<-conn.Context().Done()
 	slog.Info("instance disconnected", "id", id)

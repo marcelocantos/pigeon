@@ -277,14 +277,18 @@ func (s *WebTransportServer) handleRegister(r *http.Request, sess *wtSession, to
 	if id == "" {
 		id = generateID()
 	}
+	inst := newInstance(id, sess)
+	if err := s.hub.register(inst); err != nil {
+		slog.Warn("wt register: instance ID in use", "id", id, "err", err)
+		_ = sess.Close()
+		return
+	}
+	defer s.hub.unregister(inst)
 	if err := sess.WriteMessage([]byte(id)); err != nil {
 		slog.Error("register: write ID failed", "err", err)
 		_ = sess.Close()
 		return
 	}
-	inst := newInstance(id, sess)
-	s.hub.register(inst)
-	defer s.hub.unregister(id)
 	slog.Info("instance registered", "id", id, "transport", "webtransport")
 	<-sess.Context().Done()
 	slog.Info("instance disconnected", "id", id)
