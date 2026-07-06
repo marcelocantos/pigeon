@@ -65,18 +65,35 @@ func newHub() *hub {
 	return &hub{instances: make(map[string]*instance)}
 }
 
-func (h *hub) register(inst *instance) {
+// register claims the instance's ID for its owning connection. It
+// refuses to displace an instance that is still live (its context not
+// yet cancelled), so a peer — malicious or a racing reconnect — cannot
+// hijack a live backend's ID via last-writer-wins. A dead-but-not-yet-
+// unregistered slot may be taken over; the departing owner's unregister
+// is ownership-checked and will not disturb the new instance.
+func (h *hub) register(inst *instance) error {
 	h.mu.Lock()
+	defer h.mu.Unlock()
+	if cur, ok := h.instances[inst.id]; ok && cur.ctx.Err() == nil {
+		return fmt.Errorf("instance %q already registered", inst.id)
+	}
 	h.instances[inst.id] = inst
-	h.mu.Unlock()
+	return nil
 }
 
-func (h *hub) unregister(id string) {
+// unregister removes and cancels inst only if it still owns its ID slot
+// (pointer identity). A stale teardown whose slot was taken over by a
+// re-registered instance is a no-op, so an old connection's departure
+// can never cancel the new live instance.
+func (h *hub) unregister(inst *instance) {
 	h.mu.Lock()
-	inst, ok := h.instances[id]
-	delete(h.instances, id)
+	cur, ok := h.instances[inst.id]
+	owns := ok && cur == inst
+	if owns {
+		delete(h.instances, inst.id)
+	}
 	h.mu.Unlock()
-	if ok {
+	if owns {
 		inst.cancel()
 	}
 }

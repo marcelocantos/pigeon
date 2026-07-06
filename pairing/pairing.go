@@ -140,9 +140,12 @@ func (p *Pairer) Accept(ctx context.Context) (*Ceremony, error) {
 	}
 	token := base64.RawURLEncoding.EncodeToString(raw)
 
-	cer := newCeremony(token, nil)
+	// Root the ceremony ctx at the Pairer ctx so Pairer.Close still
+	// aborts every in-flight ceremony; cer.Close additionally cancels
+	// just this one.
+	cer := newCeremony(p.ctx, token, nil)
 	cer.listener = listener
-	go runAcceptor(p.ctx, listener, eph, p.args.Identity, p.args.Relay, cer)
+	go runAcceptor(cer.ctx, listener, eph, p.args.Identity, p.args.Relay, cer)
 	return cer, nil
 }
 
@@ -182,8 +185,11 @@ func Initiate(ctx context.Context, args *InitiateArgs) (*Ceremony, error) {
 		return nil, fmt.Errorf("relay connect: %w", err)
 	}
 
-	cer := newCeremony("", sess)
-	go runInitiator(context.Background(), sess, eph, args.Identity, &payload, cer)
+	// Root the ceremony ctx at the caller's ctx and cancel it on Close,
+	// so a pre-confirm Close (or a cancelled caller ctx) aborts the
+	// C-side confirm wait instead of wedging runInitiator forever.
+	cer := newCeremony(ctx, "", sess)
+	go runInitiator(cer.ctx, sess, eph, args.Identity, &payload, cer)
 	return cer, nil
 }
 
@@ -205,6 +211,12 @@ type Ceremony struct {
 	// Empty on the initiator side.
 	Token string
 
+	// ctx scopes the in-flight ceremony (the C driver's confirm wait
+	// selects on ctx.Done()). Close cancels it so a pre-confirm Close
+	// aborts the ceremony instead of leaking its goroutine + cgo handles.
+	ctx    context.Context
+	cancel context.CancelFunc
+
 	mu        sync.Mutex
 	closed    bool
 	sess      *pigeon.Session  // initiator side; nil on acceptor pre-Accept
@@ -225,10 +237,13 @@ type ceremonyResult struct {
 	err error
 }
 
-func newCeremony(token string, sess *pigeon.Session) *Ceremony {
+func newCeremony(parent context.Context, token string, sess *pigeon.Session) *Ceremony {
+	ctx, cancel := context.WithCancel(parent)
 	return &Ceremony{
 		Token:     token,
 		sess:      sess,
+		ctx:       ctx,
+		cancel:    cancel,
 		codeReady: make(chan struct{}),
 		confirmCh: make(chan struct{}),
 		result:    make(chan ceremonyResult, 1),
@@ -282,6 +297,10 @@ func (c *Ceremony) Close() error {
 	sess := c.sess
 	listener := c.listener
 	c.mu.Unlock()
+	// Cancel first so the C driver's confirm callback (if parked) returns
+	// and runInitiator/runAcceptor unwind, releasing their cgo handles
+	// and QUIC session before we close the transport underneath them.
+	c.cancel()
 	if sess != nil {
 		_ = sess.Close()
 	}

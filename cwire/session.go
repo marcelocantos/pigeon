@@ -16,6 +16,7 @@ import "C"
 import (
 	"errors"
 	"runtime"
+	"sync"
 	"unsafe"
 )
 
@@ -49,14 +50,24 @@ func (l *Loopback) Close() {
 	runtime.SetFinalizer(l, nil)
 }
 
-// Channel is a thin wrapper around pigeon_channel for cgo-bridge tests.
-// Production callers should use the Go pigeon package's *crypto.Channel
-// (this exists only so tests can wire the loopback API end-to-end).
+// Channel is a thin wrapper around pigeon_channel. It backs the AEAD of
+// every production pigeon.Session (api.go stores it as Session.channel,
+// built by DeriveSessionChannel), and is also used directly by the
+// cgo-bridge loopback tests.
 //
 // The C struct is heap-allocated via C.calloc so it can be passed
 // across cgo without tripping Go's "Go pointer to Go pointer" rule.
+//
+// A single Channel is shared across every stream pump and the datagram
+// pump of a Session (see the pigeon root package). pigeon_channel_encrypt
+// / _decrypt advance ch->send_seq / ch->recv_seq with a non-atomic C
+// read-modify-write, so concurrent Encrypt/Decrypt would race the counter
+// and hand two messages the same (key, nonce) — a catastrophic AES-GCM
+// break. mu serialises those C mutations so every message gets a distinct
+// nonce.
 type Channel struct {
-	c *C.pigeon_channel
+	mu sync.Mutex
+	c  *C.pigeon_channel
 }
 
 // NewChannel constructs a Channel with separate send/recv keys (each
@@ -93,6 +104,10 @@ func (ch *Channel) Encrypt(plaintext []byte) ([]byte, error) {
 	if ch == nil || ch.c == nil {
 		return nil, errors.New("cwire: Channel.Encrypt: nil channel")
 	}
+	// Serialise the non-atomic C send_seq++ so concurrent senders on a
+	// shared channel never collide on a (key, nonce) pair.
+	ch.mu.Lock()
+	defer ch.mu.Unlock()
 	// Output is 8 bytes of seq + plaintext + 16-byte GCM tag.
 	out := make([]byte, 8+len(plaintext)+16)
 	var pPtr *C.uint8_t
@@ -118,6 +133,10 @@ func (ch *Channel) Decrypt(data []byte) ([]byte, error) {
 	if len(data) < 8+16 {
 		return nil, errors.New("cwire: Channel.Decrypt: input too short")
 	}
+	// Serialise the non-atomic C recv_seq update against concurrent
+	// Decrypt callers (stream + datagram recv pumps share one channel).
+	ch.mu.Lock()
+	defer ch.mu.Unlock()
 	// Plaintext is at most len(data) - 8 (seq) - 16 (tag) bytes.
 	out := make([]byte, len(data))
 	n := C.pigeon_channel_decrypt(ch.c,
