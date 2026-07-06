@@ -1844,3 +1844,19 @@ targets:
     origin: bootstrap from targets.md (T17)
     discovered: 2026-04-08
     achieved: 2026-04-15
+  T57:
+    name: pigeon's pairing ceremony end-to-end test (TestCeremonyEndToEnd) is not flaky — the initiator pairing succeeds deterministically across repeated and bulk runs
+    status: identified
+    value: 5.0
+    cost: 3.0
+    acceptance:
+    - '`go test -count=20 -race ./pairing/...` passes with zero `pigeon_pair_initiator failed` occurrences, in CI and locally, across many consecutive runs'
+    - The intermittent C-side failure (cwire pigeon_pair_initiator, pairing_test.go line 106) is root-caused — the resource/timing/handshake nondeterminism is identified and removed, not merely masked by a rerun/retry
+    - Whether T54 ctx-threading through the confirm callback increased the flake rate is specifically measured (flake rate on master before vs after PR #51) and ruled out or fixed
+    context: 'Observed 2026-07-06 during the Fable-5 audit-remediation PR #51 (branch audit-pigeon-20260705): TestCeremonyEndToEnd failed on the branch CI — pairing_test.go:106 initiator confirm: initiator: cwire: pigeon_pair_initiator failed — then PASSED on rerun of the failed job. Intermittent, not a deterministic regression. The same test also took down a master CI run earlier (16445ded, 2026-07-04 12:07) which then went green on the next commit — so it is flaky on master too, independent of the audit fixes. A hard C-side pairing failure surfacing intermittently is a genuine CI-reliability defect; it regresses the reliability posture asserted by achieved targets T18 (root Go suite passes reliably under bulk load) and T20 (PigeonConnE2ETest reliable). Open question worth measuring: whether T54''s new ctx-threading into ConfirmFn (same confirm path, landing in #51) raised the flake rate. Filed from the ~think fleet audit-remediation run (session 1cf2248b).'
+    tags:
+    - flaky
+    - ci
+    - test-reliability
+    origin: manual
+    discovered: 2026-07-06
