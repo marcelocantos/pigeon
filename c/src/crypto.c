@@ -125,6 +125,36 @@ int pigeon_derive_confirmation_code(const uint8_t *pub_a,
     return 0;
 }
 
+// Domain-separated tag for SAS commitments (🎯T52). Keep in lockstep with
+// crypto.SASCommit / Swift sasCommit / any other language port.
+static const uint8_t k_sas_commit_tag[] = "pigeon-sas-commit";
+
+int pigeon_sas_commit(const uint8_t *eph_pub,
+                      const uint8_t *blind,
+                      uint8_t *out_commit)
+{
+    if (!eph_pub || !blind || !out_commit) return -1;
+    crypto_hash_sha256_state st;
+    crypto_hash_sha256_init(&st);
+    crypto_hash_sha256_update(&st, k_sas_commit_tag, sizeof(k_sas_commit_tag) - 1);
+    crypto_hash_sha256_update(&st, eph_pub, 32);
+    crypto_hash_sha256_update(&st, blind, 32);
+    crypto_hash_sha256_final(&st, out_commit);
+    return 0;
+}
+
+int pigeon_sas_commit_verify(const uint8_t *eph_pub,
+                             const uint8_t *blind,
+                             const uint8_t *commit)
+{
+    if (!eph_pub || !blind || !commit) return -1;
+    uint8_t expected[32];
+    if (pigeon_sas_commit(eph_pub, blind, expected) != 0) return -1;
+    int ok = sodium_memcmp(expected, commit, 32) == 0;
+    sodium_memzero(expected, sizeof(expected));
+    return ok ? 0 : -1;
+}
+
 void pigeon_channel_init(pigeon_channel *ch,
                          const uint8_t *send_key,
                          const uint8_t *recv_key,

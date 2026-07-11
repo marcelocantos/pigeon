@@ -109,6 +109,42 @@ static void test_confirmation_code(void)
     PASS();
 }
 
+// --- SAS commitment (🎯T52) ---
+
+static void test_sas_commit(void)
+{
+    TEST("SAS commit binds eph+blind (anti-grind)");
+    pigeon_keypair kp;
+    pigeon_generate_keypair(&kp);
+    uint8_t blind[32], commit[32], other_blind[32];
+    pigeon_random_bytes(blind, 32);
+    pigeon_random_bytes(other_blind, 32);
+
+    if (pigeon_sas_commit(kp.public_key, blind, commit) != 0) {
+        FAIL("commit failed"); return;
+    }
+    if (pigeon_sas_commit_verify(kp.public_key, blind, commit) != 0) {
+        FAIL("verify should accept matching reveal"); return;
+    }
+    // Wrong blind must fail.
+    if (pigeon_sas_commit_verify(kp.public_key, other_blind, commit) == 0) {
+        FAIL("verify should reject wrong blind"); return;
+    }
+    // Wrong eph must fail.
+    pigeon_keypair other;
+    pigeon_generate_keypair(&other);
+    if (pigeon_sas_commit_verify(other.public_key, blind, commit) == 0) {
+        FAIL("verify should reject wrong eph"); return;
+    }
+    // Commit is deterministic.
+    uint8_t commit2[32];
+    pigeon_sas_commit(kp.public_key, blind, commit2);
+    if (memcmp(commit, commit2, 32) != 0) {
+        FAIL("commit not deterministic"); return;
+    }
+    PASS();
+}
+
 // --- Channel encrypt/decrypt round-trip ---
 
 static void test_channel_roundtrip(void)
@@ -585,18 +621,24 @@ static void test_buffer_too_small(void)
 static int s_gen_ephemeral_called;
 static int s_register_relay_called;
 static int s_emit_token_called;
+static int s_store_commit_called;
+static int s_verify_commit_called;
 static int s_derive_code_called;
 static int s_store_record_called;
 static int s_decode_token_called;
 static int s_dial_relay_called;
+static int s_send_reveal_called;
 
 static int act_gen_ephemeral(void *ctx)   { (void)ctx; s_gen_ephemeral_called++;   return 0; }
 static int act_register_relay(void *ctx)  { (void)ctx; s_register_relay_called++;  return 0; }
 static int act_emit_token(void *ctx)      { (void)ctx; s_emit_token_called++;      return 0; }
+static int act_store_commit(void *ctx)    { (void)ctx; s_store_commit_called++;    return 0; }
+static int act_verify_commit(void *ctx)   { (void)ctx; s_verify_commit_called++;   return 0; }
 static int act_derive_code(void *ctx)     { (void)ctx; s_derive_code_called++;     return 0; }
 static int act_store_record(void *ctx)    { (void)ctx; s_store_record_called++;    return 0; }
 static int act_decode_token(void *ctx)    { (void)ctx; s_decode_token_called++;    return 0; }
 static int act_dial_relay(void *ctx)      { (void)ctx; s_dial_relay_called++;      return 0; }
+static int act_send_reveal(void *ctx)     { (void)ctx; s_send_reveal_called++;     return 0; }
 
 static void test_state_machine_transitions(void)
 {
@@ -605,19 +647,23 @@ static void test_state_machine_transitions(void)
     s_gen_ephemeral_called = 0;
     s_register_relay_called = 0;
     s_emit_token_called = 0;
+    s_store_commit_called = 0;
+    s_verify_commit_called = 0;
     s_derive_code_called = 0;
     s_store_record_called = 0;
     s_decode_token_called = 0;
     s_dial_relay_called = 0;
+    s_send_reveal_called = 0;
 
-    // ----- acceptor -----
+    // ----- acceptor (commit → reveal → code) -----
     pigeon_acceptor_machine acc;
     pigeon_acceptor_machine_init(&acc);
-    acc.actions[PIGEON_PAIRINGCEREMONY_ACTION_GEN_EPHEMERAL]  = act_gen_ephemeral;
-    acc.actions[PIGEON_PAIRINGCEREMONY_ACTION_REGISTER_RELAY] = act_register_relay;
-    acc.actions[PIGEON_PAIRINGCEREMONY_ACTION_EMIT_TOKEN]     = act_emit_token;
-    acc.actions[PIGEON_PAIRINGCEREMONY_ACTION_DERIVE_CODE]    = act_derive_code;
-    acc.actions[PIGEON_PAIRINGCEREMONY_ACTION_STORE_RECORD]   = act_store_record;
+    acc.actions[PIGEON_PAIRINGCEREMONY_ACTION_GEN_EPHEMERAL]           = act_gen_ephemeral;
+    acc.actions[PIGEON_PAIRINGCEREMONY_ACTION_REGISTER_RELAY]          = act_register_relay;
+    acc.actions[PIGEON_PAIRINGCEREMONY_ACTION_EMIT_TOKEN]              = act_emit_token;
+    acc.actions[PIGEON_PAIRINGCEREMONY_ACTION_STORE_COMMIT]            = act_store_commit;
+    acc.actions[PIGEON_PAIRINGCEREMONY_ACTION_VERIFY_COMMIT_AND_DERIVE] = act_verify_commit;
+    acc.actions[PIGEON_PAIRINGCEREMONY_ACTION_STORE_RECORD]            = act_store_record;
 
     if (acc.state != PIGEON_ACCEPTOR_IDLE) { FAIL("acceptor: expected IDLE"); return; }
     if (pigeon_acceptor_step(&acc, PIGEON_PAIRINGCEREMONY_EVENT_PAIR_BEGIN) != 1) { FAIL("acceptor: step PAIR_BEGIN"); return; }
@@ -627,6 +673,8 @@ static void test_state_machine_transitions(void)
     if (pigeon_acceptor_step(&acc, PIGEON_PAIRINGCEREMONY_EVENT_RELAY_REGISTERED) != 1) { FAIL("acceptor: step RELAY_REGISTERED"); return; }
     if (acc.state != PIGEON_ACCEPTOR_WAITING_FOR_HELLO) { FAIL("acceptor: expected WAITING_FOR_HELLO"); return; }
     if (pigeon_acceptor_handle_message(&acc, PIGEON_PAIRINGCEREMONY_MSG_HELLO) != 1) { FAIL("acceptor: handle HELLO"); return; }
+    if (acc.state != PIGEON_ACCEPTOR_WAITING_FOR_REVEAL) { FAIL("acceptor: expected WAITING_FOR_REVEAL"); return; }
+    if (pigeon_acceptor_handle_message(&acc, PIGEON_PAIRINGCEREMONY_MSG_REVEAL) != 1) { FAIL("acceptor: handle REVEAL"); return; }
     if (acc.state != PIGEON_ACCEPTOR_DERIVING_CODE) { FAIL("acceptor: expected DERIVING_CODE"); return; }
     if (pigeon_acceptor_step(&acc, PIGEON_PAIRINGCEREMONY_EVENT_CODE_READY) != 1) { FAIL("acceptor: step CODE_READY"); return; }
     if (acc.state != PIGEON_ACCEPTOR_AWAITING_USER_CONFIRM) { FAIL("acceptor: expected AWAITING_USER_CONFIRM"); return; }
@@ -638,15 +686,17 @@ static void test_state_machine_transitions(void)
     if (s_gen_ephemeral_called  != 1) { FAIL("acceptor: gen_ephemeral did not fire"); return; }
     if (s_register_relay_called != 1) { FAIL("acceptor: register_relay did not fire"); return; }
     if (s_emit_token_called     != 1) { FAIL("acceptor: emit_token did not fire"); return; }
-    if (s_derive_code_called    != 1) { FAIL("acceptor: derive_code did not fire"); return; }
+    if (s_store_commit_called   != 1) { FAIL("acceptor: store_commit did not fire"); return; }
+    if (s_verify_commit_called  != 1) { FAIL("acceptor: verify_commit_and_derive did not fire"); return; }
     if (s_store_record_called   != 1) { FAIL("acceptor: store_record did not fire"); return; }
 
-    // ----- initiator -----
+    // ----- initiator (hello commit → welcome → reveal → code) -----
     pigeon_initiator_machine ini;
     pigeon_initiator_machine_init(&ini);
     ini.actions[PIGEON_PAIRINGCEREMONY_ACTION_DECODE_TOKEN]  = act_decode_token;
     ini.actions[PIGEON_PAIRINGCEREMONY_ACTION_GEN_EPHEMERAL] = act_gen_ephemeral;
     ini.actions[PIGEON_PAIRINGCEREMONY_ACTION_DIAL_RELAY]    = act_dial_relay;
+    ini.actions[PIGEON_PAIRINGCEREMONY_ACTION_SEND_REVEAL]   = act_send_reveal;
     ini.actions[PIGEON_PAIRINGCEREMONY_ACTION_DERIVE_CODE]   = act_derive_code;
     ini.actions[PIGEON_PAIRINGCEREMONY_ACTION_STORE_RECORD]  = act_store_record;
 
@@ -659,6 +709,8 @@ static void test_state_machine_transitions(void)
     if (pigeon_initiator_step(&ini, PIGEON_PAIRINGCEREMONY_EVENT_RELAY_CONNECTED) != 1) { FAIL("initiator: step RELAY_CONNECTED"); return; }
     if (ini.state != PIGEON_INITIATOR_AWAITING_WELCOME) { FAIL("initiator: expected AWAITING_WELCOME"); return; }
     if (pigeon_initiator_handle_message(&ini, PIGEON_PAIRINGCEREMONY_MSG_WELCOME) != 1) { FAIL("initiator: handle WELCOME"); return; }
+    if (ini.state != PIGEON_INITIATOR_REVEALING) { FAIL("initiator: expected REVEALING"); return; }
+    if (pigeon_initiator_step(&ini, PIGEON_PAIRINGCEREMONY_EVENT_REVEAL_SENT) != 1) { FAIL("initiator: step REVEAL_SENT"); return; }
     if (ini.state != PIGEON_INITIATOR_DERIVING_CODE) { FAIL("initiator: expected DERIVING_CODE"); return; }
     if (pigeon_initiator_step(&ini, PIGEON_PAIRINGCEREMONY_EVENT_CODE_READY) != 1) { FAIL("initiator: step CODE_READY"); return; }
     if (ini.state != PIGEON_INITIATOR_AWAITING_USER_CONFIRM) { FAIL("initiator: expected AWAITING_USER_CONFIRM"); return; }
@@ -670,7 +722,8 @@ static void test_state_machine_transitions(void)
     if (s_decode_token_called   != 1) { FAIL("initiator: decode_token did not fire"); return; }
     if (s_gen_ephemeral_called  != 2) { FAIL("initiator: gen_ephemeral count"); return; }
     if (s_dial_relay_called     != 1) { FAIL("initiator: dial_relay did not fire"); return; }
-    if (s_derive_code_called    != 2) { FAIL("initiator: derive_code count"); return; }
+    if (s_send_reveal_called    != 1) { FAIL("initiator: send_reveal did not fire"); return; }
+    if (s_derive_code_called    != 1) { FAIL("initiator: derive_code did not fire"); return; }
     if (s_store_record_called   != 2) { FAIL("initiator: store_record count"); return; }
 
     PASS();
@@ -2247,6 +2300,7 @@ int main(void)
     test_keypair();
     test_session_key_derivation();
     test_confirmation_code();
+    test_sas_commit();
     test_channel_roundtrip();
     test_symmetric_channel();
     test_sequence_strict();

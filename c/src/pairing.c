@@ -4,13 +4,21 @@
 // Wire-level pairing ceremony driver (C side).
 //
 // pigeon_pair_acceptor and pigeon_pair_initiator implement the same
-// hello/welcome/confirm exchange that Go's pairing.runAcceptor /
+// hello/welcome/reveal/confirm exchange that Go's pairing.runAcceptor /
 // runInitiator drive over a pigeon.Conn. Messages are JSON with
 // base64-encoded byte fields — byte-for-byte compatible with the Go
 // encoding/json marshaller.
 //
+// 🎯T52: the initiator commits to its ephemeral pubkey before reveal
+// so a relay MitM cannot grind SAS codes after seeing peer keys:
+//   hello  = {commit = SHA256("pigeon-sas-commit"||eph||blind), identity, instance}
+//   welcome = {eph_pub, identity, instance}
+//   reveal = {eph_pub, blind}
+//   confirm = {}
+//
 // The only external I/O is through pigeon_transport.send_on_stream /
-// recv_on_stream, plus pigeon_derive_confirmation_code from crypto.c.
+// recv_on_stream, plus pigeon_derive_confirmation_code /
+// pigeon_sas_commit / pigeon_sas_commit_verify from crypto.c.
 
 #include "pigeon/pigeon.h"
 
@@ -177,19 +185,20 @@ static int pair_recv(const pigeon_transport *t, pigeon_stream_handle *h,
 // compatible with the Go driver.
 // ---------------------------------------------------------------------------
 
-// build_hello: {"kind":"hello","eph_pub":"<b64>","identity_pub":"<b64>","instance_id":"<str>"}
-static int build_hello(const uint8_t *eph_pub,
+// build_hello: {"kind":"hello","commit":"<b64>","identity_pub":"<b64>","instance_id":"<str>"}
+// commit is a 32-byte SAS commitment (SHA256); eph is revealed later.
+static int build_hello(const uint8_t *commit,
                        const uint8_t *identity_pub,
                        const char *instance_id,
                        uint8_t *buf, size_t buf_cap)
 {
-    char eph_b64[64], id_b64[64];
-    if (b64_encode(eph_pub, 32, eph_b64, sizeof(eph_b64)) < 0) return -1;
+    char commit_b64[64], id_b64[64];
+    if (b64_encode(commit, 32, commit_b64, sizeof(commit_b64)) < 0) return -1;
     if (b64_encode(identity_pub, 32, id_b64, sizeof(id_b64)) < 0) return -1;
     int n = snprintf((char *)buf, buf_cap,
-        "{\"kind\":\"hello\",\"eph_pub\":\"%s\",\"identity_pub\":\"%s\","
+        "{\"kind\":\"hello\",\"commit\":\"%s\",\"identity_pub\":\"%s\","
         "\"instance_id\":\"%s\"}",
-        eph_b64, id_b64, instance_id);
+        commit_b64, id_b64, instance_id);
     if (n < 0 || (size_t)n >= buf_cap) return -1;
     return n;
 }
@@ -207,6 +216,21 @@ static int build_welcome(const uint8_t *eph_pub,
         "{\"kind\":\"welcome\",\"eph_pub\":\"%s\",\"identity_pub\":\"%s\","
         "\"instance_id\":\"%s\"}",
         eph_b64, id_b64, instance_id);
+    if (n < 0 || (size_t)n >= buf_cap) return -1;
+    return n;
+}
+
+// build_reveal: {"kind":"reveal","eph_pub":"<b64>","blind":"<b64>"}
+static int build_reveal(const uint8_t *eph_pub,
+                        const uint8_t *blind,
+                        uint8_t *buf, size_t buf_cap)
+{
+    char eph_b64[64], blind_b64[64];
+    if (b64_encode(eph_pub, 32, eph_b64, sizeof(eph_b64)) < 0) return -1;
+    if (b64_encode(blind, 32, blind_b64, sizeof(blind_b64)) < 0) return -1;
+    int n = snprintf((char *)buf, buf_cap,
+        "{\"kind\":\"reveal\",\"eph_pub\":\"%s\",\"blind\":\"%s\"}",
+        eph_b64, blind_b64);
     if (n < 0 || (size_t)n >= buf_cap) return -1;
     return n;
 }
@@ -256,7 +280,7 @@ int pigeon_pair_acceptor(
     if (pigeon_acceptor_step(&m, PIGEON_PAIRINGCEREMONY_EVENT_EPHEMERAL_READY) != 1)   { free(buf); return -1; }
     if (pigeon_acceptor_step(&m, PIGEON_PAIRINGCEREMONY_EVENT_RELAY_REGISTERED) != 1)  { free(buf); return -1; }
 
-    // --- Read hello ---
+    // --- Read hello (commit only; eph revealed later) ---
     size_t got = 0;
     if (pair_recv(transport, stream, buf, PIGEON_MAX_MSG, &got) != 0) { free(buf); return -1; }
     buf[got < PIGEON_MAX_MSG ? got : PIGEON_MAX_MSG - 1] = '\0';
@@ -265,11 +289,11 @@ int pigeon_pair_acceptor(
     if (json_find_string_field((char *)buf, got, "kind", kind, sizeof(kind)) < 0
         || strcmp(kind, "hello") != 0) { free(buf); return -1; }
 
-    char eph_b64[64];
-    if (json_find_string_field((char *)buf, got, "eph_pub", eph_b64, sizeof(eph_b64)) < 0)
+    char commit_b64[64];
+    if (json_find_string_field((char *)buf, got, "commit", commit_b64, sizeof(commit_b64)) < 0)
         { free(buf); return -1; }
-    uint8_t peer_eph_pub[32];
-    if (b64_decode(eph_b64, strlen(eph_b64), peer_eph_pub, 32) != 32)
+    uint8_t peer_commit[32];
+    if (b64_decode(commit_b64, strlen(commit_b64), peer_commit, 32) != 32)
         { free(buf); return -1; }
 
     // Extract initiator identity and instance from hello.
@@ -281,14 +305,40 @@ int pigeon_pair_acceptor(
     json_find_string_field((char *)buf, got, "instance_id", peer_instance, sizeof(peer_instance));
 
     if (pigeon_acceptor_handle_message(&m, PIGEON_PAIRINGCEREMONY_MSG_HELLO) != 1) { free(buf); return -1; }
-    if (pigeon_acceptor_step(&m, PIGEON_PAIRINGCEREMONY_EVENT_CODE_READY) != 1)    { free(buf); return -1; }
 
-    // --- Send welcome ---
+    // --- Send welcome (reveal acceptor eph; already bound by OOB token) ---
     int wlen = build_welcome(local_eph_pub, identity_pub, instance_id, buf, PIGEON_MAX_MSG);
     if (wlen < 0) { free(buf); return -1; }
     if (pair_send(transport, stream, buf, (size_t)wlen) != 0) { free(buf); return -1; }
 
-    // --- Derive confirmation code ---
+    // --- Read reveal; verify it opens the hello commit ---
+    got = 0;
+    if (pair_recv(transport, stream, buf, PIGEON_MAX_MSG, &got) != 0) { free(buf); return -1; }
+    buf[got < PIGEON_MAX_MSG ? got : PIGEON_MAX_MSG - 1] = '\0';
+    if (json_find_string_field((char *)buf, got, "kind", kind, sizeof(kind)) < 0
+        || strcmp(kind, "reveal") != 0) { free(buf); return -1; }
+
+    char eph_b64[64], blind_b64[64];
+    if (json_find_string_field((char *)buf, got, "eph_pub", eph_b64, sizeof(eph_b64)) < 0)
+        { free(buf); return -1; }
+    if (json_find_string_field((char *)buf, got, "blind", blind_b64, sizeof(blind_b64)) < 0)
+        { free(buf); return -1; }
+    uint8_t peer_eph_pub[32], peer_blind[32];
+    if (b64_decode(eph_b64, strlen(eph_b64), peer_eph_pub, 32) != 32)
+        { free(buf); return -1; }
+    if (b64_decode(blind_b64, strlen(blind_b64), peer_blind, 32) != 32)
+        { free(buf); return -1; }
+
+    if (pigeon_sas_commit_verify(peer_eph_pub, peer_blind, peer_commit) != 0) {
+        (void)pigeon_acceptor_step(&m, PIGEON_PAIRINGCEREMONY_EVENT_COMMIT_FAIL);
+        free(buf);
+        return -1;
+    }
+
+    if (pigeon_acceptor_handle_message(&m, PIGEON_PAIRINGCEREMONY_MSG_REVEAL) != 1) { free(buf); return -1; }
+    if (pigeon_acceptor_step(&m, PIGEON_PAIRINGCEREMONY_EVENT_CODE_READY) != 1)    { free(buf); return -1; }
+
+    // --- Derive confirmation code (only after commit verified) ---
     if (pigeon_derive_confirmation_code(local_eph_pub, peer_eph_pub, out_code) != 0)
         { free(buf); return -1; }
 
@@ -360,10 +410,16 @@ int pigeon_pair_initiator(
     if (pigeon_initiator_step(&m, PIGEON_PAIRINGCEREMONY_EVENT_TOKEN_RECEIVED) != 1)  { free(buf); return -1; }
     if (pigeon_initiator_step(&m, PIGEON_PAIRINGCEREMONY_EVENT_TOKEN_DECODED) != 1)   { free(buf); return -1; }
     if (pigeon_initiator_step(&m, PIGEON_PAIRINGCEREMONY_EVENT_EPHEMERAL_READY) != 1) { free(buf); return -1; }
+
+    // --- Mint SAS blind + commit before revealing eph (🎯T52) ---
+    uint8_t blind[32], commit[32];
+    pigeon_random_bytes(blind, 32);
+    if (pigeon_sas_commit(local_eph_pub, blind, commit) != 0) { free(buf); return -1; }
+
     if (pigeon_initiator_step(&m, PIGEON_PAIRINGCEREMONY_EVENT_RELAY_CONNECTED) != 1) { free(buf); return -1; }
 
-    // --- Send hello ---
-    int hlen = build_hello(local_eph_pub, identity_pub, instance_id, buf, PIGEON_MAX_MSG);
+    // --- Send hello (commitment only) ---
+    int hlen = build_hello(commit, identity_pub, instance_id, buf, PIGEON_MAX_MSG);
     if (hlen < 0) { free(buf); return -1; }
     if (pair_send(transport, stream, buf, (size_t)hlen) != 0) { free(buf); return -1; }
 
@@ -383,18 +439,25 @@ int pigeon_pair_initiator(
     if (b64_decode(eph_b64, strlen(eph_b64), peer_eph_pub, 32) != 32)
         { free(buf); return -1; }
 
+    // Welcome eph must match the OOB token; otherwise a MitM substituted
+    // the acceptor key. Token value is authoritative for SAS + record.
+    if (memcmp(peer_eph_pub, acc_eph_pub, 32) != 0) { free(buf); return -1; }
+
     char peer_instance[64] = "";
     json_find_string_field((char *)buf, got, "instance_id", peer_instance, sizeof(peer_instance));
 
     if (pigeon_initiator_handle_message(&m, PIGEON_PAIRINGCEREMONY_MSG_WELCOME) != 1) { free(buf); return -1; }
-    if (pigeon_initiator_step(&m, PIGEON_PAIRINGCEREMONY_EVENT_CODE_READY) != 1)      { free(buf); return -1; }
 
-    // --- Derive confirmation code ---
-    // DeriveConfirmationCode(acc_eph_pub, local_eph_pub) — acceptor's key is
-    // pubA, initiator's key is pubB.  pigeon_derive_confirmation_code is
-    // order-independent so the result is the same as Go's
-    // crypto.DeriveConfirmationCode(accEphPub, eph.PublicKey()).
-    if (pigeon_derive_confirmation_code(peer_eph_pub, local_eph_pub, out_code) != 0)
+    // --- Reveal eph under the prior commit ---
+    int rlen = build_reveal(local_eph_pub, blind, buf, PIGEON_MAX_MSG);
+    if (rlen < 0) { free(buf); return -1; }
+    if (pair_send(transport, stream, buf, (size_t)rlen) != 0) { free(buf); return -1; }
+
+    if (pigeon_initiator_step(&m, PIGEON_PAIRINGCEREMONY_EVENT_REVEAL_SENT) != 1) { free(buf); return -1; }
+    if (pigeon_initiator_step(&m, PIGEON_PAIRINGCEREMONY_EVENT_CODE_READY) != 1)  { free(buf); return -1; }
+
+    // --- Derive confirmation code from token-bound acceptor eph + local eph ---
+    if (pigeon_derive_confirmation_code(acc_eph_pub, local_eph_pub, out_code) != 0)
         { free(buf); return -1; }
 
     // --- Ask local user to confirm ---
@@ -423,7 +486,7 @@ int pigeon_pair_initiator(
             sizeof(out_record->peer_instance_id) - 1);
     memcpy(out_record->local_private_key, local_eph_priv, 32);
     memcpy(out_record->local_public_key,  local_eph_pub,  32);
-    memcpy(out_record->peer_public_key,   peer_eph_pub,   32);
+    memcpy(out_record->peer_public_key,   acc_eph_pub,    32);
 
     free(buf);
     return 0;

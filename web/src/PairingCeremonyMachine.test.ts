@@ -29,7 +29,8 @@ describe("acceptor state machine", () => {
       PairingCeremonyProtocol.ActionID.GenEphemeral,
       PairingCeremonyProtocol.ActionID.RegisterRelay,
       PairingCeremonyProtocol.ActionID.EmitToken,
-      PairingCeremonyProtocol.ActionID.DeriveCode,
+      PairingCeremonyProtocol.ActionID.StoreCommit,
+      PairingCeremonyProtocol.ActionID.VerifyCommitAndDerive,
       PairingCeremonyProtocol.ActionID.StoreRecord,
     ]) {
       m.actions.set(id, () => { fired.push(id); });
@@ -42,6 +43,8 @@ describe("acceptor state machine", () => {
     m.handleEvent(PairingCeremonyProtocol.EventID.RelayRegistered);
     assert.equal(m.state, PairingCeremonyAcceptorState.WaitingForHello);
     m.handleEvent(PairingCeremonyProtocol.EventID.RecvHello);
+    assert.equal(m.state, PairingCeremonyAcceptorState.WaitingForReveal);
+    m.handleEvent(PairingCeremonyProtocol.EventID.RecvReveal);
     assert.equal(m.state, PairingCeremonyAcceptorState.DerivingCode);
     m.handleEvent(PairingCeremonyProtocol.EventID.CodeReady);
     assert.equal(m.state, PairingCeremonyAcceptorState.AwaitingUserConfirm);
@@ -54,7 +57,8 @@ describe("acceptor state machine", () => {
       PairingCeremonyProtocol.ActionID.GenEphemeral,
       PairingCeremonyProtocol.ActionID.RegisterRelay,
       PairingCeremonyProtocol.ActionID.EmitToken,
-      PairingCeremonyProtocol.ActionID.DeriveCode,
+      PairingCeremonyProtocol.ActionID.StoreCommit,
+      PairingCeremonyProtocol.ActionID.VerifyCommitAndDerive,
       PairingCeremonyProtocol.ActionID.StoreRecord,
     ]);
   });
@@ -65,7 +69,8 @@ describe("acceptor state machine", () => {
       PairingCeremonyProtocol.ActionID.GenEphemeral,
       PairingCeremonyProtocol.ActionID.RegisterRelay,
       PairingCeremonyProtocol.ActionID.EmitToken,
-      PairingCeremonyProtocol.ActionID.DeriveCode,
+      PairingCeremonyProtocol.ActionID.StoreCommit,
+      PairingCeremonyProtocol.ActionID.VerifyCommitAndDerive,
     ]) {
       m.actions.set(id, () => {});
     }
@@ -73,6 +78,7 @@ describe("acceptor state machine", () => {
     m.handleEvent(PairingCeremonyProtocol.EventID.EphemeralReady);
     m.handleEvent(PairingCeremonyProtocol.EventID.RelayRegistered);
     m.handleEvent(PairingCeremonyProtocol.EventID.RecvHello);
+    m.handleEvent(PairingCeremonyProtocol.EventID.RecvReveal);
     m.handleEvent(PairingCeremonyProtocol.EventID.CodeReady);
     m.handleEvent(PairingCeremonyProtocol.EventID.UserCancel);
     assert.equal(m.state, PairingCeremonyAcceptorState.Aborted);
@@ -84,7 +90,8 @@ describe("acceptor state machine", () => {
       PairingCeremonyProtocol.ActionID.GenEphemeral,
       PairingCeremonyProtocol.ActionID.RegisterRelay,
       PairingCeremonyProtocol.ActionID.EmitToken,
-      PairingCeremonyProtocol.ActionID.DeriveCode,
+      PairingCeremonyProtocol.ActionID.StoreCommit,
+      PairingCeremonyProtocol.ActionID.VerifyCommitAndDerive,
     ]) {
       m.actions.set(id, () => {});
     }
@@ -92,9 +99,29 @@ describe("acceptor state machine", () => {
     m.handleEvent(PairingCeremonyProtocol.EventID.EphemeralReady);
     m.handleEvent(PairingCeremonyProtocol.EventID.RelayRegistered);
     m.handleEvent(PairingCeremonyProtocol.EventID.RecvHello);
+    m.handleEvent(PairingCeremonyProtocol.EventID.RecvReveal);
     m.handleEvent(PairingCeremonyProtocol.EventID.CodeReady);
     m.handleEvent(PairingCeremonyProtocol.EventID.UserConfirm);
     m.handleEvent(PairingCeremonyProtocol.EventID.UserCancel);
+    assert.equal(m.state, PairingCeremonyAcceptorState.Aborted);
+  });
+
+  it("aborts on commit_fail from WaitingForReveal", () => {
+    const m = new PairingCeremonyAcceptorMachine();
+    for (const id of [
+      PairingCeremonyProtocol.ActionID.GenEphemeral,
+      PairingCeremonyProtocol.ActionID.RegisterRelay,
+      PairingCeremonyProtocol.ActionID.EmitToken,
+      PairingCeremonyProtocol.ActionID.StoreCommit,
+    ]) {
+      m.actions.set(id, () => {});
+    }
+    m.handleEvent(PairingCeremonyProtocol.EventID.PairBegin);
+    m.handleEvent(PairingCeremonyProtocol.EventID.EphemeralReady);
+    m.handleEvent(PairingCeremonyProtocol.EventID.RelayRegistered);
+    m.handleEvent(PairingCeremonyProtocol.EventID.RecvHello);
+    assert.equal(m.state, PairingCeremonyAcceptorState.WaitingForReveal);
+    m.handleEvent(PairingCeremonyProtocol.EventID.CommitFail);
     assert.equal(m.state, PairingCeremonyAcceptorState.Aborted);
   });
 
@@ -121,6 +148,7 @@ describe("initiator state machine", () => {
       PairingCeremonyProtocol.ActionID.DecodeToken,
       PairingCeremonyProtocol.ActionID.GenEphemeral,
       PairingCeremonyProtocol.ActionID.DialRelay,
+      PairingCeremonyProtocol.ActionID.SendReveal,
       PairingCeremonyProtocol.ActionID.DeriveCode,
       PairingCeremonyProtocol.ActionID.StoreRecord,
     ]) {
@@ -136,6 +164,8 @@ describe("initiator state machine", () => {
     m.handleEvent(PairingCeremonyProtocol.EventID.RelayConnected);
     assert.equal(m.state, PairingCeremonyInitiatorState.AwaitingWelcome);
     m.handleEvent(PairingCeremonyProtocol.EventID.RecvWelcome);
+    assert.equal(m.state, PairingCeremonyInitiatorState.Revealing);
+    m.handleEvent(PairingCeremonyProtocol.EventID.RevealSent);
     assert.equal(m.state, PairingCeremonyInitiatorState.DerivingCode);
     m.handleEvent(PairingCeremonyProtocol.EventID.CodeReady);
     assert.equal(m.state, PairingCeremonyInitiatorState.AwaitingUserConfirm);
@@ -148,6 +178,7 @@ describe("initiator state machine", () => {
       PairingCeremonyProtocol.ActionID.DecodeToken,
       PairingCeremonyProtocol.ActionID.GenEphemeral,
       PairingCeremonyProtocol.ActionID.DialRelay,
+      PairingCeremonyProtocol.ActionID.SendReveal,
       PairingCeremonyProtocol.ActionID.DeriveCode,
       PairingCeremonyProtocol.ActionID.StoreRecord,
     ]);
@@ -159,6 +190,7 @@ describe("initiator state machine", () => {
       PairingCeremonyProtocol.ActionID.DecodeToken,
       PairingCeremonyProtocol.ActionID.GenEphemeral,
       PairingCeremonyProtocol.ActionID.DialRelay,
+      PairingCeremonyProtocol.ActionID.SendReveal,
       PairingCeremonyProtocol.ActionID.DeriveCode,
     ]) {
       m.actions.set(id, () => {});
@@ -168,6 +200,7 @@ describe("initiator state machine", () => {
     m.handleEvent(PairingCeremonyProtocol.EventID.EphemeralReady);
     m.handleEvent(PairingCeremonyProtocol.EventID.RelayConnected);
     m.handleEvent(PairingCeremonyProtocol.EventID.RecvWelcome);
+    m.handleEvent(PairingCeremonyProtocol.EventID.RevealSent);
     m.handleEvent(PairingCeremonyProtocol.EventID.CodeReady);
     m.handleEvent(PairingCeremonyProtocol.EventID.UserCancel);
     assert.equal(m.state, PairingCeremonyInitiatorState.Aborted);
@@ -176,19 +209,23 @@ describe("initiator state machine", () => {
 
 describe("protocol surface", () => {
   it("MessageType wire values match the YAML", () => {
-    assert.equal(PairingCeremonyProtocol.MessageType.Hello,              "hello");
-    assert.equal(PairingCeremonyProtocol.MessageType.Welcome,            "welcome");
+    assert.equal(PairingCeremonyProtocol.MessageType.Hello, "hello");
+    assert.equal(PairingCeremonyProtocol.MessageType.Welcome, "welcome");
+    assert.equal(PairingCeremonyProtocol.MessageType.Reveal, "reveal");
     assert.equal(PairingCeremonyProtocol.MessageType.ConfirmToInitiator, "confirm_to_initiator");
-    assert.equal(PairingCeremonyProtocol.MessageType.ConfirmToAcceptor,  "confirm_to_acceptor");
+    assert.equal(PairingCeremonyProtocol.MessageType.ConfirmToAcceptor, "confirm_to_acceptor");
   });
 
   it("ActionID wire values match the YAML", () => {
-    assert.equal(PairingCeremonyProtocol.ActionID.GenEphemeral,  "gen_ephemeral");
+    assert.equal(PairingCeremonyProtocol.ActionID.GenEphemeral, "gen_ephemeral");
     assert.equal(PairingCeremonyProtocol.ActionID.RegisterRelay, "register_relay");
-    assert.equal(PairingCeremonyProtocol.ActionID.EmitToken,     "emit_token");
-    assert.equal(PairingCeremonyProtocol.ActionID.DeriveCode,    "derive_code");
-    assert.equal(PairingCeremonyProtocol.ActionID.StoreRecord,   "store_record");
-    assert.equal(PairingCeremonyProtocol.ActionID.DecodeToken,   "decode_token");
-    assert.equal(PairingCeremonyProtocol.ActionID.DialRelay,     "dial_relay");
+    assert.equal(PairingCeremonyProtocol.ActionID.EmitToken, "emit_token");
+    assert.equal(PairingCeremonyProtocol.ActionID.StoreCommit, "store_commit");
+    assert.equal(PairingCeremonyProtocol.ActionID.VerifyCommitAndDerive, "verify_commit_and_derive");
+    assert.equal(PairingCeremonyProtocol.ActionID.StoreRecord, "store_record");
+    assert.equal(PairingCeremonyProtocol.ActionID.DecodeToken, "decode_token");
+    assert.equal(PairingCeremonyProtocol.ActionID.DialRelay, "dial_relay");
+    assert.equal(PairingCeremonyProtocol.ActionID.SendReveal, "send_reveal");
+    assert.equal(PairingCeremonyProtocol.ActionID.DeriveCode, "derive_code");
   });
 });

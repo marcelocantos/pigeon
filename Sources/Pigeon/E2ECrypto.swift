@@ -60,12 +60,40 @@ public func deriveKeyFromSecret(_ secret: Data, info: Data) -> SymmetricKey {
     )
 }
 
+// MARK: - SAS commitment (🎯T52)
+
+/// Domain-separated tag for SAS commitments. Keep in lockstep with
+/// `pigeon_sas_commit` / `crypto.SASCommit`.
+private let sasCommitTag = Data("pigeon-sas-commit".utf8)
+
+/// Compute `SHA256("pigeon-sas-commit" || ephPub || blind)`.
+/// Both inputs must be 32 bytes. The initiator sends this in hello and
+/// later reveals `(ephPub, blind)` so the acceptor can verify the binding
+/// before deriving the confirmation code.
+public func sasCommit(ephPub: Data, blind: Data) -> Data {
+    precondition(ephPub.count == 32 && blind.count == 32, "ephPub and blind must be 32 bytes")
+    var hasher = SHA256()
+    hasher.update(data: sasCommitTag)
+    hasher.update(data: ephPub)
+    hasher.update(data: blind)
+    return Data(hasher.finalize())
+}
+
+/// True iff `(ephPub, blind)` open `commit`.
+public func sasCommitVerify(ephPub: Data, blind: Data, commit: Data) -> Bool {
+    guard commit.count == 32 else { return false }
+    return sasCommit(ephPub: ephPub, blind: blind) == commit
+}
+
 // MARK: - Confirmation code
 
 /// Derive a 6-digit confirmation code from two X25519 public keys.
 /// The code is order-independent and deterministic: swapping the keys
 /// produces the same result. Both sides of a key exchange compute this
 /// independently; a mismatch indicates a MitM attack.
+///
+/// 🎯T52: the pairing ceremony binds each side's eph with a
+/// commit-then-reveal round (see `sasCommit`) before this code is shown.
 public func deriveConfirmationCode(_ pubA: Data, _ pubB: Data) -> String {
     // Sort lexicographically for order-independence.
     let (a, b) = pubA.lexicographicallyPrecedes(pubB) ? (pubA, pubB) : (pubB, pubA)

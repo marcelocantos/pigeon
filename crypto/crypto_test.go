@@ -496,6 +496,44 @@ func TestPairingRecordRoundTrip(t *testing.T) {
 	}
 }
 
+func TestSASCommit(t *testing.T) {
+	kp, err := GenerateKeyPair()
+	if err != nil {
+		t.Fatal(err)
+	}
+	blind := make([]byte, 32)
+	if _, err := rand.Read(blind); err != nil {
+		t.Fatal(err)
+	}
+	commit, err := SASCommit(kp.Public.Bytes(), blind)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(commit) != 32 {
+		t.Fatalf("commit length %d", len(commit))
+	}
+	if !SASCommitVerify(kp.Public.Bytes(), blind, commit) {
+		t.Fatal("verify should accept matching reveal")
+	}
+	otherBlind := make([]byte, 32)
+	if _, err := rand.Read(otherBlind); err != nil {
+		t.Fatal(err)
+	}
+	if SASCommitVerify(kp.Public.Bytes(), otherBlind, commit) {
+		t.Fatal("verify should reject wrong blind")
+	}
+	other, err := GenerateKeyPair()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if SASCommitVerify(other.Public.Bytes(), blind, commit) {
+		t.Fatal("verify should reject wrong eph")
+	}
+	// After commit is fixed, grinding a different eph to match is
+	// infeasible: any other (eph', blind') opening the same commit
+	// would break preimage resistance of SHA-256.
+}
+
 func TestDeriveConfirmationCode(t *testing.T) {
 	client, err := GenerateKeyPair()
 	if err != nil {

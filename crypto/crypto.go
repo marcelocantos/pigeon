@@ -15,6 +15,7 @@ import (
 	"crypto/ecdh"
 	"crypto/rand"
 	"crypto/sha256"
+	"crypto/subtle"
 	"encoding/binary"
 	"encoding/json"
 	"errors"
@@ -87,6 +88,10 @@ func GenerateSecret() ([]byte, error) {
 // honest conditions, both derive the same code. Under a MitM attack
 // (where the adversary substituted its own public key), each side
 // computes a different code — the mismatch aborts pairing.
+//
+// 🎯T52: the pairing ceremony binds each side's eph key with a
+// commit-then-reveal round (see SASCommit) before this code is shown,
+// so a relay cannot grind eph keys offline to force a code match.
 func DeriveConfirmationCode(pubA, pubB *ecdh.PublicKey) (string, error) {
 	a, b := pubA.Bytes(), pubB.Bytes()
 	if bytes.Compare(a, b) > 0 {
@@ -100,6 +105,34 @@ func DeriveConfirmationCode(pubA, pubB *ecdh.PublicKey) (string, error) {
 	}
 	code := binary.BigEndian.Uint32(buf) % 1000000
 	return fmt.Sprintf("%06d", code), nil
+}
+
+// sasCommitTag is the domain-separation prefix for SAS commitments.
+// Keep in lockstep with pigeon_sas_commit / Swift sasCommit.
+const sasCommitTag = "pigeon-sas-commit"
+
+// SASCommit returns SHA256("pigeon-sas-commit" || ephPub || blind).
+// ephPub and blind must each be 32 bytes. The initiator sends this in
+// hello and later reveals (ephPub, blind) so the acceptor can verify
+// the binding before deriving the confirmation code (🎯T52).
+func SASCommit(ephPub, blind []byte) ([]byte, error) {
+	if len(ephPub) != 32 || len(blind) != 32 {
+		return nil, fmt.Errorf("crypto.SASCommit: ephPub and blind must be 32 bytes")
+	}
+	h := sha256.New()
+	_, _ = h.Write([]byte(sasCommitTag))
+	_, _ = h.Write(ephPub)
+	_, _ = h.Write(blind)
+	return h.Sum(nil), nil
+}
+
+// SASCommitVerify reports whether (ephPub, blind) open commit.
+func SASCommitVerify(ephPub, blind, commit []byte) bool {
+	expected, err := SASCommit(ephPub, blind)
+	if err != nil || len(commit) != 32 {
+		return false
+	}
+	return subtle.ConstantTimeCompare(expected, commit) == 1
 }
 
 // ChannelMode controls how Decrypt handles sequence numbers.

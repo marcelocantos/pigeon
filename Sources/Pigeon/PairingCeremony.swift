@@ -9,9 +9,10 @@
 // PairingRecord whose `deriveChannel` is wire-compatible with the Go and
 // Kotlin SDKs.
 //
-// The wire format matches c/src/pairing.c exactly:
-//   hello   = {"kind":"hello",  "eph_pub":"<b64>","identity_pub":"<b64>","instance_id":"<str>"}
+// The wire format matches c/src/pairing.c exactly (🎯T52 commit round):
+//   hello   = {"kind":"hello",  "commit":"<b64>","identity_pub":"<b64>","instance_id":"<str>"}
 //   welcome = {"kind":"welcome","eph_pub":"<b64>","identity_pub":"<b64>","instance_id":"<str>"}
+//   reveal  = {"kind":"reveal", "eph_pub":"<b64>","blind":"<b64>"}
 //   confirm = {"kind":"confirm"}
 // Byte fields are standard base64 with padding (Go's encoding/json default
 // for []byte). Each message is framed by the transport's send/recv —
@@ -137,40 +138,41 @@ private func decodeStdB64(_ v: Any?, field: String) throws -> Data {
 
 // MARK: - Wire message
 
-/// The three pairing-ceremony message types. Hello/welcome carry the
-/// sender's ephemeral pubkey + identity pubkey + instance ID; confirm
-/// is a bare {"kind":"confirm"}.
+/// Pairing-ceremony message types (🎯T52 commit-then-reveal):
+/// hello carries a SAS commit (not eph); welcome carries acceptor eph;
+/// reveal opens the commit; confirm is bare `{"kind":"confirm"}`.
 fileprivate enum WireMsg {
-    case hello(ephPub: Data, identityPub: Data, instanceID: String)
+    case hello(commit: Data, identityPub: Data, instanceID: String)
     case welcome(ephPub: Data, identityPub: Data, instanceID: String)
+    case reveal(ephPub: Data, blind: Data)
     case confirm
 
     /// Encode this message to the JSON form c/src/pairing.c emits.
-    /// Fields go in (kind, eph_pub, identity_pub, instance_id) order —
-    /// the C parser is order-independent so this is purely for ergonomic
-    /// equivalence with c/src/pairing.c::build_hello / build_welcome.
+    /// The C parser is order-independent; field order matches the C
+    /// builders for ergonomic byte-level equivalence in tests.
     func encode() throws -> Data {
         switch self {
-        case .hello(let eph, let id, let iid):
-            return try encodeKeyed(kind: "hello", eph: eph, id: id, iid: iid)
+        case .hello(let commit, let id, let iid):
+            precondition(commit.count == 32 && id.count == 32)
+            let cB64 = commit.base64EncodedString()
+            let idB64 = id.base64EncodedString()
+            let json = #"{"kind":"hello","commit":"\#(cB64)","identity_pub":"\#(idB64)","instance_id":"\#(iid)"}"#
+            return Data(json.utf8)
         case .welcome(let eph, let id, let iid):
-            return try encodeKeyed(kind: "welcome", eph: eph, id: id, iid: iid)
+            precondition(eph.count == 32 && id.count == 32)
+            let ephB64 = eph.base64EncodedString()
+            let idB64 = id.base64EncodedString()
+            let json = #"{"kind":"welcome","eph_pub":"\#(ephB64)","identity_pub":"\#(idB64)","instance_id":"\#(iid)"}"#
+            return Data(json.utf8)
+        case .reveal(let eph, let blind):
+            precondition(eph.count == 32 && blind.count == 32)
+            let ephB64 = eph.base64EncodedString()
+            let blindB64 = blind.base64EncodedString()
+            let json = #"{"kind":"reveal","eph_pub":"\#(ephB64)","blind":"\#(blindB64)"}"#
+            return Data(json.utf8)
         case .confirm:
             return Data(#"{"kind":"confirm"}"#.utf8)
         }
-    }
-
-    private func encodeKeyed(kind: String, eph: Data, id: Data, iid: String) throws -> Data {
-        precondition(eph.count == 32, "eph_pub must be 32 bytes")
-        precondition(id.count == 32, "identity_pub must be 32 bytes")
-        // Go's encoding/json escapes only the JSON metacharacters, and
-        // instance IDs are base64url alphabet so no escaping fires. We
-        // build the string manually so the bytes match c/src/pairing.c
-        // exactly (incl. no extra whitespace).
-        let ephB64 = eph.base64EncodedString()
-        let idB64 = id.base64EncodedString()
-        let json = #"{"kind":"\#(kind)","eph_pub":"\#(ephB64)","identity_pub":"\#(idB64)","instance_id":"\#(iid)"}"#
-        return Data(json.utf8)
     }
 
     /// Parse the next inbound message. Throws on anything unparseable;
@@ -184,7 +186,18 @@ fileprivate enum WireMsg {
             throw PairingCeremonyError.malformedMessage("missing 'kind'")
         }
         switch kind {
-        case "hello", "welcome":
+        case "hello":
+            let commit = try decodeStdB64(obj["commit"], field: "commit")
+            let id = try decodeStdB64(obj["identity_pub"], field: "identity_pub")
+            guard let iid = obj["instance_id"] as? String else {
+                throw PairingCeremonyError.malformedMessage("missing instance_id")
+            }
+            if commit.count != 32 || id.count != 32 {
+                throw PairingCeremonyError.malformedMessage("commit/identity must be 32 bytes")
+            }
+            return ParsedMsg(kind: kind, commit: commit, ephPub: nil, blind: nil,
+                             identityPub: id, instanceID: iid)
+        case "welcome":
             let eph = try decodeStdB64(obj["eph_pub"], field: "eph_pub")
             let id = try decodeStdB64(obj["identity_pub"], field: "identity_pub")
             guard let iid = obj["instance_id"] as? String else {
@@ -193,9 +206,19 @@ fileprivate enum WireMsg {
             if eph.count != 32 || id.count != 32 {
                 throw PairingCeremonyError.malformedMessage("eph/identity must be 32 bytes")
             }
-            return ParsedMsg(kind: kind, ephPub: eph, identityPub: id, instanceID: iid)
+            return ParsedMsg(kind: kind, commit: nil, ephPub: eph, blind: nil,
+                             identityPub: id, instanceID: iid)
+        case "reveal":
+            let eph = try decodeStdB64(obj["eph_pub"], field: "eph_pub")
+            let blind = try decodeStdB64(obj["blind"], field: "blind")
+            if eph.count != 32 || blind.count != 32 {
+                throw PairingCeremonyError.malformedMessage("eph/blind must be 32 bytes")
+            }
+            return ParsedMsg(kind: kind, commit: nil, ephPub: eph, blind: blind,
+                             identityPub: nil, instanceID: nil)
         case "confirm":
-            return ParsedMsg(kind: "confirm", ephPub: nil, identityPub: nil, instanceID: nil)
+            return ParsedMsg(kind: "confirm", commit: nil, ephPub: nil, blind: nil,
+                             identityPub: nil, instanceID: nil)
         default:
             throw PairingCeremonyError.unexpectedKind(kind)
         }
@@ -204,7 +227,9 @@ fileprivate enum WireMsg {
 
 fileprivate struct ParsedMsg {
     let kind: String
+    let commit: Data?
     let ephPub: Data?
+    let blind: Data?
     let identityPub: Data?
     let instanceID: String?
 }
@@ -246,28 +271,28 @@ public func pairAcceptor(
     // Setup-phase events have no wire I/O — they correspond to work the
     // caller has already done (keygen, relay registration, token emit).
     // Wire them as no-ops so the FSM advances through Idle → WaitingForHello.
-    m.actions[.genEphemeral]  = {}
-    m.actions[.registerRelay] = {}
-    m.actions[.emitToken]     = {}
-    m.actions[.deriveCode]    = {}
-    m.actions[.storeRecord]   = {}
+    m.actions[.genEphemeral]           = {}
+    m.actions[.registerRelay]          = {}
+    m.actions[.emitToken]              = {}
+    m.actions[.storeCommit]            = {}
+    m.actions[.verifyCommitAndDerive]  = {}
+    m.actions[.storeRecord]            = {}
 
     try m.handleEvent(.pairBegin)
     try m.handleEvent(.ephemeralReady)
     try m.handleEvent(.relayRegistered)
 
-    // --- Read hello ---
+    // --- Read hello (commit only; eph revealed later) ---
     let helloBytes = try await transport.recv()
     let hello = try WireMsg.decode(helloBytes)
     guard hello.kind == "hello",
-          let peerEph = hello.ephPub,
+          let peerCommit = hello.commit,
           let peerInstance = hello.instanceID else {
         throw PairingCeremonyError.unexpectedKind(hello.kind)
     }
     try m.handleMessage(.hello)
-    try m.handleEvent(.codeReady)
 
-    // --- Send welcome ---
+    // --- Send welcome (acceptor eph already bound by OOB token) ---
     let welcome = WireMsg.welcome(
         ephPub: acceptorEphPub,
         identityPub: identity.publicKey,
@@ -275,7 +300,22 @@ public func pairAcceptor(
     )
     try await transport.send(try welcome.encode())
 
-    // --- Derive code ---
+    // --- Read reveal; verify it opens the hello commit ---
+    let revealBytes = try await transport.recv()
+    let reveal = try WireMsg.decode(revealBytes)
+    guard reveal.kind == "reveal",
+          let peerEph = reveal.ephPub,
+          let peerBlind = reveal.blind else {
+        throw PairingCeremonyError.unexpectedKind(reveal.kind)
+    }
+    guard sasCommitVerify(ephPub: peerEph, blind: peerBlind, commit: peerCommit) else {
+        try m.handleEvent(.commitFail)
+        throw PairingCeremonyError.malformedMessage("reveal does not open hello commit")
+    }
+    try m.handleMessage(.reveal)
+    try m.handleEvent(.codeReady)
+
+    // --- Derive code only after commit verified ---
     let code = deriveConfirmationCode(acceptorEphPub, peerEph)
 
     // --- Ask local user (callback rendezvous) ---
@@ -329,17 +369,23 @@ public func pairInitiator(
     m.actions[.decodeToken]  = {}
     m.actions[.genEphemeral] = {}
     m.actions[.dialRelay]    = {}
+    m.actions[.sendReveal]   = {}
     m.actions[.deriveCode]   = {}
     m.actions[.storeRecord]  = {}
 
     try m.handleEvent(.tokenReceived)
     try m.handleEvent(.tokenDecoded)
     try m.handleEvent(.ephemeralReady)
+
+    // --- Mint SAS blind + commit before revealing eph (🎯T52) ---
+    let blind = generateNonce()
+    let commit = sasCommit(ephPub: initiatorEphPub, blind: blind)
+
     try m.handleEvent(.relayConnected)
 
-    // --- Send hello ---
+    // --- Send hello (commitment only) ---
     let hello = WireMsg.hello(
-        ephPub: initiatorEphPub,
+        commit: commit,
         identityPub: identity.publicKey,
         instanceID: identity.instanceID
     )
@@ -360,9 +406,13 @@ public func pairInitiator(
         throw PairingCeremonyError.malformedMessage("welcome eph_pub mismatch vs token")
     }
     try m.handleMessage(.welcome)
+
+    // --- Reveal eph under the prior commit ---
+    try await transport.send(try WireMsg.reveal(ephPub: initiatorEphPub, blind: blind).encode())
+    try m.handleEvent(.revealSent)
     try m.handleEvent(.codeReady)
 
-    // --- Derive code (order-independent, matches Go acceptor) ---
+    // --- Derive code (order-independent, token-bound acceptor eph) ---
     let code = deriveConfirmationCode(initiatorEphPub, acceptorEphPub)
 
     if !(await confirm(code)) {
