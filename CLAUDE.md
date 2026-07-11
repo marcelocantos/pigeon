@@ -39,7 +39,7 @@ instance ID; clients connect by ID and traffic is bridged opaquely
 (both streams and datagrams). Generates a self-signed TLS certificate
 at startup for development; use --cert/--key for production certificates.
 
-**Endpoints (HTTP/3):** `GET /health`, `GET /register`, `GET /ws/{id}`
+**Endpoints (HTTP/3 + HTTPS):** `GET /health`, `GET /status`, `GET /pigeon`
 
 ### Root Package (`pigeon.go`, `conn.go`, `webtransport.go`)
 
