@@ -84,20 +84,74 @@ data class PairingArtifact(
  * library is transport-agnostic — pick a Kwik or Bridge transport
  * connected to the relay's host/port from the artifact.
  *
- * Mirrors `pigeon.ConnectWithArtifact` (Go) and
- * `PigeonConn.connect(artifact:)` (Swift).
+ * After the relay bridge is live, runs the 🎯T50 session-salt
+ * handshake on the primary stream: mints a fresh [SESSION_SALT_LEN]-byte
+ * salt, sends it plaintext, waits for [SESSION_SALT_ACK], then derives
+ * the AEAD channel with HKDF info = direction-label || salt so each
+ * reconnect gets distinct keys.
+ *
+ * The peer must call [acceptSessionSalt] on its bridged conn with the
+ * mirrored PairingRecord.
+ *
+ * Mirrors `PigeonConn.connect(artifact:)` (Swift).
  */
 fun connectWithArtifact(transport: QuicTransport, artifact: PairingArtifact): PigeonConn {
     if (artifact.isExpired()) {
         throw PairingExpiredException(artifact.expiresAt ?: Instant.now())
     }
     val conn = connect(transport, artifact.record.peerInstanceID)
-    val channel = artifact.record.deriveChannel(
+    val channel = initiateSessionSalt(
+        conn,
+        artifact.record,
         "client-to-server".toByteArray(),
         "server-to-client".toByteArray(),
     )
     conn.setChannel(channel)
     return conn
+}
+
+/**
+ * Client side of the 🎯T50 session-salt handshake: mint salt, send it,
+ * wait for [SESSION_SALT_ACK], derive channel with info = label || salt.
+ *
+ * Called before [PigeonConn.setChannel] so the exchange is plaintext.
+ */
+fun initiateSessionSalt(
+    conn: PigeonConn,
+    record: PairingRecord,
+    sendInfo: ByteArray,
+    recvInfo: ByteArray,
+): E2EChannel {
+    val salt = generateSessionSalt()
+    conn.send(salt)
+    val ack = conn.recv()
+    val ackStr = String(ack, Charsets.UTF_8)
+    require(ackStr == SESSION_SALT_ACK) {
+        "session salt handshake: expected $SESSION_SALT_ACK, got $ackStr"
+    }
+    return record.deriveChannel(sendInfo, recvInfo, salt)
+}
+
+/**
+ * Peer/backend side of the 🎯T50 session-salt handshake: read the
+ * client's salt, reply [SESSION_SALT_ACK], derive channel with the same
+ * salt. Direction labels are the caller's responsibility (typically the
+ * reverse of the client's).
+ *
+ * Called before [PigeonConn.setChannel] so the exchange is plaintext.
+ */
+fun acceptSessionSalt(
+    conn: PigeonConn,
+    record: PairingRecord,
+    sendInfo: ByteArray,
+    recvInfo: ByteArray,
+): E2EChannel {
+    val salt = conn.recv()
+    require(salt.size == SESSION_SALT_LEN) {
+        "session salt handshake: expected $SESSION_SALT_LEN-byte salt, got ${salt.size}"
+    }
+    conn.send(SESSION_SALT_ACK.toByteArray(Charsets.UTF_8))
+    return record.deriveChannel(sendInfo, recvInfo, salt)
 }
 
 // ---- Hand-rolled JSON ----

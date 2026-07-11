@@ -227,11 +227,11 @@ func TestCrossLanguagePairingGoAcceptorSwiftInitiator(t *testing.T) {
 	// Go channel: encrypts with "go->swift", decrypts with "swift->go".
 	// Swift channel (re-derived on the Go side using its raw key material):
 	// the opposite. Same ECDH shared secret produces matching session keys.
-	goChan, err := goRec.DeriveChannel([]byte("go->swift"), []byte("swift->go"))
+	goChan, err := goRec.DeriveChannel([]byte("go->swift"), []byte("swift->go"), nil)
 	if err != nil {
 		t.Fatalf("go DeriveChannel: %v", err)
 	}
-	swiftChan, err := swiftRec.DeriveChannel([]byte("swift->go"), []byte("go->swift"))
+	swiftChan, err := swiftRec.DeriveChannel([]byte("swift->go"), []byte("go->swift"), nil)
 	if err != nil {
 		t.Fatalf("swift DeriveChannel: %v", err)
 	}

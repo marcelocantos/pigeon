@@ -82,6 +82,25 @@ public func deriveConfirmationCode(_ pubA: Data, _ pubB: Data) -> String {
     return String(format: "%06d", code)
 }
 
+// MARK: - Session salt (🎯T50)
+
+/// Length of the per-session diversifier folded into `deriveChannel`'s
+/// HKDF info. Matches the activation-path nonce length (T44.1) so
+/// reconnects under one PairingRecord never share an AEAD key.
+public let sessionSaltLen = 16
+
+/// Fixed peer reply to a session-salt handshake on the artifact/reconnect
+/// path (plaintext on the primary stream before AEAD is established).
+public let sessionSaltAck = "session_salt_ack"
+
+/// Generate `sessionSaltLen` cryptographically random bytes for use as a
+/// per-session `deriveChannel` diversifier (🎯T50).
+public func generateSessionSalt() -> Data {
+    var d = Data(count: sessionSaltLen)
+    _ = d.withUnsafeMutableBytes { SecRandomCopyBytes(kSecRandomDefault, sessionSaltLen, $0.baseAddress!) }
+    return d
+}
+
 // MARK: - Pairing record
 
 /// Persistent state from a completed pairing ceremony.
@@ -128,17 +147,42 @@ public struct PairingRecord: Codable, Sendable {
 
     /// Derive an encrypted channel from the stored keys.
     /// The info parameters should match what was used during the original pairing.
-    public func deriveChannel(sendInfo: Data, recvInfo: Data) throws -> E2EChannel {
+    ///
+    /// `sessionSalt` is a per-session diversifier (typically
+    /// `sessionSaltLen` random bytes exchanged during reconnect). When
+    /// non-empty it is appended to each direction label (HKDF info =
+    /// label || salt), so two sessions under one PairingRecord derive
+    /// distinct AEAD keys (🎯T50). Pass empty only for tests that
+    /// intentionally exercise the static pre-T50 derivation. When
+    /// non-empty, `sessionSalt.count` must equal `sessionSaltLen`.
+    public func deriveChannel(sendInfo: Data, recvInfo: Data, sessionSalt: Data = Data()) throws -> E2EChannel {
+        if !sessionSalt.isEmpty && sessionSalt.count != sessionSaltLen {
+            throw E2ECryptoError.invalidSessionSaltLength(sessionSalt.count)
+        }
         let privateKey = try Curve25519.KeyAgreement.PrivateKey(rawRepresentation: localPrivateKey)
         let peerKey = try Curve25519.KeyAgreement.PublicKey(rawRepresentation: peerPublicKey)
         let shared = try privateKey.sharedSecretFromKeyAgreement(with: peerKey)
 
+        let sendKeyInfo = sendInfo + sessionSalt
+        let recvKeyInfo = recvInfo + sessionSalt
         let sendKey = shared.hkdfDerivedSymmetricKey(
-            using: SHA256.self, salt: Data(), sharedInfo: sendInfo, outputByteCount: 32)
+            using: SHA256.self, salt: Data(), sharedInfo: sendKeyInfo, outputByteCount: 32)
         let recvKey = shared.hkdfDerivedSymmetricKey(
-            using: SHA256.self, salt: Data(), sharedInfo: recvInfo, outputByteCount: 32)
+            using: SHA256.self, salt: Data(), sharedInfo: recvKeyInfo, outputByteCount: 32)
 
         return E2EChannel(sendKey: sendKey, recvKey: recvKey)
+    }
+}
+
+/// Errors from the pure-crypto layer (key derivation, salt validation).
+public enum E2ECryptoError: LocalizedError, Equatable {
+    case invalidSessionSaltLength(Int)
+
+    public var errorDescription: String? {
+        switch self {
+        case .invalidSessionSaltLength(let n):
+            return "session salt must be \(sessionSaltLen) bytes, got \(n)"
+        }
     }
 }
 

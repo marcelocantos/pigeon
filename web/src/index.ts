@@ -8,12 +8,16 @@ export {
   deriveConfirmationCode,
   generateNonce,
   generateSecret,
+  generateSessionSalt,
+  SESSION_SALT_LEN,
+  SESSION_SALT_ACK,
   createPairingRecord,
   deriveChannelFromRecord,
   type PairingRecord,
 } from "./crypto.js";
 export {
   connect,
+  acceptSessionSalt,
   wakeRelay,
   Session,
   Stream,

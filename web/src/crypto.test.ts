@@ -10,6 +10,7 @@ import {
   deriveConfirmationCode,
   createPairingRecord,
   deriveChannelFromRecord,
+  SESSION_SALT_LEN,
 } from "./crypto.js";
 
 describe("E2EKeyPair", () => {
@@ -298,6 +299,73 @@ describe("PairingRecord", () => {
     const ct = await ch.encrypt(enc.encode("hello from restored record"));
     const pt = await serverCh.decrypt(ct);
     assert.deepEqual(pt, enc.encode("hello from restored record"));
+  });
+
+  // 🎯T50 oracle: two sessions under one PairingRecord with distinct
+  // session salts must produce distinct AEAD keys (reconnect must not
+  // reuse the prior key with the GCM counter reset to 0).
+  it("deriveChannelFromRecord per-session salt produces distinct keys", async () => {
+    const localKP = await E2EKeyPair.create();
+    const peerKP = await E2EKeyPair.create();
+    const rec = await createPairingRecord(
+      "peer-001",
+      "https://relay.example.com",
+      localKP,
+      peerKP.publicKeyData,
+    );
+
+    const salt1 = new Uint8Array(SESSION_SALT_LEN).fill(0x11);
+    const salt2 = new Uint8Array(SESSION_SALT_LEN).fill(0x22);
+    const enc = new TextEncoder();
+    const plaintext = enc.encode("the quick brown fox");
+
+    const ch1 = await deriveChannelFromRecord(
+      rec,
+      enc.encode("client-to-server"),
+      enc.encode("server-to-client"),
+      salt1,
+    );
+    const ch2 = await deriveChannelFromRecord(
+      rec,
+      enc.encode("client-to-server"),
+      enc.encode("server-to-client"),
+      salt2,
+    );
+
+    const ct1 = await ch1.encrypt(plaintext);
+    const ct2 = await ch2.encrypt(plaintext);
+    // Leading 8 bytes are the (zero) sequence prefix; body must differ.
+    assert.notDeepEqual(
+      ct1.slice(8),
+      ct2.slice(8),
+      "distinct salts produced identical keystream: per-session key derivation is broken",
+    );
+
+    // Same salt is deterministic.
+    const ch1b = await deriveChannelFromRecord(
+      rec,
+      enc.encode("client-to-server"),
+      enc.encode("server-to-client"),
+      salt1,
+    );
+    const ct1b = await ch1b.encrypt(plaintext);
+    assert.deepEqual(
+      ct1.slice(8),
+      ct1b.slice(8),
+      "same salt produced different keys",
+    );
+
+    // Wrong-length salt is rejected.
+    await assert.rejects(
+      () =>
+        deriveChannelFromRecord(
+          rec,
+          enc.encode("c2s"),
+          enc.encode("s2c"),
+          new Uint8Array([0x01]),
+        ),
+      /session salt must be/,
+    );
   });
 });
 

@@ -136,11 +136,11 @@ func TestCeremonyEndToEnd(t *testing.T) {
 
 	// Verify the records produce compatible AEAD channels — proving the
 	// ceremony exchanged matching ECDH key material under the spec.
-	bch, err := res.rec.DeriveChannel([]byte("a->b"), []byte("b->a"))
+	bch, err := res.rec.DeriveChannel([]byte("a->b"), []byte("b->a"), nil)
 	if err != nil {
 		t.Fatalf("acceptor DeriveChannel: %v", err)
 	}
-	cch, err := clientRec.DeriveChannel([]byte("b->a"), []byte("a->b"))
+	cch, err := clientRec.DeriveChannel([]byte("b->a"), []byte("a->b"), nil)
 	if err != nil {
 		t.Fatalf("initiator DeriveChannel: %v", err)
 	}

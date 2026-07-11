@@ -252,6 +252,17 @@ func makeNonce(size int, seq uint64) []byte {
 	return nonce
 }
 
+// SessionSaltLen is the length of the per-session diversifier folded into
+// DeriveChannel's HKDF info (🎯T50). Matches the activation-path nonce
+// length (cwire.nonceLen / T44.1) so reconnects and concurrent sessions
+// under one PairingRecord never share an AEAD key.
+const SessionSaltLen = 16
+
+// SessionSaltAck is the fixed peer reply to a session-salt handshake on
+// the artifact/reconnect path (plaintext on the primary stream before
+// AEAD is established).
+const SessionSaltAck = "session_salt_ack"
+
 // PairingRecord holds the persistent state from a completed pairing
 // ceremony. Serialize this (e.g., JSON) and store it securely. On
 // reconnect, load it and call DeriveChannel() to derive session keys
@@ -275,10 +286,31 @@ func NewPairingRecord(peerInstanceID, relayURL string, localKP *KeyPair, peerPub
 	}
 }
 
+// GenerateSessionSalt returns SessionSaltLen cryptographically random
+// bytes for use as a per-session DeriveChannel diversifier (🎯T50).
+func GenerateSessionSalt() ([]byte, error) {
+	salt := make([]byte, SessionSaltLen)
+	if _, err := rand.Read(salt); err != nil {
+		return nil, err
+	}
+	return salt, nil
+}
+
 // DeriveChannel derives an encrypted channel from the stored keys.
 // The info parameters should match what was used during the original pairing
 // (e.g., "server-to-client" and "client-to-server").
-func (r *PairingRecord) DeriveChannel(sendInfo, recvInfo []byte) (*Channel, error) {
+//
+// sessionSalt is a per-session diversifier (typically SessionSaltLen random
+// bytes exchanged during reconnect). When non-empty it is appended to each
+// direction label (HKDF info = label || salt), so two sessions under one
+// PairingRecord derive distinct AEAD keys (🎯T50). Pass nil/empty only for
+// tests that intentionally exercise the static pre-T50 derivation. When
+// non-empty, len(sessionSalt) must equal SessionSaltLen.
+func (r *PairingRecord) DeriveChannel(sendInfo, recvInfo, sessionSalt []byte) (*Channel, error) {
+	if n := len(sessionSalt); n != 0 && n != SessionSaltLen {
+		return nil, fmt.Errorf("session salt must be %d bytes, got %d", SessionSaltLen, n)
+	}
+
 	priv, err := ecdh.X25519().NewPrivateKey(r.LocalPrivateKey)
 	if err != nil {
 		return nil, fmt.Errorf("parse local key: %w", err)
@@ -288,11 +320,14 @@ func (r *PairingRecord) DeriveChannel(sendInfo, recvInfo []byte) (*Channel, erro
 		return nil, fmt.Errorf("parse peer key: %w", err)
 	}
 
-	sendKey, err := DeriveSessionKey(priv, peerPub, sendInfo)
+	sendKeyInfo := append(append([]byte{}, sendInfo...), sessionSalt...)
+	recvKeyInfo := append(append([]byte{}, recvInfo...), sessionSalt...)
+
+	sendKey, err := DeriveSessionKey(priv, peerPub, sendKeyInfo)
 	if err != nil {
 		return nil, fmt.Errorf("derive send key: %w", err)
 	}
-	recvKey, err := DeriveSessionKey(priv, peerPub, recvInfo)
+	recvKey, err := DeriveSessionKey(priv, peerPub, recvKeyInfo)
 	if err != nil {
 		return nil, fmt.Errorf("derive recv key: %w", err)
 	}

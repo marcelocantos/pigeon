@@ -247,6 +247,28 @@ class E2EChannel private constructor(
 
 class E2EException(message: String) : Exception(message)
 
+// ---- Session salt (🎯T50) ----
+
+/**
+ * Length of the per-session diversifier folded into [PairingRecord.deriveChannel]'s
+ * HKDF info. Matches the activation-path nonce length (T44.1) so reconnects
+ * under one PairingRecord never share an AEAD key.
+ */
+const val SESSION_SALT_LEN = 16
+
+/**
+ * Fixed peer reply to a session-salt handshake on the artifact/reconnect
+ * path (plaintext on the primary stream before AEAD is established).
+ */
+const val SESSION_SALT_ACK = "session_salt_ack"
+
+/** Generate [SESSION_SALT_LEN] cryptographically random bytes (🎯T50). */
+fun generateSessionSalt(): ByteArray {
+    val b = ByteArray(SESSION_SALT_LEN)
+    java.security.SecureRandom().nextBytes(b)
+    return b
+}
+
 // ---- Pairing record ----
 
 /**
@@ -275,10 +297,29 @@ data class PairingRecord(
         peerPublicKey = peerPublicKey,
     )
 
-    /** Derive an encrypted channel from the stored keys. */
-    fun deriveChannel(sendInfo: ByteArray, recvInfo: ByteArray): E2EChannel {
-        val sendKey = deriveSessionKeyFromRaw(localPrivateKey, peerPublicKey, sendInfo)
-        val recvKey = deriveSessionKeyFromRaw(localPrivateKey, peerPublicKey, recvInfo)
+    /**
+     * Derive an encrypted channel from the stored keys.
+     *
+     * [sessionSalt] is a per-session diversifier (typically
+     * [SESSION_SALT_LEN] random bytes exchanged during reconnect). When
+     * non-empty it is appended to each direction label (HKDF info =
+     * label || salt), so two sessions under one PairingRecord derive
+     * distinct AEAD keys (🎯T50). Pass empty only for tests that
+     * intentionally exercise the static pre-T50 derivation. When
+     * non-empty, [sessionSalt] must be exactly [SESSION_SALT_LEN] bytes.
+     */
+    fun deriveChannel(
+        sendInfo: ByteArray,
+        recvInfo: ByteArray,
+        sessionSalt: ByteArray = ByteArray(0),
+    ): E2EChannel {
+        require(sessionSalt.isEmpty() || sessionSalt.size == SESSION_SALT_LEN) {
+            "session salt must be $SESSION_SALT_LEN bytes, got ${sessionSalt.size}"
+        }
+        val sendKeyInfo = sendInfo + sessionSalt
+        val recvKeyInfo = recvInfo + sessionSalt
+        val sendKey = deriveSessionKeyFromRaw(localPrivateKey, peerPublicKey, sendKeyInfo)
+        val recvKey = deriveSessionKeyFromRaw(localPrivateKey, peerPublicKey, recvKeyInfo)
         return E2EChannel(sendKey, recvKey)
     }
 
