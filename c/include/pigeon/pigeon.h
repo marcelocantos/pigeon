@@ -154,6 +154,13 @@ int pigeon_derive_session_key(const uint8_t *private_key,
                               const uint8_t *info, size_t info_len,
                               uint8_t *out_key);
 
+// HKDF-SHA256 diversify: out_key = HKDF(base_key, info). Used to fork
+// independent stream / datagram AEAD keys from the session ECDH material
+// (🎯T53). base_key and out_key are 32 bytes; info_len must be ≤ 255.
+int pigeon_diversify_key(const uint8_t *base_key,
+                         const uint8_t *info, size_t info_len,
+                         uint8_t *out_key);
+
 // Derive a 6-digit confirmation code from two public keys. Order-independent.
 // Writes null-terminated 7-byte string to out_code.
 int pigeon_derive_confirmation_code(const uint8_t *pub_a,
@@ -290,15 +297,22 @@ typedef struct {
 typedef void (*pigeon_listen_owner_fn)(void *owner);
 
 typedef struct {
-    // PairingRecord-derived AEAD channel. Encrypts every stream message
-    // (after the unencrypted name-binding header) and every datagram
-    // payload.
-    //
-    // In pairing mode (no PairingRecord; pre-pairing handshake), the
-    // channel's `established` flag is false and stream/datagram APIs
-    // that rely on AEAD will refuse to operate. Callers drive the
-    // pairing ceremony over Session.Primary() directly, then derive
-    // a channel and re-init the session for the post-pairing wire.
+    // Base session keys (ECDH + direction||nonce). Never used raw for
+    // Encrypt: each stream and the datagram path diversify via
+    // pigeon_diversify_key (🎯T53). keys_ready is false in pairing mode.
+    uint8_t base_send_key[32];
+    uint8_t base_recv_key[32];
+    bool    keys_ready;
+
+    // ModeDatagrams channel for all connection-level datagrams.
+    // Independent of every stream's ModeStrict counter.
+    pigeon_channel dg_channel;
+
+    // Legacy alias: ModeStrict channel for the empty stream name
+    // (primary). Populated when keys_ready; established==false in
+    // pairing mode. Kept so older call sites that still encrypt via
+    // sess->channel (before per-stream aead on pigeon_stream) keep
+    // compiling; pigeon_stream_send prefers stream->aead.
     pigeon_channel channel;
 
     // Transport vtable + opaque userdata. Under T45 each session rides
@@ -364,6 +378,9 @@ typedef struct {
     pigeon_session       *session;
     pigeon_stream_handle *handle;
     char                  name[PIGEON_MAX_NAME_LEN];
+    // Per-stream ModeStrict AEAD (🎯T53). established when session
+    // keys_ready; empty otherwise (pairing-mode plaintext).
+    pigeon_channel        aead;
 } pigeon_stream;
 
 typedef struct {
@@ -456,6 +473,11 @@ int pigeon_connect_on_transport(const pigeon_transport *transport,
 
 // AEAD-encrypt and send one application-level message on the stream.
 // Returns 0 on success, -1 on transport or encryption error.
+// Finish stream open/accept: derive per-stream ModeStrict AEAD when
+// the session has activation keys (no-op in pairing mode). Call after
+// filling session/handle/name.
+int pigeon_stream_bind_aead(pigeon_stream *s);
+
 int pigeon_stream_send(pigeon_stream *s,
                        const uint8_t *msg, size_t msg_len);
 

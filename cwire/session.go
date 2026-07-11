@@ -275,6 +275,10 @@ func (lb *Loopback) AcceptStreamWithHeader(s *Session) (*Stream, string, error) 
 		st.c.name[i] = C.char(name[i])
 	}
 	st.c.name[len(name)] = 0
+	// Per-stream ModeStrict AEAD from session base keys (🎯T53).
+	if C.pigeon_stream_bind_aead(&st.c) != 0 {
+		return nil, "", errors.New("cwire: pigeon_stream_bind_aead failed")
+	}
 	return st, name, nil
 }
 
