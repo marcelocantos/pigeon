@@ -1642,9 +1642,10 @@ targets:
     achieved: 2026-05-30
   T48:
     name: Automatic LAN upgrade is reachable through the public Session API
-    status: identified
+    status: achieved
     value: 0.0
     cost: 0.0
+    actual_cost: 5.0
     acceptance:
     - RegisterArgs/ConnectArgs (or an equivalent public option) let a backend advertise a LAN listener and a client opt into LAN upgrade — no removed Conn/Config path.
     - When both peers are on the same LAN, an established Session transparently swaps its transport from the relay to a direct QUIC connection to NewLANServer, verified by challenge/response.
@@ -1654,6 +1655,7 @@ targets:
     context: 'LAN upgrade was orphaned when T39 (#31) deleted pigeon.Conn: RegisterArgs/ConnectArgs have no LAN fields, Config.LANServer/LAN are effectively dead on the public API, and the relay''s --lan flag only constructs a NewLANServer that is never wired in (`// TODO: wire into relay registration flow`, cmd/pigeon/main.go). The README "LAN Upgrade" section documented a non-compiling Conn-based API and was removed in the v0.24.0 doc-accuracy release; this target captures restoring the feature so that intent isn''t lost. The LANServer primitive (lan.go, with cert-hash for browser serverCertificateHashes) still exists and is tested, so the building blocks remain. Should fit the post-T45 remote-Listen L1 model and align with the T43 path-tier / candidate-pair work (LAN-direct is one tier alongside STUN-reflexive and relay).'
     origin: manual
     discovered: 2026-06-20
+    achieved: 2026-07-11
   T49:
     name: pigeon's AEAD channel never reuses an (key, nonce) pair under concurrent senders — send/recv counters are synchronized
     status: achieved
