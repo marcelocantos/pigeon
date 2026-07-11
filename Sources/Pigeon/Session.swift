@@ -545,22 +545,36 @@ public final class PigeonDatagram: @unchecked Sendable {
         }
     }
 
-    /// Receive the next datagram on this named channel. If the next
-    /// inbound datagram is for a different channel, returns nil so
-    /// the caller can re-dispatch (matches the C semantics where
-    /// `pigeon_datagram_recv` returns 0 for "not for me").
-    public func recv() async throws -> Data? {
-        enum Outcome { case ok(Data), notForMe, fail(Int32) }
+    /// One delivered piece of a logical datagram message (🎯T59). Whole
+    /// messages arrive as a single part with `index == 0` and `total == 1`.
+    public struct Part: Sendable {
+        public let msgID: UInt32
+        public let index: UInt16
+        public let total: UInt16
+        public let payload: Data
+    }
+
+    /// Receive the next part on this named channel as soon as its QUIC
+    /// datagram arrives (no library reassembly). If the next inbound
+    /// datagram is for a different channel, returns nil so the caller
+    /// can re-dispatch (`pigeon_datagram_recv` returns -2 for wrong channel).
+    public func recv() async throws -> Part? {
+        enum Outcome { case ok(Part), notForMe, fail(Int32) }
         let outcome: Outcome = await worker.run {
             let buf = UnsafeMutablePointer<UInt8>.allocate(capacity: Int(PIGEON_MAX_MSG))
             defer { buf.deallocate() }
-            let n = pigeon_datagram_recv(self.ptr, buf, Int(PIGEON_MAX_MSG))
+            var part = pigeon_datagram_part()
+            let n = pigeon_datagram_recv(self.ptr, buf, Int(PIGEON_MAX_MSG), &part)
+            if n == -2 { return .notForMe }
             if n < 0 { return .fail(n) }
-            if n == 0 { return .notForMe }
-            return .ok(Data(bytes: buf, count: Int(n)))
+            return .ok(Part(
+                msgID: part.msg_id,
+                index: part.index,
+                total: part.total,
+                payload: Data(bytes: buf, count: Int(n))))
         }
         switch outcome {
-        case .ok(let d): return d
+        case .ok(let p): return p
         case .notForMe: return nil
         case .fail(let rc): throw PigeonSessionError.datagramRecv(rc)
         }

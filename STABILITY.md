@@ -74,20 +74,23 @@ AES-GCM nonce (first 8 bytes of the 12-byte nonce, remaining 4 bytes zero).
 
 ### Wire format (datagram framing)
 
-Every datagram has a 1-byte prefix for type discrimination and automatic
-fragmentation of payloads exceeding the QUIC datagram frame size:
+Every QUIC datagram carries a 1-byte outer prefix. Application channel
+demux lives inside per-part AEAD plaintext (`varint channel_id || chunk`).
+Large logical messages are split on send into independently-AEAD'd parts;
+the receiver **delivers each part as it arrives** with metadata
+(`msg_id`, `index`, `total`) — the library does not reassemble (🎯T59).
 
 ```
-0x00 + payload                                — conn: whole datagram
-0x40 + frag header (8B) + chunk               — conn: fragment
-0x80 + channel ID (2B) + payload              — channel: whole datagram
-0xC0 + channel ID (2B) + frag header (8B) + chunk — channel: fragment
+0x00 + AEAD(cid||payload)                              — whole (total=1, index=0)
+0x40 + frag header (8B) + AEAD(cid||chunk)             — multi-part fragment
 ```
 
-Fragment header: `[4B msg ID][2B frag index][2B total fragments]`.
-Incomplete assemblies are discarded after 5 seconds (configurable).
+Fragment header: `[4B msg ID][2B frag index][2B total fragments]` (big-endian).
+Parts of one logical message share `msg_id`; `index` is 0-based in `[0, total)`.
+Lost parts simply never arrive (datagram semantics). `0x80` / `0xC0` remain
+reserved constants; channel identity is inside AEAD under the T45 multi-channel model.
 
-*Stability: Stable.*
+*Stability: Needs Review (progressive-part delivery; was reassembly in v0.9.0 docs).*
 
 ### Root Go package (`github.com/marcelocantos/pigeon`)
 

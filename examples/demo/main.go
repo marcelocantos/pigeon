@@ -613,8 +613,8 @@ func serveBackendSession(ctx context.Context, sess *pigeon.Session, clientID str
 			if err != nil {
 				return
 			}
-			b.publish(event{Pane: "backend", ClientID: clientID, Dir: "in", Channel: "ping", Text: string(p)})
-			reply := append([]byte("pong:"), p...)
+			b.publish(event{Pane: "backend", ClientID: clientID, Dir: "in", Channel: "ping", Text: string(p.Payload)})
+			reply := append([]byte("pong:"), p.Payload...)
 			if err := ping.Send(reply); err != nil {
 				return
 			}
@@ -632,7 +632,7 @@ func serveBackendSession(ctx context.Context, sess *pigeon.Session, clientID str
 			if err != nil {
 				return
 			}
-			b.publish(event{Pane: "backend", ClientID: clientID, Dir: "in", Channel: "metric", Text: string(req)})
+			b.publish(event{Pane: "backend", ClientID: clientID, Dir: "in", Channel: "metric", Text: string(req.Payload)})
 			echoMu.Lock()
 			reply := fmt.Appendf(nil, "echoes=%d", echoes)
 			echoMu.Unlock()
@@ -702,7 +702,7 @@ func startClient(ctx context.Context, relayURL, demoID string, identity crypto.I
 			if err != nil {
 				return
 			}
-			b.publish(event{Pane: "client", ClientID: demoID, Dir: "in", Channel: "ping", Text: string(p)})
+			b.publish(event{Pane: "client", ClientID: demoID, Dir: "in", Channel: "ping", Text: string(p.Payload)})
 		}
 	}()
 	go func() {
@@ -711,7 +711,7 @@ func startClient(ctx context.Context, relayURL, demoID string, identity crypto.I
 			if err != nil {
 				return
 			}
-			b.publish(event{Pane: "client", ClientID: demoID, Dir: "in", Channel: "metric", Text: string(m)})
+			b.publish(event{Pane: "client", ClientID: demoID, Dir: "in", Channel: "metric", Text: string(m.Payload)})
 		}
 	}()
 

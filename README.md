@@ -398,6 +398,8 @@ are included).
 | `GET /status`      | Process info (version, commit, uptime) as JSON               |
 | `GET /pigeon`      | Single entry point; the role (register / listen / connect) is set by the greeting on the primary stream |
 
+**Datagram parts (🎯T59):** `Datagram.Send` may emit multiple QUIC datagrams for one logical message. `Datagram.Recv` returns a `DatagramPart` (`MsgID`, `Index`, `Total`, `Payload`) for each as it arrives — no library reassembly.
+
 Native clients use raw QUIC (ALPN `"pigeon"`) on the QUIC port instead of
 WebTransport; the same greeting selects the role.
 

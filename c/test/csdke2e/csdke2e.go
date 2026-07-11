@@ -290,9 +290,11 @@ func (d *datagramHandle) Send(msg []byte) error {
 
 func (d *datagramHandle) Recv() ([]byte, error) {
 	buf := make([]byte, 1<<20)
+	var part C.pigeon_datagram_part
 	n := C.pigeon_datagram_recv(&d.c,
 		(*C.uint8_t)(unsafe.Pointer(&buf[0])),
-		C.size_t(len(buf)))
+		C.size_t(len(buf)),
+		&part)
 	if n < 0 {
 		return nil, errors.New("pigeon_datagram_recv failed")
 	}

@@ -824,13 +824,17 @@ Java_com_marcelocantos_pigeon_jni_PigeonNative_datagramRecv(
     if (!d) { throw_runtime(env, "null datagram"); return NULL; }
     uint8_t *buf = malloc(PIGEON_MAX_MSG);
     if (!buf) { throw_runtime(env, "alloc failed"); return NULL; }
-    int n = pigeon_datagram_recv(d, buf, PIGEON_MAX_MSG);
+    pigeon_datagram_part part;
+    int n = pigeon_datagram_recv(d, buf, PIGEON_MAX_MSG, &part);
     if (n < 0) {
         free(buf);
         throw_runtime(env, "pigeon_datagram_recv failed");
         return NULL;
     }
-    // n == 0 is a legitimate "wrong channel; redispatch" signal.
+    // n == -2 is wrong-channel; other negatives already failed above.
+    // Meta (msg_id/index/total) is not yet exposed through JNI — each
+    // part's payload is returned; multi-part messages surface as
+    // multiple recv calls (🎯T59).
     jbyteArray res = bytes_to_jba(env, buf, (size_t)n);
     free(buf);
     return res;

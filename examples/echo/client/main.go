@@ -143,7 +143,7 @@ func main() {
 			if err != nil {
 				return
 			}
-			fmt.Printf("[ping] %s\n", p)
+			fmt.Printf("[ping] %s\n", p.Payload)
 		}
 	}()
 	go func() {
@@ -152,7 +152,7 @@ func main() {
 			if err != nil {
 				return
 			}
-			fmt.Printf("[metric] %s\n", m)
+			fmt.Printf("[metric] %s\n", m.Payload)
 		}
 	}()
 

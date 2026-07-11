@@ -1508,9 +1508,44 @@ static void test_session_datagram_roundtrip(void)
     // Under T45 the datagram wire is just AEAD([varint channel-id]
     // [payload]) — both peers are symmetric, no tag prefix to strip.
     if (pigeon_datagram_send(&da_ping, (const uint8_t *)"p1", 2) != 0) { FAIL("A send ping"); return; }
-    uint8_t buf[32];
-    int got = pigeon_datagram_recv(&db_ping, buf, sizeof(buf));
+    uint8_t buf[256];
+    pigeon_datagram_part part;
+    int got = pigeon_datagram_recv(&db_ping, buf, sizeof(buf), &part);
     if (got != 2 || memcmp(buf, "p1", 2) != 0) { FAIL("B recv ping"); return; }
+    if (part.total != 1 || part.index != 0) { FAIL("B part meta"); return; }
+
+    // 🎯T59 multi-part: force tiny outer MTU so a medium payload splits.
+    sa.max_dg_payload = 80;
+    sb.max_dg_payload = 80;
+    uint8_t big[200];
+    for (int i = 0; i < 200; i++) big[i] = (uint8_t)i;
+    if (pigeon_datagram_send(&da_ping, big, sizeof(big)) != 0) { FAIL("A send big"); return; }
+    uint8_t acc[256];
+    size_t acc_n = 0;
+    uint32_t msg_id = 0;
+    uint16_t total = 0;
+    int parts = 0;
+    for (;;) {
+        pigeon_datagram_part p;
+        int n = pigeon_datagram_recv(&db_ping, buf, sizeof(buf), &p);
+        if (n < 0) { FAIL("B recv part"); return; }
+        if (parts == 0) {
+            msg_id = p.msg_id;
+            total = p.total;
+            if (total < 2) { FAIL("expected multi-part"); return; }
+        } else if (p.msg_id != msg_id || p.total != total) {
+            FAIL("part meta mismatch"); return;
+        }
+        if (p.index != (uint16_t)parts) { FAIL("part order"); return; }
+        if (acc_n + (size_t)n > sizeof(acc)) { FAIL("acc overflow"); return; }
+        memcpy(acc + acc_n, buf, (size_t)n);
+        acc_n += (size_t)n;
+        parts++;
+        if (parts >= (int)total) break;
+    }
+    if (acc_n != sizeof(big) || memcmp(acc, big, sizeof(big)) != 0) {
+        FAIL("reassembled payload mismatch"); return;
+    }
 
     pigeon_session_close(&sa);
     pigeon_session_close(&sb);

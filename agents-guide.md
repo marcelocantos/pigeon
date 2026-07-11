@@ -193,6 +193,8 @@ See [docs/DESIGN.md §2](docs/DESIGN.md) for the broader threat model that motiv
 |-------|-------------|
 | `GET /health` | Liveness probe `{"status":"ok"}` (HTTP/3 and HTTPS) |
 | `GET /status` | Process diagnostic: service, status, version, commit, started_at, uptime_sec |
+
+**Datagram parts (🎯T59):** `Datagram.Send` may emit multiple QUIC datagrams for one logical message. `Datagram.Recv` returns `DatagramPart{MsgID, Index, Total, Payload}` per QUIC datagram as it arrives — no library reassembly. Whole messages have `Total=1`, `Index=0`.
 | `GET /pigeon` | Single WebTransport entry point; the role (register / listen / connect) is set by the greeting on the primary stream |
 
 Native clients use raw QUIC (ALPN `"pigeon"`) instead of WebTransport; the
