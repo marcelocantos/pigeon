@@ -6,6 +6,10 @@ path management. It is defined as a single state machine in
 [`protocol/session.yaml`](../protocol/session.yaml) and verified
 by TLA+ model checking.
 
+For the general architecture and adoption method (independent of this
+protocol), see
+[`formal-state-machines.md`](formal-state-machines.md).
+
 ## Overview
 
 The protocol has two phases connected by a single choke point:

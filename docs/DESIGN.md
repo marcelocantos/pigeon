@@ -296,6 +296,11 @@ relay-only — LAN/STUN promotion (🎯T43) is follow-up work.
 
 ## 4. Wire protocols — declarative, code-generated
 
+For the transferable method (why command-emitting pure machines, TLA+
+in CI, deterministic codegen, interface contracts, fidelity gates) see
+[`docs/formal-state-machines.md`](formal-state-machines.md). This section
+is the pigeon-specific application of that method.
+
 **Principle: anything that goes on the wire is specified in protogen and
 code-generated for every target language. Nothing on the wire is hand-
 rolled per language.**
