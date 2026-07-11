@@ -1686,9 +1686,10 @@ targets:
     achieved: 2026-04-15
   T50:
     name: pigeon derives a distinct per-session AEAD key so reconnects and concurrent sessions never reuse a nonce (T44.1)
-    status: identified
+    status: achieved
     value: 13.0
     cost: 5.0
+    actual_cost: 5.0
     acceptance:
     - DeriveSessionChannel/DeriveChannel incorporate a per-session nonce or salt so two sessions under one PairingRecord get distinct keys
     - A reconnect does not reuse the prior session's key with the counter reset to 0
@@ -1696,6 +1697,7 @@ targets:
     context: 'CRITICAL. PARTIALLY FIXED in v0.25.0. The activation path — Go pigeon.Connect/Register and the C SDK — now folds a fresh per-session nonce from auth_request into DeriveSessionChannel''s HKDF info (🎯T44.1, retired), so activation-based reconnects and concurrent sessions under one PairingRecord derive distinct keys (verified by cwire/persession_test.go). Go production is fully safe: its crypto.DeriveChannel is test-only, and every live Go session goes through the nonced activation path. REMAINING (this target stays open): the deterministic artifact-reconnect path still reuses keys — Swift PigeonConn.connect(artifact:), Kotlin connectWithArtifact, and TS relay.ts derive the session channel via the nonce-less DeriveChannel primitive (client-to-server/server-to-client labels) with no activation handshake, so a reconnect there reuses the key with the GCM counter reset to 0. Fold a per-session salt into that path too (the audit''s explicit crypto.DeriveChannel fix). See docs/audit/fable-2026-07.md F2.'
     origin: manual
     discovered: 2026-07-02
+    achieved: 2026-07-11
   T51:
     name: pigeon reconnect authentication requires cryptographic proof of pairing, not a bare device_id
     status: set_aside
