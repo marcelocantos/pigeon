@@ -366,14 +366,14 @@ func (l *Listener) activate(tr *transport) (*Session, error) {
 		ref.Close()
 		return nil, errors.New("activation succeeded but no record captured")
 	}
-	channel, err := cwire.DeriveSessionChannel(pairingRecordToCwire(rec), true, result.Nonce)
+	mat, err := cwire.DeriveSessionMaterial(pairingRecordToCwire(rec), true, result.Nonce)
 	if err != nil {
 		removeStream(cwirePrimary)
 		ref.Close()
-		return nil, fmt.Errorf("derive session channel: %w", err)
+		return nil, fmt.Errorf("derive session material: %w", err)
 	}
 
-	sess := newSession(l.ctx, tr, channel, result.DeviceID, l.args.Datagrams, true)
+	sess := newSession(l.ctx, tr, mat, result.DeviceID, l.args.Datagrams, true)
 	sess.route = result.Route
 	sess.discover = l.args.Discover
 	sess.ownsTransport = true
@@ -440,7 +440,7 @@ func Connect(ctx context.Context, args *ConnectArgs) (*Session, error) {
 		}
 	}
 	var (
-		channel      *cwire.Channel
+		mat          *cwire.SessionMaterial
 		cwireRef     *cwire.GoTransportRef
 		cwirePrimary unsafe.Pointer
 	)
@@ -458,16 +458,16 @@ func Connect(ctx context.Context, args *ConnectArgs) (*Session, error) {
 			_ = tr.Close()
 			return nil, fmt.Errorf("client activation: %w", actErr)
 		}
-		channel, err = cwire.DeriveSessionChannel(pairingRecordToCwire(args.Record), false, sessionNonce)
+		mat, err = cwire.DeriveSessionMaterial(pairingRecordToCwire(args.Record), false, sessionNonce)
 		if err != nil {
 			removeStream(cwirePrimary)
 			cwireRef.Close()
 			_ = tr.Close()
-			return nil, fmt.Errorf("derive session channel: %w", err)
+			return nil, fmt.Errorf("derive session material: %w", err)
 		}
 	}
 
-	sess := newSession(ctx, tr, channel, args.InstanceID, args.Datagrams, false)
+	sess := newSession(ctx, tr, mat, args.InstanceID, args.Datagrams, false)
 	sess.route = args.Route
 	sess.ownsTransport = true
 	sess.cwireRef = cwireRef
@@ -506,8 +506,16 @@ type Session struct {
 	ctx    context.Context
 	cancel context.CancelFunc
 
-	transport     *transport
-	channel       *cwire.Channel
+	transport *transport
+	// material is the post-activation ECDH key material (nil in pairing
+	// mode). Stream and datagram AEAD channels are forked from it so
+	// each path has an independent (key, counter) — 🎯T53.
+	material  *cwire.SessionMaterial
+	dgChannel *cwire.Channel // ModeDatagrams; nil in pairing mode
+
+	streamChMu  sync.Mutex
+	streamChans map[string]*cwire.Channel // ModeStrict per stream name
+
 	peerID        string
 	route         string
 	isBackend     bool
@@ -541,19 +549,30 @@ type Session struct {
 	closeOnce sync.Once
 }
 
-func newSession(ctx context.Context, tr *transport, channel *cwire.Channel, peerID string, dgConfig map[string]uint64, isBackend bool) *Session {
+func newSession(ctx context.Context, tr *transport, mat *cwire.SessionMaterial, peerID string, dgConfig map[string]uint64, isBackend bool) *Session {
 	sCtx, cancel := context.WithCancel(ctx)
 	s := &Session{
 		ctx:             sCtx,
 		cancel:          cancel,
 		transport:       tr,
-		channel:         channel,
+		material:        mat,
+		streamChans:     make(map[string]*cwire.Channel),
 		peerID:          peerID,
 		isBackend:       isBackend,
 		pendingOpens:    make(map[string][]chan io.ReadWriteCloser),
 		bufferedStreams: make(map[string][]io.ReadWriteCloser),
 		dgConfig:        make(map[string]uint64, len(dgConfig)),
 		datagrams:       make(map[uint64]*Datagram, len(dgConfig)),
+	}
+	if mat != nil {
+		dg, err := mat.DatagramChannel()
+		if err != nil {
+			// Programmer/crypto error at construction; panic is worse
+			// than a dead session — leave dgChannel nil and log on use.
+			slog.Error("session: derive datagram channel", "err", err)
+		} else {
+			s.dgChannel = dg
+		}
 	}
 	for name, id := range dgConfig {
 		s.dgConfig[name] = id
@@ -565,6 +584,26 @@ func newSession(ctx context.Context, tr *transport, channel *cwire.Channel, peer
 		}
 	}
 	return s
+}
+
+// streamChannel returns the ModeStrict AEAD for a named stream, creating
+// it lazily from session material. nil in pairing mode (no AEAD).
+func (s *Session) streamChannel(name string) *cwire.Channel {
+	if s.material == nil {
+		return nil
+	}
+	s.streamChMu.Lock()
+	defer s.streamChMu.Unlock()
+	if ch, ok := s.streamChans[name]; ok {
+		return ch
+	}
+	ch, err := s.material.StreamChannel(name)
+	if err != nil {
+		slog.Error("session: derive stream channel", "name", name, "err", err)
+		return nil
+	}
+	s.streamChans[name] = ch
+	return ch
 }
 
 func (s *Session) bindPrimary(stream io.ReadWriteCloser) {
@@ -597,7 +636,7 @@ func (s *Session) OpenStream(ctx context.Context, name string) (*Stream, error) 
 		_ = rwc.Close()
 		return nil, fmt.Errorf("write stream header: %w", err)
 	}
-	return &Stream{name: name, rwc: rwc, channel: s.channel}, nil
+	return &Stream{name: name, rwc: rwc, channel: s.streamChannel(name)}, nil
 }
 
 // AcceptStream blocks until the peer opens a stream with the given name.
@@ -612,7 +651,7 @@ func (s *Session) AcceptStream(ctx context.Context, name string) (*Stream, error
 		rwc := buf[0]
 		s.bufferedStreams[name] = buf[1:]
 		s.streamMu.Unlock()
-		return &Stream{name: name, rwc: rwc, channel: s.channel}, nil
+		return &Stream{name: name, rwc: rwc, channel: s.streamChannel(name)}, nil
 	}
 	ch := make(chan io.ReadWriteCloser, 1)
 	s.pendingOpens[name] = append(s.pendingOpens[name], ch)
@@ -620,7 +659,7 @@ func (s *Session) AcceptStream(ctx context.Context, name string) (*Stream, error
 
 	select {
 	case rwc := <-ch:
-		return &Stream{name: name, rwc: rwc, channel: s.channel}, nil
+		return &Stream{name: name, rwc: rwc, channel: s.streamChannel(name)}, nil
 	case <-ctx.Done():
 		s.removePending(name, ch)
 		return nil, ctx.Err()
@@ -685,7 +724,7 @@ func (s *Session) acceptLoop() {
 		if name == discoveryStreamName && s.discover != nil {
 			// 🎯T44.3: answer route enumeration internally instead of
 			// surfacing the reserved stream to the application.
-			go s.handleEnumerate(&Stream{name: name, rwc: rwc, channel: s.channel})
+			go s.handleEnumerate(&Stream{name: name, rwc: rwc, channel: s.streamChannel(name)})
 			continue
 		}
 		s.deliverIncomingStream(name, rwc)
@@ -719,7 +758,7 @@ func (s *Session) datagramLoop() {
 // construction; reading from it after activation will block. Primary()
 // is safe to call regardless, but only useful in pairing-mode.
 func (s *Session) Primary() *Stream {
-	return &Stream{name: "", rwc: s.primary, channel: s.channel}
+	return &Stream{name: "", rwc: s.primary, channel: s.streamChannel("")}
 }
 
 // Datagram returns the pre-configured datagram channel by name.
@@ -750,13 +789,13 @@ func (s *Session) Datagram(name string) *Datagram {
 // channel form below preserves correct demux behaviour without
 // pretending the machine drives it.
 func (s *Session) deliverIncomingDatagram(payload []byte) {
-	if s.channel == nil {
+	if s.dgChannel == nil {
 		// Pairing-mode session: datagrams aren't expected. Drop
 		// rather than NPE-ing on Decrypt.
 		slog.Debug("session: datagram on pairing-mode session, dropping", "peer", s.peerID, "len", len(payload))
 		return
 	}
-	plain, err := s.channel.Decrypt(payload)
+	plain, err := s.dgChannel.Decrypt(payload)
 	if err != nil {
 		slog.Debug("session: datagram decrypt", "peer", s.peerID, "err", err)
 		return
@@ -897,8 +936,11 @@ type Datagram struct {
 // AEAD([varint channel-id][payload]); the relay forwards it opaquely on
 // this session's own connection, so no routing prefix is added.
 func (d *Datagram) Send(payload []byte) error {
+	if d.session.dgChannel == nil {
+		return errors.New("datagram: no AEAD channel (pairing-mode session)")
+	}
 	plain := EncodeDatagramPlaintext(d.id, payload)
-	ct, err := d.session.channel.Encrypt(plain)
+	ct, err := d.session.dgChannel.Encrypt(plain)
 	if err != nil {
 		return fmt.Errorf("datagram: encrypt: %w", err)
 	}

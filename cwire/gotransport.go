@@ -172,6 +172,9 @@ func (s *Session) AcceptStreamFromGo(ref *GoTransportRef) (*Stream, string, erro
 		st.c.name[i] = C.char(name[i])
 	}
 	st.c.name[len(name)] = 0
+	if C.pigeon_stream_bind_aead(&st.c) != 0 {
+		return nil, "", errors.New("cwire: pigeon_stream_bind_aead failed")
+	}
 	return st, name, nil
 }
 

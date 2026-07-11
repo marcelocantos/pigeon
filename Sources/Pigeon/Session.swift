@@ -405,6 +405,17 @@ public final class PigeonSession: @unchecked Sendable {
             }
         }
         streamPtr.initialize(to: s)
+        // Per-stream ModeStrict AEAD from session base keys (🎯T53).
+        // openStream() already binds via pigeon_session_open_stream;
+        // this path is for adoptAcceptedStream after a manual accept.
+        let bindRC = pigeon_stream_bind_aead(streamPtr)
+        if bindRC != 0 {
+            streamPtr.deinitialize(count: 1)
+            streamPtr.deallocate()
+            // Fall through with an unbound stream is worse than a hard
+            // failure — callers would see AEAD ciphertext as plaintext.
+            fatalError("pigeon_stream_bind_aead failed (rc=\(bindRC))")
+        }
         return PigeonStream(parent: self, ptr: streamPtr, worker: worker)
     }
 

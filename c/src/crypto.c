@@ -79,6 +79,15 @@ int pigeon_derive_session_key(const uint8_t *private_key,
     return ret;
 }
 
+int pigeon_diversify_key(const uint8_t *base_key,
+                         const uint8_t *info, size_t info_len,
+                         uint8_t *out_key)
+{
+    if (!base_key || !out_key) return -1;
+    if (info_len > 0 && !info) return -1;
+    return hkdf_sha256(base_key, 32, info, info_len, out_key, 32);
+}
+
 int pigeon_derive_confirmation_code(const uint8_t *pub_a,
                                     const uint8_t *pub_b,
                                     char *out_code)

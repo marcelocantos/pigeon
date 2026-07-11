@@ -345,28 +345,94 @@ func GenerateKeypair() (*Keypair, error) {
 	return out, nil
 }
 
-// DeriveSessionChannel derives the AEAD channel from a PairingRecord and the
-// per-session nonce exchanged during activation. The HKDF info is
-// direction-label || nonce (🎯T44.1), so concurrent/reconnecting sessions
-// under one PairingRecord derive distinct keys:
+// AEAD sub-channel labels (🎯T53). Session ECDH keys are never used
+// raw for Encrypt: each named stream and the datagram path diversify
+// via HKDF-Expand so they have independent (key, nonce-space) pairs.
+// A lost datagram or a concurrent second stream therefore cannot
+// advance / desynchronise a shared ModeStrict recv_seq.
+const (
+	aeadStreamInfoPrefix = "pigeon/v1/stream:"
+	aeadDatagramInfo     = "pigeon/v1/datagram"
+)
+
+// SessionMaterial holds the directional ECDH-derived session keys
+// (post-activation). Use StreamChannel / DatagramChannel to obtain
+// the AEAD channels applications actually encrypt with.
+type SessionMaterial struct {
+	SendKey []byte // 32 bytes
+	RecvKey []byte // 32 bytes
+}
+
+// ExpandKey HKDF-SHA256-expands a 32-byte IKM under info into a fresh
+// 32-byte key. Matches C pigeon_diversify_key.
+func ExpandKey(ikm []byte, info string) ([]byte, error) {
+	if len(ikm) != 32 {
+		return nil, errors.New("cwire: ExpandKey: ikm must be 32 bytes")
+	}
+	infoB := []byte(info)
+	var out [32]C.uint8_t
+	if C.pigeon_diversify_key(
+		(*C.uint8_t)(unsafe.Pointer(&ikm[0])),
+		(*C.uint8_t)(unsafe.Pointer(&infoB[0])), C.size_t(len(infoB)),
+		&out[0],
+	) != 0 {
+		return nil, errors.New("cwire: ExpandKey: pigeon_diversify_key failed")
+	}
+	return C.GoBytes(unsafe.Pointer(&out[0]), 32), nil
+}
+
+// StreamChannel returns a ModeStrict AEAD channel for a named stream
+// (empty name = primary / anonymous stream). Independent counters per
+// name: concurrent streams cannot wedge each other.
+func (m *SessionMaterial) StreamChannel(name string) (*Channel, error) {
+	if m == nil {
+		return nil, errors.New("cwire: StreamChannel: nil material")
+	}
+	info := aeadStreamInfoPrefix + name
+	sk, err := ExpandKey(m.SendKey, info)
+	if err != nil {
+		return nil, err
+	}
+	rk, err := ExpandKey(m.RecvKey, info)
+	if err != nil {
+		return nil, err
+	}
+	return NewChannel(sk, rk, "stream")
+}
+
+// DatagramChannel returns a ModeDatagrams AEAD channel for all
+// connection-level datagrams (gap-tolerant recv_seq).
+func (m *SessionMaterial) DatagramChannel() (*Channel, error) {
+	if m == nil {
+		return nil, errors.New("cwire: DatagramChannel: nil material")
+	}
+	sk, err := ExpandKey(m.SendKey, aeadDatagramInfo)
+	if err != nil {
+		return nil, err
+	}
+	rk, err := ExpandKey(m.RecvKey, aeadDatagramInfo)
+	if err != nil {
+		return nil, err
+	}
+	return NewChannel(sk, rk, "datagram")
+}
+
+// DeriveSessionMaterial derives directional session keys from a
+// PairingRecord and the per-session activation nonce (🎯T44.1):
 //   - Client (isBackend=false): send="client->backend", recv="backend->client"
 //   - Backend (isBackend=true):  send="backend->client", recv="client->backend"
 //
-// `nonce` must be nonceLen bytes: the client's nonce returned by
-// RunClientActivation, or (on the backend) BackendActivationResult.Nonce.
-// Both sides must hold the other's public key as PeerPubKey for the ECDH to
-// agree, and both must fold in the same nonce. In tests where both sides hold
-// the same record, passing opposite isBackend flags with the same nonce makes
-// the keys match (send on one side becomes recv on the other).
-func DeriveSessionChannel(rec *PairingRecord, isBackend bool, nonce []byte) (*Channel, error) {
+// HKDF info is direction-label || nonce. Callers then open sub-channels
+// via StreamChannel / DatagramChannel (🎯T53).
+func DeriveSessionMaterial(rec *PairingRecord, isBackend bool, nonce []byte) (*SessionMaterial, error) {
 	if rec == nil {
-		return nil, errors.New("cwire: DeriveSessionChannel: nil record")
+		return nil, errors.New("cwire: DeriveSessionMaterial: nil record")
 	}
 	if len(rec.LocalPrivKey) != 32 || len(rec.PeerPubKey) != 32 {
-		return nil, errors.New("cwire: DeriveSessionChannel: keys must be 32 bytes")
+		return nil, errors.New("cwire: DeriveSessionMaterial: keys must be 32 bytes")
 	}
 	if len(nonce) != nonceLen {
-		return nil, fmt.Errorf("cwire: DeriveSessionChannel: nonce must be %d bytes", nonceLen)
+		return nil, fmt.Errorf("cwire: DeriveSessionMaterial: nonce must be %d bytes", nonceLen)
 	}
 
 	var cRec C.pigeon_pairing_record
@@ -382,7 +448,6 @@ func DeriveSessionChannel(rec *PairingRecord, isBackend bool, nonce []byte) (*Ch
 	} else {
 		sendLabel, recvLabel = clientToBackend, backendToClient
 	}
-	// info = direction-label || per-session nonce.
 	sendInfo := append([]byte(sendLabel), nonce...)
 	recvInfo := append([]byte(recvLabel), nonce...)
 
@@ -394,21 +459,34 @@ func DeriveSessionChannel(rec *PairingRecord, isBackend bool, nonce []byte) (*Ch
 		&cRec.peer_public_key[0],
 		(*C.uint8_t)(unsafe.Pointer(&sendInfo[0])), C.size_t(len(sendInfo)),
 		&sendKey[0]) != 0 {
-		return nil, errors.New("cwire: DeriveSessionChannel: derive send key failed")
+		return nil, errors.New("cwire: DeriveSessionMaterial: derive send key failed")
 	}
 	if C.pigeon_derive_session_key(
 		&cRec.local_private_key[0],
 		&cRec.peer_public_key[0],
 		(*C.uint8_t)(unsafe.Pointer(&recvInfo[0])), C.size_t(len(recvInfo)),
 		&recvKey[0]) != 0 {
-		return nil, errors.New("cwire: DeriveSessionChannel: derive recv key failed")
+		return nil, errors.New("cwire: DeriveSessionMaterial: derive recv key failed")
 	}
 
-	return NewChannel(
-		(*[32]byte)(unsafe.Pointer(&sendKey[0]))[:],
-		(*[32]byte)(unsafe.Pointer(&recvKey[0]))[:],
-		"stream",
-	)
+	return &SessionMaterial{
+		SendKey: C.GoBytes(unsafe.Pointer(&sendKey[0]), 32),
+		RecvKey: C.GoBytes(unsafe.Pointer(&recvKey[0]), 32),
+	}, nil
+}
+
+// DeriveSessionChannel returns a ModeStrict Channel holding the raw
+// ECDH session keys (direction||nonce). Hand that Channel to
+// pigeon_session_init / NewLoopbackSession / NewGoSession — they fork
+// per-stream and datagram sub-channels via pigeon_diversify_key (🎯T53).
+// Prefer DeriveSessionMaterial + StreamChannel/DatagramChannel when
+// building AEAD channels in pure Go without a C session.
+func DeriveSessionChannel(rec *PairingRecord, isBackend bool, nonce []byte) (*Channel, error) {
+	m, err := DeriveSessionMaterial(rec, isBackend, nonce)
+	if err != nil {
+		return nil, err
+	}
+	return NewChannel(m.SendKey, m.RecvKey, "stream")
 }
 
 // cwireGoResolve / resolveHandle / newResolveHandle live in listener.go —

@@ -340,6 +340,62 @@ void pigeon_session_close(pigeon_session *s)
     }
 }
 
+// Labels must match cwire/connect.go (🎯T53).
+#define PIGEON_AEAD_STREAM_PREFIX "pigeon/v1/stream:"
+#define PIGEON_AEAD_DATAGRAM_INFO "pigeon/v1/datagram"
+
+// Derive ModeStrict stream AEAD for `name` (may be empty) into *out.
+static int pigeon_session_stream_aead(const pigeon_session *s,
+                                      const char *name,
+                                      pigeon_channel *out)
+{
+    char info[sizeof(PIGEON_AEAD_STREAM_PREFIX) + PIGEON_MAX_NAME_LEN];
+    size_t nlen = name ? strlen(name) : 0;
+    if (nlen >= PIGEON_MAX_NAME_LEN) return -1;
+    size_t plen = sizeof(PIGEON_AEAD_STREAM_PREFIX) - 1;
+    memcpy(info, PIGEON_AEAD_STREAM_PREFIX, plen);
+    if (nlen > 0) memcpy(info + plen, name, nlen);
+    size_t info_len = plen + nlen;
+
+    uint8_t sk[32], rk[32];
+    if (pigeon_diversify_key(s->base_send_key,
+                             (const uint8_t *)info, info_len, sk) != 0)
+        return -1;
+    if (pigeon_diversify_key(s->base_recv_key,
+                             (const uint8_t *)info, info_len, rk) != 0)
+        return -1;
+    pigeon_channel_init(out, sk, rk, PIGEON_MODE_STRICT);
+    memset(sk, 0, sizeof(sk));
+    memset(rk, 0, sizeof(rk));
+    return 0;
+}
+
+static int pigeon_session_bind_base_keys(pigeon_session *s,
+                                         const uint8_t *send_key,
+                                         const uint8_t *recv_key)
+{
+    memcpy(s->base_send_key, send_key, 32);
+    memcpy(s->base_recv_key, recv_key, 32);
+    s->keys_ready = true;
+
+    // Empty-name stream channel (primary / legacy sess->channel).
+    if (pigeon_session_stream_aead(s, "", &s->channel) != 0) return -1;
+
+    // Datagram ModeDatagrams channel.
+    uint8_t sk[32], rk[32];
+    const char *dinfo = PIGEON_AEAD_DATAGRAM_INFO;
+    if (pigeon_diversify_key(s->base_send_key,
+                             (const uint8_t *)dinfo, strlen(dinfo), sk) != 0)
+        return -1;
+    if (pigeon_diversify_key(s->base_recv_key,
+                             (const uint8_t *)dinfo, strlen(dinfo), rk) != 0)
+        return -1;
+    pigeon_channel_init(&s->dg_channel, sk, rk, PIGEON_MODE_DATAGRAMS);
+    memset(sk, 0, sizeof(sk));
+    memset(rk, 0, sizeof(rk));
+    return 0;
+}
+
 int pigeon_session_init(pigeon_session *s,
                         const pigeon_transport *transport,
                         const pigeon_channel *channel,
@@ -350,8 +406,17 @@ int pigeon_session_init(pigeon_session *s,
     if (datagram_count > PIGEON_MAX_DATAGRAM_CHANNELS) return -1;
 
     memset(s, 0, sizeof(*s));
-    s->transport  = *transport;
-    s->channel    = *channel;
+    s->transport = *transport;
+
+    // Activation path: channel carries raw ECDH session keys in
+    // ModeStrict. Fork stream/datagram sub-channels (🎯T53). Pairing
+    // mode: channel.established is false — leave keys_ready false.
+    if (channel->established) {
+        if (pigeon_session_bind_base_keys(s, channel->send_key,
+                                          channel->recv_key) != 0) {
+            return -1;
+        }
+    }
 
     // Validate the (name, id) list: no duplicate ids, no id == 0
     // (reserved), no name overflow.
@@ -398,7 +463,19 @@ int pigeon_session_open_stream(pigeon_session *s,
     out_stream->handle  = h;
     memcpy(out_stream->name, name, name_len);
     out_stream->name[name_len] = '\0';
+    if (pigeon_stream_bind_aead(out_stream) != 0) {
+        if (s->transport.close_stream) s->transport.close_stream(s->transport.userdata, h);
+        return -1;
+    }
     return 0;
+}
+
+int pigeon_stream_bind_aead(pigeon_stream *s)
+{
+    if (!s || !s->session) return -1;
+    memset(&s->aead, 0, sizeof(s->aead));
+    if (!s->session->keys_ready) return 0;
+    return pigeon_session_stream_aead(s->session, s->name, &s->aead);
 }
 
 int pigeon_session_get_datagram(pigeon_session *s,
@@ -426,20 +503,19 @@ int pigeon_stream_send(pigeon_stream *s,
     pigeon_session *sess = s->session;
     if (!sess->transport.send_on_stream) return -1;
 
-    // Pairing-mode session: channel not yet established. Mirror Go's
-    // Stream.Send (api.go) — send plaintext as one length-prefixed message
-    // so pigeon_session_primary() callers can drive the pairing ceremony
+    // Pairing-mode session: no per-stream AEAD. Mirror Go's Stream.Send —
+    // send plaintext as one length-prefixed message so
+    // pigeon_session_primary() callers can drive the pairing ceremony
     // over the primary stream before the AEAD channel exists.
-    if (!sess->channel.established) {
+    if (!s->aead.established) {
         return sess->transport.send_on_stream(sess->transport.userdata,
                                               s->handle, msg, msg_len);
     }
 
     if (pigeon_session_ensure_scratch(sess) != 0) return -1;
 
-    // AEAD-encrypt the application payload and write the ciphertext as
-    // one length-prefixed message on the stream.
-    int ctn = pigeon_channel_encrypt(&sess->channel, msg, msg_len,
+    // Per-stream ModeStrict AEAD (🎯T53).
+    int ctn = pigeon_channel_encrypt(&s->aead, msg, msg_len,
                                      sess->scratch_a, sess->scratch_size);
     if (ctn < 0) return -1;
     return sess->transport.send_on_stream(sess->transport.userdata, s->handle,
@@ -454,8 +530,8 @@ int pigeon_stream_recv(pigeon_stream *s,
     if (!sess->transport.recv_on_stream) return -1;
 
     // Pairing-mode mirror of pigeon_stream_send: read plaintext directly
-    // into the caller's buffer when the channel hasn't been established yet.
-    if (!sess->channel.established) {
+    // into the caller's buffer when per-stream AEAD is not established.
+    if (!s->aead.established) {
         size_t got = 0;
         if (sess->transport.recv_on_stream(sess->transport.userdata, s->handle,
                                            buf, buf_len, &got) != 0) {
@@ -471,7 +547,7 @@ int pigeon_stream_recv(pigeon_stream *s,
                                        sess->scratch_a, sess->scratch_size, &got) != 0) {
         return -1;
     }
-    return pigeon_channel_decrypt(&sess->channel, sess->scratch_a, got, buf, buf_len);
+    return pigeon_channel_decrypt(&s->aead, sess->scratch_a, got, buf, buf_len);
 }
 
 int pigeon_stream_close(pigeon_stream *s)
@@ -489,7 +565,8 @@ int pigeon_datagram_send(pigeon_datagram *d,
     if (!sess->transport.send_datagram) return -1;
     if (pigeon_session_ensure_scratch(sess) != 0) return -1;
 
-    int wn = pigeon_encode_datagram(&sess->channel,
+    if (!sess->dg_channel.established) return -1;
+    int wn = pigeon_encode_datagram(&sess->dg_channel,
                                     d->channel_id,
                                     payload, payload_len,
                                     sess->scratch_a, sess->scratch_size);
@@ -513,7 +590,8 @@ int pigeon_datagram_recv(pigeon_datagram *d,
     }
     if (got == 0) return -1; // recv timed out with no datagram available
     uint64_t cid = 0;
-    int pn = pigeon_decode_datagram(&sess->channel,
+    if (!sess->dg_channel.established) return -1;
+    int pn = pigeon_decode_datagram(&sess->dg_channel,
                                     sess->scratch_a, got, &cid,
                                     buf, buf_len);
     if (pn < 0) return -1;
@@ -535,7 +613,7 @@ int pigeon_session_primary(pigeon_session *s, pigeon_stream *out_stream)
     out_stream->session = s;
     out_stream->handle  = s->primary;
     out_stream->name[0] = '\0'; // Primary stream has empty name.
-    return 0;
+    return pigeon_stream_bind_aead(out_stream);
 }
 
 // derive_session_channel mirrors crypto.PairingRecord.DeriveChannel

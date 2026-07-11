@@ -1397,10 +1397,11 @@ static void test_session_stream_roundtrip(void)
     }
     if (nl != 4 || strcmp(name, "chat") != 0) { FAIL("name mismatch"); return; }
 
-    // Wrap B's accepted handle in a pigeon_stream and run send/recv
-    // round-trip through pigeon_stream_send / _recv (AEAD).
+    // Wrap B's accepted handle in a pigeon_stream and bind per-stream
+    // ModeStrict AEAD (🎯T53) before send/recv.
     pigeon_stream sb_chat = (pigeon_stream){ .session = &sb, .handle = bh };
     strcpy(sb_chat.name, "chat");
+    if (pigeon_stream_bind_aead(&sb_chat) != 0) { FAIL("B bind aead"); return; }
 
     // A sends "hello" (encrypted), B reads "hello".
     if (pigeon_stream_send(&sa_chat, (const uint8_t *)"hello", 5) != 0) { FAIL("A send"); return; }
@@ -2111,6 +2112,7 @@ static void test_pigeon_connect_loopback(void)
     }
     pigeon_stream b_chat_wrap = { .session = &bsess, .handle = b_chat };
     strcpy(b_chat_wrap.name, "chat");
+    if (pigeon_stream_bind_aead(&b_chat_wrap) != 0) { FAIL("backend bind aead"); return; }
     uint8_t buf[32];
     int got = pigeon_stream_recv(&b_chat_wrap, buf, sizeof(buf));
     if (got != 5 || memcmp(buf, "hello", 5) != 0) { FAIL("backend chat recv"); return; }

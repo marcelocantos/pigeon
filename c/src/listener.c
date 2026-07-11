@@ -315,7 +315,7 @@ int pigeon_session_accept_incoming_stream(pigeon_session *s,
             out_stream->name[nl] = '\0';
             s->incoming[i].in_use = false;
             s->incoming[i].handle = NULL;
-            return 0;
+            return pigeon_stream_bind_aead(out_stream);
         }
     }
 
@@ -354,7 +354,7 @@ int pigeon_session_accept_incoming_stream(pigeon_session *s,
             out_stream->handle  = handle;
             memcpy(out_stream->name, sname, sname_len);
             out_stream->name[sname_len] = '\0';
-            return 0;
+            return pigeon_stream_bind_aead(out_stream);
         }
         // Different name: buffer it for a later matching call.
         bool buffered = false;
