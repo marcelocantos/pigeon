@@ -1795,9 +1795,10 @@ targets:
     achieved: 2026-07-11
   T58:
     name: faultproxy TestPassthrough is race-free under concurrent forward stats
-    status: identified
+    status: achieved
     value: 3.0
     cost: 2.0
+    actual_cost: 1.0
     acceptance:
     - TestPassthrough never fails because PacketsForwarded is observed before the return hop is counted
     - A deterministic wait/poll or ordering fix makes the assertion race-free on Linux CI
@@ -1805,6 +1806,7 @@ targets:
     context: 'Discovered during v0.30.0 release: release.yml linux-amd64 Run tests failed once with faultproxy.TestPassthrough expecting >=2 PacketsForwarded but observing 1, even though the client already received the echoed payload. The return-path counter update races with the test reading stats after Read returns. Rerun passed; still a real flake that can block releases.'
     origin: manual
     discovered: 2026-07-11
+    achieved: 2026-07-11
   T6:
     name: WebTransport relay
     status: achieved
