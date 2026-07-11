@@ -57,17 +57,16 @@ type Config struct {
 	// connections.
 	QUICPort string
 
-	// LANServer, if set, advertises a local LAN listener for direct peer
-	// connections. Automatic LAN upgrade is not currently exposed through
-	// the Session API (see the relay's --lan flag and NewLANServer).
+	// LANServer, if set on low-level dial helpers, is unused by the
+	// Session API. Prefer RegisterArgs.LAN (🎯T48).
 	LANServer *LANServer
 
-	// LAN enables LAN upgrade on the client side. When the backend
-	// advertises a LAN address, the client attempts a direct connection.
+	// LAN enables LAN upgrade on low-level dial helpers. Prefer
+	// ConnectArgs.PreferLAN (🎯T48).
 	LAN bool
 
 	// LANTLS is the TLS config for LAN connections (client side).
-	// If nil and LAN is true, InsecureSkipVerify is used.
+	// Prefer ConnectArgs.LANTLS (🎯T48).
 	LANTLS *tls.Config
 }
 

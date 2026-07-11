@@ -872,3 +872,190 @@ func TestE2EMultiClient(t *testing.T) {
 		t.Error(e)
 	}
 }
+
+// TestE2ELANUpgrade is the 🎯T48 oracle: both peers start over the relay,
+// traffic flows, then the Session transparently swaps its carrier to a
+// direct QUIC path (NewLANServer) after challenge/response, and traffic
+// continues on the upgraded Session without re-pairing.
+func TestE2ELANUpgrade(t *testing.T) {
+	t.Parallel()
+	relayURL, teardown := startRelay(t)
+	defer teardown()
+	time.Sleep(200 * time.Millisecond)
+
+	bid, cid, brec, crec := pairingPair(t, relayURL)
+	pairings := map[string]*crypto.PairingRecord{cid.InstanceID(): brec}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	defer cancel()
+	tlsCfg := &tls.Config{InsecureSkipVerify: true}
+
+	// Bind LAN to loopback so both peers share a path without real LAN
+	// discovery; NewLANServer advertises 127.0.0.1:<port>.
+	lan, err := pigeon.NewLANServer("127.0.0.1:0", nil)
+	if err != nil {
+		t.Fatalf("NewLANServer: %v", err)
+	}
+	defer lan.Close()
+
+	listener, _, err := pigeon.Register(ctx, &pigeon.RegisterArgs{
+		Identity: bid,
+		Pairing: func(clientInstanceID string) (*crypto.PairingRecord, error) {
+			rec, ok := pairings[clientInstanceID]
+			if !ok {
+				return nil, fmt.Errorf("unknown client %q", clientInstanceID)
+			}
+			return rec, nil
+		},
+		Relay: relayURL,
+		TLS:   tlsCfg,
+		LAN:   lan,
+		Datagrams: map[string]uint64{
+			"probe": 1,
+		},
+	})
+	if err != nil {
+		t.Fatalf("register: %v", err)
+	}
+	defer listener.Close()
+
+	// Backend: accept one client, echo on "chat", and also serve post-upgrade
+	// traffic on "chat2".
+	bdone := make(chan error, 1)
+	var backendSess atomic.Pointer[pigeon.Session]
+	go func() {
+		sess, err := listener.Accept(ctx)
+		if err != nil {
+			bdone <- fmt.Errorf("accept: %w", err)
+			return
+		}
+		defer sess.Close()
+		backendSess.Store(sess)
+
+		// Serve chat (relay) then chat2 (post-LAN) concurrently.
+		var wg sync.WaitGroup
+		echo := func(name string) {
+			defer wg.Done()
+			st, err := sess.AcceptStream(ctx, name)
+			if err != nil {
+				bdone <- fmt.Errorf("accept %s: %w", name, err)
+				return
+			}
+			for {
+				msg, err := st.Recv(ctx)
+				if err != nil {
+					return
+				}
+				if err := st.Send(append([]byte("echo: "), msg...)); err != nil {
+					bdone <- fmt.Errorf("send %s: %w", name, err)
+					return
+				}
+			}
+		}
+		wg.Add(2)
+		go echo("chat")
+		go echo("chat2")
+
+		// Datagram echo on "probe".
+		go func() {
+			dg := sess.Datagram("probe")
+			for {
+				msg, err := dg.Recv(ctx)
+				if err != nil {
+					return
+				}
+				_ = dg.Send(append([]byte("pong:"), msg...))
+			}
+		}()
+
+		// Wait until the client closes (or ctx ends).
+		<-ctx.Done()
+		wg.Wait()
+		bdone <- nil
+	}()
+
+	sess, err := pigeon.Connect(ctx, &pigeon.ConnectArgs{
+		InstanceID: bid.InstanceID(),
+		Record:     crec,
+		Identity:   cid,
+		Relay:      relayURL,
+		TLS:        tlsCfg,
+		PreferLAN:  true,
+		Datagrams: map[string]uint64{
+			"probe": 1,
+		},
+	})
+	if err != nil {
+		t.Fatalf("connect: %v", err)
+	}
+	defer sess.Close()
+
+	// 1) Traffic over the relay before (or while) LAN upgrade races in.
+	chat, err := sess.OpenStream(ctx, "chat")
+	if err != nil {
+		t.Fatalf("open chat: %v", err)
+	}
+	if err := chat.Send([]byte("relay-hi")); err != nil {
+		t.Fatalf("send relay-hi: %v", err)
+	}
+	got, err := chat.Recv(ctx)
+	if err != nil {
+		t.Fatalf("recv relay-hi: %v", err)
+	}
+	if string(got) != "echo: relay-hi" {
+		t.Fatalf("relay chat: got %q want %q", got, "echo: relay-hi")
+	}
+
+	// 2) Wait for LAN upgrade on both sides.
+	select {
+	case <-sess.LANReady():
+	case <-ctx.Done():
+		t.Fatal("client LANReady timeout")
+	}
+	// Backend side: poll UsingLAN (LANReady may race with Accept).
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		bs := backendSess.Load()
+		if bs != nil && bs.UsingLAN() {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("backend did not upgrade to LAN")
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	if !sess.UsingLAN() {
+		t.Fatal("client UsingLAN() = false after LANReady")
+	}
+
+	// 3) Traffic continues on a fresh stream over the LAN carrier.
+	chat2, err := sess.OpenStream(ctx, "chat2")
+	if err != nil {
+		t.Fatalf("open chat2: %v", err)
+	}
+	if err := chat2.Send([]byte("lan-hi")); err != nil {
+		t.Fatalf("send lan-hi: %v", err)
+	}
+	got, err = chat2.Recv(ctx)
+	if err != nil {
+		t.Fatalf("recv lan-hi: %v", err)
+	}
+	if string(got) != "echo: lan-hi" {
+		t.Fatalf("lan chat2: got %q want %q", got, "echo: lan-hi")
+	}
+
+	// 4) Datagrams also ride the LAN carrier.
+	dg := sess.Datagram("probe")
+	if err := dg.Send([]byte("ping")); err != nil {
+		t.Fatalf("datagram send: %v", err)
+	}
+	dgot, err := dg.Recv(ctx)
+	if err != nil {
+		t.Fatalf("datagram recv: %v", err)
+	}
+	if string(dgot) != "pong:ping" {
+		t.Fatalf("datagram: got %q want %q", dgot, "pong:ping")
+	}
+
+	_ = sess.Close()
+}

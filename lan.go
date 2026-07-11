@@ -9,6 +9,7 @@ import (
 	"crypto/elliptic"
 	"crypto/rand"
 	"crypto/sha256"
+	"crypto/subtle"
 	"crypto/tls"
 	"crypto/x509"
 	"encoding/json"
@@ -24,40 +25,47 @@ import (
 	"github.com/quic-go/quic-go"
 )
 
+// lanControlStreamName is the reserved sub-stream the backend opens to
+// advertise a LAN offer after activation (🎯T48). The NUL prefix keeps
+// it out of the application name space (apps use plain names like "chat").
+const lanControlStreamName = "\x00pigeon.lan"
+
 // LANServer is a local QUIC listener that accepts direct connections
 // from clients on the same LAN. It is the local counterpart of the
 // relay server — same protocol, no relay in between.
 //
-// The backend creates a LANServer at startup. When a client connects
-// via the relay, the backend's Conn advertises the LAN address. The
-// client attempts a direct connection; if successful, the Conn
-// transparently switches to the LAN path.
+// The backend creates a LANServer at startup and passes it via
+// RegisterArgs.LAN. After each client activates, the Session advertises
+// the LAN address over an encrypted control stream. A client that set
+// ConnectArgs.PreferLAN dials the backend directly, verifies via
+// challenge/response, and the Session transparently swaps its transport
+// to the direct path.
 //
 // Usage:
 //
-//	lan, _ := pigeon.NewLANServer(tlsConfig)  // random port
+//	lan, _ := pigeon.NewLANServer("", nil) // random port, self-signed cert
 //	defer lan.Close()
 //
-//	// Register with the relay, passing the LAN server.
-//	b, _ := pigeon.Register(ctx, relayURL, pigeon.WithLANServer(lan))
-//	// The LAN address is automatically advertised to connecting clients.
+//	listener, _, _ := pigeon.Register(ctx, &pigeon.RegisterArgs{
+//	    Identity: id, Pairing: resolve, Relay: relayURL, LAN: lan,
+//	})
 type LANServer struct {
 	listener *quic.Listener
 	addr     string // "ip:port" on the LAN
 	certHash []byte // SHA-256 of DER cert for browser serverCertificateHashes
 	mu       sync.Mutex
-	conns    map[string]*pendingLAN // instance ID → pending connection
+	conns    map[string]*pendingLAN // pending key → challenge + callback
 }
 
 // pendingLAN tracks a client that should connect via LAN.
 type pendingLAN struct {
 	challenge []byte
-	onVerify  func(stream io.ReadWriteCloser, conn *quic.Conn) // executor callback
+	onVerify  func(stream io.ReadWriteCloser, conn *quic.Conn)
 }
 
 // NewLANServer creates a LAN QUIC listener. The addr parameter
 // specifies the listen address (e.g., ":0" for a random port,
-// "localhost:44333" for a fixed address). If addr is empty, ":0"
+// "127.0.0.1:44333" for a fixed address). If addr is empty, ":0"
 // is used. If tlsConfig is nil, a self-signed certificate is generated.
 func NewLANServer(addr string, tlsConfig *tls.Config) (*LANServer, error) {
 	if addr == "" {
@@ -130,6 +138,32 @@ func (s *LANServer) Close() error {
 	return s.listener.Close()
 }
 
+// RegisterPending records a challenge for a pending LAN upgrade keyed by
+// id (typically the client's stable InstanceID). When a dialer presents a
+// matching lanVerify, onVerify runs with the handshake stream and the
+// established QUIC connection.
+func (s *LANServer) RegisterPending(id string, challenge []byte, onVerify func(stream io.ReadWriteCloser, conn *quic.Conn)) {
+	if s == nil || id == "" {
+		return
+	}
+	s.mu.Lock()
+	s.conns[id] = &pendingLAN{
+		challenge: append([]byte(nil), challenge...),
+		onVerify:  onVerify,
+	}
+	s.mu.Unlock()
+}
+
+// UnregisterPending drops a pending entry (e.g. on offer timeout).
+func (s *LANServer) UnregisterPending(id string) {
+	if s == nil {
+		return
+	}
+	s.mu.Lock()
+	delete(s.conns, id)
+	s.mu.Unlock()
+}
+
 // acceptLoop accepts incoming LAN connections and verifies them.
 func (s *LANServer) acceptLoop() {
 	for {
@@ -163,7 +197,7 @@ func (s *LANServer) handleConn(conn *quic.Conn) {
 		return
 	}
 
-	// Look up the pending connection by instance ID.
+	// Look up the pending connection by client identity key.
 	s.mu.Lock()
 	pending, ok := s.conns[verify.InstanceID]
 	if ok {
@@ -207,14 +241,12 @@ type lanOffer struct {
 }
 
 // lanVerify is sent on the direct LAN connection to prove identity.
+// InstanceID is the client's stable identifier (the key used with
+// RegisterPending on the backend).
 type lanVerify struct {
 	Challenge  []byte `json:"challenge"`
 	InstanceID string `json:"instance_id"`
 }
-
-// --- Conn integration ---
-// All LAN lifecycle (advertiseLAN, handleLANOffer, setDirectPath,
-// sendControl) is now handled by the executor. See executor.go.
 
 // --- Helpers ---
 
@@ -222,12 +254,7 @@ func challengeEqual(a, b []byte) bool {
 	if len(a) != len(b) {
 		return false
 	}
-	for i := range a {
-		if a[i] != b[i] {
-			return false
-		}
-	}
-	return true
+	return subtle.ConstantTimeCompare(a, b) == 1
 }
 
 func generateSelfSigned() (tls.Certificate, error) {
@@ -245,7 +272,8 @@ func generateSelfSigned() (tls.Certificate, error) {
 		NotAfter:    notBefore.Add(14 * 24 * time.Hour),
 		KeyUsage:    x509.KeyUsageDigitalSignature,
 		ExtKeyUsage: []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth},
-		IPAddresses: []net.IP{net.IPv4(127, 0, 0, 1)},
+		IPAddresses: []net.IP{net.IPv4(127, 0, 0, 1), net.IPv6loopback},
+		DNSNames:    []string{"localhost"},
 	}
 
 	certDER, err := x509.CreateCertificate(rand.Reader, template, template, &key.PublicKey, key)

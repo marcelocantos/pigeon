@@ -368,7 +368,7 @@ PORT=443 ./pigeon                           # run relay server (self-signed cert
 | `--cert` | — | TLS certificate file (PEM); if omitted, generates self-signed |
 | `--key` | — | TLS private key file (PEM) |
 | `--cert-validity` | `365` | Self-signed certificate validity in days (use ≤14 for WebTransport `serverCertificateHashes`) |
-| `--lan` | — | LAN listener address for direct connections (e.g. `:0`); not yet wired into the relay flow |
+| `--lan` | — | Start a LAN QUIC listener at this address (dev convenience). App backends pass `NewLANServer` via `RegisterArgs.LAN`; clients set `ConnectArgs.PreferLAN` (🎯T48). |
 | `--version` | — | Print version and exit |
 | `--help-agent` | — | Print this guide |
 | `PIGEON_TOKEN` | — | Bearer token for backend registration auth. Wires through the default `BearerTokenAuth` verifier; replace with any custom `pigeon.Auth` for more complex admission policies. |
