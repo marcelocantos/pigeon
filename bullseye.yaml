@@ -1708,15 +1708,17 @@ targets:
     discovered: 2026-07-02
   T52:
     name: pigeon's SAS confirmation code resists a relay MitM grinding attack (commitment round + adequate entropy)
-    status: identified
+    status: achieved
     value: 8.0
     cost: 5.0
+    actual_cost: 5.0
     acceptance:
     - The confirmation code uses a commitment round so neither side can grind its displayed code after seeing the other's public key
     - Effective entropy is raised beyond ~20 bits, or the commitment makes grinding infeasible
     context: 'HIGH. c/src/pairing.c:368: the 6-digit SAS has no commitment round and only ~20 bits, so a relay MitM can grind the two displayed codes to match, defeating MitM detection. Unverified Fable-5 finder-stage candidate; verify before implementing. See docs/audit/fable-2026-07.md.'
     origin: manual
     discovered: 2026-07-02
+    achieved: 2026-07-11
   T53:
     name: pigeon carries lossy datagrams and multiplexed streams without a single strict counter that one lost datagram can wedge
     status: achieved
