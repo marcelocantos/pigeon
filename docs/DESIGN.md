@@ -298,7 +298,10 @@ relay-only — LAN/STUN promotion (🎯T43) is follow-up work.
 
 For the transferable method (why command-emitting pure machines, TLA+
 in CI, deterministic codegen, interface contracts, fidelity gates) see
-[`docs/formal-state-machines.md`](formal-state-machines.md). This section
+[`docs/formal-state-machines.md`](formal-state-machines.md). For
+adversary-as-transitions and residual-power analysis (network MitM and
+privileged state writers) see
+[`docs/adversarial-modeling.md`](adversarial-modeling.md). This section
 is the pigeon-specific application of that method.
 
 **Principle: anything that goes on the wire is specified in protogen and

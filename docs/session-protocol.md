@@ -184,6 +184,12 @@ re-encryption, concurrent pairing race, token brute-force, code
 guessing, and session replay. All attacks are verified to be detected
 or prevented by the protocol.
 
+Method and generalisation (including privileged/internal state-tampering
+adversaries): [`adversarial-modeling.md`](adversarial-modeling.md). The
+current `protocol/pairing.yaml` focuses MitM on hello/welcome pubkey
+substitution; the richer eight-capability catalogue is the historical
+session/pairing lineage summarised above.
+
 ## Phase 2: Transport
 
 After pairing, the transport phase manages which network path carries

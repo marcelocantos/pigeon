@@ -7,7 +7,9 @@ languages and over long maintenance horizons.
 **Status:** architectural essay grounded in the pigeon project’s lived
 history (2026-03 → 2026-07). Not a protocol reference. Protocol detail
 lives in [`session-protocol.md`](session-protocol.md) and
-[`DESIGN.md`](DESIGN.md) §4.
+[`DESIGN.md`](DESIGN.md) §4. **Adversarial modelling** (network MitM and
+privileged state-tampering as TLA+ actions, residual power) is covered
+in the companion [`adversarial-modeling.md`](adversarial-modeling.md).
 
 **How to use this document**
 
@@ -16,6 +18,7 @@ lives in [`session-protocol.md`](session-protocol.md) and
 | Human, 15 minutes | §§1–3, §6, §8 |
 | Human, full case | All sections |
 | Language model (strategy / adoption plan) | Treat §1 claims as axioms, §3 as the normative pattern, §5 as failure modes, §7 as adoption playbook, §9 as glossary |
+| Security / residual attack surface | Read with [`adversarial-modeling.md`](adversarial-modeling.md) |
 
 ---
 
@@ -516,10 +519,11 @@ pigeon invents them.
 
 | Document | Role |
 |----------|------|
+| [`adversarial-modeling.md`](adversarial-modeling.md) | Adversary as transitions; residual power; network vs privileged insiders |
 | [`session-protocol.md`](session-protocol.md) | Concrete session/pairing machine design + full journey appendix |
 | [`DESIGN.md`](DESIGN.md) §4 | Wire protocols: generate everything; verification first; no composed TLA+ |
 | [`DESIGN.md`](DESIGN.md) §1–2 | Goals, non-goals, threat model (product context) |
-| [`protocol/*.yaml`](../protocol/) | Live formal specs |
+| [`protocol/*.yaml`](../protocol/) | Live formal specs (`adversary:` on pairing) |
 | [`formal/`](../formal/) | Generated / maintained TLA+ and TLC configs |
 | [`audit/fable-2026-07.md`](audit/fable-2026-07.md) | Case study of seam failures and fidelity gaps |
 
@@ -548,7 +552,8 @@ When asked to “generate a strategy from this document,” emit:
 
 1. **Scope:** which subsystems become machines first (with rationale §7.1).
 2. **Machine map:** names, events, commands, contracts between machines.
-3. **Property list:** safety + liveness candidates; adversary model if any.
+3. **Property list:** safety + liveness candidates; adversary model if any
+   (detail: [`adversarial-modeling.md`](adversarial-modeling.md)).
 4. **Pipeline plan:** tooling choice, CI budgets, generation targets.
 5. **Fidelity plan:** table from §7.5 for every security property.
 6. **Migration plan:** how to delete backdoor handlers; interim dual-run.
