@@ -378,13 +378,16 @@ func (p *Proxy) forward(pkt []byte, upstream *net.UDPConn, clientAddr *net.UDPAd
 	}
 
 	send := func() {
+		// Count before the socket write so a peer that has already
+		// observed delivery cannot race the counter (🎯T58). Write
+		// errors are already ignored either way.
+		p.stats.PacketsForwarded.Add(1)
+		p.stats.BytesForwarded.Add(int64(len(pkt)))
 		if upstream != nil {
 			upstream.Write(pkt)
 		} else if clientAddr != nil {
 			p.conn.WriteToUDP(pkt, clientAddr)
 		}
-		p.stats.PacketsForwarded.Add(1)
-		p.stats.BytesForwarded.Add(int64(len(pkt)))
 	}
 
 	if delay > 0 {

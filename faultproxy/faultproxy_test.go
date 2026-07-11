@@ -55,9 +55,20 @@ func TestPassthrough(t *testing.T) {
 		t.Fatalf("got %q, want hello", buf[:n])
 	}
 
+	// Client Read only proves delivery, not that the proxy goroutine has
+	// finished updating PacketsForwarded (and even counting before Write
+	// is not a Go happens-before against UDP delivery). Poll until both
+	// hops are counted (🎯T58).
 	stats := proxy.GetStats()
-	if stats.PacketsForwarded.Load() < 2 {
-		t.Fatalf("expected at least 2 forwarded packets, got %d", stats.PacketsForwarded.Load())
+	deadline := time.Now().Add(2 * time.Second)
+	for {
+		if n := stats.PacketsForwarded.Load(); n >= 2 {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("expected at least 2 forwarded packets, got %d", stats.PacketsForwarded.Load())
+		}
+		time.Sleep(time.Millisecond)
 	}
 }
 
