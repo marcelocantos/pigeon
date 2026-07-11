@@ -1807,6 +1807,22 @@ targets:
     origin: manual
     discovered: 2026-07-11
     achieved: 2026-07-11
+  T59:
+    name: datagram fragmentation delivers each part as it arrives with message metadata
+    status: identified
+    value: 8.0
+    cost: 5.0
+    acceptance:
+    - Datagram.Send splits oversized app payloads into independently-AEAD'd parts under 0x00 (whole) / 0x40 (fragment) outer framing
+    - Each inbound QUIC datagram is delivered immediately as a DatagramPart {MsgID, Index, Total, Payload} — no receiver-side reassembly wait
+    - Whole messages use Total=1, Index=0; multi-part messages share MsgID with Index in [0, Total)
+    - Oversized messages needing >65535 parts return a clear error
+    - Go unit tests cover framing, progressive delivery, multi-message interleave, and oversize rejection
+    - C libpigeon datagram send/recv implement the same progressive-part wire and metadata
+    - STABILITY/README/agents-guide document progressive delivery (not transparent reassembly)
+    context: Supersedes transparent reassembly (v0.9.0 / original T59 draft). Send still auto-fragments. Recv always surfaces each part as it arrives with MsgID/Index/Total so apps can reassemble, cancel, or stream partial data themselves. Incomplete parts are simply never completed by the peer (datagram loss) — no 5s reassembly buffer on the library path. Channel ID remains inside per-part AEAD (T45).
+    origin: manual
+    discovered: 2026-07-11
   T6:
     name: WebTransport relay
     status: achieved
