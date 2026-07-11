@@ -191,7 +191,8 @@ See [docs/DESIGN.md §2](docs/DESIGN.md) for the broader threat model that motiv
 
 | Route | Description |
 |-------|-------------|
-| `GET /health` | Returns `{"status":"ok"}` (HTTP/3) |
+| `GET /health` | Liveness probe `{"status":"ok"}` (HTTP/3 and HTTPS) |
+| `GET /status` | Process diagnostic: service, status, version, commit, started_at, uptime_sec |
 | `GET /pigeon` | Single WebTransport entry point; the role (register / listen / connect) is set by the greeting on the primary stream |
 
 Native clients use raw QUIC (ALPN `"pigeon"`) instead of WebTransport; the
@@ -373,4 +374,4 @@ PORT=443 ./pigeon                           # run relay server (self-signed cert
 | `--help-agent` | — | Print this guide |
 | `PIGEON_TOKEN` | — | Bearer token for backend registration auth. Wires through the default `BearerTokenAuth` verifier; replace with any custom `pigeon.Auth` for more complex admission policies. |
 
-Build-time version injection: `-ldflags "-X main.version=<version>"`.
+Build-time version injection: `-ldflags "-X main.version=<version> -X github.com/marcelocantos/pigeon.Commit=<sha>"`.

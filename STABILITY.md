@@ -16,7 +16,8 @@ The pre-1.0 period (currently v0.x.x) exists to get the interaction surface righ
 
 | Route | Protocol | Response |
 |-------|----------|----------|
-| `GET /health` | HTTP/3 | `{"status":"ok"}` |
+| `GET /health` | HTTP/3 + HTTPS | `{"status":"ok"}` (liveness only) |
+| `GET /status` | HTTP/3 + HTTPS | JSON process info: `service`, `status`, `version`, `commit?`, `started_at`, `uptime_sec` |
 | `GET /register` | WebTransport (QUIC) | First stream message is the assigned instance ID |
 | `GET /ws/{id}` | WebTransport (QUIC) | Bridged bidirectionally (streams + datagrams) to registered backend |
 
@@ -27,7 +28,7 @@ Constraints: multiple clients may connect to the same instance ID; the relay
 maintains independent bridges for each. Stream/datagram traffic is fanned
 out per client.
 Max message frame size: 1 MiB.
-CORS: `Access-Control-Allow-Origin: *` on health endpoint (for browser Alt-Svc priming).
+CORS: `Access-Control-Allow-Origin: *` on `/health` and `/status` (browser Alt-Svc priming / diagnostics).
 
 *Stability: Stable.*
 
@@ -54,7 +55,7 @@ Subcommands:
 
 Environment variables: `PORT` (default `443`).
 
-Build-time version injection: `-ldflags "-X main.version=<version>"`.
+Build-time version injection: `-ldflags "-X main.version=<version> -X github.com/marcelocantos/pigeon.Commit=<sha>"`.
 
 *Stability: Stable. The `pair` subcommand is Needs Review — added in v0.19.0; flag set may settle further as deploy-script use cases land.*
 

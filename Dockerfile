@@ -20,7 +20,15 @@ COPY qr/ qr/
 COPY cwire/ cwire/
 COPY dist/ dist/
 COPY cmd/pigeon/ cmd/pigeon/
-RUN CGO_ENABLED=1 go build -o /pigeon ./cmd/pigeon
+
+# VERSION / COMMIT are injected by CI (`flyctl deploy --build-arg`) so
+# GET /status and --version report what is actually running. Local
+# docker builds default to "dev" with an empty commit.
+ARG VERSION=dev
+ARG COMMIT=
+RUN CGO_ENABLED=1 go build \
+    -ldflags "-X main.version=${VERSION} -X github.com/marcelocantos/pigeon.Commit=${COMMIT}" \
+    -o /pigeon ./cmd/pigeon
 
 FROM alpine:3.21
 RUN apk add --no-cache ca-certificates && mkdir -p /data/certmagic
