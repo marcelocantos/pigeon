@@ -1771,9 +1771,10 @@ targets:
     achieved: 2026-07-06
   T57:
     name: pigeon's pairing ceremony end-to-end test (TestCeremonyEndToEnd) is not flaky — the initiator pairing succeeds deterministically across repeated and bulk runs
-    status: identified
+    status: achieved
     value: 5.0
     cost: 3.0
+    actual_cost: 3.0
     acceptance:
     - '`go test -count=20 -race ./pairing/...` passes with zero `pigeon_pair_initiator failed` occurrences, in CI and locally, across many consecutive runs'
     - The intermittent C-side failure (cwire pigeon_pair_initiator, pairing_test.go line 106) is root-caused — the resource/timing/handshake nondeterminism is identified and removed, not merely masked by a rerun/retry
@@ -1785,6 +1786,7 @@ targets:
     - test-reliability
     origin: manual
     discovered: 2026-07-06
+    achieved: 2026-07-11
   T6:
     name: WebTransport relay
     status: achieved
