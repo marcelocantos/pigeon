@@ -11,6 +11,7 @@ public enum PairingCeremonyAcceptorState: String, Sendable {
     case generatingEphemeral = "GeneratingEphemeral"
     case registeringRelay = "RegisteringRelay"
     case waitingForHello = "WaitingForHello"
+    case waitingForReveal = "WaitingForReveal"
     case derivingCode = "DerivingCode"
     case awaitingUserConfirm = "AwaitingUserConfirm"
     case awaitingPeerConfirm = "AwaitingPeerConfirm"
@@ -24,6 +25,7 @@ public enum PairingCeremonyInitiatorState: String, Sendable {
     case generatingEphemeral = "GeneratingEphemeral"
     case connectingRelay = "ConnectingRelay"
     case awaitingWelcome = "AwaitingWelcome"
+    case revealing = "Revealing"
     case derivingCode = "DerivingCode"
     case awaitingUserConfirm = "AwaitingUserConfirm"
     case awaitingPeerConfirm = "AwaitingPeerConfirm"
@@ -37,6 +39,7 @@ public enum PairingCeremonyProtocol {
     public enum MessageType: String, Sendable {
         case hello = "hello"
         case welcome = "welcome"
+        case reveal = "reveal"
         case confirmToInitiator = "confirm_to_initiator"
         case confirmToAcceptor = "confirm_to_acceptor"
     }
@@ -45,10 +48,13 @@ public enum PairingCeremonyProtocol {
         case genEphemeral = "gen_ephemeral"
         case registerRelay = "register_relay"
         case emitToken = "emit_token"
-        case deriveCode = "derive_code"
+        case storeCommit = "store_commit"
+        case verifyCommitAndDerive = "verify_commit_and_derive"
         case storeRecord = "store_record"
         case decodeToken = "decode_token"
         case dialRelay = "dial_relay"
+        case sendReveal = "send_reveal"
+        case deriveCode = "derive_code"
     }
 
     public enum EventID: String, Sendable {
@@ -58,10 +64,13 @@ public enum PairingCeremonyProtocol {
         case codeReady = "code_ready"
         case userConfirm = "user_confirm"
         case userCancel = "user_cancel"
+        case commitFail = "commit_fail"
         case tokenReceived = "token_received"
         case tokenDecoded = "token_decoded"
         case relayConnected = "relay_connected"
+        case revealSent = "reveal_sent"
         case recvHello = "recv_hello"
+        case recvReveal = "recv_reveal"
         case recvConfirmToAcceptor = "recv_confirm_to_acceptor"
         case recvWelcome = "recv_welcome"
         case recvConfirmToInitiator = "recv_confirm_to_initiator"
@@ -75,12 +84,14 @@ public enum PairingCeremonyProtocol {
         (from: "Idle", to: "GeneratingEphemeral", on: "pair_begin", onKind: "internal", guard: nil, action: "gen_ephemeral", sends: []),
         (from: "GeneratingEphemeral", to: "RegisteringRelay", on: "ephemeral_ready", onKind: "internal", guard: nil, action: "register_relay", sends: []),
         (from: "RegisteringRelay", to: "WaitingForHello", on: "relay_registered", onKind: "internal", guard: nil, action: "emit_token", sends: []),
-        (from: "WaitingForHello", to: "DerivingCode", on: "hello", onKind: "recv", guard: nil, action: "derive_code", sends: []),
-        (from: "DerivingCode", to: "AwaitingUserConfirm", on: "code_ready", onKind: "internal", guard: nil, action: nil, sends: [(to: "initiator", msg: "welcome")]),
+        (from: "WaitingForHello", to: "WaitingForReveal", on: "hello", onKind: "recv", guard: nil, action: "store_commit", sends: [(to: "initiator", msg: "welcome")]),
+        (from: "WaitingForReveal", to: "DerivingCode", on: "reveal", onKind: "recv", guard: nil, action: "verify_commit_and_derive", sends: []),
+        (from: "DerivingCode", to: "AwaitingUserConfirm", on: "code_ready", onKind: "internal", guard: nil, action: nil, sends: []),
         (from: "AwaitingUserConfirm", to: "AwaitingPeerConfirm", on: "user_confirm", onKind: "internal", guard: nil, action: nil, sends: [(to: "initiator", msg: "confirm_to_initiator")]),
         (from: "AwaitingPeerConfirm", to: "Paired", on: "confirm_to_acceptor", onKind: "recv", guard: nil, action: "store_record", sends: []),
         (from: "AwaitingUserConfirm", to: "Aborted", on: "user_cancel", onKind: "internal", guard: nil, action: nil, sends: []),
         (from: "AwaitingPeerConfirm", to: "Aborted", on: "user_cancel", onKind: "internal", guard: nil, action: nil, sends: []),
+        (from: "WaitingForReveal", to: "Aborted", on: "commit_fail", onKind: "internal", guard: nil, action: nil, sends: []),
     ]
 
     /// initiator transitions.
@@ -91,7 +102,8 @@ public enum PairingCeremonyProtocol {
         (from: "DecodingToken", to: "GeneratingEphemeral", on: "token_decoded", onKind: "internal", guard: nil, action: "gen_ephemeral", sends: []),
         (from: "GeneratingEphemeral", to: "ConnectingRelay", on: "ephemeral_ready", onKind: "internal", guard: nil, action: "dial_relay", sends: []),
         (from: "ConnectingRelay", to: "AwaitingWelcome", on: "relay_connected", onKind: "internal", guard: nil, action: nil, sends: [(to: "acceptor", msg: "hello")]),
-        (from: "AwaitingWelcome", to: "DerivingCode", on: "welcome", onKind: "recv", guard: nil, action: "derive_code", sends: []),
+        (from: "AwaitingWelcome", to: "Revealing", on: "welcome", onKind: "recv", guard: nil, action: "send_reveal", sends: [(to: "acceptor", msg: "reveal")]),
+        (from: "Revealing", to: "DerivingCode", on: "reveal_sent", onKind: "internal", guard: nil, action: "derive_code", sends: []),
         (from: "DerivingCode", to: "AwaitingUserConfirm", on: "code_ready", onKind: "internal", guard: nil, action: nil, sends: []),
         (from: "AwaitingUserConfirm", to: "AwaitingPeerConfirm", on: "user_confirm", onKind: "internal", guard: nil, action: nil, sends: [(to: "acceptor", msg: "confirm_to_acceptor")]),
         (from: "AwaitingPeerConfirm", to: "Paired", on: "confirm_to_initiator", onKind: "recv", guard: nil, action: "store_record", sends: []),
@@ -108,9 +120,11 @@ public final class PairingCeremonyAcceptorMachine: @unchecked Sendable {
 
     public private(set) var state: PairingCeremonyAcceptorState
     public var acceptorEphPub: String // acceptor's ephemeral X25519 public key
-    public var acceptorReceivedEphPub: String // ephemeral pubkey acceptor saw in hello (may be adversary's)
+    public var acceptorReceivedCommit: String // SAS commit from hello (binds peer eph before reveal)
+    public var acceptorReceivedEphPub: String // ephemeral pubkey acceptor saw in reveal (may be adversary's)
     public var acceptorReceivedIdentity: String // identity pubkey acceptor saw in hello
     public var acceptorReceivedInstance: String // instance ID acceptor saw in hello
+    public var acceptorCommitOk: String // did the reveal open the hello commit? "true" only after CommitMatches
     public var acceptorCode: String // confirmation code acceptor derived from its (ephA, ephB) view
     public var acceptorUserConfirmed: String // has the acceptor's local human pressed y?
     public var acceptorReceivedConfirm: String // has the acceptor received initiator's confirm message?
@@ -120,9 +134,11 @@ public final class PairingCeremonyAcceptorMachine: @unchecked Sendable {
     public init() {
         self.state = .idle
         self.acceptorEphPub = "none"
+        self.acceptorReceivedCommit = "none"
         self.acceptorReceivedEphPub = "none"
         self.acceptorReceivedIdentity = "none"
         self.acceptorReceivedInstance = "none"
+        self.acceptorCommitOk = "false"
         self.acceptorCode = ""
         self.acceptorUserConfirmed = "false"
         self.acceptorReceivedConfirm = "false"
@@ -146,11 +162,17 @@ public final class PairingCeremonyAcceptorMachine: @unchecked Sendable {
             state = .waitingForHello
             return []
         case (.waitingForHello, .recvHello):
-            try actions[.deriveCode]?()
-            // acceptor_received_eph_pub: recv_msg.eph_pub (set by action)
+            try actions[.storeCommit]?()
+            // acceptor_received_commit: recv_msg.commit (set by action)
             // acceptor_received_identity: recv_msg.identity_pub (set by action)
             // acceptor_received_instance: recv_msg.instance_id (set by action)
-            // acceptor_code: DeriveCode(acceptor_eph_pub, recv_msg.eph_pub) (set by action)
+            state = .waitingForReveal
+            return []
+        case (.waitingForReveal, .recvReveal):
+            try actions[.verifyCommitAndDerive]?()
+            // acceptor_received_eph_pub: recv_msg.eph_pub (set by action)
+            // acceptor_commit_ok: IF CommitMatches(acceptor_received_commit, recv_msg.eph_pub) THEN "true" ELSE "false" (set by action)
+            // acceptor_code: IF CommitMatches(acceptor_received_commit, recv_msg.eph_pub) THEN DeriveCode(acceptor_eph_pub, recv_msg.eph_pub) ELSE <<"none">> (set by action)
             state = .derivingCode
             return []
         case (.derivingCode, .codeReady):
@@ -171,6 +193,9 @@ public final class PairingCeremonyAcceptorMachine: @unchecked Sendable {
         case (.awaitingPeerConfirm, .userCancel):
             state = .aborted
             return []
+        case (.waitingForReveal, .commitFail):
+            state = .aborted
+            return []
         default:
             return []
         }
@@ -181,11 +206,17 @@ public final class PairingCeremonyAcceptorMachine: @unchecked Sendable {
     public func handleMessage(_ msg: MessageType) throws -> PairingCeremonyAcceptorState? {
         switch (state, msg) {
         case (.waitingForHello, .hello):
-            try actions[.deriveCode]?()
-            // acceptor_received_eph_pub: recv_msg.eph_pub (set by action)
+            try actions[.storeCommit]?()
+            // acceptor_received_commit: recv_msg.commit (set by action)
             // acceptor_received_identity: recv_msg.identity_pub (set by action)
             // acceptor_received_instance: recv_msg.instance_id (set by action)
-            // acceptor_code: DeriveCode(acceptor_eph_pub, recv_msg.eph_pub) (set by action)
+            state = .waitingForReveal
+            return state
+        case (.waitingForReveal, .reveal):
+            try actions[.verifyCommitAndDerive]?()
+            // acceptor_received_eph_pub: recv_msg.eph_pub (set by action)
+            // acceptor_commit_ok: IF CommitMatches(acceptor_received_commit, recv_msg.eph_pub) THEN "true" ELSE "false" (set by action)
+            // acceptor_code: IF CommitMatches(acceptor_received_commit, recv_msg.eph_pub) THEN DeriveCode(acceptor_eph_pub, recv_msg.eph_pub) ELSE <<"none">> (set by action)
             state = .derivingCode
             return state
         case (.awaitingPeerConfirm, .confirmToAcceptor):
@@ -221,6 +252,9 @@ public final class PairingCeremonyAcceptorMachine: @unchecked Sendable {
         case .awaitingPeerConfirm:
             state = .aborted
             return state
+        case .waitingForReveal:
+            state = .aborted
+            return state
         default:
             return nil
         }
@@ -235,6 +269,7 @@ public final class PairingCeremonyInitiatorMachine: @unchecked Sendable {
 
     public private(set) var state: PairingCeremonyInitiatorState
     public var initiatorEphPub: String // initiator's ephemeral X25519 public key
+    public var initiatorCommit: String // SHA256("pigeon-sas-commit"||eph||blind) for initiator_eph_pub
     public var receivedAcceptorEphPub: String // acceptor ephemeral pubkey from token (trusted, out-of-band)
     public var receivedAcceptorIdentity: String // acceptor identity pubkey from token
     public var receivedAcceptorInstance: String // acceptor instance ID from token
@@ -250,6 +285,7 @@ public final class PairingCeremonyInitiatorMachine: @unchecked Sendable {
     public init() {
         self.state = .idle
         self.initiatorEphPub = "none"
+        self.initiatorCommit = "none"
         self.receivedAcceptorEphPub = "none"
         self.receivedAcceptorIdentity = "none"
         self.receivedAcceptorInstance = "none"
@@ -275,6 +311,7 @@ public final class PairingCeremonyInitiatorMachine: @unchecked Sendable {
         case (.decodingToken, .tokenDecoded):
             try actions[.genEphemeral]?()
             initiatorEphPub = "initiator_eph"
+            initiatorCommit = "initiator_commit"
             state = .generatingEphemeral
             return []
         case (.generatingEphemeral, .ephemeralReady):
@@ -285,11 +322,15 @@ public final class PairingCeremonyInitiatorMachine: @unchecked Sendable {
             state = .awaitingWelcome
             return []
         case (.awaitingWelcome, .recvWelcome):
-            try actions[.deriveCode]?()
+            try actions[.sendReveal]?()
             // initiator_received_eph_pub: recv_msg.eph_pub (set by action)
             // initiator_received_identity: recv_msg.identity_pub (set by action)
             // initiator_received_instance: recv_msg.instance_id (set by action)
-            // initiator_code: DeriveCode(initiator_eph_pub, recv_msg.eph_pub) (set by action)
+            state = .revealing
+            return []
+        case (.revealing, .revealSent):
+            try actions[.deriveCode]?()
+            // initiator_code: DeriveCode(initiator_eph_pub, initiator_received_eph_pub) (set by action)
             state = .derivingCode
             return []
         case (.derivingCode, .codeReady):
@@ -320,12 +361,11 @@ public final class PairingCeremonyInitiatorMachine: @unchecked Sendable {
     public func handleMessage(_ msg: MessageType) throws -> PairingCeremonyInitiatorState? {
         switch (state, msg) {
         case (.awaitingWelcome, .welcome):
-            try actions[.deriveCode]?()
+            try actions[.sendReveal]?()
             // initiator_received_eph_pub: recv_msg.eph_pub (set by action)
             // initiator_received_identity: recv_msg.identity_pub (set by action)
             // initiator_received_instance: recv_msg.instance_id (set by action)
-            // initiator_code: DeriveCode(initiator_eph_pub, recv_msg.eph_pub) (set by action)
-            state = .derivingCode
+            state = .revealing
             return state
         case (.awaitingPeerConfirm, .confirmToInitiator):
             try actions[.storeRecord]?()
@@ -351,6 +391,7 @@ public final class PairingCeremonyInitiatorMachine: @unchecked Sendable {
         case .decodingToken:
             try actions[.genEphemeral]?()
             initiatorEphPub = "initiator_eph"
+            initiatorCommit = "initiator_commit"
             state = .generatingEphemeral
             return state
         case .generatingEphemeral:
@@ -359,6 +400,11 @@ public final class PairingCeremonyInitiatorMachine: @unchecked Sendable {
             return state
         case .connectingRelay:
             state = .awaitingWelcome
+            return state
+        case .revealing:
+            try actions[.deriveCode]?()
+            // initiator_code: DeriveCode(initiator_eph_pub, initiator_received_eph_pub) (set by action)
+            state = .derivingCode
             return state
         case .derivingCode:
             state = .awaitingUserConfirm

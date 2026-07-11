@@ -307,6 +307,59 @@ learns which service a client reached; route metadata is opaque
 application bytes. Design and deployment shapes (in-process dispatch vs
 cascading relay): [docs/multiplexing.md](docs/multiplexing.md).
 
+## LAN Upgrade
+
+When both peers are on the same LAN, an established Session transparently
+swaps its carrier from the relay to a direct QUIC connection. Session
+identity, AEAD material, and the application API stay the same — only the
+underlying transport changes (🎯T48).
+
+```go
+// Backend: start a LAN server and pass it into Register.
+lan, _ := pigeon.NewLANServer("", nil) // random port, self-signed cert
+defer lan.Close()
+
+listener, instanceID, _ := pigeon.Register(ctx, &pigeon.RegisterArgs{
+    Identity: identity,
+    Pairing:  resolvePairingRecord,
+    Relay:    relayURL,
+    LAN:      lan, // advertise direct path after each Accept
+})
+defer listener.Close()
+session, _ := listener.Accept(ctx)
+// session.LANReady() closes when the client upgrades; session.UsingLAN()
+// reports whether the active carrier is the direct path.
+
+// Client: opt into LAN upgrade.
+session, _ := pigeon.Connect(ctx, &pigeon.ConnectArgs{
+    InstanceID: instanceID,
+    Record:     pairingRecord,
+    Identity:   identity,
+    Relay:      relayURL,
+    PreferLAN:  true, // dial NewLANServer when offered
+})
+defer session.Close()
+
+// Wait (optional) for the carrier swap, then use streams as usual.
+select {
+case <-session.LANReady():
+    // Direct path is active.
+case <-ctx.Done():
+}
+stream, _ := session.OpenStream(ctx, "chat")
+stream.Send([]byte("hello over LAN"))
+```
+
+`LANServer` is a standalone QUIC listener that can serve multiple clients.
+After activation the backend opens an encrypted control stream with a
+challenge; the client dials the advertised address, proves the challenge,
+and both sides swap their Session transport to the verified connection.
+If the dial fails (peers not co-located), the Session stays on the relay.
+
+The relay's `--lan` flag only starts a standalone listener for local
+development (port / cert-hash probing). Application backends always create
+their own `NewLANServer` and pass it via `RegisterArgs.LAN`.
+
 ## Fault Injection Testing
 
 The `faultproxy` package provides a transparent UDP proxy for testing
@@ -358,7 +411,7 @@ WebTransport; the same greeting selects the role.
 | `--cert` | — | TLS certificate file (PEM); if `--domain` is not set |
 | `--key` | — | TLS private key file (PEM); used with `--cert` |
 | `--cert-validity` | `365` | Self-signed certificate validity in days (use ≤14 for WebTransport `serverCertificateHashes`) |
-| `--lan` | — | LAN listener address for direct connections (e.g. `:0`); not yet wired into the relay flow |
+| `--lan` | — | Start a LAN QUIC listener at this address (dev convenience). App backends pass `NewLANServer` via `RegisterArgs.LAN` for automatic upgrade (see [LAN Upgrade](#lan-upgrade)). |
 | `PIGEON_TOKEN` | — | Bearer token required for backend registration; open if unset. Wires through the default `BearerTokenAuth` verifier; replace with any custom `pigeon.Auth` for more complex admission policies. |
 | `--version` | — | Print version and exit |
 | `--help-agent` | — | Print usage + agent guide |

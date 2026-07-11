@@ -27,11 +27,12 @@ final class PairingCeremonyMachineTests: XCTestCase {
         let track: (Acceptor.ActionID) -> () throws -> Void = { id in
             { fired.append(id) }
         }
-        m.actions[.genEphemeral]    = track(.genEphemeral)
-        m.actions[.registerRelay]   = track(.registerRelay)
-        m.actions[.emitToken]       = track(.emitToken)
-        m.actions[.deriveCode]      = track(.deriveCode)
-        m.actions[.storeRecord]     = track(.storeRecord)
+        m.actions[.genEphemeral]          = track(.genEphemeral)
+        m.actions[.registerRelay]         = track(.registerRelay)
+        m.actions[.emitToken]             = track(.emitToken)
+        m.actions[.storeCommit]           = track(.storeCommit)
+        m.actions[.verifyCommitAndDerive] = track(.verifyCommitAndDerive)
+        m.actions[.storeRecord]           = track(.storeRecord)
 
         try m.handleEvent(.pairBegin)
         XCTAssertEqual(m.state, .generatingEphemeral)
@@ -40,6 +41,8 @@ final class PairingCeremonyMachineTests: XCTestCase {
         try m.handleEvent(.relayRegistered)
         XCTAssertEqual(m.state, .waitingForHello)
         try m.handleEvent(.recvHello)
+        XCTAssertEqual(m.state, .waitingForReveal)
+        try m.handleEvent(.recvReveal)
         XCTAssertEqual(m.state, .derivingCode)
         try m.handleEvent(.codeReady)
         XCTAssertEqual(m.state, .awaitingUserConfirm)
@@ -48,27 +51,28 @@ final class PairingCeremonyMachineTests: XCTestCase {
         try m.handleEvent(.recvConfirmToAcceptor)
         XCTAssertEqual(m.state, .paired)
 
-        // Actions fire in the order the spec dictates: gen_ephemeral
-        // (Idle→GeneratingEphemeral), register_relay (→RegisteringRelay),
-        // emit_token (→WaitingForHello), derive_code (on recv hello),
-        // store_record (on recv confirm_to_acceptor).
+        // Actions: gen_ephemeral, register_relay, emit_token,
+        // store_commit (on recv hello), verify_commit_and_derive (on recv
+        // reveal), store_record (on recv confirm_to_acceptor).
         XCTAssertEqual(fired, [
             .genEphemeral, .registerRelay, .emitToken,
-            .deriveCode, .storeRecord,
+            .storeCommit, .verifyCommitAndDerive, .storeRecord,
         ])
     }
 
     func testAcceptorUserCancelFromAwaitingUserConfirm() throws {
         let m = Acceptor()
-        m.actions[.genEphemeral]  = {}
-        m.actions[.registerRelay] = {}
-        m.actions[.emitToken]     = {}
-        m.actions[.deriveCode]    = {}
+        m.actions[.genEphemeral]          = {}
+        m.actions[.registerRelay]         = {}
+        m.actions[.emitToken]             = {}
+        m.actions[.storeCommit]           = {}
+        m.actions[.verifyCommitAndDerive] = {}
 
         try m.handleEvent(.pairBegin)
         try m.handleEvent(.ephemeralReady)
         try m.handleEvent(.relayRegistered)
         try m.handleEvent(.recvHello)
+        try m.handleEvent(.recvReveal)
         try m.handleEvent(.codeReady)
         XCTAssertEqual(m.state, .awaitingUserConfirm)
 
@@ -78,20 +82,39 @@ final class PairingCeremonyMachineTests: XCTestCase {
 
     func testAcceptorUserCancelFromAwaitingPeerConfirm() throws {
         let m = Acceptor()
-        m.actions[.genEphemeral]  = {}
-        m.actions[.registerRelay] = {}
-        m.actions[.emitToken]     = {}
-        m.actions[.deriveCode]    = {}
+        m.actions[.genEphemeral]          = {}
+        m.actions[.registerRelay]         = {}
+        m.actions[.emitToken]             = {}
+        m.actions[.storeCommit]           = {}
+        m.actions[.verifyCommitAndDerive] = {}
 
         try m.handleEvent(.pairBegin)
         try m.handleEvent(.ephemeralReady)
         try m.handleEvent(.relayRegistered)
         try m.handleEvent(.recvHello)
+        try m.handleEvent(.recvReveal)
         try m.handleEvent(.codeReady)
         try m.handleEvent(.userConfirm)
         XCTAssertEqual(m.state, .awaitingPeerConfirm)
 
         try m.handleEvent(.userCancel)
+        XCTAssertEqual(m.state, .aborted)
+    }
+
+    func testAcceptorCommitFailAborts() throws {
+        let m = Acceptor()
+        m.actions[.genEphemeral]  = {}
+        m.actions[.registerRelay] = {}
+        m.actions[.emitToken]     = {}
+        m.actions[.storeCommit]   = {}
+
+        try m.handleEvent(.pairBegin)
+        try m.handleEvent(.ephemeralReady)
+        try m.handleEvent(.relayRegistered)
+        try m.handleEvent(.recvHello)
+        XCTAssertEqual(m.state, .waitingForReveal)
+
+        try m.handleEvent(.commitFail)
         XCTAssertEqual(m.state, .aborted)
     }
 
@@ -117,11 +140,12 @@ final class PairingCeremonyMachineTests: XCTestCase {
         let track: (Initiator.ActionID) -> () throws -> Void = { id in
             { fired.append(id) }
         }
-        m.actions[.decodeToken]   = track(.decodeToken)
-        m.actions[.genEphemeral]  = track(.genEphemeral)
-        m.actions[.dialRelay]     = track(.dialRelay)
-        m.actions[.deriveCode]    = track(.deriveCode)
-        m.actions[.storeRecord]   = track(.storeRecord)
+        m.actions[.decodeToken]  = track(.decodeToken)
+        m.actions[.genEphemeral] = track(.genEphemeral)
+        m.actions[.dialRelay]    = track(.dialRelay)
+        m.actions[.sendReveal]   = track(.sendReveal)
+        m.actions[.deriveCode]   = track(.deriveCode)
+        m.actions[.storeRecord]  = track(.storeRecord)
 
         try m.handleEvent(.tokenReceived)
         XCTAssertEqual(m.state, .decodingToken)
@@ -132,6 +156,8 @@ final class PairingCeremonyMachineTests: XCTestCase {
         try m.handleEvent(.relayConnected)
         XCTAssertEqual(m.state, .awaitingWelcome)
         try m.handleEvent(.recvWelcome)
+        XCTAssertEqual(m.state, .revealing)
+        try m.handleEvent(.revealSent)
         XCTAssertEqual(m.state, .derivingCode)
         try m.handleEvent(.codeReady)
         XCTAssertEqual(m.state, .awaitingUserConfirm)
@@ -140,12 +166,12 @@ final class PairingCeremonyMachineTests: XCTestCase {
         try m.handleEvent(.recvConfirmToInitiator)
         XCTAssertEqual(m.state, .paired)
 
-        // decode_token (Idle→DecodingToken), gen_ephemeral
-        // (DecodingToken→GeneratingEphemeral), dial_relay
-        // (GeneratingEphemeral→ConnectingRelay), derive_code
-        // (on recv welcome), store_record (on recv confirm).
+        // decode_token, gen_ephemeral, dial_relay, send_reveal (on recv
+        // welcome), derive_code (on reveal_sent), store_record (on recv
+        // confirm).
         XCTAssertEqual(fired, [
-            .decodeToken, .genEphemeral, .dialRelay, .deriveCode, .storeRecord,
+            .decodeToken, .genEphemeral, .dialRelay,
+            .sendReveal, .deriveCode, .storeRecord,
         ])
     }
 
@@ -153,6 +179,7 @@ final class PairingCeremonyMachineTests: XCTestCase {
         let m = Initiator()
         m.actions[.decodeToken]  = {}
         m.actions[.genEphemeral] = {}
+        m.actions[.sendReveal]   = {}
         m.actions[.deriveCode]   = {}
 
         try m.handleEvent(.tokenReceived)
@@ -160,6 +187,7 @@ final class PairingCeremonyMachineTests: XCTestCase {
         try m.handleEvent(.ephemeralReady)
         try m.handleEvent(.relayConnected)
         try m.handleEvent(.recvWelcome)
+        try m.handleEvent(.revealSent)
         try m.handleEvent(.codeReady)
         XCTAssertEqual(m.state, .awaitingUserConfirm)
 
@@ -172,17 +200,21 @@ final class PairingCeremonyMachineTests: XCTestCase {
     func testMessageTypesMatchYAML() {
         XCTAssertEqual(PairingCeremonyProtocol.MessageType.hello.rawValue,              "hello")
         XCTAssertEqual(PairingCeremonyProtocol.MessageType.welcome.rawValue,            "welcome")
+        XCTAssertEqual(PairingCeremonyProtocol.MessageType.reveal.rawValue,             "reveal")
         XCTAssertEqual(PairingCeremonyProtocol.MessageType.confirmToInitiator.rawValue, "confirm_to_initiator")
         XCTAssertEqual(PairingCeremonyProtocol.MessageType.confirmToAcceptor.rawValue,  "confirm_to_acceptor")
     }
 
     func testActionIDsMatchYAML() {
-        XCTAssertEqual(PairingCeremonyProtocol.ActionID.genEphemeral.rawValue,  "gen_ephemeral")
-        XCTAssertEqual(PairingCeremonyProtocol.ActionID.registerRelay.rawValue, "register_relay")
-        XCTAssertEqual(PairingCeremonyProtocol.ActionID.emitToken.rawValue,     "emit_token")
-        XCTAssertEqual(PairingCeremonyProtocol.ActionID.deriveCode.rawValue,    "derive_code")
-        XCTAssertEqual(PairingCeremonyProtocol.ActionID.storeRecord.rawValue,   "store_record")
-        XCTAssertEqual(PairingCeremonyProtocol.ActionID.decodeToken.rawValue,   "decode_token")
-        XCTAssertEqual(PairingCeremonyProtocol.ActionID.dialRelay.rawValue,     "dial_relay")
+        XCTAssertEqual(PairingCeremonyProtocol.ActionID.genEphemeral.rawValue,          "gen_ephemeral")
+        XCTAssertEqual(PairingCeremonyProtocol.ActionID.registerRelay.rawValue,         "register_relay")
+        XCTAssertEqual(PairingCeremonyProtocol.ActionID.emitToken.rawValue,             "emit_token")
+        XCTAssertEqual(PairingCeremonyProtocol.ActionID.storeCommit.rawValue,           "store_commit")
+        XCTAssertEqual(PairingCeremonyProtocol.ActionID.verifyCommitAndDerive.rawValue, "verify_commit_and_derive")
+        XCTAssertEqual(PairingCeremonyProtocol.ActionID.storeRecord.rawValue,           "store_record")
+        XCTAssertEqual(PairingCeremonyProtocol.ActionID.decodeToken.rawValue,           "decode_token")
+        XCTAssertEqual(PairingCeremonyProtocol.ActionID.dialRelay.rawValue,             "dial_relay")
+        XCTAssertEqual(PairingCeremonyProtocol.ActionID.sendReveal.rawValue,            "send_reveal")
+        XCTAssertEqual(PairingCeremonyProtocol.ActionID.deriveCode.rawValue,            "derive_code")
     }
 }

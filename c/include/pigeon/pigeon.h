@@ -167,6 +167,23 @@ int pigeon_derive_confirmation_code(const uint8_t *pub_a,
                                     const uint8_t *pub_b,
                                     char *out_code);
 
+// SAS commitment (🎯T52): bind an ephemeral pubkey before reveal so a
+// relay MitM cannot grind eph keys after seeing the peer's key.
+//
+//   commit = SHA256("pigeon-sas-commit" || eph_pub[32] || blind[32])
+//
+// out_commit must be 32 bytes. Returns 0 on success, -1 on error.
+int pigeon_sas_commit(const uint8_t *eph_pub,
+                      const uint8_t *blind,
+                      uint8_t *out_commit);
+
+// Verify that (eph_pub, blind) open the given 32-byte commit.
+// Returns 0 if the commit matches, -1 on mismatch or error.
+// Comparison is constant-time.
+int pigeon_sas_commit_verify(const uint8_t *eph_pub,
+                             const uint8_t *blind,
+                             const uint8_t *commit);
+
 // Initialise a channel with separate send/recv keys.
 void pigeon_channel_init(pigeon_channel *ch,
                          const uint8_t *send_key,

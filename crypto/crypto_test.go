@@ -465,8 +465,8 @@ func TestPairingRecordRoundTrip(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// Derive channel from restored record.
-	ch, err := restored.DeriveChannel([]byte("c2s"), []byte("s2c"))
+	// Derive channel from restored record (nil salt: static pre-T50 shape).
+	ch, err := restored.DeriveChannel([]byte("c2s"), []byte("s2c"), nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -494,6 +494,44 @@ func TestPairingRecordRoundTrip(t *testing.T) {
 	if string(pt) != "hello from restored record" {
 		t.Fatalf("got %q", pt)
 	}
+}
+
+func TestSASCommit(t *testing.T) {
+	kp, err := GenerateKeyPair()
+	if err != nil {
+		t.Fatal(err)
+	}
+	blind := make([]byte, 32)
+	if _, err := rand.Read(blind); err != nil {
+		t.Fatal(err)
+	}
+	commit, err := SASCommit(kp.Public.Bytes(), blind)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(commit) != 32 {
+		t.Fatalf("commit length %d", len(commit))
+	}
+	if !SASCommitVerify(kp.Public.Bytes(), blind, commit) {
+		t.Fatal("verify should accept matching reveal")
+	}
+	otherBlind := make([]byte, 32)
+	if _, err := rand.Read(otherBlind); err != nil {
+		t.Fatal(err)
+	}
+	if SASCommitVerify(kp.Public.Bytes(), otherBlind, commit) {
+		t.Fatal("verify should reject wrong blind")
+	}
+	other, err := GenerateKeyPair()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if SASCommitVerify(other.Public.Bytes(), blind, commit) {
+		t.Fatal("verify should reject wrong eph")
+	}
+	// After commit is fixed, grinding a different eph to match is
+	// infeasible: any other (eph', blind') opening the same commit
+	// would break preimage resistance of SHA-256.
 }
 
 func TestDeriveConfirmationCode(t *testing.T) {
@@ -618,12 +656,83 @@ func TestUnmarshalPairingRecordInvalidJSON(t *testing.T) {
 	}
 }
 
+// TestDeriveChannelPerSessionSaltDistinct is the 🎯T50 oracle for the
+// artifact/reconnect DeriveChannel path: two sessions under one
+// PairingRecord with distinct session salts must produce distinct AEAD
+// keys (so a reconnect cannot reuse the prior key with the GCM counter
+// reset to 0). Mirrors cwire.TestDeriveSessionChannelPerNonceDistinct
+// (T44.1 activation-path oracle).
+func TestDeriveChannelPerSessionSaltDistinct(t *testing.T) {
+	localKP, err := GenerateKeyPair()
+	if err != nil {
+		t.Fatal(err)
+	}
+	peerKP, err := GenerateKeyPair()
+	if err != nil {
+		t.Fatal(err)
+	}
+	rec := NewPairingRecord("peer-001", "https://relay.example.com", localKP, peerKP.Public)
+
+	salt1 := bytes.Repeat([]byte{0x11}, SessionSaltLen)
+	salt2 := bytes.Repeat([]byte{0x22}, SessionSaltLen)
+	plaintext := []byte("the quick brown fox")
+
+	ch1, err := rec.DeriveChannel([]byte("client-to-server"), []byte("server-to-client"), salt1)
+	if err != nil {
+		t.Fatalf("DeriveChannel (salt1): %v", err)
+	}
+	ch2, err := rec.DeriveChannel([]byte("client-to-server"), []byte("server-to-client"), salt2)
+	if err != nil {
+		t.Fatalf("DeriveChannel (salt2): %v", err)
+	}
+
+	// Fresh channels both start at GCM counter 0, so a shared key would
+	// produce identical ciphertext bodies for identical plaintext. The
+	// leading 8 bytes are the (zero) sequence prefix; the body follows.
+	ct1 := ch1.Encrypt(plaintext)
+	ct2 := ch2.Encrypt(plaintext)
+	if bytes.Equal(ct1[8:], ct2[8:]) {
+		t.Fatal("distinct salts produced identical keystream: per-session key derivation is broken (AES-GCM nonce reuse across sessions)")
+	}
+
+	// Same salt is deterministic so both peers, folding in the same
+	// negotiated salt, agree on the keys.
+	ch1b, err := rec.DeriveChannel([]byte("client-to-server"), []byte("server-to-client"), salt1)
+	if err != nil {
+		t.Fatalf("DeriveChannel (salt1 again): %v", err)
+	}
+	ct1b := ch1b.Encrypt(plaintext)
+	if !bytes.Equal(ct1[8:], ct1b[8:]) {
+		t.Fatal("same salt produced different keys: derivation is not deterministic in (record, salt)")
+	}
+
+	// Wrong-length salt is rejected rather than silently truncated.
+	if _, err := rec.DeriveChannel([]byte("c2s"), []byte("s2c"), []byte{0x01}); err == nil {
+		t.Fatal("expected error for short salt, got nil")
+	}
+
+	// Empty/nil salt preserves the static (pre-T50) derivation for tests.
+	chNil, err := rec.DeriveChannel([]byte("c2s"), []byte("s2c"), nil)
+	if err != nil {
+		t.Fatalf("nil salt: %v", err)
+	}
+	chEmpty, err := rec.DeriveChannel([]byte("c2s"), []byte("s2c"), []byte{})
+	if err != nil {
+		t.Fatalf("empty salt: %v", err)
+	}
+	ctNil := chNil.Encrypt(plaintext)
+	ctEmpty := chEmpty.Encrypt(plaintext)
+	if !bytes.Equal(ctNil[8:], ctEmpty[8:]) {
+		t.Fatal("nil and empty salt must both mean no diversifier")
+	}
+}
+
 func TestPairingRecordDeriveChannelBadLocalKey(t *testing.T) {
 	r := &PairingRecord{
 		LocalPrivateKey: []byte("not-a-valid-x25519-key"),
 		PeerPublicKey:   make([]byte, 32),
 	}
-	if _, err := r.DeriveChannel([]byte("s2c"), []byte("c2s")); err == nil {
+	if _, err := r.DeriveChannel([]byte("s2c"), []byte("c2s"), nil); err == nil {
 		t.Fatal("expected error for bad local private key")
 	}
 }
@@ -638,7 +747,7 @@ func TestPairingRecordDeriveChannelBadPeerKey(t *testing.T) {
 		LocalPrivateKey: kp.Private.Bytes(),
 		PeerPublicKey:   []byte("not-a-valid-x25519-key"),
 	}
-	if _, err := r.DeriveChannel([]byte("s2c"), []byte("c2s")); err == nil {
+	if _, err := r.DeriveChannel([]byte("s2c"), []byte("c2s"), nil); err == nil {
 		t.Fatal("expected error for bad peer public key")
 	}
 }

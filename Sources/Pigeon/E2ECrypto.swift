@@ -60,12 +60,40 @@ public func deriveKeyFromSecret(_ secret: Data, info: Data) -> SymmetricKey {
     )
 }
 
+// MARK: - SAS commitment (🎯T52)
+
+/// Domain-separated tag for SAS commitments. Keep in lockstep with
+/// `pigeon_sas_commit` / `crypto.SASCommit`.
+private let sasCommitTag = Data("pigeon-sas-commit".utf8)
+
+/// Compute `SHA256("pigeon-sas-commit" || ephPub || blind)`.
+/// Both inputs must be 32 bytes. The initiator sends this in hello and
+/// later reveals `(ephPub, blind)` so the acceptor can verify the binding
+/// before deriving the confirmation code.
+public func sasCommit(ephPub: Data, blind: Data) -> Data {
+    precondition(ephPub.count == 32 && blind.count == 32, "ephPub and blind must be 32 bytes")
+    var hasher = SHA256()
+    hasher.update(data: sasCommitTag)
+    hasher.update(data: ephPub)
+    hasher.update(data: blind)
+    return Data(hasher.finalize())
+}
+
+/// True iff `(ephPub, blind)` open `commit`.
+public func sasCommitVerify(ephPub: Data, blind: Data, commit: Data) -> Bool {
+    guard commit.count == 32 else { return false }
+    return sasCommit(ephPub: ephPub, blind: blind) == commit
+}
+
 // MARK: - Confirmation code
 
 /// Derive a 6-digit confirmation code from two X25519 public keys.
 /// The code is order-independent and deterministic: swapping the keys
 /// produces the same result. Both sides of a key exchange compute this
 /// independently; a mismatch indicates a MitM attack.
+///
+/// 🎯T52: the pairing ceremony binds each side's eph with a
+/// commit-then-reveal round (see `sasCommit`) before this code is shown.
 public func deriveConfirmationCode(_ pubA: Data, _ pubB: Data) -> String {
     // Sort lexicographically for order-independence.
     let (a, b) = pubA.lexicographicallyPrecedes(pubB) ? (pubA, pubB) : (pubB, pubA)
@@ -80,6 +108,25 @@ public func deriveConfirmationCode(_ pubA: Data, _ pubB: Data) -> String {
     let value = UInt32(bytes[0]) << 24 | UInt32(bytes[1]) << 16 | UInt32(bytes[2]) << 8 | UInt32(bytes[3])
     let code = value % 1_000_000
     return String(format: "%06d", code)
+}
+
+// MARK: - Session salt (🎯T50)
+
+/// Length of the per-session diversifier folded into `deriveChannel`'s
+/// HKDF info. Matches the activation-path nonce length (T44.1) so
+/// reconnects under one PairingRecord never share an AEAD key.
+public let sessionSaltLen = 16
+
+/// Fixed peer reply to a session-salt handshake on the artifact/reconnect
+/// path (plaintext on the primary stream before AEAD is established).
+public let sessionSaltAck = "session_salt_ack"
+
+/// Generate `sessionSaltLen` cryptographically random bytes for use as a
+/// per-session `deriveChannel` diversifier (🎯T50).
+public func generateSessionSalt() -> Data {
+    var d = Data(count: sessionSaltLen)
+    _ = d.withUnsafeMutableBytes { SecRandomCopyBytes(kSecRandomDefault, sessionSaltLen, $0.baseAddress!) }
+    return d
 }
 
 // MARK: - Pairing record
@@ -128,17 +175,42 @@ public struct PairingRecord: Codable, Sendable {
 
     /// Derive an encrypted channel from the stored keys.
     /// The info parameters should match what was used during the original pairing.
-    public func deriveChannel(sendInfo: Data, recvInfo: Data) throws -> E2EChannel {
+    ///
+    /// `sessionSalt` is a per-session diversifier (typically
+    /// `sessionSaltLen` random bytes exchanged during reconnect). When
+    /// non-empty it is appended to each direction label (HKDF info =
+    /// label || salt), so two sessions under one PairingRecord derive
+    /// distinct AEAD keys (🎯T50). Pass empty only for tests that
+    /// intentionally exercise the static pre-T50 derivation. When
+    /// non-empty, `sessionSalt.count` must equal `sessionSaltLen`.
+    public func deriveChannel(sendInfo: Data, recvInfo: Data, sessionSalt: Data = Data()) throws -> E2EChannel {
+        if !sessionSalt.isEmpty && sessionSalt.count != sessionSaltLen {
+            throw E2ECryptoError.invalidSessionSaltLength(sessionSalt.count)
+        }
         let privateKey = try Curve25519.KeyAgreement.PrivateKey(rawRepresentation: localPrivateKey)
         let peerKey = try Curve25519.KeyAgreement.PublicKey(rawRepresentation: peerPublicKey)
         let shared = try privateKey.sharedSecretFromKeyAgreement(with: peerKey)
 
+        let sendKeyInfo = sendInfo + sessionSalt
+        let recvKeyInfo = recvInfo + sessionSalt
         let sendKey = shared.hkdfDerivedSymmetricKey(
-            using: SHA256.self, salt: Data(), sharedInfo: sendInfo, outputByteCount: 32)
+            using: SHA256.self, salt: Data(), sharedInfo: sendKeyInfo, outputByteCount: 32)
         let recvKey = shared.hkdfDerivedSymmetricKey(
-            using: SHA256.self, salt: Data(), sharedInfo: recvInfo, outputByteCount: 32)
+            using: SHA256.self, salt: Data(), sharedInfo: recvKeyInfo, outputByteCount: 32)
 
         return E2EChannel(sendKey: sendKey, recvKey: recvKey)
+    }
+}
+
+/// Errors from the pure-crypto layer (key derivation, salt validation).
+public enum E2ECryptoError: LocalizedError, Equatable {
+    case invalidSessionSaltLength(Int)
+
+    public var errorDescription: String? {
+        switch self {
+        case .invalidSessionSaltLength(let n):
+            return "session salt must be \(sessionSaltLen) bytes, got \(n)"
+        }
     }
 }
 

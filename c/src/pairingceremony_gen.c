@@ -11,9 +11,11 @@ void pigeon_acceptor_machine_init(pigeon_acceptor_machine *m)
 	memset(m, 0, sizeof(*m));
 	m->state = PIGEON_ACCEPTOR_IDLE;
 	m->acceptor_eph_pub = "none";
+	m->acceptor_received_commit = "none";
 	m->acceptor_received_eph_pub = "none";
 	m->acceptor_received_identity = "none";
 	m->acceptor_received_instance = "none";
+	m->acceptor_commit_ok = "false";
 	m->acceptor_user_confirmed = "false";
 	m->acceptor_received_confirm = "false";
 }
@@ -21,14 +23,24 @@ void pigeon_acceptor_machine_init(pigeon_acceptor_machine *m)
 int pigeon_acceptor_handle_message(pigeon_acceptor_machine *m, pairing_ceremony_msg_type msg)
 {
 	if (m->state == PIGEON_ACCEPTOR_WAITING_FOR_HELLO && msg == PIGEON_PAIRINGCEREMONY_MSG_HELLO) {
-		if (m->actions[PIGEON_PAIRINGCEREMONY_ACTION_DERIVE_CODE]) {
-			int err = m->actions[PIGEON_PAIRINGCEREMONY_ACTION_DERIVE_CODE](m->userdata);
+		if (m->actions[PIGEON_PAIRINGCEREMONY_ACTION_STORE_COMMIT]) {
+			int err = m->actions[PIGEON_PAIRINGCEREMONY_ACTION_STORE_COMMIT](m->userdata);
+			if (err) return -err;
+		}
+		// acceptor_received_commit: recv_msg.commit (set by action)
+		// acceptor_received_identity: recv_msg.identity_pub (set by action)
+		// acceptor_received_instance: recv_msg.instance_id (set by action)
+		m->state = PIGEON_ACCEPTOR_WAITING_FOR_REVEAL;
+		return 1;
+	}
+	if (m->state == PIGEON_ACCEPTOR_WAITING_FOR_REVEAL && msg == PIGEON_PAIRINGCEREMONY_MSG_REVEAL) {
+		if (m->actions[PIGEON_PAIRINGCEREMONY_ACTION_VERIFY_COMMIT_AND_DERIVE]) {
+			int err = m->actions[PIGEON_PAIRINGCEREMONY_ACTION_VERIFY_COMMIT_AND_DERIVE](m->userdata);
 			if (err) return -err;
 		}
 		// acceptor_received_eph_pub: recv_msg.eph_pub (set by action)
-		// acceptor_received_identity: recv_msg.identity_pub (set by action)
-		// acceptor_received_instance: recv_msg.instance_id (set by action)
-		// acceptor_code: DeriveCode(acceptor_eph_pub, recv_msg.eph_pub) (set by action)
+		// acceptor_commit_ok: IF CommitMatches(acceptor_received_commit, recv_msg.eph_pub) THEN "true" ELSE "false" (set by action)
+		// acceptor_code: IF CommitMatches(acceptor_received_commit, recv_msg.eph_pub) THEN DeriveCode(acceptor_eph_pub, recv_msg.eph_pub) ELSE <<"none">> (set by action)
 		m->state = PIGEON_ACCEPTOR_DERIVING_CODE;
 		return 1;
 	}
@@ -91,6 +103,10 @@ int pigeon_acceptor_step(pigeon_acceptor_machine *m, pairing_ceremony_event_id e
 		m->state = PIGEON_ACCEPTOR_ABORTED;
 		return 1;
 	}
+	if (m->state == PIGEON_ACCEPTOR_WAITING_FOR_REVEAL && event == PIGEON_PAIRINGCEREMONY_EVENT_COMMIT_FAIL) {
+		m->state = PIGEON_ACCEPTOR_ABORTED;
+		return 1;
+	}
 	return 0;
 }
 
@@ -99,6 +115,7 @@ void pigeon_initiator_machine_init(pigeon_initiator_machine *m)
 	memset(m, 0, sizeof(*m));
 	m->state = PIGEON_INITIATOR_IDLE;
 	m->initiator_eph_pub = "none";
+	m->initiator_commit = "none";
 	m->received_acceptor_eph_pub = "none";
 	m->received_acceptor_identity = "none";
 	m->received_acceptor_instance = "none";
@@ -112,15 +129,14 @@ void pigeon_initiator_machine_init(pigeon_initiator_machine *m)
 int pigeon_initiator_handle_message(pigeon_initiator_machine *m, pairing_ceremony_msg_type msg)
 {
 	if (m->state == PIGEON_INITIATOR_AWAITING_WELCOME && msg == PIGEON_PAIRINGCEREMONY_MSG_WELCOME) {
-		if (m->actions[PIGEON_PAIRINGCEREMONY_ACTION_DERIVE_CODE]) {
-			int err = m->actions[PIGEON_PAIRINGCEREMONY_ACTION_DERIVE_CODE](m->userdata);
+		if (m->actions[PIGEON_PAIRINGCEREMONY_ACTION_SEND_REVEAL]) {
+			int err = m->actions[PIGEON_PAIRINGCEREMONY_ACTION_SEND_REVEAL](m->userdata);
 			if (err) return -err;
 		}
 		// initiator_received_eph_pub: recv_msg.eph_pub (set by action)
 		// initiator_received_identity: recv_msg.identity_pub (set by action)
 		// initiator_received_instance: recv_msg.instance_id (set by action)
-		// initiator_code: DeriveCode(initiator_eph_pub, recv_msg.eph_pub) (set by action)
-		m->state = PIGEON_INITIATOR_DERIVING_CODE;
+		m->state = PIGEON_INITIATOR_REVEALING;
 		return 1;
 	}
 	if (m->state == PIGEON_INITIATOR_AWAITING_PEER_CONFIRM && msg == PIGEON_PAIRINGCEREMONY_MSG_CONFIRM_TO_INITIATOR) {
@@ -159,6 +175,8 @@ int pigeon_initiator_step(pigeon_initiator_machine *m, pairing_ceremony_event_id
 		}
 		m->initiator_eph_pub = "initiator_eph";
 		if (m->on_change) m->on_change("initiator_eph_pub", m->userdata);
+		m->initiator_commit = "initiator_commit";
+		if (m->on_change) m->on_change("initiator_commit", m->userdata);
 		m->state = PIGEON_INITIATOR_GENERATING_EPHEMERAL;
 		return 1;
 	}
@@ -172,6 +190,15 @@ int pigeon_initiator_step(pigeon_initiator_machine *m, pairing_ceremony_event_id
 	}
 	if (m->state == PIGEON_INITIATOR_CONNECTING_RELAY && event == PIGEON_PAIRINGCEREMONY_EVENT_RELAY_CONNECTED) {
 		m->state = PIGEON_INITIATOR_AWAITING_WELCOME;
+		return 1;
+	}
+	if (m->state == PIGEON_INITIATOR_REVEALING && event == PIGEON_PAIRINGCEREMONY_EVENT_REVEAL_SENT) {
+		if (m->actions[PIGEON_PAIRINGCEREMONY_ACTION_DERIVE_CODE]) {
+			int err = m->actions[PIGEON_PAIRINGCEREMONY_ACTION_DERIVE_CODE](m->userdata);
+			if (err) return -err;
+		}
+		// initiator_code: DeriveCode(initiator_eph_pub, initiator_received_eph_pub) (set by action)
+		m->state = PIGEON_INITIATOR_DERIVING_CODE;
 		return 1;
 	}
 	if (m->state == PIGEON_INITIATOR_DERIVING_CODE && event == PIGEON_PAIRINGCEREMONY_EVENT_CODE_READY) {

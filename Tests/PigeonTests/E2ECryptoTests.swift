@@ -180,6 +180,55 @@ final class E2ECryptoTests: XCTestCase {
         XCTAssertEqual(String(data: pt, encoding: .utf8), "hello from restored record")
     }
 
+    /// 🎯T50 oracle: two sessions under one PairingRecord with distinct
+    /// session salts must produce distinct AEAD keys (reconnect must not
+    /// reuse the prior key with the GCM counter reset to 0).
+    func testDeriveChannelPerSessionSaltDistinct() throws {
+        let localKP = E2EKeyPair()
+        let peerKP = E2EKeyPair()
+        let rec = PairingRecord(
+            peerInstanceID: "peer-001",
+            relayURL: "https://relay.example.com",
+            localKeyPair: localKP,
+            peerPublicKey: peerKP.publicKeyData)
+
+        let salt1 = Data(repeating: 0x11, count: sessionSaltLen)
+        let salt2 = Data(repeating: 0x22, count: sessionSaltLen)
+        let plaintext = Data("the quick brown fox".utf8)
+
+        let ch1 = try rec.deriveChannel(
+            sendInfo: Data("client-to-server".utf8),
+            recvInfo: Data("server-to-client".utf8),
+            sessionSalt: salt1)
+        let ch2 = try rec.deriveChannel(
+            sendInfo: Data("client-to-server".utf8),
+            recvInfo: Data("server-to-client".utf8),
+            sessionSalt: salt2)
+
+        let ct1 = try ch1.encrypt(plaintext)
+        let ct2 = try ch2.encrypt(plaintext)
+        // Leading 8 bytes are the (zero) sequence prefix; body must differ.
+        XCTAssertNotEqual(ct1.dropFirst(8), ct2.dropFirst(8),
+            "distinct salts produced identical keystream: per-session key derivation is broken")
+
+        // Same salt is deterministic.
+        let ch1b = try rec.deriveChannel(
+            sendInfo: Data("client-to-server".utf8),
+            recvInfo: Data("server-to-client".utf8),
+            sessionSalt: salt1)
+        let ct1b = try ch1b.encrypt(plaintext)
+        XCTAssertEqual(ct1.dropFirst(8), ct1b.dropFirst(8),
+            "same salt produced different keys")
+
+        // Wrong-length salt is rejected.
+        XCTAssertThrowsError(
+            try rec.deriveChannel(
+                sendInfo: Data("c2s".utf8),
+                recvInfo: Data("s2c".utf8),
+                sessionSalt: Data([0x01]))
+        )
+    }
+
     func testConfirmationCodeCrossplatformVector() {
         // Fixed X25519 public keys (any 32-byte value works for derivation).
         let keyA = Data(repeating: 0x01, count: 32)

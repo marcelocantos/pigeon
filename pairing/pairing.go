@@ -44,6 +44,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"sync"
 
 	"github.com/marcelocantos/pigeon"
@@ -379,18 +380,23 @@ func runAcceptorOnStream(ctx context.Context, stream *pigeon.Stream, eph *ecdh.P
 		InstanceID:   identity.InstanceID(),
 		ConfirmFn: func(code string) bool {
 			cer.signalCode(code, nil)
-			select {
-			case <-cer.confirmCh:
-				return true
-			case <-ctx.Done():
-				return false
-			}
+			return waitConfirm(ctx, cer)
 		},
 	})
 	if err != nil {
 		cer.deliverResult(nil, fmt.Errorf("acceptor: %w", err))
 		return
 	}
+
+	// 🎯T57: do not deliverResult (and thus unblock Confirm → caller Close)
+	// until the initiator has finished draining our final confirm and closed
+	// its stream end. The relay bridge is asynchronous: acceptor's pair_send
+	// of confirm can still be in-flight toward the initiator when C returns.
+	// If Confirm returns and the caller's defer Close tears down the backend
+	// Session, the bridge aborts and the initiator's pair_recv fails with
+	// cwire: pigeon_pair_initiator failed. Waiting for peer FIN makes Close
+	// safe. Bounded by ctx so a stuck peer still aborts.
+	drainPeerStream(ctx, rwc)
 
 	cer.deliverResult(&crypto.PairingRecord{
 		PeerInstanceID:  rec.PeerInstanceID,
@@ -408,6 +414,9 @@ func runInitiator(ctx context.Context, sess *pigeon.Session, eph *ecdh.PrivateKe
 		cer.deliverResult(nil, fmt.Errorf("open ceremony stream: %w", err))
 		return
 	}
+	// Close the stream before deliverResult so the acceptor's post-success
+	// drain (🎯T57) observes FIN and unblocks before either side's Confirm
+	// returns — ordering that keeps Ceremony.Close from racing the peer.
 	defer stream.Close()
 	runInitiatorOnStream(ctx, stream, eph, identity, payload, cer)
 }
@@ -434,14 +443,12 @@ func runInitiatorOnStream(ctx context.Context, stream *pigeon.Stream, eph *ecdh.
 		AccInstance:  payload.AcceptorInstance,
 		ConfirmFn: func(code string) bool {
 			cer.signalCode(code, nil)
-			select {
-			case <-cer.confirmCh:
-				return true
-			case <-ctx.Done():
-				return false
-			}
+			return waitConfirm(ctx, cer)
 		},
 	})
+	// FIN the ceremony stream before delivering the result so the acceptor
+	// drainPeerStream unblocks prior to either Confirm returning (🎯T57).
+	_ = stream.Close()
 	if err != nil {
 		cer.deliverResult(nil, fmt.Errorf("initiator: %w", err))
 		return
@@ -454,4 +461,44 @@ func runInitiatorOnStream(ctx context.Context, stream *pigeon.Stream, eph *ecdh.
 		LocalPublicKey:  rec.LocalPubKey,
 		PeerPublicKey:   rec.PeerPubKey,
 	}, nil)
+}
+
+// waitConfirm blocks until the user confirms (confirmCh closed) or ctx is
+// cancelled. When both are ready, prefer confirm over cancel so a Close that
+// races with Confirm does not spuriously abort a successful ceremony
+// (T54 ctx-threading made this select reachable on Close; the flake was
+// primarily the post-success Session teardown race fixed by drainPeerStream,
+// but preferring confirmCh keeps Close+Confirm ordering deterministic).
+func waitConfirm(ctx context.Context, cer *Ceremony) bool {
+	select {
+	case <-cer.confirmCh:
+		return true
+	default:
+	}
+	select {
+	case <-cer.confirmCh:
+		return true
+	case <-ctx.Done():
+		select {
+		case <-cer.confirmCh:
+			return true
+		default:
+			return false
+		}
+	}
+}
+
+// drainPeerStream reads until EOF or ctx cancel. Used after a successful
+// acceptor pairing so Confirm does not return before the initiator has
+// closed its stream end (proof it finished pair_recv of our confirm).
+func drainPeerStream(ctx context.Context, r io.Reader) {
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		_, _ = io.Copy(io.Discard, r)
+	}()
+	select {
+	case <-done:
+	case <-ctx.Done():
+	}
 }

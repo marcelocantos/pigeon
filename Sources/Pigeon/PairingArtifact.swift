@@ -15,12 +15,15 @@ public enum PairingError: LocalizedError, Equatable {
     case missingField(String)
     /// The text encoding could not be decoded.
     case malformedText
+    /// The session-salt handshake (🎯T50) failed.
+    case sessionSaltHandshake(String)
 
     public var errorDescription: String? {
         switch self {
         case .expired(let at): "Pairing artifact expired at \(at)"
         case .missingField(let f): "Pairing artifact missing field: \(f)"
         case .malformedText: "Malformed pairing artifact text encoding"
+        case .sessionSaltHandshake(let msg): "Session salt handshake failed: \(msg)"
         }
     }
 }
@@ -134,7 +137,16 @@ extension PigeonConn {
     /// artifact's expiry is checked up front and throws
     /// `PairingError.expired(at:)` (matchable for re-pair routing).
     ///
-    /// Mirrors `pigeon.ConnectWithArtifact` in the Go SDK.
+    /// After the relay bridge is live, runs the 🎯T50 session-salt
+    /// handshake on the primary stream: mints a fresh
+    /// `sessionSaltLen`-byte salt, sends it plaintext, waits for
+    /// `sessionSaltAck`, then derives the AEAD channel with
+    /// HKDF info = direction-label || salt so each reconnect gets
+    /// distinct keys (counter-reset-to-0 under a reused key is no
+    /// longer possible).
+    ///
+    /// The peer must call `acceptSessionSalt(record:)` on its bridged
+    /// conn with the mirrored PairingRecord.
     public static func connect(
         artifact: PairingArtifact,
         quicOptions: NWProtocolQUIC.Options? = nil
@@ -147,10 +159,49 @@ extension PigeonConn {
             host: host, port: port,
             instanceID: artifact.record.peerInstanceID,
             quicOptions: quicOptions)
-        let channel = try artifact.record.deriveChannel(
+        let channel = try await conn.initiateSessionSalt(
+            record: artifact.record,
             sendInfo: Data("client-to-server".utf8),
             recvInfo: Data("server-to-client".utf8))
         return (conn, channel)
+    }
+
+    /// Client side of the 🎯T50 session-salt handshake: mint salt,
+    /// send it, wait for `sessionSaltAck`, derive channel with
+    /// info = label || salt.
+    public func initiateSessionSalt(
+        record: PairingRecord,
+        sendInfo: Data,
+        recvInfo: Data
+    ) async throws -> E2EChannel {
+        let salt = generateSessionSalt()
+        try await send(salt)
+        let ack = try await recv()
+        guard String(data: ack, encoding: .utf8) == sessionSaltAck else {
+            throw PairingError.sessionSaltHandshake(
+                "expected \(sessionSaltAck), got \(String(data: ack, encoding: .utf8) ?? "<binary>")")
+        }
+        return try record.deriveChannel(
+            sendInfo: sendInfo, recvInfo: recvInfo, sessionSalt: salt)
+    }
+
+    /// Peer/backend side of the 🎯T50 session-salt handshake: read the
+    /// client's salt, reply `sessionSaltAck`, derive channel with the
+    /// same salt (direction labels are the caller's responsibility —
+    /// typically the reverse of the client's).
+    public func acceptSessionSalt(
+        record: PairingRecord,
+        sendInfo: Data,
+        recvInfo: Data
+    ) async throws -> E2EChannel {
+        let salt = try await recv()
+        guard salt.count == sessionSaltLen else {
+            throw PairingError.sessionSaltHandshake(
+                "expected \(sessionSaltLen)-byte salt, got \(salt.count)")
+        }
+        try await send(Data(sessionSaltAck.utf8))
+        return try record.deriveChannel(
+            sendInfo: sendInfo, recvInfo: recvInfo, sessionSalt: salt)
     }
 }
 

@@ -68,6 +68,13 @@ type RegisterArgs struct {
 	// accepted Session, mapped to their pre-agreed varint channel IDs.
 	// Both peers must declare the same map. Channel ID 0 is reserved.
 	Datagrams map[string]uint64
+
+	// LAN, if set, makes each accepted Session advertise a direct-path
+	// offer after activation (🎯T48). Clients that set ConnectArgs.PreferLAN
+	// dial NewLANServer, verify via challenge/response, and the Session
+	// transparently swaps its carrier from the relay to the LAN connection.
+	// nil disables LAN advertisement (relay-only).
+	LAN *LANServer
 }
 
 // ConnectArgs configures a client-side connection to a paired backend.
@@ -102,6 +109,18 @@ type ConnectArgs struct {
 
 	// Datagrams declares the named datagram channels (see RegisterArgs.Datagrams).
 	Datagrams map[string]uint64
+
+	// PreferLAN opts into automatic LAN upgrade (🎯T48). When the backend
+	// advertises a LAN address over the encrypted control stream, the
+	// client dials NewLANServer, verifies the challenge, and swaps the
+	// Session carrier to the direct path. No-op if the backend did not
+	// set RegisterArgs.LAN or the dial fails (session stays on the relay).
+	PreferLAN bool
+
+	// LANTLS is the TLS config for the direct LAN dial when PreferLAN is
+	// true. nil ⇒ InsecureSkipVerify (typical for self-signed NewLANServer
+	// certs in development).
+	LANTLS *tls.Config
 }
 
 // Listener is the backend-side acceptor for paired clients. Under the
@@ -380,8 +399,15 @@ func (l *Listener) activate(tr *transport) (*Session, error) {
 	sess.cwireRef = ref
 	sess.cwirePrimary = cwirePrimary
 	sess.bindPrimary(tr.primary)
+	if l.args.LAN != nil {
+		sess.lanServer = l.args.LAN
+		sess.lanReady = make(chan struct{})
+	}
 	go sess.acceptLoop()
 	go sess.datagramLoop()
+	if sess.lanServer != nil {
+		go sess.offerLAN()
+	}
 	return sess, nil
 }
 
@@ -473,6 +499,12 @@ func Connect(ctx context.Context, args *ConnectArgs) (*Session, error) {
 	sess.cwireRef = cwireRef
 	sess.cwirePrimary = cwirePrimary
 	sess.bindPrimary(tr.primary)
+	if args.PreferLAN && !pairingMode && args.Identity != nil {
+		sess.preferLAN = true
+		sess.lanTLS = args.LANTLS
+		sess.localID = args.Identity.InstanceID()
+		sess.lanReady = make(chan struct{})
+	}
 	go sess.acceptLoop()
 	go sess.datagramLoop()
 	return sess, nil
@@ -506,7 +538,10 @@ type Session struct {
 	ctx    context.Context
 	cancel context.CancelFunc
 
-	transport *transport
+	transportMu sync.RWMutex
+	transport   *transport
+	onLAN       bool
+
 	// material is the post-activation ECDH key material (nil in pairing
 	// mode). Stream and datagram AEAD channels are forked from it so
 	// each path has an independent (key, counter) — 🎯T53.
@@ -517,6 +552,7 @@ type Session struct {
 	streamChans map[string]*cwire.Channel // ModeStrict per stream name
 
 	peerID        string
+	localID       string // this side's InstanceID (client, for LAN verify)
 	route         string
 	isBackend     bool
 	ownsTransport bool
@@ -545,6 +581,13 @@ type Session struct {
 	// discover, on a backend session, answers Session.Enumerate requests on
 	// the reserved discovery stream (🎯T44.3); nil = discovery disabled.
 	discover func(clientID string) ([]RouteEntry, error)
+
+	// LAN upgrade (🎯T48).
+	lanServer    *LANServer
+	preferLAN    bool
+	lanTLS       *tls.Config
+	lanReady     chan struct{} // closed on successful upgrade; nil if not configured
+	lanReadyOnce sync.Once
 
 	closeOnce sync.Once
 }
@@ -628,7 +671,11 @@ func (s *Session) OpenStream(ctx context.Context, name string) (*Stream, error) 
 	if name == "" {
 		return nil, errors.New("OpenStream: name must be non-empty")
 	}
-	rwc, err := s.transport.OpenStream()
+	tr := s.currentTransport()
+	if tr == nil {
+		return nil, io.ErrClosedPipe
+	}
+	rwc, err := tr.OpenStream()
 	if err != nil {
 		return nil, fmt.Errorf("open quic stream: %w", err)
 	}
@@ -701,8 +748,15 @@ func (s *Session) deliverIncomingStream(name string, rwc io.ReadWriteCloser) {
 // shared-connection demux. The primary stream is consumed by activation
 // (or used directly in pairing mode) and is never delivered here.
 func (s *Session) acceptLoop() {
+	// Pin the carrier this loop serves. On LAN upgrade a new loop is
+	// started for the new carrier; this one exits when its transport
+	// closes (or the session context is cancelled).
+	tr := s.currentTransport()
+	if tr == nil {
+		return
+	}
 	for {
-		rwc, err := s.transport.AcceptStream(s.ctx)
+		rwc, err := tr.AcceptStream(s.ctx)
 		if err != nil {
 			if s.ctx.Err() == nil {
 				slog.Debug("session: accept stream", "err", err)
@@ -727,6 +781,16 @@ func (s *Session) acceptLoop() {
 			go s.handleEnumerate(&Stream{name: name, rwc: rwc, channel: s.streamChannel(name)})
 			continue
 		}
+		if name == lanControlStreamName {
+			// 🎯T48: LAN offer control stream. Only the PreferLAN client
+			// handles it; backend never receives this (it opens the offer).
+			if s.preferLAN {
+				go s.handleLANOffer(rwc)
+			} else {
+				_ = rwc.Close()
+			}
+			continue
+		}
 		s.deliverIncomingStream(name, rwc)
 	}
 }
@@ -735,8 +799,13 @@ func (s *Session) acceptLoop() {
 // channel-id. Runs on both sides; each datagram is the AEAD ciphertext
 // the peer sent, with no relay framing.
 func (s *Session) datagramLoop() {
+	// Pin the carrier this loop serves (see acceptLoop).
+	tr := s.currentTransport()
+	if tr == nil {
+		return
+	}
 	for {
-		data, err := s.transport.ReceiveDatagram(s.ctx)
+		data, err := tr.ReceiveDatagram(s.ctx)
 		if err != nil {
 			if s.ctx.Err() == nil {
 				slog.Debug("session: receive datagram", "err", err)
@@ -835,9 +904,16 @@ func (s *Session) Close() error {
 			s.cwireRef.Close()
 			s.cwireRef = nil
 		}
-		if s.ownsTransport && s.transport != nil {
-			_ = s.transport.Close()
+		s.transportMu.Lock()
+		tr := s.transport
+		owns := s.ownsTransport
+		s.transport = nil
+		s.transportMu.Unlock()
+		if owns && tr != nil {
+			_ = tr.Close()
 		}
+		// Unblock any LANReady waiters if upgrade never completed.
+		s.signalLANReady()
 	})
 	return nil
 }
@@ -944,7 +1020,11 @@ func (d *Datagram) Send(payload []byte) error {
 	if err != nil {
 		return fmt.Errorf("datagram: encrypt: %w", err)
 	}
-	return d.session.transport.SendDatagram(ct)
+	tr := d.session.currentTransport()
+	if tr == nil {
+		return io.ErrClosedPipe
+	}
+	return tr.SendDatagram(ct)
 }
 
 // Recv blocks until the next datagram on this channel arrives.

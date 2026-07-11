@@ -1642,9 +1642,10 @@ targets:
     achieved: 2026-05-30
   T48:
     name: Automatic LAN upgrade is reachable through the public Session API
-    status: identified
+    status: achieved
     value: 0.0
     cost: 0.0
+    actual_cost: 5.0
     acceptance:
     - RegisterArgs/ConnectArgs (or an equivalent public option) let a backend advertise a LAN listener and a client opt into LAN upgrade — no removed Conn/Config path.
     - When both peers are on the same LAN, an established Session transparently swaps its transport from the relay to a direct QUIC connection to NewLANServer, verified by challenge/response.
@@ -1654,6 +1655,7 @@ targets:
     context: 'LAN upgrade was orphaned when T39 (#31) deleted pigeon.Conn: RegisterArgs/ConnectArgs have no LAN fields, Config.LANServer/LAN are effectively dead on the public API, and the relay''s --lan flag only constructs a NewLANServer that is never wired in (`// TODO: wire into relay registration flow`, cmd/pigeon/main.go). The README "LAN Upgrade" section documented a non-compiling Conn-based API and was removed in the v0.24.0 doc-accuracy release; this target captures restoring the feature so that intent isn''t lost. The LANServer primitive (lan.go, with cert-hash for browser serverCertificateHashes) still exists and is tested, so the building blocks remain. Should fit the post-T45 remote-Listen L1 model and align with the T43 path-tier / candidate-pair work (LAN-direct is one tier alongside STUN-reflexive and relay).'
     origin: manual
     discovered: 2026-06-20
+    achieved: 2026-07-11
   T49:
     name: pigeon's AEAD channel never reuses an (key, nonce) pair under concurrent senders — send/recv counters are synchronized
     status: achieved
@@ -1684,9 +1686,10 @@ targets:
     achieved: 2026-04-15
   T50:
     name: pigeon derives a distinct per-session AEAD key so reconnects and concurrent sessions never reuse a nonce (T44.1)
-    status: identified
+    status: achieved
     value: 13.0
     cost: 5.0
+    actual_cost: 5.0
     acceptance:
     - DeriveSessionChannel/DeriveChannel incorporate a per-session nonce or salt so two sessions under one PairingRecord get distinct keys
     - A reconnect does not reuse the prior session's key with the counter reset to 0
@@ -1694,6 +1697,7 @@ targets:
     context: 'CRITICAL. PARTIALLY FIXED in v0.25.0. The activation path — Go pigeon.Connect/Register and the C SDK — now folds a fresh per-session nonce from auth_request into DeriveSessionChannel''s HKDF info (🎯T44.1, retired), so activation-based reconnects and concurrent sessions under one PairingRecord derive distinct keys (verified by cwire/persession_test.go). Go production is fully safe: its crypto.DeriveChannel is test-only, and every live Go session goes through the nonced activation path. REMAINING (this target stays open): the deterministic artifact-reconnect path still reuses keys — Swift PigeonConn.connect(artifact:), Kotlin connectWithArtifact, and TS relay.ts derive the session channel via the nonce-less DeriveChannel primitive (client-to-server/server-to-client labels) with no activation handshake, so a reconnect there reuses the key with the GCM counter reset to 0. Fold a per-session salt into that path too (the audit''s explicit crypto.DeriveChannel fix). See docs/audit/fable-2026-07.md F2.'
     origin: manual
     discovered: 2026-07-02
+    achieved: 2026-07-11
   T51:
     name: pigeon reconnect authentication requires cryptographic proof of pairing, not a bare device_id
     status: set_aside
@@ -1708,15 +1712,17 @@ targets:
     discovered: 2026-07-02
   T52:
     name: pigeon's SAS confirmation code resists a relay MitM grinding attack (commitment round + adequate entropy)
-    status: identified
+    status: achieved
     value: 8.0
     cost: 5.0
+    actual_cost: 5.0
     acceptance:
     - The confirmation code uses a commitment round so neither side can grind its displayed code after seeing the other's public key
     - Effective entropy is raised beyond ~20 bits, or the commitment makes grinding infeasible
     context: 'HIGH. c/src/pairing.c:368: the 6-digit SAS has no commitment round and only ~20 bits, so a relay MitM can grind the two displayed codes to match, defeating MitM detection. Unverified Fable-5 finder-stage candidate; verify before implementing. See docs/audit/fable-2026-07.md.'
     origin: manual
     discovered: 2026-07-02
+    achieved: 2026-07-11
   T53:
     name: pigeon carries lossy datagrams and multiplexed streams without a single strict counter that one lost datagram can wedge
     status: achieved
@@ -1771,9 +1777,10 @@ targets:
     achieved: 2026-07-06
   T57:
     name: pigeon's pairing ceremony end-to-end test (TestCeremonyEndToEnd) is not flaky — the initiator pairing succeeds deterministically across repeated and bulk runs
-    status: identified
+    status: achieved
     value: 5.0
     cost: 3.0
+    actual_cost: 3.0
     acceptance:
     - '`go test -count=20 -race ./pairing/...` passes with zero `pigeon_pair_initiator failed` occurrences, in CI and locally, across many consecutive runs'
     - The intermittent C-side failure (cwire pigeon_pair_initiator, pairing_test.go line 106) is root-caused — the resource/timing/handshake nondeterminism is identified and removed, not merely masked by a rerun/retry
@@ -1785,6 +1792,7 @@ targets:
     - test-reliability
     origin: manual
     discovered: 2026-07-06
+    achieved: 2026-07-11
   T6:
     name: WebTransport relay
     status: achieved

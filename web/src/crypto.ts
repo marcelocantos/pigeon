@@ -270,6 +270,36 @@ export class E2EChannel {
   }
 }
 
+// ---- Session salt (🎯T50) ----
+
+/**
+ * Length of the per-session diversifier folded into deriveChannelFromRecord's
+ * HKDF info. Matches the activation-path nonce length (T44.1) so reconnects
+ * under one PairingRecord never share an AEAD key.
+ */
+export const SESSION_SALT_LEN = 16;
+
+/**
+ * Fixed peer reply to a session-salt handshake on the artifact/reconnect
+ * path (plaintext on the primary stream before AEAD is established).
+ */
+export const SESSION_SALT_ACK = "session_salt_ack";
+
+/** Generate SESSION_SALT_LEN cryptographically random bytes (🎯T50). */
+export function generateSessionSalt(): Uint8Array {
+  const b = new Uint8Array(SESSION_SALT_LEN);
+  crypto.getRandomValues(b);
+  return b;
+}
+
+/** Concatenate two Uint8Arrays. */
+function concatBytes(a: Uint8Array, b: Uint8Array): Uint8Array {
+  const out = new Uint8Array(a.length + b.length);
+  out.set(a, 0);
+  out.set(b, a.length);
+  return out;
+}
+
 // ---- Pairing record ----
 
 /** Persistent state from a completed pairing ceremony. */
@@ -298,12 +328,27 @@ export async function createPairingRecord(
   };
 }
 
-/** Derive a channel from a stored pairing record. */
+/**
+ * Derive a channel from a stored pairing record.
+ *
+ * sessionSalt is a per-session diversifier (typically SESSION_SALT_LEN
+ * random bytes exchanged during reconnect). When non-empty it is appended
+ * to each direction label (HKDF info = label || salt), so two sessions
+ * under one PairingRecord derive distinct AEAD keys (🎯T50). Omit or pass
+ * empty only for tests that intentionally exercise the static pre-T50
+ * derivation. When non-empty, length must equal SESSION_SALT_LEN.
+ */
 export async function deriveChannelFromRecord(
   record: PairingRecord,
   sendInfo: Uint8Array,
   recvInfo: Uint8Array,
+  sessionSalt: Uint8Array = new Uint8Array(0),
 ): Promise<E2EChannel> {
+  if (sessionSalt.length !== 0 && sessionSalt.length !== SESSION_SALT_LEN) {
+    throw new Error(
+      `session salt must be ${SESSION_SALT_LEN} bytes, got ${sessionSalt.length}`,
+    );
+  }
   const privateKeyBytes = Uint8Array.from(atob(record.localPrivateKey), (c) =>
     c.charCodeAt(0),
   );
@@ -344,9 +389,11 @@ export async function deriveChannelFromRecord(
   );
   const shared = new Uint8Array(sharedBits);
 
-  // Derive directional keys via HKDF.
-  const sendKey = await deriveKeyFromSecret(shared, sendInfo);
-  const recvKey = await deriveKeyFromSecret(shared, recvInfo);
+  // Derive directional keys via HKDF (info = label || sessionSalt).
+  const sendKeyInfo = concatBytes(sendInfo, sessionSalt);
+  const recvKeyInfo = concatBytes(recvInfo, sessionSalt);
+  const sendKey = await deriveKeyFromSecret(shared, sendKeyInfo);
+  const recvKey = await deriveKeyFromSecret(shared, recvKeyInfo);
 
   return E2EChannel.create(sendKey, recvKey);
 }

@@ -34,7 +34,10 @@
 import {
   E2EChannel,
   PairingRecord,
+  SESSION_SALT_ACK,
+  SESSION_SALT_LEN,
   deriveChannelFromRecord,
+  generateSessionSalt,
 } from "./crypto.js";
 import {
   encodeStreamHeader as wireEncodeStreamHeader,
@@ -597,16 +600,58 @@ export async function connect(args: ConnectArgs): Promise<Session> {
     throw new Error(`relay handshake: expected "ok", got ${JSON.stringify(ackStr)}`);
   }
 
-  // Derive the AEAD channel from the PairingRecord. Same info strings
-  // as Go's api.go Connect (client side: send=client->backend,
-  // recv=backend->client).
+  // 🎯T50 session-salt handshake on the bridged primary: mint a fresh
+  // salt, send it plaintext, wait for SESSION_SALT_ACK, then derive
+  // with HKDF info = direction-label || salt so each reconnect under
+  // the same PairingRecord gets distinct AEAD keys. The peer must call
+  // acceptSessionSalt with the mirrored record.
+  const salt = generateSessionSalt();
+  await writeFrame(writer, salt);
+  const saltAck = await reader.readMessage();
+  const saltAckStr = new TextDecoder().decode(saltAck);
+  if (saltAckStr !== SESSION_SALT_ACK) {
+    transport.close();
+    throw new Error(
+      `session salt handshake: expected ${JSON.stringify(SESSION_SALT_ACK)}, got ${JSON.stringify(saltAckStr)}`,
+    );
+  }
+
+  // Same info strings as Go's api.go Connect (client side:
+  // send=client->backend, recv=backend->client), with the session salt
+  // folded in.
   const channel = await deriveChannelFromRecord(
     args.record,
     new TextEncoder().encode("client->backend"),
     new TextEncoder().encode("backend->client"),
+    salt,
   );
 
   return new Session(transport, writer, reader, channel, args.instanceID, args.datagrams);
+}
+
+/**
+ * Peer/backend side of the 🎯T50 session-salt handshake on an already-
+ * bridged primary stream: read the client's salt, reply
+ * SESSION_SALT_ACK, derive channel with the same salt.
+ *
+ * Direction labels default to the backend side of Connect
+ * (send=backend->client, recv=client->backend).
+ */
+export async function acceptSessionSalt(
+  writer: WritableStreamDefaultWriter<Uint8Array>,
+  reader: { readMessage(): Promise<Uint8Array> },
+  record: PairingRecord,
+  sendInfo: Uint8Array = new TextEncoder().encode("backend->client"),
+  recvInfo: Uint8Array = new TextEncoder().encode("client->backend"),
+): Promise<E2EChannel> {
+  const salt = await reader.readMessage();
+  if (salt.length !== SESSION_SALT_LEN) {
+    throw new Error(
+      `session salt handshake: expected ${SESSION_SALT_LEN}-byte salt, got ${salt.length}`,
+    );
+  }
+  await writeFrame(writer, new TextEncoder().encode(SESSION_SALT_ACK));
+  return deriveChannelFromRecord(record, sendInfo, recvInfo, salt);
 }
 
 /**

@@ -11,12 +11,32 @@
 #               token containing its ephemeral pubkey, identity pubkey,
 #               instance ID, and relay URL.
 #   initiator — short-lived client that scans/pastes the rendezvous
-#               token, derives the same 6-digit confirmation code from
-#               both ephemeral pubkeys, awaits a local user "y", then
-#               exchanges confirm messages with the acceptor.
+#               token, runs a commit-then-reveal SAS exchange, derives
+#               the same 6-digit confirmation code from both ephemeral
+#               pubkeys, awaits a local user "y", then exchanges confirm
+#               messages with the acceptor.
 #
 # The token itself is NOT a wire message — it travels out-of-band (QR
-# scan, paste, etc.). On-the-wire messages are hello, welcome, confirm.
+# scan, paste, etc.). On-the-wire messages are hello, welcome, reveal,
+# confirm.
+#
+# ── SAS commitment (🎯T52) ──────────────────────────────────────────
+# Without a commitment round a relay MitM can grind ephemeral keys after
+# seeing the peer's public key until both humans display the same ~20-bit
+# code. The fix is ZRTP-style commit-then-reveal on the initiator side
+# (the acceptor's eph is already bound by the OOB token):
+#
+#   commit = SHA256("pigeon-sas-commit" || eph_pub || blind)
+#
+#   1. Initiator mints (eph_I, blind_I), sends hello{commit_I, …}
+#   2. Acceptor stores commit_I, sends welcome{eph_A, …}
+#   3. Initiator checks welcome.eph_A == token.eph_A, sends reveal{eph_I, blind_I}
+#   4. Acceptor checks CommitOf(eph_I) == stored commit_I, then both derive SAS
+#
+# Because the MitM must fix eph_M1 (facing the acceptor) before the
+# initiator reveals eph_I, and must fix eph_M2 (facing the initiator) in
+# welcome before the reveal, offline grinding of a matching SAS is
+# infeasible. The 6-digit code remains adequate once keys are committed.
 #
 # Confirmation-code derivation is symmetric and order-independent:
 #   code = HKDF(min(eph_pub_a, eph_pub_b) ++ max(eph_pub_a, eph_pub_b))
@@ -36,11 +56,15 @@ messages:
   hello:
     from: initiator
     to: acceptor
-    desc: 'JSON {kind: "hello", eph_pub, identity_pub, instance_id}'
+    desc: 'JSON {kind: "hello", commit, identity_pub, instance_id} — commit = SHA256("pigeon-sas-commit"||eph||blind); eph not yet revealed'
   welcome:
     from: acceptor
     to: initiator
     desc: 'JSON {kind: "welcome", eph_pub, identity_pub, instance_id}'
+  reveal:
+    from: initiator
+    to: acceptor
+    desc: 'JSON {kind: "reveal", eph_pub, blind} — opens the hello commit; acceptor verifies CommitOf(eph_pub)==stored commit'
   confirm_to_initiator:
     from: acceptor
     to: initiator
@@ -73,20 +97,11 @@ actors:
         on: relay_registered
         do: emit_token
 
-      # --- Receive hello ---
+      # --- Receive hello (commitment only; eph not yet known) ---
       - from: WaitingForHello
-        to: DerivingCode
+        to: WaitingForReveal
         on: recv hello
-        do: derive_code
-        updates:
-          acceptor_received_eph_pub: recv_msg.eph_pub
-          acceptor_received_identity: recv_msg.identity_pub
-          acceptor_received_instance: recv_msg.instance_id
-          acceptor_code: 'DeriveCode(acceptor_eph_pub, recv_msg.eph_pub)'
-
-      - from: DerivingCode
-        to: AwaitingUserConfirm
-        on: code_ready
+        do: store_commit
         sends:
           - to: initiator
             msg: welcome
@@ -94,6 +109,28 @@ actors:
               eph_pub: acceptor_eph_pub
               identity_pub: acceptor_identity_pub
               instance_id: acceptor_instance_id
+        updates:
+          acceptor_received_commit: recv_msg.commit
+          acceptor_received_identity: recv_msg.identity_pub
+          acceptor_received_instance: recv_msg.instance_id
+
+      # --- Receive reveal; verify commit then derive SAS ---
+      - from: WaitingForReveal
+        to: DerivingCode
+        on: recv reveal
+        do: verify_commit_and_derive
+        updates:
+          acceptor_received_eph_pub: recv_msg.eph_pub
+          acceptor_commit_ok: 'IF CommitMatches(acceptor_received_commit, recv_msg.eph_pub) THEN "true" ELSE "false"'
+          acceptor_code: 'IF CommitMatches(acceptor_received_commit, recv_msg.eph_pub) THEN DeriveCode(acceptor_eph_pub, recv_msg.eph_pub) ELSE <<"none">>'
+
+      - from: DerivingCode
+        to: AwaitingUserConfirm
+        on: code_ready
+        # Implementations refuse code_ready when commit verification failed
+        # (acceptor_commit_ok = "false"); the TLA model encodes that as the
+        # code staying <<"none">>, so HonestPairingMatchesCodes still holds
+        # and MitM paths that break the commit never reach a shared code.
 
       # --- User confirm flow ---
       - from: AwaitingUserConfirm
@@ -121,6 +158,13 @@ actors:
         to: Aborted
         on: user_cancel
 
+      # Commit mismatch: implementations abort; model exposes the flag so
+      # properties can require that a failed commit never yields Paired with
+      # a forged eph.
+      - from: WaitingForReveal
+        to: Aborted
+        on: commit_fail
+
   initiator:
     initial: Idle
     transitions:
@@ -140,13 +184,14 @@ actors:
         do: gen_ephemeral
         updates:
           initiator_eph_pub: '"initiator_eph"'
+          initiator_commit: '"initiator_commit"'
 
       - from: GeneratingEphemeral
         to: ConnectingRelay
         on: ephemeral_ready
         do: dial_relay
 
-      # --- Send hello ---
+      # --- Send hello (commitment only) ---
       - from: ConnectingRelay
         to: AwaitingWelcome
         on: relay_connected
@@ -154,20 +199,32 @@ actors:
           - to: acceptor
             msg: hello
             fields:
-              eph_pub: initiator_eph_pub
+              commit: initiator_commit
               identity_pub: initiator_identity_pub
               instance_id: initiator_instance_id
 
-      # --- Receive welcome ---
+      # --- Receive welcome, reveal eph under prior commit ---
       - from: AwaitingWelcome
-        to: DerivingCode
+        to: Revealing
         on: recv welcome
-        do: derive_code
+        do: send_reveal
+        sends:
+          - to: acceptor
+            msg: reveal
+            fields:
+              eph_pub: initiator_eph_pub
+              blind: '"initiator_blind"'
         updates:
           initiator_received_eph_pub: recv_msg.eph_pub
           initiator_received_identity: recv_msg.identity_pub
           initiator_received_instance: recv_msg.instance_id
-          initiator_code: 'DeriveCode(initiator_eph_pub, recv_msg.eph_pub)'
+
+      - from: Revealing
+        to: DerivingCode
+        on: reveal_sent
+        do: derive_code
+        updates:
+          initiator_code: 'DeriveCode(initiator_eph_pub, initiator_received_eph_pub)'
 
       - from: DerivingCode
         to: AwaitingUserConfirm
@@ -210,15 +267,21 @@ vars:
   acceptor_instance_id:
     initial: '"acceptor_instance"'
     desc: acceptor's stable instance ID
+  acceptor_received_commit:
+    initial: '"none"'
+    desc: SAS commit from hello (binds peer eph before reveal)
   acceptor_received_eph_pub:
     initial: '"none"'
-    desc: ephemeral pubkey acceptor saw in hello (may be adversary's)
+    desc: ephemeral pubkey acceptor saw in reveal (may be adversary's)
   acceptor_received_identity:
     initial: '"none"'
     desc: identity pubkey acceptor saw in hello
   acceptor_received_instance:
     initial: '"none"'
     desc: instance ID acceptor saw in hello
+  acceptor_commit_ok:
+    initial: '"false"'
+    desc: 'did the reveal open the hello commit? "true" only after CommitMatches'
   acceptor_code:
     initial: '<<"none">>'
     desc: 'confirmation code acceptor derived from its (ephA, ephB) view'
@@ -233,6 +296,9 @@ vars:
   initiator_eph_pub:
     initial: '"none"'
     desc: initiator's ephemeral X25519 public key
+  initiator_commit:
+    initial: '"none"'
+    desc: 'SHA256("pigeon-sas-commit"||eph||blind) for initiator_eph_pub'
   initiator_identity_pub:
     initial: '"initiator_id"'
     desc: initiator's long-term Identity public key
@@ -274,12 +340,18 @@ vars:
   adv_eph_pub:
     initial: '"adv_eph"'
     desc: adversary's ephemeral X25519 public key
+  adv_commit:
+    initial: '"adv_commit"'
+    desc: adversary's SAS commit (CommitOf(adv_eph))
   adv_saved_acceptor_eph:
     initial: '"none"'
     desc: real acceptor eph pubkey saved during MitM substitution
   adv_saved_initiator_eph:
     initial: '"none"'
     desc: real initiator eph pubkey saved during MitM substitution
+  adv_saved_initiator_commit:
+    initial: '"none"'
+    desc: real initiator commit saved during MitM substitution of hello
   recv_msg:
     initial: '[type |-> "none"]'
     desc: last received message (staging slot)
@@ -293,6 +365,14 @@ operators:
     params: a, b
     expr: 'IF KeyRank(a) <= KeyRank(b) THEN <<"code", a, b>> ELSE <<"code", b, a>>'
     desc: 'Confirmation code derived from both ephemeral pubkeys (order-independent).'
+  CommitOf:
+    params: eph
+    expr: 'CASE eph = "initiator_eph" -> "initiator_commit" [] eph = "adv_eph" -> "adv_commit" [] eph = "acceptor_eph" -> "acceptor_commit" [] OTHER -> "unknown_commit"'
+    desc: 'Symbolic commitment: commit = H(eph||blind). Models the binding that SHA256 provides in the implementation.'
+  CommitMatches:
+    params: commit, eph
+    expr: 'commit = CommitOf(eph)'
+    desc: 'True iff reveal(eph, blind) opens the previously received commit.'
   ValidPairingRecord:
     params: r
     expr: 'r.peer_instance_id /= "none" /\ r.peer_eph_pub /= "none"'
@@ -300,12 +380,12 @@ operators:
 
 adversary:
   - name: MitM_hello
-    desc: intercept hello and substitute adversary ephemeral pubkey
+    desc: intercept hello and substitute adversary commit (so a later reveal of adv_eph can open it)
     code: |
       await Len(chan_initiator_acceptor) > 0 /\ Head(chan_initiator_acceptor).type = MSG_hello;
-      adv_saved_initiator_eph := Head(chan_initiator_acceptor).eph_pub;
+      adv_saved_initiator_commit := Head(chan_initiator_acceptor).commit;
       adversary_keys := adversary_keys \union {adv_eph_pub};
-      chan_initiator_acceptor := <<[type |-> MSG_hello, eph_pub |-> adv_eph_pub, identity_pub |-> Head(chan_initiator_acceptor).identity_pub, instance_id |-> Head(chan_initiator_acceptor).instance_id]>> \o Tail(chan_initiator_acceptor);
+      chan_initiator_acceptor := <<[type |-> MSG_hello, commit |-> adv_commit, identity_pub |-> Head(chan_initiator_acceptor).identity_pub, instance_id |-> Head(chan_initiator_acceptor).instance_id]>> \o Tail(chan_initiator_acceptor);
   - name: MitM_welcome
     desc: intercept welcome and substitute adversary ephemeral pubkey
     code: |
@@ -313,6 +393,13 @@ adversary:
       adv_saved_acceptor_eph := Head(chan_acceptor_initiator).eph_pub;
       adversary_keys := adversary_keys \union {adv_eph_pub};
       chan_acceptor_initiator := <<[type |-> MSG_welcome, eph_pub |-> adv_eph_pub, identity_pub |-> Head(chan_acceptor_initiator).identity_pub, instance_id |-> Head(chan_acceptor_initiator).instance_id]>> \o Tail(chan_acceptor_initiator);
+  - name: MitM_reveal
+    desc: intercept reveal and substitute adversary eph (fails CommitMatches unless hello was also MitM'd with adv_commit)
+    code: |
+      await Len(chan_initiator_acceptor) > 0 /\ Head(chan_initiator_acceptor).type = MSG_reveal;
+      adv_saved_initiator_eph := Head(chan_initiator_acceptor).eph_pub;
+      adversary_keys := adversary_keys \union {adv_eph_pub};
+      chan_initiator_acceptor := <<[type |-> MSG_reveal, eph_pub |-> adv_eph_pub, blind |-> "adv_blind"]>> \o Tail(chan_initiator_acceptor);
 
 properties:
   - name: MitMDetectedByCodeMismatch
@@ -335,3 +422,11 @@ properties:
     kind: invariant
     expr: '(acceptor_state = acceptor_Paired => ValidPairingRecord([peer_instance_id |-> acceptor_received_instance, peer_eph_pub |-> acceptor_received_eph_pub])) /\ (initiator_state = initiator_Paired => ValidPairingRecord([peer_instance_id |-> initiator_received_instance, peer_eph_pub |-> initiator_received_eph_pub]))'
     desc: 'Postcondition: whenever either side reaches Paired, the implicit PairingRecord built from received-peer fields satisfies the ValidPairingRecord interface contract that SessionMachine assumes.'
+  - name: CodeRequiresCommit
+    kind: invariant
+    expr: 'acceptor_code /= <<"none">> => acceptor_commit_ok = "true"'
+    desc: 'Acceptor never derives a SAS code unless the reveal opened the hello commit — commitment binding (anti-grind).'
+  - name: RevealBoundByCommit
+    kind: invariant
+    expr: '(acceptor_received_eph_pub /= "none" /\ acceptor_commit_ok = "true") => CommitMatches(acceptor_received_commit, acceptor_received_eph_pub)'
+    desc: 'When commit verification succeeded, the revealed eph is exactly the one bound by the earlier hello commit; the acceptor cannot have been shown a ground key after the fact.'

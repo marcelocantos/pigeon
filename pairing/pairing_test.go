@@ -34,6 +34,15 @@ import (
 // the YAML-generated PairingCeremonyProtocol*Machine sequences the
 // ceremony correctly and that runAcceptor / runInitiator drive those
 // machines through their full state graph without spec-rejected events.
+//
+// 🎯T57: was flaky with "cwire: pigeon_pair_initiator failed" when the
+// acceptor Confirm returned and Close tore down the backend Session
+// while the initiator was still draining the final confirm through the
+// async relay bridge. Fixed in production by acceptor post-success
+// drain + initiator stream FIN before deliverResult. T54's ctx-threading
+// of ConfirmFn did not create this race (it predates T54 on master) but
+// Close-cancel can shrink the drain window; the drain/FIN ordering is
+// what makes success deterministic.
 func TestCeremonyEndToEnd(t *testing.T) {
 	t.Parallel()
 
@@ -127,11 +136,11 @@ func TestCeremonyEndToEnd(t *testing.T) {
 
 	// Verify the records produce compatible AEAD channels — proving the
 	// ceremony exchanged matching ECDH key material under the spec.
-	bch, err := res.rec.DeriveChannel([]byte("a->b"), []byte("b->a"))
+	bch, err := res.rec.DeriveChannel([]byte("a->b"), []byte("b->a"), nil)
 	if err != nil {
 		t.Fatalf("acceptor DeriveChannel: %v", err)
 	}
-	cch, err := clientRec.DeriveChannel([]byte("b->a"), []byte("a->b"))
+	cch, err := clientRec.DeriveChannel([]byte("b->a"), []byte("a->b"), nil)
 	if err != nil {
 		t.Fatalf("initiator DeriveChannel: %v", err)
 	}

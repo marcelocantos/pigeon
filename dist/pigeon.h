@@ -14,6 +14,7 @@ typedef enum {
 	PIGEON_ACCEPTOR_GENERATING_EPHEMERAL,
 	PIGEON_ACCEPTOR_REGISTERING_RELAY,
 	PIGEON_ACCEPTOR_WAITING_FOR_HELLO,
+	PIGEON_ACCEPTOR_WAITING_FOR_REVEAL,
 	PIGEON_ACCEPTOR_DERIVING_CODE,
 	PIGEON_ACCEPTOR_AWAITING_USER_CONFIRM,
 	PIGEON_ACCEPTOR_AWAITING_PEER_CONFIRM,
@@ -29,6 +30,7 @@ typedef enum {
 	PIGEON_INITIATOR_GENERATING_EPHEMERAL,
 	PIGEON_INITIATOR_CONNECTING_RELAY,
 	PIGEON_INITIATOR_AWAITING_WELCOME,
+	PIGEON_INITIATOR_REVEALING,
 	PIGEON_INITIATOR_DERIVING_CODE,
 	PIGEON_INITIATOR_AWAITING_USER_CONFIRM,
 	PIGEON_INITIATOR_AWAITING_PEER_CONFIRM,
@@ -41,6 +43,7 @@ typedef enum {
 typedef enum {
 	PIGEON_PAIRINGCEREMONY_MSG_HELLO = 0,
 	PIGEON_PAIRINGCEREMONY_MSG_WELCOME,
+	PIGEON_PAIRINGCEREMONY_MSG_REVEAL,
 	PIGEON_PAIRINGCEREMONY_MSG_CONFIRM_TO_INITIATOR,
 	PIGEON_PAIRINGCEREMONY_MSG_CONFIRM_TO_ACCEPTOR,
 	PIGEON_PAIRINGCEREMONY_MSG_COUNT
@@ -51,10 +54,13 @@ typedef enum {
 	PIGEON_PAIRINGCEREMONY_ACTION_GEN_EPHEMERAL = 0,
 	PIGEON_PAIRINGCEREMONY_ACTION_REGISTER_RELAY,
 	PIGEON_PAIRINGCEREMONY_ACTION_EMIT_TOKEN,
-	PIGEON_PAIRINGCEREMONY_ACTION_DERIVE_CODE,
+	PIGEON_PAIRINGCEREMONY_ACTION_STORE_COMMIT,
+	PIGEON_PAIRINGCEREMONY_ACTION_VERIFY_COMMIT_AND_DERIVE,
 	PIGEON_PAIRINGCEREMONY_ACTION_STORE_RECORD,
 	PIGEON_PAIRINGCEREMONY_ACTION_DECODE_TOKEN,
 	PIGEON_PAIRINGCEREMONY_ACTION_DIAL_RELAY,
+	PIGEON_PAIRINGCEREMONY_ACTION_SEND_REVEAL,
+	PIGEON_PAIRINGCEREMONY_ACTION_DERIVE_CODE,
 	PIGEON_PAIRINGCEREMONY_ACTION_COUNT
 } pairing_ceremony_action_id;
 
@@ -66,10 +72,13 @@ typedef enum {
 	PIGEON_PAIRINGCEREMONY_EVENT_CODE_READY,
 	PIGEON_PAIRINGCEREMONY_EVENT_USER_CONFIRM,
 	PIGEON_PAIRINGCEREMONY_EVENT_USER_CANCEL,
+	PIGEON_PAIRINGCEREMONY_EVENT_COMMIT_FAIL,
 	PIGEON_PAIRINGCEREMONY_EVENT_TOKEN_RECEIVED,
 	PIGEON_PAIRINGCEREMONY_EVENT_TOKEN_DECODED,
 	PIGEON_PAIRINGCEREMONY_EVENT_RELAY_CONNECTED,
+	PIGEON_PAIRINGCEREMONY_EVENT_REVEAL_SENT,
 	PIGEON_PAIRINGCEREMONY_EVENT_RECV_HELLO,
+	PIGEON_PAIRINGCEREMONY_EVENT_RECV_REVEAL,
 	PIGEON_PAIRINGCEREMONY_EVENT_RECV_CONFIRM_TO_ACCEPTOR,
 	PIGEON_PAIRINGCEREMONY_EVENT_RECV_WELCOME,
 	PIGEON_PAIRINGCEREMONY_EVENT_RECV_CONFIRM_TO_INITIATOR,
@@ -85,9 +94,11 @@ typedef void (*pigeon_change_fn)(const char *var_name, void *ctx);
 typedef struct {
 	pigeon_acceptor_state state;
 	const char * acceptor_eph_pub; // acceptor's ephemeral X25519 public key
-	const char * acceptor_received_eph_pub; // ephemeral pubkey acceptor saw in hello (may be adversary's)
+	const char * acceptor_received_commit; // SAS commit from hello (binds peer eph before reveal)
+	const char * acceptor_received_eph_pub; // ephemeral pubkey acceptor saw in reveal (may be adversary's)
 	const char * acceptor_received_identity; // identity pubkey acceptor saw in hello
 	const char * acceptor_received_instance; // instance ID acceptor saw in hello
+	const char * acceptor_commit_ok; // did the reveal open the hello commit? "true" only after CommitMatches
 	const char * acceptor_code; // confirmation code acceptor derived from its (ephA, ephB) view
 	const char * acceptor_user_confirmed; // has the acceptor's local human pressed y?
 	const char * acceptor_received_confirm; // has the acceptor received initiator's confirm message?
@@ -104,6 +115,7 @@ int  pigeon_acceptor_step(pigeon_acceptor_machine *m, pairing_ceremony_event_id 
 typedef struct {
 	pigeon_initiator_state state;
 	const char * initiator_eph_pub; // initiator's ephemeral X25519 public key
+	const char * initiator_commit; // SHA256("pigeon-sas-commit"||eph||blind) for initiator_eph_pub
 	const char * received_acceptor_eph_pub; // acceptor ephemeral pubkey from token (trusted, out-of-band)
 	const char * received_acceptor_identity; // acceptor identity pubkey from token
 	const char * received_acceptor_instance; // acceptor instance ID from token
@@ -306,6 +318,23 @@ int pigeon_diversify_key(const uint8_t *base_key,
 int pigeon_derive_confirmation_code(const uint8_t *pub_a,
                                     const uint8_t *pub_b,
                                     char *out_code);
+
+// SAS commitment (🎯T52): bind an ephemeral pubkey before reveal so a
+// relay MitM cannot grind eph keys after seeing the peer's key.
+//
+//   commit = SHA256("pigeon-sas-commit" || eph_pub[32] || blind[32])
+//
+// out_commit must be 32 bytes. Returns 0 on success, -1 on error.
+int pigeon_sas_commit(const uint8_t *eph_pub,
+                      const uint8_t *blind,
+                      uint8_t *out_commit);
+
+// Verify that (eph_pub, blind) open the given 32-byte commit.
+// Returns 0 if the commit matches, -1 on mismatch or error.
+// Comparison is constant-time.
+int pigeon_sas_commit_verify(const uint8_t *eph_pub,
+                             const uint8_t *blind,
+                             const uint8_t *commit);
 
 // Initialise a channel with separate send/recv keys.
 void pigeon_channel_init(pigeon_channel *ch,

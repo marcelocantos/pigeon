@@ -62,6 +62,7 @@ const (
 	AcceptorGeneratingEphemeral
 	AcceptorRegisteringRelay
 	AcceptorWaitingForHello
+	AcceptorWaitingForReveal
 	AcceptorDerivingCode
 	AcceptorAwaitingUserConfirm
 	AcceptorAwaitingPeerConfirm
@@ -79,6 +80,8 @@ func (s AcceptorState) String() string {
 		return "RegisteringRelay"
 	case AcceptorWaitingForHello:
 		return "WaitingForHello"
+	case AcceptorWaitingForReveal:
+		return "WaitingForReveal"
 	case AcceptorDerivingCode:
 		return "DerivingCode"
 	case AcceptorAwaitingUserConfirm:
@@ -102,6 +105,7 @@ const (
 	InitiatorGeneratingEphemeral
 	InitiatorConnectingRelay
 	InitiatorAwaitingWelcome
+	InitiatorRevealing
 	InitiatorDerivingCode
 	InitiatorAwaitingUserConfirm
 	InitiatorAwaitingPeerConfirm
@@ -121,6 +125,8 @@ func (s InitiatorState) String() string {
 		return "ConnectingRelay"
 	case InitiatorAwaitingWelcome:
 		return "AwaitingWelcome"
+	case InitiatorRevealing:
+		return "Revealing"
 	case InitiatorDerivingCode:
 		return "DerivingCode"
 	case InitiatorAwaitingUserConfirm:
@@ -136,6 +142,7 @@ func (s InitiatorState) String() string {
 }
 
 // CeremonyEvent is the Go mirror of pairing_ceremony_event_id.
+// Values must match the C enum order in pairingceremony_gen.h.
 type CeremonyEvent int
 
 const (
@@ -145,10 +152,13 @@ const (
 	EvCodeReady
 	EvUserConfirm
 	EvUserCancel
+	EvCommitFail
 	EvTokenReceived
 	EvTokenDecoded
 	EvRelayConnected
+	EvRevealSent
 	EvRecvHello
+	EvRecvReveal
 	EvRecvConfirmToAcceptor
 	EvRecvWelcome
 	EvRecvConfirmToInitiator
@@ -160,6 +170,7 @@ type CeremonyMessage int
 const (
 	MsgHello CeremonyMessage = iota
 	MsgWelcome
+	MsgReveal
 	MsgConfirmToInitiator
 	MsgConfirmToAcceptor
 )

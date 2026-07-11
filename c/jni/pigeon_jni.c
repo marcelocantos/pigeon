@@ -696,6 +696,16 @@ Java_com_marcelocantos_pigeon_jni_PigeonNative_sessionAcceptStream(
     ps->handle = sh;
     memcpy(ps->name, name, name_len);
 
+    // 🎯T53: per-stream ModeStrict AEAD — open_stream binds on the
+    // opener; accept paths must bind here (mirrors cwire AcceptStreamFromGo
+    // and Swift adoptAcceptedStream). Without this, the opener encrypts
+    // and the acceptor returns ciphertext as "plaintext".
+    if (pigeon_stream_bind_aead(ps) != 0) {
+        free(ps);
+        throw_runtime(env, "pigeon_stream_bind_aead failed");
+        return 0;
+    }
+
     if (nameOut && (*env)->GetArrayLength(env, nameOut) > 0) {
         (*env)->SetObjectArrayElement(env, nameOut, 0,
             (*env)->NewStringUTF(env, name));
@@ -1232,6 +1242,14 @@ Java_com_marcelocantos_pigeon_jni_PigeonNative_sessionAcceptStreamGeneric(
     ps->session = &h->session;
     ps->handle  = sh;
     memcpy(ps->name, name, name_len);
+
+    // 🎯T53: per-stream ModeStrict AEAD on the acceptor (see loopback
+    // sessionAcceptStream above).
+    if (pigeon_stream_bind_aead(ps) != 0) {
+        free(ps);
+        throw_runtime(env, "pigeon_stream_bind_aead failed");
+        return 0;
+    }
 
     if (nameOut && (*env)->GetArrayLength(env, nameOut) > 0) {
         (*env)->SetObjectArrayElement(env, nameOut, 0,

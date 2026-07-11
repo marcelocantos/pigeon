@@ -9,6 +9,7 @@ export enum PairingCeremonyAcceptorState {
     GeneratingEphemeral = "GeneratingEphemeral",
     RegisteringRelay = "RegisteringRelay",
     WaitingForHello = "WaitingForHello",
+    WaitingForReveal = "WaitingForReveal",
     DerivingCode = "DerivingCode",
     AwaitingUserConfirm = "AwaitingUserConfirm",
     AwaitingPeerConfirm = "AwaitingPeerConfirm",
@@ -22,6 +23,7 @@ export enum PairingCeremonyInitiatorState {
     GeneratingEphemeral = "GeneratingEphemeral",
     ConnectingRelay = "ConnectingRelay",
     AwaitingWelcome = "AwaitingWelcome",
+    Revealing = "Revealing",
     DerivingCode = "DerivingCode",
     AwaitingUserConfirm = "AwaitingUserConfirm",
     AwaitingPeerConfirm = "AwaitingPeerConfirm",
@@ -35,6 +37,7 @@ export namespace PairingCeremonyProtocol {
     export enum MessageType {
         Hello = "hello",
         Welcome = "welcome",
+        Reveal = "reveal",
         ConfirmToInitiator = "confirm_to_initiator",
         ConfirmToAcceptor = "confirm_to_acceptor",
     }
@@ -43,10 +46,13 @@ export namespace PairingCeremonyProtocol {
         GenEphemeral = "gen_ephemeral",
         RegisterRelay = "register_relay",
         EmitToken = "emit_token",
-        DeriveCode = "derive_code",
+        StoreCommit = "store_commit",
+        VerifyCommitAndDerive = "verify_commit_and_derive",
         StoreRecord = "store_record",
         DecodeToken = "decode_token",
         DialRelay = "dial_relay",
+        SendReveal = "send_reveal",
+        DeriveCode = "derive_code",
     }
 
     export enum EventID {
@@ -56,10 +62,13 @@ export namespace PairingCeremonyProtocol {
         CodeReady = "code_ready",
         UserConfirm = "user_confirm",
         UserCancel = "user_cancel",
+        CommitFail = "commit_fail",
         TokenReceived = "token_received",
         TokenDecoded = "token_decoded",
         RelayConnected = "relay_connected",
+        RevealSent = "reveal_sent",
         RecvHello = "recv_hello",
+        RecvReveal = "recv_reveal",
         RecvConfirmToAcceptor = "recv_confirm_to_acceptor",
         RecvWelcome = "recv_welcome",
         RecvConfirmToInitiator = "recv_confirm_to_initiator",
@@ -87,12 +96,14 @@ export namespace PairingCeremonyProtocol {
             { from: "Idle", to: "GeneratingEphemeral", on: "pair_begin", onKind: "internal", action: "gen_ephemeral" },
             { from: "GeneratingEphemeral", to: "RegisteringRelay", on: "ephemeral_ready", onKind: "internal", action: "register_relay" },
             { from: "RegisteringRelay", to: "WaitingForHello", on: "relay_registered", onKind: "internal", action: "emit_token" },
-            { from: "WaitingForHello", to: "DerivingCode", on: "hello", onKind: "recv", action: "derive_code" },
-            { from: "DerivingCode", to: "AwaitingUserConfirm", on: "code_ready", onKind: "internal", sends: [{ to: "initiator", msg: "welcome" }] },
+            { from: "WaitingForHello", to: "WaitingForReveal", on: "hello", onKind: "recv", action: "store_commit", sends: [{ to: "initiator", msg: "welcome" }] },
+            { from: "WaitingForReveal", to: "DerivingCode", on: "reveal", onKind: "recv", action: "verify_commit_and_derive" },
+            { from: "DerivingCode", to: "AwaitingUserConfirm", on: "code_ready", onKind: "internal" },
             { from: "AwaitingUserConfirm", to: "AwaitingPeerConfirm", on: "user_confirm", onKind: "internal", sends: [{ to: "initiator", msg: "confirm_to_initiator" }] },
             { from: "AwaitingPeerConfirm", to: "Paired", on: "confirm_to_acceptor", onKind: "recv", action: "store_record" },
             { from: "AwaitingUserConfirm", to: "Aborted", on: "user_cancel", onKind: "internal" },
             { from: "AwaitingPeerConfirm", to: "Aborted", on: "user_cancel", onKind: "internal" },
+            { from: "WaitingForReveal", to: "Aborted", on: "commit_fail", onKind: "internal" },
         ],
     };
 
@@ -104,7 +115,8 @@ export namespace PairingCeremonyProtocol {
             { from: "DecodingToken", to: "GeneratingEphemeral", on: "token_decoded", onKind: "internal", action: "gen_ephemeral" },
             { from: "GeneratingEphemeral", to: "ConnectingRelay", on: "ephemeral_ready", onKind: "internal", action: "dial_relay" },
             { from: "ConnectingRelay", to: "AwaitingWelcome", on: "relay_connected", onKind: "internal", sends: [{ to: "acceptor", msg: "hello" }] },
-            { from: "AwaitingWelcome", to: "DerivingCode", on: "welcome", onKind: "recv", action: "derive_code" },
+            { from: "AwaitingWelcome", to: "Revealing", on: "welcome", onKind: "recv", action: "send_reveal", sends: [{ to: "acceptor", msg: "reveal" }] },
+            { from: "Revealing", to: "DerivingCode", on: "reveal_sent", onKind: "internal", action: "derive_code" },
             { from: "DerivingCode", to: "AwaitingUserConfirm", on: "code_ready", onKind: "internal" },
             { from: "AwaitingUserConfirm", to: "AwaitingPeerConfirm", on: "user_confirm", onKind: "internal", sends: [{ to: "acceptor", msg: "confirm_to_acceptor" }] },
             { from: "AwaitingPeerConfirm", to: "Paired", on: "confirm_to_initiator", onKind: "recv", action: "store_record" },
@@ -120,9 +132,11 @@ export class PairingCeremonyAcceptorMachine {
     readonly protocol = PairingCeremonyProtocol;
     state: PairingCeremonyAcceptorState;
     acceptorEphPub: string = "none"; // acceptor's ephemeral X25519 public key
-    acceptorReceivedEphPub: string = "none"; // ephemeral pubkey acceptor saw in hello (may be adversary's)
+    acceptorReceivedCommit: string = "none"; // SAS commit from hello (binds peer eph before reveal)
+    acceptorReceivedEphPub: string = "none"; // ephemeral pubkey acceptor saw in reveal (may be adversary's)
     acceptorReceivedIdentity: string = "none"; // identity pubkey acceptor saw in hello
     acceptorReceivedInstance: string = "none"; // instance ID acceptor saw in hello
+    acceptorCommitOk: string = "false"; // did the reveal open the hello commit? "true" only after CommitMatches
     acceptorCode: string = ""; // confirmation code acceptor derived from its (ephA, ephB) view
     acceptorUserConfirmed: string = "false"; // has the acceptor's local human pressed y?
     acceptorReceivedConfirm: string = "false"; // has the acceptor received initiator's confirm message?
@@ -151,11 +165,18 @@ export class PairingCeremonyAcceptorMachine {
                 return [];
             }
             case this.state === PairingCeremonyAcceptorState.WaitingForHello && ev === PairingCeremonyProtocol.EventID.RecvHello: {
-                this.actions.get(PairingCeremonyProtocol.ActionID.DeriveCode)?.();
-                // acceptor_received_eph_pub: recv_msg.eph_pub (set by action)
+                this.actions.get(PairingCeremonyProtocol.ActionID.StoreCommit)?.();
+                // acceptor_received_commit: recv_msg.commit (set by action)
                 // acceptor_received_identity: recv_msg.identity_pub (set by action)
                 // acceptor_received_instance: recv_msg.instance_id (set by action)
-                // acceptor_code: DeriveCode(acceptor_eph_pub, recv_msg.eph_pub) (set by action)
+                this.state = PairingCeremonyAcceptorState.WaitingForReveal;
+                return [];
+            }
+            case this.state === PairingCeremonyAcceptorState.WaitingForReveal && ev === PairingCeremonyProtocol.EventID.RecvReveal: {
+                this.actions.get(PairingCeremonyProtocol.ActionID.VerifyCommitAndDerive)?.();
+                // acceptor_received_eph_pub: recv_msg.eph_pub (set by action)
+                // acceptor_commit_ok: IF CommitMatches(acceptor_received_commit, recv_msg.eph_pub) THEN "true" ELSE "false" (set by action)
+                // acceptor_code: IF CommitMatches(acceptor_received_commit, recv_msg.eph_pub) THEN DeriveCode(acceptor_eph_pub, recv_msg.eph_pub) ELSE <<"none">> (set by action)
                 this.state = PairingCeremonyAcceptorState.DerivingCode;
                 return [];
             }
@@ -182,6 +203,10 @@ export class PairingCeremonyAcceptorMachine {
                 this.state = PairingCeremonyAcceptorState.Aborted;
                 return [];
             }
+            case this.state === PairingCeremonyAcceptorState.WaitingForReveal && ev === PairingCeremonyProtocol.EventID.CommitFail: {
+                this.state = PairingCeremonyAcceptorState.Aborted;
+                return [];
+            }
         }
         return [];
     }
@@ -192,6 +217,7 @@ export class PairingCeremonyInitiatorMachine {
     readonly protocol = PairingCeremonyProtocol;
     state: PairingCeremonyInitiatorState;
     initiatorEphPub: string = "none"; // initiator's ephemeral X25519 public key
+    initiatorCommit: string = "none"; // SHA256("pigeon-sas-commit"||eph||blind) for initiator_eph_pub
     receivedAcceptorEphPub: string = "none"; // acceptor ephemeral pubkey from token (trusted, out-of-band)
     receivedAcceptorIdentity: string = "none"; // acceptor identity pubkey from token
     receivedAcceptorInstance: string = "none"; // acceptor instance ID from token
@@ -220,6 +246,7 @@ export class PairingCeremonyInitiatorMachine {
             case this.state === PairingCeremonyInitiatorState.DecodingToken && ev === PairingCeremonyProtocol.EventID.TokenDecoded: {
                 this.actions.get(PairingCeremonyProtocol.ActionID.GenEphemeral)?.();
                 this.initiatorEphPub = "initiator_eph";
+                this.initiatorCommit = "initiator_commit";
                 this.state = PairingCeremonyInitiatorState.GeneratingEphemeral;
                 return [];
             }
@@ -233,11 +260,16 @@ export class PairingCeremonyInitiatorMachine {
                 return [];
             }
             case this.state === PairingCeremonyInitiatorState.AwaitingWelcome && ev === PairingCeremonyProtocol.EventID.RecvWelcome: {
-                this.actions.get(PairingCeremonyProtocol.ActionID.DeriveCode)?.();
+                this.actions.get(PairingCeremonyProtocol.ActionID.SendReveal)?.();
                 // initiator_received_eph_pub: recv_msg.eph_pub (set by action)
                 // initiator_received_identity: recv_msg.identity_pub (set by action)
                 // initiator_received_instance: recv_msg.instance_id (set by action)
-                // initiator_code: DeriveCode(initiator_eph_pub, recv_msg.eph_pub) (set by action)
+                this.state = PairingCeremonyInitiatorState.Revealing;
+                return [];
+            }
+            case this.state === PairingCeremonyInitiatorState.Revealing && ev === PairingCeremonyProtocol.EventID.RevealSent: {
+                this.actions.get(PairingCeremonyProtocol.ActionID.DeriveCode)?.();
+                // initiator_code: DeriveCode(initiator_eph_pub, initiator_received_eph_pub) (set by action)
                 this.state = PairingCeremonyInitiatorState.DerivingCode;
                 return [];
             }

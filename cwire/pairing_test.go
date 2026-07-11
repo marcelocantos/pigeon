@@ -4,9 +4,11 @@
 package cwire_test
 
 import (
+	"bytes"
 	"crypto/ecdh"
 	"crypto/rand"
 	"encoding/json"
+	"fmt"
 	"testing"
 	"unsafe"
 
@@ -54,6 +56,14 @@ func TestAcceptorFSMMatchesGo(t *testing.T) {
 		{"recv Hello", func() error {
 			ge := cm.HandleMessage(cwire.MsgHello)
 			_, err := gm.HandleMessage(pairing.PairingCeremonyProtocolMsgHello)
+			if err != nil {
+				return err
+			}
+			return ge
+		}},
+		{"recv Reveal", func() error {
+			ge := cm.HandleMessage(cwire.MsgReveal)
+			_, err := gm.HandleMessage(pairing.PairingCeremonyProtocolMsgReveal)
 			if err != nil {
 				return err
 			}
@@ -142,6 +152,14 @@ func TestInitiatorFSMMatchesGo(t *testing.T) {
 		{"recv Welcome", func() error {
 			ge := cm.HandleMessage(cwire.MsgWelcome)
 			_, err := gm.HandleMessage(pairing.PairingCeremonyProtocolMsgWelcome)
+			if err != nil {
+				return err
+			}
+			return ge
+		}},
+		{"RevealSent", func() error {
+			ge := cm.Step(cwire.EvRevealSent)
+			_, err := gm.Step(pairing.PairingCeremonyProtocolEventRevealSent)
 			if err != nil {
 				return err
 			}
@@ -242,10 +260,13 @@ func TestConfirmationCodeMatchesGo(t *testing.T) {
 // Acceptance criterion: both sides derive the same 6-digit confirmation code.
 // ---------------------------------------------------------------------------
 
-// pairingMsg is the JSON structure the Go pairing package sends on the wire.
+// pairingMsg is the JSON structure the Go/C pairing drivers send on the wire
+// after 🎯T52 (commit-then-reveal).
 type pairingMsg struct {
 	Kind        string `json:"kind"`
+	Commit      []byte `json:"commit,omitempty"`
 	EphPub      []byte `json:"eph_pub,omitempty"`
+	Blind       []byte `json:"blind,omitempty"`
 	IdentityPub []byte `json:"identity_pub,omitempty"`
 	InstanceID  string `json:"instance_id,omitempty"`
 }
@@ -377,7 +398,7 @@ func TestWireParityGoAcceptorCInitiator(t *testing.T) {
 		cCh <- result{code: code, err: err}
 	}()
 
-	// Go acceptor goroutine: blocks on AcceptStream.
+	// Go acceptor goroutine: blocks on AcceptStream; commit/reveal/confirm.
 	go func() {
 		h, err := ca.AcceptStream()
 		if err != nil {
@@ -391,16 +412,34 @@ func TestWireParityGoAcceptorCInitiator(t *testing.T) {
 		}
 		var hello pairingMsg
 		if err := json.Unmarshal(raw, &hello); err != nil || hello.Kind != "hello" {
-			goCh <- result{err: json.Unmarshal(raw, &hello)}
+			goCh <- result{err: fmt.Errorf("hello: %w", err)}
 			return
 		}
-		initEphPubParsed, err := ecdh.X25519().NewPublicKey(hello.EphPub)
-		if err != nil {
-			goCh <- result{err: err}
+		if len(hello.Commit) != 32 {
+			goCh <- result{err: fmt.Errorf("hello missing 32-byte commit")}
 			return
 		}
 		wb, _ := json.Marshal(pairingMsg{Kind: "welcome", EphPub: accEphPub.Bytes(), IdentityPub: accIdPub, InstanceID: "go-acceptor"})
 		if err := ca.SendOnStream(h, wb); err != nil {
+			goCh <- result{err: err}
+			return
+		}
+		raw, err = ca.RecvOnStream(h)
+		if err != nil {
+			goCh <- result{err: err}
+			return
+		}
+		var reveal pairingMsg
+		if err := json.Unmarshal(raw, &reveal); err != nil || reveal.Kind != "reveal" {
+			goCh <- result{err: fmt.Errorf("reveal: %w", err)}
+			return
+		}
+		if !crypto.SASCommitVerify(reveal.EphPub, reveal.Blind, hello.Commit) {
+			goCh <- result{err: fmt.Errorf("reveal does not open commit")}
+			return
+		}
+		initEphPubParsed, err := ecdh.X25519().NewPublicKey(reveal.EphPub)
+		if err != nil {
 			goCh <- result{err: err}
 			return
 		}
@@ -421,7 +460,7 @@ func TestWireParityGoAcceptorCInitiator(t *testing.T) {
 		}
 		var conf pairingMsg
 		if err := json.Unmarshal(raw, &conf); err != nil || conf.Kind != "confirm" {
-			goCh <- result{err: json.Unmarshal(raw, &conf)}
+			goCh <- result{err: fmt.Errorf("confirm: %w", err)}
 			return
 		}
 		goCh <- result{code: code}
@@ -483,14 +522,24 @@ func TestWireParityCAcceptorGoInitiator(t *testing.T) {
 		cCh <- result{code: code, err: err}
 	}()
 
-	// Go initiator goroutine.
+	// Go initiator goroutine: commit → welcome → reveal → confirm.
 	go func() {
 		h, err := cb.OpenStream()
 		if err != nil {
 			goCh <- result{err: err}
 			return
 		}
-		hb, _ := json.Marshal(pairingMsg{Kind: "hello", EphPub: initEphPub.Bytes(), IdentityPub: initIdPub, InstanceID: "go-initiator"})
+		blind := make([]byte, 32)
+		if _, err := rand.Read(blind); err != nil {
+			goCh <- result{err: err}
+			return
+		}
+		commit, err := crypto.SASCommit(initEphPub.Bytes(), blind)
+		if err != nil {
+			goCh <- result{err: err}
+			return
+		}
+		hb, _ := json.Marshal(pairingMsg{Kind: "hello", Commit: commit, IdentityPub: initIdPub, InstanceID: "go-initiator"})
 		if err := cb.SendOnStream(h, hb); err != nil {
 			goCh <- result{err: err}
 			return
@@ -502,15 +551,19 @@ func TestWireParityCAcceptorGoInitiator(t *testing.T) {
 		}
 		var welcome pairingMsg
 		if err := json.Unmarshal(raw, &welcome); err != nil || welcome.Kind != "welcome" {
-			goCh <- result{err: json.Unmarshal(raw, &welcome)}
+			goCh <- result{err: fmt.Errorf("welcome: %w", err)}
 			return
 		}
-		accEphPubParsed, err := ecdh.X25519().NewPublicKey(welcome.EphPub)
-		if err != nil {
+		if !bytes.Equal(welcome.EphPub, accEphPub.Bytes()) {
+			goCh <- result{err: fmt.Errorf("welcome eph mismatch vs expected acceptor key")}
+			return
+		}
+		rb, _ := json.Marshal(pairingMsg{Kind: "reveal", EphPub: initEphPub.Bytes(), Blind: blind})
+		if err := cb.SendOnStream(h, rb); err != nil {
 			goCh <- result{err: err}
 			return
 		}
-		code, err := crypto.DeriveConfirmationCode(accEphPubParsed, initEphPub)
+		code, err := crypto.DeriveConfirmationCode(accEphPub, initEphPub)
 		if err != nil {
 			goCh <- result{err: err}
 			return
@@ -527,7 +580,7 @@ func TestWireParityCAcceptorGoInitiator(t *testing.T) {
 		}
 		var conf pairingMsg
 		if err := json.Unmarshal(raw, &conf); err != nil || conf.Kind != "confirm" {
-			goCh <- result{err: json.Unmarshal(raw, &conf)}
+			goCh <- result{err: fmt.Errorf("confirm: %w", err)}
 			return
 		}
 		goCh <- result{code: code}

@@ -6,6 +6,7 @@ package com.marcelocantos.pigeon.crypto
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
+import kotlin.test.assertFalse
 import kotlin.test.assertNotEquals
 
 class E2ECryptoTest {
@@ -159,7 +160,7 @@ class E2ECryptoTest {
         assertEquals(32, record.localPublicKey.size)
         assertEquals(32, record.peerPublicKey.size)
 
-        // Derive channel from the record.
+        // Derive channel from the record (empty salt: static pre-T50 shape).
         val ch = record.deriveChannel("c2s".toByteArray(), "s2c".toByteArray())
 
         // Derive the same channel from the original keys (server side).
@@ -171,6 +172,63 @@ class E2ECryptoTest {
         val ct = ch.encrypt("hello from restored record".toByteArray())
         val pt = serverCh.decrypt(ct)
         assertContentEquals("hello from restored record".toByteArray(), pt)
+    }
+
+    /**
+     * 🎯T50 oracle: two sessions under one PairingRecord with distinct
+     * session salts must produce distinct AEAD keys (reconnect must not
+     * reuse the prior key with the GCM counter reset to 0).
+     */
+    @Test
+    fun `deriveChannel per-session salt produces distinct keys`() {
+        val localKP = E2EKeyPair()
+        val peerKP = E2EKeyPair()
+        val rec = PairingRecord(
+            peerInstanceID = "peer-001",
+            relayURL = "https://relay.example.com",
+            localKeyPair = localKP,
+            peerPublicKey = peerKP.publicKeyData,
+        )
+
+        val salt1 = ByteArray(SESSION_SALT_LEN) { 0x11 }
+        val salt2 = ByteArray(SESSION_SALT_LEN) { 0x22 }
+        val plaintext = "the quick brown fox".toByteArray()
+
+        val ch1 = rec.deriveChannel(
+            "client-to-server".toByteArray(),
+            "server-to-client".toByteArray(),
+            salt1,
+        )
+        val ch2 = rec.deriveChannel(
+            "client-to-server".toByteArray(),
+            "server-to-client".toByteArray(),
+            salt2,
+        )
+
+        val ct1 = ch1.encrypt(plaintext)
+        val ct2 = ch2.encrypt(plaintext)
+        // Leading 8 bytes are the (zero) sequence prefix; body must differ.
+        assertFalse(
+            ct1.copyOfRange(8, ct1.size).contentEquals(ct2.copyOfRange(8, ct2.size)),
+            "distinct salts produced identical keystream: per-session key derivation is broken",
+        )
+
+        // Same salt is deterministic.
+        val ch1b = rec.deriveChannel(
+            "client-to-server".toByteArray(),
+            "server-to-client".toByteArray(),
+            salt1,
+        )
+        val ct1b = ch1b.encrypt(plaintext)
+        assertContentEquals(
+            ct1.copyOfRange(8, ct1.size),
+            ct1b.copyOfRange(8, ct1b.size),
+        )
+
+        // Wrong-length salt is rejected.
+        assertFailsWith<IllegalArgumentException> {
+            rec.deriveChannel("c2s".toByteArray(), "s2c".toByteArray(), byteArrayOf(0x01))
+        }
     }
 
     @Test

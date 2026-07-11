@@ -103,7 +103,7 @@ func main() {
 	keyFile := flag.String("key", "", "TLS private key file (PEM)")
 	domain := flag.String("domain", "", "domain for automatic Let's Encrypt TLS (e.g. carrier-pigeon.fly.dev)")
 	acmeEmail := flag.String("acme-email", "", "email for Let's Encrypt account (recommended)")
-	lanAddr := flag.String("lan", "", "LAN listener address for direct connections (e.g. :0, localhost:44333)")
+	lanAddr := flag.String("lan", "", "start a LAN QUIC listener at this address (dev convenience; apps pass NewLANServer via RegisterArgs.LAN)")
 	certValidity := flag.Int("cert-validity", 365, "self-signed certificate validity in days (use ≤14 for WebTransport serverCertificateHashes)")
 	flag.Parse()
 
@@ -261,7 +261,11 @@ func main() {
 		}
 	}()
 
-	// Start LAN server if configured.
+	// --lan starts a LAN QUIC listener for operator convenience during
+	// local development (e.g. probe a free port / cert-hash). Automatic
+	// LAN upgrade is an application concern: backends call NewLANServer
+	// and pass it via RegisterArgs.LAN; clients set ConnectArgs.PreferLAN
+	// (🎯T48). The relay itself never terminates direct peer traffic.
 	if *lanAddr != "" {
 		lanSrv, err := pigeon.NewLANServer(*lanAddr, tlsConfig)
 		if err != nil {
@@ -269,7 +273,11 @@ func main() {
 			os.Exit(1)
 		}
 		defer lanSrv.Close()
-		_ = lanSrv // TODO: wire into relay registration flow
+		attrs := []any{"addr", lanSrv.Addr()}
+		if h := lanSrv.CertHash(); len(h) > 0 {
+			attrs = append(attrs, "cert-hash", hex.EncodeToString(h))
+		}
+		slog.Info("LAN server listening (app backends should pass NewLANServer via RegisterArgs.LAN)", attrs...)
 	}
 
 	slog.Info("pigeon starting",
