@@ -222,7 +222,7 @@ func serveClient(ctx context.Context, sess *pigeon.Session) {
 			if err != nil {
 				return
 			}
-			_ = ping.Send(append([]byte("pong:"), p...))
+			_ = ping.Send(append([]byte("pong:"), p.Payload...))
 			echoes.Add(1)
 		}
 	}()
@@ -231,8 +231,7 @@ func serveClient(ctx context.Context, sess *pigeon.Session) {
 	go func() {
 		metric := sess.Datagram("metric")
 		for {
-			_, err := metric.Recv(ctx)
-			if err != nil {
+			if _, err := metric.Recv(ctx); err != nil {
 				return
 			}
 			_ = metric.Send(fmt.Appendf(nil, "echoes=%d", echoes.Load()))

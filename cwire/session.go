@@ -347,14 +347,15 @@ func (d *Datagram) Send(payload []byte) error {
 	return nil
 }
 
-// Recv reads + AEAD-decrypts the next datagram on this channel. If
-// the next datagram on the wire is for a different channel, returns
-// errors.New("cwire: wrong channel"); the caller should then
-// re-dispatch by reading the connection-level recv directly.
+// Recv reads the next datagram part on this channel (🎯T59). Multi-part
+// messages arrive as separate Recv calls with independent AEAD blobs.
+// If the next datagram on the wire is for a different channel, returns
+// errors.New("cwire: wrong channel").
 func (d *Datagram) Recv() ([]byte, error) {
 	out := make([]byte, 1<<20)
+	var part C.pigeon_datagram_part
 	n := C.pigeon_datagram_recv(&d.c,
-		(*C.uint8_t)(unsafe.Pointer(&out[0])), C.size_t(len(out)))
+		(*C.uint8_t)(unsafe.Pointer(&out[0])), C.size_t(len(out)), &part)
 	switch {
 	case n == -2:
 		return nil, errors.New("cwire: wrong channel")

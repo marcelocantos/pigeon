@@ -644,15 +644,14 @@ func TestE2EMultiStreamMultiDatagram(t *testing.T) {
 				if err != nil {
 					return
 				}
-				_ = pingCh.Send(append([]byte("pong:"), p...))
+				_ = pingCh.Send(append([]byte("pong:"), p.Payload...))
 				echoes.Add(1)
 			}
 		}()
 		go func() {
 			metric := sess.Datagram("metric")
 			for {
-				_, err := metric.Recv(ctx)
-				if err != nil {
+				if _, err := metric.Recv(ctx); err != nil {
 					return
 				}
 				_ = metric.Send([]byte("n=42"))
@@ -703,24 +702,24 @@ func TestE2EMultiStreamMultiDatagram(t *testing.T) {
 	if err := ping.Send([]byte("p1")); err != nil {
 		t.Fatalf("ping send: %v", err)
 	}
-	got, err = ping.Recv(ctx)
+	part, err := ping.Recv(ctx)
 	if err != nil {
 		t.Fatalf("ping recv: %v", err)
 	}
-	if string(got) != "pong:p1" {
-		t.Fatalf("ping: got %q", got)
+	if string(part.Payload) != "pong:p1" {
+		t.Fatalf("ping: got %q", part.Payload)
 	}
 
 	// Round-trip on metric (datagram).
 	if err := metric.Send([]byte("get")); err != nil {
 		t.Fatalf("metric send: %v", err)
 	}
-	got, err = metric.Recv(ctx)
+	part, err = metric.Recv(ctx)
 	if err != nil {
 		t.Fatalf("metric recv: %v", err)
 	}
-	if string(got) != "n=42" {
-		t.Fatalf("metric: got %q", got)
+	if string(part.Payload) != "n=42" {
+		t.Fatalf("metric: got %q", part.Payload)
 	}
 
 	// Round-trip on control. Backend's echo count should now be 1
@@ -960,11 +959,11 @@ func TestE2ELANUpgrade(t *testing.T) {
 		go func() {
 			dg := sess.Datagram("probe")
 			for {
-				msg, err := dg.Recv(ctx)
+				part, err := dg.Recv(ctx)
 				if err != nil {
 					return
 				}
-				_ = dg.Send(append([]byte("pong:"), msg...))
+				_ = dg.Send(append([]byte("pong:"), part.Payload...))
 			}
 		}()
 
@@ -1049,12 +1048,12 @@ func TestE2ELANUpgrade(t *testing.T) {
 	if err := dg.Send([]byte("ping")); err != nil {
 		t.Fatalf("datagram send: %v", err)
 	}
-	dgot, err := dg.Recv(ctx)
+	dpart, err := dg.Recv(ctx)
 	if err != nil {
 		t.Fatalf("datagram recv: %v", err)
 	}
-	if string(dgot) != "pong:ping" {
-		t.Fatalf("datagram: got %q want %q", dgot, "pong:ping")
+	if string(dpart.Payload) != "pong:ping" {
+		t.Fatalf("datagram: got %q want %q", dpart.Payload, "pong:ping")
 	}
 
 	_ = sess.Close()

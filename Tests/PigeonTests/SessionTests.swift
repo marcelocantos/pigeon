@@ -178,7 +178,9 @@ final class SessionTests: XCTestCase {
 
         try await aPing.send(Data("p1".utf8))
         let got = try await bPing.recv()
-        XCTAssertEqual(got.map { String(decoding: $0, as: UTF8.self) }, "p1")
+        XCTAssertEqual(got?.total, 1)
+        XCTAssertEqual(got?.index, 0)
+        XCTAssertEqual(got.map { String(decoding: $0.payload, as: UTF8.self) }, "p1")
     }
 
     func testUnknownDatagramChannelThrows() throws {

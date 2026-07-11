@@ -541,7 +541,22 @@ typedef struct {
         char                  name[PIGEON_MAX_NAME_LEN];
         bool                  in_use;
     } incoming[PIGEON_SESSION_MAX_INCOMING];
+
+    // 🎯T59: max outer QUIC datagram size used when splitting Send into
+    // parts. Defaults to PIGEON_WIRE_MAX_DATAGRAM_PAYLOAD. next_dg_msg_id
+    // assigns MsgID values for multi-part messages.
+    size_t   max_dg_payload;
+    uint32_t next_dg_msg_id;
 } pigeon_session;
+
+// Metadata for one delivered datagram part (🎯T59). Whole messages have
+// total=1 and index=0. Multi-part messages share msg_id; parts are
+// delivered as each QUIC datagram arrives (no library reassembly).
+typedef struct {
+    uint32_t msg_id;
+    uint16_t index;
+    uint16_t total;
+} pigeon_datagram_part;
 
 typedef struct {
     pigeon_session       *session;
@@ -664,24 +679,24 @@ int pigeon_stream_close(pigeon_stream *s);
 // the pigeon_session struct can still be re-initialised afterwards.
 void pigeon_session_close(pigeon_session *s);
 
-// Send one datagram on the named channel. Wraps with the post-T45
-// framing (AEAD([varint id][payload])). Returns 0 on success.
+// Send a logical message on the named channel. Small payloads go as one
+// whole part (0x00 + AEAD). Larger payloads are split into independently
+// AEAD'd parts (0x40 + msgID/index/total) so each can be delivered as it
+// arrives (🎯T59). Returns 0 on success, -1 on error.
 int pigeon_datagram_send(pigeon_datagram *d,
                          const uint8_t *payload, size_t payload_len);
 
-// Receive the next datagram on the connection's datagram channel.
-// AEAD-decrypts, parses the channel-id, and — if the channel-id
-// matches the requested datagram — copies the application payload to
-// `buf` and returns its length. If the channel-id doesn't match,
-// returns 0 (the caller should re-dispatch this datagram). Returns -1
-// on framing or AEAD error.
+// Receive the next part on the connection's datagram channel (🎯T59).
+// Each QUIC datagram is delivered immediately with part metadata — the
+// library does not reassemble multi-part messages.
 //
-// Application code that wants per-channel queues should run a single
-// pump on the connection's datagram channel and demultiplex into
-// per-channel buffers; pigeon_datagram_recv is a single-channel
-// convenience for tests and simple client-side patterns.
+// AEAD-decrypts, parses the channel-id, and — if the channel-id matches
+// the requested datagram — copies the application payload chunk to `buf`,
+// fills *part, and returns the chunk length. If the channel-id doesn't
+// match, returns -2. Returns -1 on framing / AEAD / transport error.
 int pigeon_datagram_recv(pigeon_datagram *d,
-                         uint8_t *buf, size_t buf_len);
+                         uint8_t *buf, size_t buf_len,
+                         pigeon_datagram_part *part);
 
 // --- Pairing ceremony wire driver ---
 //

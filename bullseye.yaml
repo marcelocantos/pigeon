@@ -1809,9 +1809,10 @@ targets:
     achieved: 2026-07-11
   T59:
     name: datagram fragmentation delivers each part as it arrives with message metadata
-    status: identified
+    status: achieved
     value: 8.0
     cost: 5.0
+    actual_cost: 5.0
     acceptance:
     - Datagram.Send splits oversized app payloads into independently-AEAD'd parts under 0x00 (whole) / 0x40 (fragment) outer framing
     - Each inbound QUIC datagram is delivered immediately as a DatagramPart {MsgID, Index, Total, Payload} — no receiver-side reassembly wait
@@ -1823,6 +1824,7 @@ targets:
     context: Supersedes transparent reassembly (v0.9.0 / original T59 draft). Send still auto-fragments. Recv always surfaces each part as it arrives with MsgID/Index/Total so apps can reassemble, cancel, or stream partial data themselves. Incomplete parts are simply never completed by the peer (datagram loss) — no 5s reassembly buffer on the library path. Channel ID remains inside per-part AEAD (T45).
     origin: manual
     discovered: 2026-07-11
+    achieved: 2026-07-11
   T6:
     name: WebTransport relay
     status: achieved

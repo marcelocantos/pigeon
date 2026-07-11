@@ -589,6 +589,10 @@ type Session struct {
 	lanReady     chan struct{} // closed on successful upgrade; nil if not configured
 	lanReadyOnce sync.Once
 
+	// maxDgPayload is the max QUIC datagram size used when deciding to
+	// split Send into parts (🎯T59). Tests may shrink it.
+	maxDgPayload int
+
 	closeOnce sync.Once
 }
 
@@ -606,6 +610,7 @@ func newSession(ctx context.Context, tr *transport, mat *cwire.SessionMaterial, 
 		bufferedStreams: make(map[string][]io.ReadWriteCloser),
 		dgConfig:        make(map[string]uint64, len(dgConfig)),
 		datagrams:       make(map[uint64]*Datagram, len(dgConfig)),
+		maxDgPayload:    MaxDatagramPayload,
 	}
 	if mat != nil {
 		dg, err := mat.DatagramChannel()
@@ -623,7 +628,7 @@ func newSession(ctx context.Context, tr *transport, mat *cwire.SessionMaterial, 
 			name:    name,
 			id:      id,
 			session: s,
-			rx:      make(chan []byte, 32),
+			rx:      make(chan DatagramPart, 64),
 		}
 	}
 	return s
@@ -840,8 +845,9 @@ func (s *Session) Datagram(name string) *Datagram {
 	return s.datagrams[id]
 }
 
-// deliverIncomingDatagram routes a decrypted, channel-id-prefixed
-// datagram to the matching *Datagram's rx queue.
+// deliverIncomingDatagram deframes one QUIC datagram (🎯T59), decrypts
+// its AEAD body, and immediately delivers a DatagramPart to the matching
+// channel — no reassembly. Lost parts simply never arrive.
 //
 // Why not the executor's chan-datagram surface (T39.4 deferred):
 // docs/session-protocol.md §Boundaries puts datagram I/O *through*
@@ -864,7 +870,11 @@ func (s *Session) deliverIncomingDatagram(payload []byte) {
 		slog.Debug("session: datagram on pairing-mode session, dropping", "peer", s.peerID, "len", len(payload))
 		return
 	}
-	plain, err := s.dgChannel.Decrypt(payload)
+	msgID, index, total, ct, ok := decodePartWire(payload)
+	if !ok || len(ct) == 0 {
+		return
+	}
+	plain, err := s.dgChannel.Decrypt(ct)
 	if err != nil {
 		slog.Debug("session: datagram decrypt", "peer", s.peerID, "err", err)
 		return
@@ -881,8 +891,9 @@ func (s *Session) deliverIncomingDatagram(payload []byte) {
 	}
 	cp := make([]byte, len(body))
 	copy(cp, body)
+	part := DatagramPart{MsgID: msgID, Index: index, Total: total, Payload: cp}
 	select {
-	case dg.rx <- cp:
+	case dg.rx <- part:
 	case <-s.ctx.Done():
 	default:
 		slog.Warn("session: datagram queue full, dropping", "channel", dg.name)
@@ -1005,40 +1016,86 @@ type Datagram struct {
 	name    string
 	id      uint64
 	session *Session
-	rx      chan []byte
+	rx      chan DatagramPart
 }
 
-// Send transmits a single datagram on this channel. The wire format is
-// AEAD([varint channel-id][payload]); the relay forwards it opaquely on
-// this session's own connection, so no routing prefix is added.
+// Send transmits a logical message on this channel. Small payloads go
+// as one whole part (0x00). Larger payloads are split into independently
+// AEAD'd parts (0x40 + metadata) so each can be delivered as it arrives
+// (🎯T59). The relay forwards each QUIC datagram opaquely.
 func (d *Datagram) Send(payload []byte) error {
 	if d.session.dgChannel == nil {
 		return errors.New("datagram: no AEAD channel (pairing-mode session)")
-	}
-	plain := EncodeDatagramPlaintext(d.id, payload)
-	ct, err := d.session.dgChannel.Encrypt(plain)
-	if err != nil {
-		return fmt.Errorf("datagram: encrypt: %w", err)
 	}
 	tr := d.session.currentTransport()
 	if tr == nil {
 		return io.ErrClosedPipe
 	}
-	return tr.SendDatagram(ct)
+	maxP := d.session.maxDgPayload
+	if maxP <= 0 {
+		maxP = MaxDatagramPayload
+	}
+
+	// Whole-message budget: 1-byte prefix + AEAD(cid||payload).
+	// Use a conservative 10-byte varint allowance for channel-id sizing.
+	wholeBudget := maxAppChunk(maxP, 1, 10)
+	if len(payload) <= wholeBudget {
+		plain := EncodeDatagramPlaintext(d.id, payload)
+		ct, err := d.session.dgChannel.Encrypt(plain)
+		if err != nil {
+			return fmt.Errorf("datagram: encrypt: %w", err)
+		}
+		return tr.SendDatagram(encodePartWire(0, 0, 1, ct))
+	}
+
+	// Multi-part: each part has 1+8 outer overhead.
+	chunkBudget := maxAppChunk(maxP, 1+FragHeaderSize, 10)
+	if chunkBudget < 1 {
+		return ErrDatagramTooLarge
+	}
+	total := (len(payload) + chunkBudget - 1) / chunkBudget
+	if total > 65535 {
+		return ErrDatagramTooLarge
+	}
+	if total < 2 {
+		total = 2
+	}
+	msgID := nextFragMsgID.Add(1)
+	for i := 0; i < total; i++ {
+		start := i * chunkBudget
+		end := start + chunkBudget
+		if end > len(payload) {
+			end = len(payload)
+		}
+		// Last empty slice only if payload empty multi-path — skip.
+		chunk := payload[start:end]
+		plain := EncodeDatagramPlaintext(d.id, chunk)
+		ct, err := d.session.dgChannel.Encrypt(plain)
+		if err != nil {
+			return fmt.Errorf("datagram: encrypt part %d: %w", i, err)
+		}
+		wire := encodePartWire(msgID, uint16(i), uint16(total), ct)
+		if err := tr.SendDatagram(wire); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
-// Recv blocks until the next datagram on this channel arrives.
-func (d *Datagram) Recv(ctx context.Context) ([]byte, error) {
+// Recv blocks until the next part arrives on this channel. Each call
+// returns one DatagramPart as soon as its QUIC datagram is received —
+// multi-part messages are not reassembled by the library (🎯T59).
+func (d *Datagram) Recv(ctx context.Context) (DatagramPart, error) {
 	select {
-	case msg, ok := <-d.rx:
+	case part, ok := <-d.rx:
 		if !ok {
-			return nil, io.ErrClosedPipe
+			return DatagramPart{}, io.ErrClosedPipe
 		}
-		return msg, nil
+		return part, nil
 	case <-ctx.Done():
-		return nil, ctx.Err()
+		return DatagramPart{}, ctx.Err()
 	case <-d.session.ctx.Done():
-		return nil, io.ErrClosedPipe
+		return DatagramPart{}, io.ErrClosedPipe
 	}
 }
 
