@@ -199,10 +199,8 @@ func NewWebTransportServerWithHub(addr string, tlsConfig *tls.Config, auth Auth,
 	webtransport.ConfigureHTTP3Server(wtServer.H3)
 	s.wtServer = wtServer
 
-	mux.HandleFunc("/health", func(w http.ResponseWriter, _ *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(`{"status":"ok"}`))
-	})
+	mux.HandleFunc("/health", HandleHealth)
+	mux.HandleFunc("/status", HandleStatus)
 
 	mux.HandleFunc("/pigeon", func(w http.ResponseWriter, r *http.Request) {
 		s.handlePigeon(w, r)

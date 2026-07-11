@@ -135,6 +135,13 @@ jobs:
       - name: Init vendored libsodium submodule
         run: git submodule update --init --depth 1 c/vendor/github.com/jedisct1/libsodium
       - uses: superfly/flyctl-actions/setup-flyctl@master
-      - run: flyctl deploy --remote-only
+      # Stamp the image with a human version (nearest tag + dirty state)
+      # and the full commit SHA so GET /status is authoritative on Fly.
+      - name: Deploy
+        run: |
+          VERSION=$(git describe --tags --always --dirty)
+          flyctl deploy --remote-only \
+            --build-arg "VERSION=${VERSION}" \
+            --build-arg "COMMIT=${GITHUB_SHA}"
         env:
           FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}

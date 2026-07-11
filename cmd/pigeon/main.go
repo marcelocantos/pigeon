@@ -6,9 +6,10 @@
 // register and receive a unique instance ID. Clients connect by ID
 // and all traffic is forwarded bidirectionally (streams and datagrams).
 //
-// Endpoints (WebTransport, HTTP/3):
+// Endpoints (WebTransport HTTP/3, and HTTPS when --domain is set):
 //
-//	GET /health   — health check
+//	GET /health   — liveness probe ({"status":"ok"})
+//	GET /status   — process info (version, commit, uptime)
 //	GET /pigeon   — single entry point; the role (register / listen /
 //	                connect) is set by the greeting on the primary stream
 //
@@ -95,6 +96,12 @@ func certSHA256Hex(cert tls.Certificate) string {
 }
 
 func main() {
+	// Bridge -ldflags "-X main.version=..." into the library status
+	// handler so GET /status and --version agree.
+	if version != "" {
+		pigeon.Version = version
+	}
+
 	showVersion := flag.Bool("version", false, "print version and exit")
 	helpAgent := flag.Bool("help-agent", false, "print help and agent guide")
 	port := flag.String("port", "", "WebTransport listening port (overrides PORT env var)")
@@ -108,7 +115,7 @@ func main() {
 	flag.Parse()
 
 	if *showVersion {
-		fmt.Println(version)
+		fmt.Println(pigeon.Version)
 		os.Exit(0)
 	}
 
@@ -216,26 +223,25 @@ func main() {
 	// for ACME TLS-ALPN-01 challenges and HTTPS health checks.
 	if *domain != "" {
 		healthMux := http.NewServeMux()
-		healthMux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
-			// Alt-Svc header tells browsers that HTTP/3 (and thus WebTransport)
-			// is available on the same port.
-			w.Header().Set("Alt-Svc", `h3=":443"; ma=86400`)
-			// CORS headers for browser access from any origin.
-			w.Header().Set("Access-Control-Allow-Origin", "*")
-			w.Header().Set("Access-Control-Allow-Methods", "GET, OPTIONS")
-
-			if r.Method == "OPTIONS" {
-				w.WriteHeader(204)
-				return
+		// Shared headers for browser Alt-Svc priming and CORS on
+		// diagnostic GETs (/health, /status).
+		withDiagHeaders := func(next http.HandlerFunc) http.HandlerFunc {
+			return func(w http.ResponseWriter, r *http.Request) {
+				w.Header().Set("Alt-Svc", `h3=":443"; ma=86400`)
+				w.Header().Set("Access-Control-Allow-Origin", "*")
+				w.Header().Set("Access-Control-Allow-Methods", "GET, OPTIONS")
+				if r.Method == http.MethodOptions {
+					w.WriteHeader(http.StatusNoContent)
+					return
+				}
+				next(w, r)
 			}
-
-			if r.URL.Path == "/health" {
-				w.Header().Set("Content-Type", "application/json")
-				_, _ = w.Write([]byte(`{"status":"ok"}`))
-				return
-			}
+		}
+		healthMux.HandleFunc("/health", withDiagHeaders(pigeon.HandleHealth))
+		healthMux.HandleFunc("/status", withDiagHeaders(pigeon.HandleStatus))
+		healthMux.HandleFunc("/", withDiagHeaders(func(w http.ResponseWriter, r *http.Request) {
 			http.NotFound(w, r)
-		})
+		}))
 
 		tcpTLS := tlsConfig.Clone()
 		tcpTLS.NextProtos = []string{"h2", "http/1.1", "acme-tls/1"}
@@ -283,7 +289,8 @@ func main() {
 	slog.Info("pigeon starting",
 		"wt-addr", wtAddr,
 		"quic-addr", qAddr,
-		"version", version,
+		"version", pigeon.Version,
+		"commit", pigeon.Commit,
 	)
 
 	// Start WebTransport server in a goroutine so we can handle signals.

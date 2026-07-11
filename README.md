@@ -394,7 +394,8 @@ are included).
 
 | Route              | Description                                                  |
 |--------------------|--------------------------------------------------------------|
-| `GET /health`      | Health check (returns `{"status":"ok"}`)                     |
+| `GET /health`      | Liveness probe (`{"status":"ok"}`)                           |
+| `GET /status`      | Process info (version, commit, uptime) as JSON               |
 | `GET /pigeon`      | Single entry point; the role (register / listen / connect) is set by the greeting on the primary stream |
 
 Native clients use raw QUIC (ALPN `"pigeon"`) on the QUIC port instead of
@@ -416,7 +417,13 @@ WebTransport; the same greeting selects the role.
 | `--version` | — | Print version and exit |
 | `--help-agent` | — | Print usage + agent guide |
 
-Build-time version injection: `go build -ldflags "-X main.version=v1.0.0" ./cmd/pigeon`
+Build-time version injection:
+
+```bash
+go build -ldflags "-X main.version=v1.0.0 -X github.com/marcelocantos/pigeon.Commit=$(git rev-parse HEAD)" ./cmd/pigeon
+```
+
+Fly deploys pass the same values as Docker build-args so `curl https://…/status` reports the running revision.
 
 Max message frame size: 1 MiB (constant `maxMessageSize`).
 
