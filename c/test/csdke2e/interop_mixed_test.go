@@ -267,24 +267,24 @@ func TestInteropCBackendGoClient(t *testing.T) {
 	if err := ping.Send([]byte("p1")); err != nil {
 		t.Fatalf("ping Send: %v", err)
 	}
-	got, err = ping.Recv(ctx)
+	part, err := ping.Recv(ctx)
 	if err != nil {
 		t.Fatalf("ping Recv: %v", err)
 	}
-	if string(got) != "pong:p1" {
-		t.Fatalf("ping: got %q want %q", got, "pong:p1")
+	if string(part.Payload) != "pong:p1" {
+		t.Fatalf("ping: got %q want %q", part.Payload, "pong:p1")
 	}
 
 	metric := sess.Datagram("metric")
 	if err := metric.Send([]byte("42")); err != nil {
 		t.Fatalf("metric Send: %v", err)
 	}
-	got, err = metric.Recv(ctx)
+	part, err = metric.Recv(ctx)
 	if err != nil {
 		t.Fatalf("metric Recv: %v", err)
 	}
-	if string(got) != "n=42" {
-		t.Fatalf("metric: got %q want %q", got, "n=42")
+	if string(part.Payload) != "n=42" {
+		t.Fatalf("metric: got %q want %q", part.Payload, "n=42")
 	}
 
 	_ = sess.Close()
@@ -383,7 +383,7 @@ func TestInteropGoBackendCClient(t *testing.T) {
 				if err != nil {
 					return
 				}
-				_ = ping.Send(append([]byte("pong:"), msg...))
+				_ = ping.Send(append([]byte("pong:"), msg.Payload...))
 			}
 		}()
 
@@ -391,8 +391,7 @@ func TestInteropGoBackendCClient(t *testing.T) {
 		go func() {
 			metric := bsess.Datagram("metric")
 			for {
-				_, err := metric.Recv(ctx)
-				if err != nil {
+				if _, err := metric.Recv(ctx); err != nil {
 					return
 				}
 				_ = metric.Send([]byte("n=42"))
