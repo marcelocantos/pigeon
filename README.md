@@ -429,6 +429,87 @@ Fly deploys pass the same values as Docker build-args so `curl https://…/statu
 
 Max message frame size: 1 MiB (constant `maxMessageSize`).
 
+## Consuming pigeon from another app
+
+Pigeon is two surfaces: a **Go module** and a **Swift package** (`Package.swift`).
+Prefer **sibling checkouts** or a **tagged GitHub dependency** over vendoring
+or git submodules — same pattern as Jevons.
+
+### Go
+
+```bash
+go get github.com/marcelocantos/pigeon@v0.32.0   # or latest tag
+```
+
+Local development (sibling clone next to your module):
+
+```go
+// go.mod
+replace github.com/marcelocantos/pigeon => ../pigeon
+```
+
+Public API entry points: root package `Register` / `Connect` / `Session`,
+plus `crypto`, `pairing`, `qr`, `backchannel`. See `examples/echo/`.
+
+### Swift / iOS (SPM)
+
+The product name is **`Pigeon`** (depends on the `CPigeon` C target).
+
+**Path dependency** (XcodeGen / Xcode local package — best while iterating):
+
+```yaml
+# project.yml
+packages:
+  Pigeon:
+    path: ../../pigeon   # sibling of your app repo
+targets:
+  YourApp:
+    dependencies:
+      - package: Pigeon
+        product: Pigeon
+```
+
+**Versioned GitHub dependency** (release / CI pin — as in Jevons):
+
+```yaml
+packages:
+  Pigeon:
+    url: https://github.com/marcelocantos/pigeon
+    from: 0.32.0
+```
+
+One-time on each machine that builds the C stack from source:
+
+```bash
+make build-vendor-deps   # libsodium + quictls + ngtcp2 static libs
+```
+
+Notes:
+
+- `Package.swift` links those static libs with linker `unsafeFlags` and
+  **absolute paths** (rooted at the package checkout via `#filePath`).
+  Relative `c/vendor/…` flags resolve against the *app* CWD when Xcode
+  links the consumer dylib and break path/git dependents (Orthograph,
+  Jevons, …).
+- **`make build-vendor-deps` builds for the host (macOS) today.** Linking
+  into an iOS / iOS-Simulator app will fail with “building for iOS-simulator,
+  but linking in object file … built for macOS” until multi-platform
+  (iphoneos / iphonesimulator) vendor artifacts or an XCFramework land.
+  macOS app / `swift build` on Mac is fine. Jevons still pins older
+  pure-Swift tags (`0.19.x`) that predate the CPigeon static stack.
+- Fine for an **application** target (Xcode / XcodeGen). A pure SwiftPM
+  *library* that depends on Pigeon may still be rejected by SPM’s
+  unsafe-flag rules — prefer depending from the app target, or open an
+  issue if you need a binary XCFramework product.
+- Minimum platforms: iOS 16, macOS 13.
+- Import: `import Pigeon`.
+
+### Orthograph
+
+Orthograph’s daemon uses the Go module; the iPad app uses the Swift
+package via path `../../pigeon`. See orthograph `AGENTS.md` (Sibling
+dependencies).
+
 ## Running Tests
 
 ```bash

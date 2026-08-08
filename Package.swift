@@ -1,7 +1,14 @@
 // swift-tools-version: 5.9
 
+import Foundation
 import PackageDescription
 
+// Product: library "Pigeon" (import Pigeon). Consumable as:
+//   - SPM path dependency (local sibling / XcodeGen path:)
+//   - SPM git dependency (url: github.com/marcelocantos/pigeon, from: tag)
+//   - Go module github.com/marcelocantos/pigeon (separate from this manifest)
+// See README.md § "Consuming pigeon from another app".
+//
 // Header / linker settings for the vendored C stack. CPigeon's amalgamated
 // source (dist/pigeon.c) is built with -DPIGEON_CRYPTO_LIBSODIUM and pulls
 // AEAD primitives from libsodium; the ngtcp2 transport build unit
@@ -15,6 +22,20 @@ import PackageDescription
 // them rather than asking SwiftPM to discover them dynamically. Callers
 // must run `make build-vendor-deps` (or at minimum
 // `bash c/vendor/build.sh libsodium openssl ngtcp2`) before `swift build`.
+//
+// Linker paths use absolute paths derived from this Package.swift location.
+// Relative "c/vendor/..." flags resolve against the *consumer* CWD when an
+// app depends on this package (Xcode link of the app dylib) — that broke
+// orthograph/jevons-style path consumers. Absolute paths keep the libs
+// found regardless of who links.
+//
+// unsafeFlags are still required for arbitrary .a paths. App targets
+// (Xcode) may depend on this package; pure SPM library dependents may not.
+let packageRoot = URL(fileURLWithPath: #filePath)
+    .deletingLastPathComponent()
+    .path
+let vendorLibDir = packageRoot + "/c/vendor/build/lib"
+
 let cpigeonCSettings: [CSetting] = [
     .define("PIGEON_CRYPTO_LIBSODIUM"),
     // dist/pigeon.h is included by cpigeon.c via "../../dist/pigeon.c".
@@ -35,15 +56,13 @@ let cpigeonCSettings: [CSetting] = [
 ]
 
 let cpigeonLinkerSettings: [LinkerSetting] = [
-    // Linker unsafeFlags resolve relative to the package root. Order
-    // matters: ngtcp2_crypto_quictls depends on ngtcp2 + openssl,
-    // ngtcp2 depends on openssl. Libsodium last (no deps).
+    // Order: ngtcp2_crypto_quictls → ngtcp2 → openssl → libsodium.
     .unsafeFlags([
-        "c/vendor/build/lib/libngtcp2_crypto_quictls.a",
-        "c/vendor/build/lib/libngtcp2.a",
-        "c/vendor/build/lib/libssl.a",
-        "c/vendor/build/lib/libcrypto.a",
-        "c/vendor/build/lib/libsodium.a",
+        vendorLibDir + "/libngtcp2_crypto_quictls.a",
+        vendorLibDir + "/libngtcp2.a",
+        vendorLibDir + "/libssl.a",
+        vendorLibDir + "/libcrypto.a",
+        vendorLibDir + "/libsodium.a",
     ]),
 ]
 
