@@ -31,6 +31,12 @@ import PackageDescription
 //
 // unsafeFlags are still required for arbitrary .a paths. App targets
 // (Xcode) may depend on this package; pure SPM library dependents may not.
+//
+// Products:
+//   * PigeonCore — pure Swift (pairing artifacts, machines). Links on iOS
+//     device without host-only static libs.
+//   * Pigeon — full stack (PigeonCore + CPigeon + ngtcp2). Host macOS
+//     vendor .a today; iOS once multi-platform vendor build exists.
 let packageRoot = URL(fileURLWithPath: #filePath)
     .deletingLastPathComponent()
     .path
@@ -38,25 +44,12 @@ let vendorLibDir = packageRoot + "/c/vendor/build/lib"
 
 let cpigeonCSettings: [CSetting] = [
     .define("PIGEON_CRYPTO_LIBSODIUM"),
-    // dist/pigeon.h is included by cpigeon.c via "../../dist/pigeon.c".
-    // The amalgamated header itself self-includes; SwiftPM also needs
-    // to find it for the umbrella header, hence the extra search path.
     .headerSearchPath("../../dist"),
-    // Vendored libsodium / ngtcp2 / openssl headers under
-    // c/vendor/build/include. .headerSearchPath paths are relative to
-    // the target source dir (Sources/CPigeon/), so up two levels reaches
-    // the package root.
     .headerSearchPath("../../c/vendor/build/include"),
-    // Canonical pigeon C headers (c/include) — required by the ngtcp2
-    // transport build unit, which #includes "pigeon/ngtcp2_transport.h"
-    // and (transitively) the canonical "pigeon/pigeon.h". The amalgamated
-    // dist/pigeon.h is guard-compatible (PIGEON_H), so the
-    // include-once protection keeps the two coexistent.
     .headerSearchPath("../../c/include"),
 ]
 
 let cpigeonLinkerSettings: [LinkerSetting] = [
-    // Order: ngtcp2_crypto_quictls → ngtcp2 → openssl → libsodium.
     .unsafeFlags([
         vendorLibDir + "/libngtcp2_crypto_quictls.a",
         vendorLibDir + "/libngtcp2.a",
@@ -71,11 +64,9 @@ let package = Package(
     platforms: [.iOS(.v16), .macOS(.v13)],
     products: [
         .library(name: "Pigeon", targets: ["Pigeon"]),
+        .library(name: "PigeonCore", targets: ["PigeonCore"]),
     ],
     targets: [
-        // C target: amalgamated libpigeon (dist/pigeon.c) + an in-process
-        // loopback transport so the Swift tests can exercise the
-        // multi-channel session API without ngtcp2.
         .target(
             name: "CPigeon",
             path: "Sources/CPigeon",
@@ -83,20 +74,24 @@ let package = Package(
             cSettings: cpigeonCSettings,
             linkerSettings: cpigeonLinkerSettings
         ),
+        // Pure Swift: pairing, machines, wire helpers — no CPigeon.
+        .target(
+            name: "PigeonCore",
+            path: "Sources/PigeonCore"
+        ),
+        // Full stack: transport + session over CPigeon; re-exports Core.
         .target(
             name: "Pigeon",
-            dependencies: ["CPigeon"]
+            dependencies: ["CPigeon", "PigeonCore"],
+            path: "Sources/Pigeon"
         ),
-        .testTarget(name: "PigeonTests", dependencies: ["Pigeon", "CPigeon"]),
+        .testTarget(name: "PigeonTests", dependencies: ["Pigeon", "PigeonCore", "CPigeon"]),
         .testTarget(name: "PigeonRelayE2ETests", dependencies: ["Pigeon"]),
         .executableTarget(
             name: "pigeon-e2e-swift",
             dependencies: ["Pigeon"],
             path: "e2e/swift"
         ),
-        // pairing-peer-swift drives the Swift PairingCeremony as the
-        // initiator side from a Go acceptor's subprocess, used by the
-        // cross-language test in pairing/cross_swift_test.go.
         .executableTarget(
             name: "pairing-peer-swift",
             dependencies: ["Pigeon"],

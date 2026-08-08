@@ -16,6 +16,7 @@
 
 import CPigeon
 import Foundation
+import PigeonCore
 
 // MARK: - Errors
 
