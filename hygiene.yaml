@@ -1,0 +1,615 @@
+# hygiene.yaml — declared, drift-validated hygiene posture for pigeon.
+# Schema reference: the `hygiene` skill (~/.claude/skills/hygiene/SKILL.md).
+# Validate with `/hygiene`; aggregate the fleet with `/hygiene fleet`. Tracks
+# steady-state ("we maintain X"), the complement to bullseye's aspirational
+# targets ("achieve X").
+#
+# Tiers are PER DIMENSION (schema v1): a dimension's held tier is the highest T
+# such that every item in it with tier <= T is satisfied. `floors` is the
+# per-dimension ratchet (below floor => DRIFT); `aspires` is the gap horizon;
+# `enforce` is intent-only and does not affect tiers.
+
+schema_version: 1
+
+repo: pigeon
+aspires: 3
+floors:            # per-dimension held-tier ratchet; below floor => DRIFT
+  correctness: 2   # Go+Swift+Playwright in CI; full SDK/TLC matrix is local bullseye
+  security: 2      # go.sum pin; GitHub secret scanning is T3
+  quality: 0       # gofmt/vet live in `make bullseye` only, not GitHub Actions
+  deps: 2          # go.sum + web/package-lock.json committed
+  release: 2       # CI-built tarballs + Homebrew + Fly deploy; no CHANGELOG
+  governance: 2    # Apache LICENSE + squash-only + NOTICES
+  build: 2         # go.mod pin, Makefile, Dockerfile, amalgamate job
+  docs: 1          # README/agents-guide/DESIGN/STABILITY; no docs-in-CI
+  perf: 0          # make bench exists but there are no Benchmark functions
+  vcs: 1           # default branch is master; no hooks, no branch protection
+  agent: 2         # CLAUDE.md + bullseye.yaml; no AGENTS.md
+
+tiers:
+  1: baseline    # LICENSE + README + .gitignore; tests build & run
+  2: maintained  # full matrix, examples run, lint/format, release + governance
+  3: hardened    # formal specs, security scanning, SBOM/signing, fuzzing, perf
+
+items:
+
+  # ============================== CORRECTNESS =============================
+  - id: correctness.tests
+    dim: correctness
+    desc: go test ./... runs on every push/PR (ci.yml `test` job)
+    state: enforced
+    cadence: continuous
+    enforce: blocking
+    tier: 1
+    evidence: {ci_job: ci.yml#test}
+
+  - id: correctness.make-test
+    dim: correctness
+    desc: Makefile `test` target runs Go, Swift, Kotlin, and web unit suites
+    state: present
+    cadence: continuous
+    enforce: blocking
+    tier: 1
+    evidence: {make_target: test}
+
+  - id: correctness.swift-ci
+    dim: correctness
+    desc: swift test runs on macos-latest in CI
+    state: enforced
+    cadence: continuous
+    enforce: blocking
+    tier: 2
+    evidence: {ci_job: ci.yml#swift-test}
+
+  - id: correctness.web-e2e
+    dim: correctness
+    desc: Playwright WebTransport browser E2E runs in CI
+    state: enforced
+    cadence: continuous
+    enforce: blocking
+    tier: 2
+    evidence: {ci_job: ci.yml#web-e2e}
+
+  - id: correctness.release-multitarget
+    dim: correctness
+    desc: Release builds (and linux-amd64 tests) across darwin-arm64, linux-amd64, linux-arm64
+    state: present
+    cadence: per-release
+    enforce: warning
+    tier: 2
+    evidence: {ci_job: release.yml#build}
+
+  - id: correctness.bullseye
+    dim: correctness
+    desc: Local `make bullseye` is the durable green signal (all SDKs + TLC)
+    state: present
+    cadence: continuous
+    enforce: warning
+    tier: 2
+    evidence: {make_target: bullseye}
+
+  - id: correctness.formal-tla
+    dim: correctness
+    desc: PairingCeremony + SessionMachine TLC runs as part of `make bullseye`
+    state: present
+    cadence: continuous
+    enforce: warning
+    tier: 3
+    evidence: {file: {path: Makefile, matches: './tlc PairingCeremony'}}
+
+  - id: correctness.kotlin-ci
+    dim: correctness
+    desc: Kotlin/Android unit tests run in GitHub Actions
+    state: planned
+    cadence: continuous
+    enforce: warning
+    tier: 3
+    reason: >-
+      :pigeon:test runs in local make bullseye / make test-kotlin only; no CI job.
+    evidence: {absent: {ci_job: ci.yml#kotlin}}
+
+  - id: correctness.c-ci
+    dim: correctness
+    desc: Amalgamated C tests (and ASan) run in GitHub Actions
+    state: planned
+    cadence: continuous
+    enforce: warning
+    tier: 3
+    reason: >-
+      make test-c / test-c-asan are local (bullseye / bullseye-strict); CI only
+      checks dist/ freshness.
+    evidence: {absent: {ci_job: ci.yml#test-c}}
+
+  - id: correctness.tlc-ci
+    dim: correctness
+    desc: TLC model checking runs in GitHub Actions
+    state: planned
+    cadence: continuous
+    enforce: warning
+    tier: 3
+    reason: PairingCeremony + SessionMachine run in local bullseye; PathSwitch is not in bullseye or CI.
+    evidence: {absent: {ci_job: ci.yml#tlc}}
+
+  - id: correctness.windows
+    dim: correctness
+    desc: Windows CI / Windows relay binary
+    state: skipped
+    cadence: continuous
+    enforce: informational
+    tier: 3
+    reason: >-
+      Release matrix is darwin-arm64 + linux-amd64 + linux-arm64. CGO + vendored
+      libsodium is not claimed on Windows.
+    evidence: {absent: {ci_job: ci.yml#windows}}
+
+  - id: correctness.fuzzing
+    dim: correctness
+    desc: Fuzz harnesses over pairing/crypto/wire parsers
+    state: planned
+    cadence: continuous
+    enforce: informational
+    tier: 3
+    reason: Crypto and pairing are unit-tested (plus TLC locally); no go test -fuzz targets.
+    evidence: {absent: {make_target: fuzz}}
+
+  # =========================== SECURITY / SUPPLY ==========================
+  - id: security.dep-pinning
+    dim: security
+    desc: go.sum committed — reproducible, pinned module graph
+    state: present
+    cadence: per-release
+    enforce: warning
+    tier: 2
+    evidence: {file: {path: go.sum}}
+
+  - id: security.secret-scan
+    dim: security
+    desc: GitHub secret scanning is enabled on the repo
+    state: enforced
+    cadence: once-must-hold
+    enforce: blocking
+    tier: 3
+    evidence:
+      {gh_setting: {key: security_and_analysis.secret_scanning.status, equals: enabled}}
+
+  - id: security.push-protection
+    dim: security
+    desc: Secret-scanning push protection is enabled
+    state: enforced
+    cadence: once-must-hold
+    enforce: blocking
+    tier: 3
+    evidence:
+      {
+        gh_setting: {
+          key: security_and_analysis.secret_scanning_push_protection.status,
+          equals: enabled,
+        }
+      }
+
+  - id: security.gitleaks
+    dim: security
+    desc: gitleaks scanner in CI
+    state: skipped
+    cadence: continuous
+    enforce: informational
+    tier: 3
+    reason: >-
+      GitHub native secret scanning and push protection are enabled; a second
+      gitleaks job would duplicate that gate. Reclassify if a local/CI scanner
+      is added.
+    evidence: {absent: {scanner: {tool: gitleaks}}}
+
+  - id: security.vuln-scan
+    dim: security
+    desc: govulncheck (or equivalent) runs in CI over the module
+    state: planned
+    cadence: periodic:30d
+    enforce: warning
+    tier: 3
+    reason: go.sum is pinned but no govulncheck (or OSV) job runs against it yet.
+    evidence: {absent: {scanner: {tool: govulncheck}}}
+
+  - id: security.dependabot
+    dim: security
+    desc: Dependabot (or equivalent) watches gomod / npm / gradle for advisories
+    state: planned
+    cadence: periodic:30d
+    enforce: warning
+    tier: 3
+    reason: No .github/dependabot.yml; GitHub Dependabot security updates are disabled.
+    evidence: {absent: {file: {path: .github/dependabot.yml}}}
+
+  - id: security.sast-codeql
+    dim: security
+    desc: CodeQL static analysis for Go
+    state: planned
+    cadence: continuous
+    enforce: informational
+    tier: 3
+    reason: No CodeQL workflow; go vet is local-bullseye only.
+    evidence: {absent: {ci_job: ci.yml#codeql}}
+
+  - id: security.actions-perms
+    dim: security
+    desc: GitHub Actions default token permissions scoped to least privilege
+    state: planned
+    cadence: once-must-hold
+    enforce: warning
+    tier: 3
+    reason: >-
+      ci.yml has no top-level permissions block; release.yml sets
+      `contents: write` on the whole workflow, including the matrix build.
+    evidence: {absent: {ci_step: {workflow: ci.yml, name: permissions}}}
+
+  - id: security.signed-releases
+    dim: security
+    desc: Release artifacts carry provenance / are signed (cosign/sigstore)
+    state: planned
+    cadence: per-release
+    enforce: informational
+    tier: 3
+    reason: >-
+      release.yml uploads tarballs via gh release upload; no signing/attestation
+      step.
+    evidence: {absent: {ci_step: {workflow: release.yml, name: Sign}}}
+
+  # ============================== CODE QUALITY ============================
+  - id: quality.format
+    dim: quality
+    desc: Sources are gofmt-clean, enforced in CI
+    state: planned
+    cadence: continuous
+    enforce: warning
+    tier: 3
+    reason: gofmt -l . runs in local make bullseye only; no CI format step.
+    evidence: {absent: {ci_step: {workflow: ci.yml, name: gofmt}}}
+
+  - id: quality.vet
+    dim: quality
+    desc: go vet runs in CI on every push/PR
+    state: planned
+    cadence: continuous
+    enforce: warning
+    tier: 3
+    reason: go vet runs in local make bullseye only; no CI vet step.
+    evidence: {absent: {ci_step: {workflow: ci.yml, name: vet}}}
+
+  - id: quality.staticcheck
+    dim: quality
+    desc: staticcheck (or golangci-lint) runs in CI
+    state: planned
+    cadence: continuous
+    enforce: informational
+    tier: 3
+    reason: No .golangci.yml and no staticcheck/golangci-lint job.
+    evidence: {absent: {scanner: {tool: golangci-lint}}}
+
+  # =========================== DEPENDENCY HEALTH ==========================
+  - id: deps.go-sum
+    dim: deps
+    desc: go.sum is committed so module versions are pinned
+    state: present
+    cadence: once-must-hold
+    enforce: warning
+    tier: 2
+    evidence: {file: {path: go.sum}}
+
+  - id: deps.npm-lock
+    dim: deps
+    desc: web/package-lock.json is committed so npm versions are pinned
+    state: present
+    cadence: once-must-hold
+    enforce: warning
+    tier: 2
+    evidence: {file: {path: web/package-lock.json}}
+
+  - id: deps.dependabot
+    dim: deps
+    desc: Automated dependency-update PRs (Dependabot or Renovate)
+    state: planned
+    cadence: periodic:30d
+    enforce: informational
+    tier: 3
+    reason: No .github/dependabot.yml; GitHub Dependabot security updates are disabled.
+    evidence: {absent: {file: {path: .github/dependabot.yml}}}
+
+  # ========================== RELEASE & VERSIONING =======================
+  - id: release.ci-built
+    dim: release
+    desc: Release binaries are CI-built (darwin-arm64, linux-amd64, linux-arm64), never locally
+    state: present
+    cadence: per-release
+    enforce: warning
+    tier: 2
+    evidence: {ci_job: release.yml#build}
+
+  - id: release.homebrew
+    dim: release
+    desc: Published to the Homebrew tap on release
+    state: present
+    cadence: per-release
+    enforce: informational
+    tier: 2
+    evidence: {ci_job: release.yml#homebrew}
+
+  - id: release.fly-deploy
+    dim: release
+    desc: Master pushes deploy the relay to Fly.io after the Go test job
+    state: present
+    cadence: continuous
+    enforce: warning
+    tier: 2
+    evidence: {ci_job: ci.yml#deploy}
+
+  - id: release.semver-minor
+    dim: release
+    desc: Git tags are MINOR-only (vMAJOR.MINOR.0)
+    state: present
+    cadence: per-release
+    enforce: blocking
+    tier: 2
+    evidence:
+      command: test -z "$(git tag -l 'v*' | grep -vE '^v[0-9]+\.[0-9]+\.0$')"
+
+  - id: release.changelog
+    dim: release
+    desc: A maintained CHANGELOG records user-visible changes per release
+    state: planned
+    cadence: per-release
+    enforce: warning
+    tier: 3
+    reason: History lives in git + GitHub release notes; no curated CHANGELOG.md yet.
+    evidence: {absent: {file: {path: CHANGELOG.md}}}
+
+  # ============================ GOVERNANCE / META ========================
+  - id: governance.license
+    dim: governance
+    desc: Apache-2.0 LICENSE present
+    state: present
+    cadence: once-must-hold
+    enforce: blocking
+    tier: 1
+    evidence: {file: {path: LICENSE, matches: 'Apache License'}}
+
+  - id: governance.readme
+    dim: governance
+    desc: README present
+    state: present
+    cadence: once-must-hold
+    enforce: blocking
+    tier: 1
+    evidence: {file: {path: README.md}}
+
+  - id: governance.gitignore
+    dim: governance
+    desc: .gitignore covers build artifacts, vendor outputs, IDE/OS files
+    state: present
+    cadence: once-must-hold
+    enforce: warning
+    tier: 1
+    evidence: {file: {path: .gitignore}}
+
+  - id: governance.squash-only
+    dim: governance
+    desc: Repo is squash-merge only, with delete-branch-on-merge
+    state: enforced
+    cadence: once-must-hold
+    enforce: blocking
+    tier: 2
+    evidence: {gh_setting: {key: allow_merge_commit, equals: false}}
+
+  - id: governance.delete-branch
+    dim: governance
+    desc: Head branch is deleted on merge
+    state: enforced
+    cadence: once-must-hold
+    enforce: warning
+    tier: 2
+    evidence: {gh_setting: {key: delete_branch_on_merge, equals: true}}
+
+  - id: governance.notices
+    dim: governance
+    desc: Third-party attribution NOTICES for bundled dependencies
+    state: present
+    cadence: per-release
+    enforce: warning
+    tier: 2
+    evidence: {file: {path: NOTICES, matches: 'Third-Party Software Notices'}}
+
+  - id: governance.security-md
+    dim: governance
+    desc: SECURITY.md documents the vulnerability-disclosure process
+    state: planned
+    cadence: once-must-hold
+    enforce: informational
+    tier: 3
+    reason: Public repo without a published disclosure policy yet.
+    evidence: {absent: {file: {path: SECURITY.md}}}
+
+  - id: governance.codeowners
+    dim: governance
+    desc: CODEOWNERS names reviewers for the tree
+    state: planned
+    cadence: once-must-hold
+    enforce: informational
+    tier: 3
+    reason: Sole-owner repo; no CODEOWNERS file. Review is the owner, not a roster.
+    evidence: {absent: {file: {path: CODEOWNERS}}}
+
+  # ================================= BUILD ===============================
+  - id: build.go-version
+    dim: build
+    desc: Go toolchain pinned in go.mod (go 1.25)
+    state: present
+    cadence: once-must-hold
+    enforce: warning
+    tier: 2
+    evidence: {file: {path: go.mod, matches: '(?m)^go 1\.25'}}
+
+  - id: build.makefile
+    dim: build
+    desc: Makefile exposes build/test/bullseye
+    state: present
+    cadence: once-must-hold
+    enforce: warning
+    tier: 2
+    evidence: {make_target: build}
+
+  - id: build.dockerfile
+    dim: build
+    desc: Multi-stage Dockerfile builds the relay with vendored libsodium
+    state: present
+    cadence: once-must-hold
+    enforce: informational
+    tier: 2
+    evidence: {file: {path: Dockerfile, matches: 'FROM golang:1.25-alpine'}}
+
+  - id: build.amalgamate
+    dim: build
+    desc: CI fails if dist/ amalgamation is stale
+    state: enforced
+    cadence: continuous
+    enforce: blocking
+    tier: 2
+    evidence: {ci_job: ci.yml#amalgamate}
+
+  - id: build.go-sum
+    dim: build
+    desc: Committed go.sum makes the module graph reproducible
+    state: present
+    cadence: once-must-hold
+    enforce: warning
+    tier: 2
+    evidence: {file: {path: go.sum}}
+
+  # ============================ DOCUMENTATION ============================
+  - id: docs.agents-guide
+    dim: docs
+    desc: agents-guide.md is the product-facing agent/SDK doc
+    state: present
+    cadence: once-must-hold
+    enforce: informational
+    tier: 1
+    evidence: {file: {path: agents-guide.md}}
+
+  - id: docs.design
+    dim: docs
+    desc: docs/DESIGN.md records architecture (including accepted runtime-vs-YAML gaps)
+    state: present
+    cadence: once-must-hold
+    enforce: informational
+    tier: 1
+    evidence: {file: {path: docs/DESIGN.md}}
+
+  - id: docs.stability
+    dim: docs
+    desc: STABILITY.md catalogues the public interaction surface
+    state: present
+    cadence: once-must-hold
+    enforce: informational
+    tier: 1
+    evidence: {file: {path: STABILITY.md}}
+
+  - id: docs.todo
+    dim: docs
+    desc: docs/TODO.md is not the work ledger (bullseye.yaml is)
+    state: skipped
+    cadence: once-must-hold
+    enforce: informational
+    tier: 3
+    reason: Global convention bans TODO.md; bullseye.yaml is the intent ledger.
+    evidence: {absent: {file: {path: docs/TODO.md}}}
+
+  - id: docs.md-links
+    dim: docs
+    desc: Internal markdown links resolve in CI
+    state: planned
+    cadence: continuous
+    enforce: informational
+    tier: 3
+    reason: No markdown-link check target or CI step.
+    evidence: {absent: {make_target: check-md-links}}
+
+  # ============================== PERFORMANCE ===========================
+  - id: perf.benchmarks
+    dim: perf
+    desc: Benchmark suite exists and is invocable in CI
+    state: planned
+    cadence: per-release
+    enforce: informational
+    tier: 3
+    reason: >-
+      Makefile `bench` target exists but there are no Benchmark functions and
+      no CI bench job.
+    evidence: {absent: {ci_job: ci.yml#bench}}
+
+  # ============================== VCS / HISTORY =========================
+  - id: vcs.default-branch
+    dim: vcs
+    desc: Default branch is master
+    state: enforced
+    cadence: once-must-hold
+    enforce: blocking
+    tier: 1
+    evidence: {gh_setting: {key: default_branch, equals: master}}
+
+  - id: vcs.branch-protection
+    dim: vcs
+    desc: master is protected and requires the CI `test` job
+    state: planned
+    cadence: once-must-hold
+    enforce: warning
+    tier: 3
+    reason: Branch protection 404; CI runs on push/PR but is not a required check.
+    evidence:
+      absent:
+        command: gh api repos/marcelocantos/pigeon/branches/master/protection --jq .url
+
+  - id: vcs.pre-commit-hook
+    dim: vcs
+    desc: Committed git hooks (scripts/hooks) gate locally before commit
+    state: planned
+    cadence: once-must-hold
+    enforce: informational
+    tier: 3
+    reason: No scripts/hooks; core.hooksPath is the default .git/hooks.
+    evidence: {absent: {file: {path: scripts/hooks/pre-commit}}}
+
+  # =================== AGENT-READINESS / ONBOARDING ====================
+  - id: agent.claude-md
+    dim: agent
+    desc: CLAUDE.md present (project conventions discoverable by agents)
+    state: present
+    cadence: once-must-hold
+    enforce: warning
+    tier: 1
+    evidence: {file: {path: CLAUDE.md}}
+
+  - id: agent.bullseye
+    dim: agent
+    desc: bullseye.yaml present (convergence targets discoverable)
+    state: present
+    cadence: once-must-hold
+    enforce: informational
+    tier: 2
+    evidence: {file: {path: bullseye.yaml}}
+
+  - id: agent.cli-help
+    dim: agent
+    desc: pigeon binary exposes --version
+    state: present
+    cadence: once-must-hold
+    enforce: informational
+    tier: 2
+    evidence: {file: {path: cmd/pigeon/main.go, matches: 'flag.Bool\("version"'}}
+
+  - id: agent.agents-md
+    dim: agent
+    desc: AGENTS.md present (shared agent-instruction file)
+    state: planned
+    cadence: once-must-hold
+    enforce: informational
+    tier: 3
+    reason: Root instruction file is CLAUDE.md; no AGENTS.md yet.
+    evidence: {absent: {file: {path: AGENTS.md}}}
