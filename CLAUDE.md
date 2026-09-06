@@ -116,4 +116,34 @@ Fly.io config in `fly.toml`. Multi-stage Dockerfile (`golang:1.25-alpine`
 
 ## Delivery
 
-Merged to master.
+Merged to master, through a local pre-push gate.
+
+`make gate` (an alias for `make bullseye`) is the oracle. `scripts/hooks/pre-push`
+runs it on every push and refuses the push on a non-zero exit, so the durable
+green signal is executed rather than asserted. Wire it once per clone:
+
+```bash
+make hooks     # git config core.hooksPath scripts/hooks
+```
+
+That redirect makes git read `scripts/hooks/` *instead of* `.git/hooks/`, not in
+addition to it, so every hook this repo needs must be tracked there. The hook
+ends by chaining `git lfs pre-push` (guarded on `git-lfs` being installed) —
+pigeon tracks no LFS objects today, but the chain means it keeps working if that
+changes.
+
+The hook strips `GIT_DIR`, `GIT_INDEX_FILE` and friends before running the gate:
+git exports them into hooks, and anything the gate runs that shells out to git
+against a scratch repo would otherwise operate on this repository.
+
+CI mirrors the same target. `.github/workflows/ci.yml`:
+
+| job | runner | what |
+|---|---|---|
+| `test` | ubuntu | gofmt, `go vet`, `go build`, `go test` — the Fly.io deploy platform |
+| `bullseye` | macOS | `make gate` — the full fan-out (only runner OS with Swift, JDK, clang and node together) |
+| `web-e2e` | ubuntu | Playwright browser WebTransport E2E |
+| `amalgamate` | ubuntu | `dist/` staleness check |
+| `bullseye-strict` | macOS | nightly (and `workflow_dispatch`): ASan/UBSan + `-race` |
+
+`--no-verify` is the owner's emergency bypass, not an agent's.
