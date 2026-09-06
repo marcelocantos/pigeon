@@ -2,8 +2,15 @@ name: ci
 on:
   push:
     branches: [master]
+    tags: ['v*']
   pull_request:
     branches: [master]
+  workflow_dispatch:
+  schedule:
+    # Nightly 14:00 UTC (midnight AEST). The strict gate adds ASan/UBSan on
+    # the C suite and Go's race detector; minutes rather than seconds, so it
+    # runs on a cadence instead of on every push. [owner] to confirm cadence.
+    - cron: '0 14 * * *'
 
 jobs:
   test:
@@ -30,7 +37,17 @@ jobs:
         run: bash c/vendor/build.sh libsodium
       - name: Increase UDP buffer size for QUIC
         run: sudo sysctl -w net.core.rmem_max=7340032 net.core.wmem_max=7340032
-      - run: go test ./...
+      # Linux is pigeon's deploy platform (Fly.io), so the Go legs of the
+      # gate run here as well as in the macOS `bullseye` job below. The
+      # cross-language legs (swift, kotlin, web, C, TLC) need a macOS
+      # runner; see that job.
+      - name: gofmt
+        run: |
+          out=$(gofmt -l .)
+          if [ -n "$out" ]; then echo "::error::gofmt needed:"; echo "$out"; exit 1; fi
+      - run: go vet ./...
+      - run: go build ./...
+      - run: go test -count=1 -timeout=300s ./...
 
   web-e2e:
     runs-on: ubuntu-latest
@@ -86,7 +103,10 @@ jobs:
             exit 1
           fi
 
-  swift-test:
+  # The whole local gate, on the only runner OS that has every toolchain:
+  # `make bullseye` == `make gate` == what the pre-push hook runs. Replaces
+  # the former swift-test job, which was a strict subset of this.
+  bullseye:
     runs-on: macos-latest
     steps:
       - uses: actions/checkout@v6
@@ -119,7 +139,70 @@ jobs:
           bash c/vendor/build.sh libsodium
           bash c/vendor/build.sh openssl
           bash c/vendor/build.sh ngtcp2
-      - run: swift test
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '21'
+      - uses: actions/setup-node@v6
+        with:
+          node-version: "20"
+      - name: Install npm dependencies
+        run: npm ci
+        working-directory: web
+      # JDK21 defaults to a local Homebrew path in the Makefile; on the
+      # runner, point it at the JDK setup-java just installed.
+      - name: make gate (== make bullseye)
+        run: make gate JDK21="$JAVA_HOME"
+
+  # Sanitiser tier: ASan + UBSan on the C suite and Go's race detector on
+  # cwire/crypto/root. Minutes rather than seconds, so it runs nightly
+  # rather than on every push. [owner] to confirm the cadence.
+  bullseye-strict:
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+      - name: Resolve vendor pinned SHAs
+        id: vendor-shas
+        run: |
+          {
+            echo "libsodium=$(git ls-tree HEAD c/vendor/github.com/jedisct1/libsodium | awk '{print $3}')"
+            echo "openssl=$(git ls-tree HEAD c/vendor/github.com/quictls/openssl | awk '{print $3}')"
+            echo "ngtcp2=$(git ls-tree HEAD c/vendor/github.com/ngtcp2/ngtcp2 | awk '{print $3}')"
+          } >> $GITHUB_OUTPUT
+      - name: Cache vendored C deps
+        id: cache-vendor
+        uses: actions/cache@v5
+        with:
+          path: c/vendor/build
+          key: vendor-${{ runner.os }}-sodium-${{ steps.vendor-shas.outputs.libsodium }}-ossl-${{ steps.vendor-shas.outputs.openssl }}-ngtcp2-${{ steps.vendor-shas.outputs.ngtcp2 }}-${{ hashFiles('c/vendor/build.sh') }}
+      - name: Init vendored submodules
+        if: steps.cache-vendor.outputs.cache-hit != 'true'
+        run: |
+          git submodule update --init --depth 1 c/vendor/github.com/jedisct1/libsodium
+          git submodule update --init --depth 1 c/vendor/github.com/quictls/openssl
+          git submodule update --init --depth 1 c/vendor/github.com/ngtcp2/ngtcp2
+      - name: Build vendored C deps
+        if: steps.cache-vendor.outputs.cache-hit != 'true'
+        run: |
+          bash c/vendor/build.sh libsodium
+          bash c/vendor/build.sh openssl
+          bash c/vendor/build.sh ngtcp2
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '21'
+      - uses: actions/setup-node@v6
+        with:
+          node-version: "20"
+      - name: Install npm dependencies
+        run: npm ci
+        working-directory: web
+      - name: make bullseye-strict
+        run: make bullseye-strict JDK21="$JAVA_HOME"
 
   deploy:
     name: Deploy to Fly.io
