@@ -6,8 +6,8 @@ require (
 	github.com/arr-ai/frozen v1.11.0
 	github.com/caddyserver/certmagic v0.25.2
 	github.com/keybase/go-keychain v0.0.1
-	github.com/quic-go/quic-go v0.59.0
-	github.com/quic-go/webtransport-go v0.10.0
+	github.com/quic-go/quic-go v0.60.0
+	github.com/quic-go/webtransport-go v0.11.1
 	github.com/skip2/go-qrcode v0.0.0-20200617195104-da1b6568686e
 	golang.org/x/crypto v0.56.0
 	gopkg.in/yaml.v3 v3.0.1
@@ -16,6 +16,7 @@ require (
 require (
 	github.com/caddyserver/zerossl v0.1.5 // indirect
 	github.com/dunglas/httpsfv v1.1.0 // indirect
+	github.com/go-jose/go-jose/v4 v4.1.5 // indirect
 	github.com/klauspost/cpuid/v2 v2.3.0 // indirect
 	github.com/libdns/libdns v1.1.1 // indirect
 	github.com/mholt/acmez/v3 v3.1.6 // indirect
