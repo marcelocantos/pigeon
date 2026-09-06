@@ -223,6 +223,19 @@ test-c-ngtcp2: build-vendor-deps amalgamate
 	@# can link it.
 	go test -tags csdke2e -count=1 -timeout=120s ./c/test/csdke2e/
 
+# --- TLA+ tools ---
+#
+# formal/tla2tools.jar is gitignored (2.2 MB binary), so a fresh clone has
+# no TLC and the gate's `tlc` leg fails with ClassNotFoundException before
+# this rule existed. Fetch it on demand, pinned; an existing jar is left
+# alone, so a hand-installed nightly still wins.
+TLA_TOOLS_VERSION ?= v1.7.4
+TLA_TOOLS_JAR = formal/tla2tools.jar
+TLA_TOOLS_URL = https://github.com/tlaplus/tlaplus/releases/download/$(TLA_TOOLS_VERSION)/tla2tools.jar
+
+$(TLA_TOOLS_JAR):
+	curl -fsSL -o $@ $(TLA_TOOLS_URL)
+
 # --- Owner gate (pre-push) ---
 #
 # `gate` is the single name the pre-push hook and CI both invoke, so the
@@ -260,7 +273,7 @@ bullseye-strict: bullseye test-c-asan test-go-race
 # the gofmt and go vet/build/test branches scanning the same files.
 # Also build libsodium up front so the test-c branch doesn't race
 # against itself if multiple bullseye-style targets reach it.
-bullseye-prereq: $(SODIUM_SENTINEL)
+bullseye-prereq: $(SODIUM_SENTINEL) $(TLA_TOOLS_JAR)
 	@$(MAKE) -s amalgamate >/dev/null
 
 bullseye: bullseye-prereq

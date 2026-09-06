@@ -147,3 +147,7 @@ CI mirrors the same target. `.github/workflows/ci.yml`:
 | `bullseye-strict` | macOS | nightly (and `workflow_dispatch`): ASan/UBSan + `-race` |
 
 `--no-verify` is the owner's emergency bypass, not an agent's.
+
+`formal/tla2tools.jar` is gitignored, so `make bullseye` fetches it on demand
+(pinned by `TLA_TOOLS_VERSION`, default `v1.7.4`) rather than failing the TLC
+leg on a fresh clone. An already-present jar is never overwritten.
