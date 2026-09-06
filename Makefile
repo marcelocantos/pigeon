@@ -13,7 +13,8 @@ export ANDROID_HOME
         test-live bench clean \
         build-vendor-deps test-c test-c-only test-c-asan test-c-ngtcp2 \
         test-go-race \
-        bullseye bullseye-prereq bullseye-strict demo server
+        bullseye bullseye-prereq bullseye-strict demo server \
+        gate hooks
 
 # --- Build ---
 
@@ -222,6 +223,23 @@ test-c-ngtcp2: build-vendor-deps amalgamate
 	@# can link it.
 	go test -tags csdke2e -count=1 -timeout=120s ./c/test/csdke2e/
 
+# --- Owner gate (pre-push) ---
+#
+# `gate` is the single name the pre-push hook and CI both invoke, so the
+# oracle that runs before a push is the same one that runs on the remote.
+# It is the parallel `bullseye` fan-out (gofmt, go vet, go build, go test,
+# swift, kotlin, web, C, TLC, csdk interop) — not `bullseye-strict`, whose
+# ASan and race legs are minutes rather than seconds and belong on a
+# schedule.
+gate: bullseye
+
+# Point git at the tracked hooks directory. This replaces .git/hooks
+# wholesale — git reads one hooks directory, not both — so every hook this
+# repo needs must live in scripts/hooks/.
+hooks:
+	git config core.hooksPath scripts/hooks
+	@echo "core.hooksPath -> scripts/hooks"
+
 # --- Standing invariants (for bullseye_convergence) ---
 
 # Bullseye runs the SDK suites and TLC concurrently. Each step writes
@@ -256,7 +274,7 @@ bullseye: bullseye-prereq
 	 ( go build ./... > /tmp/bullseye/gobuild.log 2>&1 \
 	   && echo ok > /tmp/bullseye/gobuild.status \
 	   || echo fail > /tmp/bullseye/gobuild.status ) & \
-	 ( go test -count=1 -short -timeout=300s ./... > /tmp/bullseye/gotest.log 2>&1 \
+	 ( go test -count=1 -timeout=300s ./... > /tmp/bullseye/gotest.log 2>&1 \
 	   && echo ok > /tmp/bullseye/gotest.status \
 	   || echo fail > /tmp/bullseye/gotest.status ) & \
 	 ( swift test > /tmp/bullseye/swift-test.log 2>&1 \
