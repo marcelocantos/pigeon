@@ -85,8 +85,13 @@ endif
 
 # --- Benchmarks ---
 
+# Wall-clock benchmarks, reported not gated: throughput here moves by tens
+# of percent with machine load. The gate is the allocation ratchet in
+# crypto/perf_ratchet_test.go, which runs inside the ordinary test suite.
+# Package list, not ".": every benchmark lives in ./crypto, and the old
+# root-only invocation silently measured nothing.
 bench:
-	go test -bench=. -benchtime=2s -count=1 -timeout=120s -run=^$$ .
+	go test -bench=. -benchtime=2s -count=1 -timeout=120s -run=^$$ ./crypto/ .
 
 bench-live:
 ifndef PIGEON_TOKEN

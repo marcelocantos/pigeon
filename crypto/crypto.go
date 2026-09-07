@@ -233,15 +233,28 @@ func NewSymmetricChannel(key []byte, isServer bool) (*Channel, error) {
 	return NewChannel(sendKey, recvKey)
 }
 
+// SeqPrefixLen is the length of the little-endian sequence number that
+// prefixes every ciphertext and doubles as its associated data.
+const SeqPrefixLen = 8
+
 // Encrypt encrypts a plaintext message. The returned ciphertext includes
 // the 8-byte sequence number prefix.
+//
+// The output buffer is allocated once, at its exact final size, and
+// sealed into directly. Sealing into a fresh buffer and then appending it
+// to the prefix allocated the ciphertext twice and copied it once, which
+// cost 2.25 bytes of heap per byte relayed — the whole point of this
+// channel is that every relayed byte passes through here.
 func (c *Channel) Encrypt(plaintext []byte) []byte {
 	seq := c.sendSeq.Add(1) - 1
+	var seqBytes [SeqPrefixLen]byte
+	binary.LittleEndian.PutUint64(seqBytes[:], seq)
 	nonce := makeNonce(c.sendGCM.NonceSize(), seq)
-	seqBytes := make([]byte, 8)
-	binary.LittleEndian.PutUint64(seqBytes, seq)
-	ciphertext := c.sendGCM.Seal(nil, nonce, plaintext, seqBytes)
-	return append(seqBytes, ciphertext...)
+	out := make([]byte, SeqPrefixLen, SeqPrefixLen+len(plaintext)+c.sendGCM.Overhead())
+	copy(out, seqBytes[:])
+	// seqBytes, not out[:SeqPrefixLen]: the associated data must not alias
+	// the buffer Seal is appending into.
+	return c.sendGCM.Seal(out, nonce, plaintext, seqBytes[:])
 }
 
 // Decrypt decrypts a ciphertext message. Verifies the sequence number
