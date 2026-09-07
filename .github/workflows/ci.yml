@@ -69,6 +69,67 @@ jobs:
         run: npm run test:e2e
         working-directory: web
 
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+      - name: gofmt
+        run: |
+          unformatted=$(gofmt -l .)
+          if [ -n "$unformatted" ]; then
+            echo "::error::gofmt reported unformatted files"
+            echo "$unformatted"
+            exit 1
+          fi
+      - run: go vet ./...
+
+  web-unit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
+        with:
+          node-version: "20"
+      - name: Install npm dependencies
+        run: npm ci
+        working-directory: web
+      - run: npm test
+        working-directory: web
+
+  kotlin:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: "21"
+      - name: Run Android SDK unit tests
+        run: ./gradlew -p android :pigeon:test --no-daemon --console=plain
+        working-directory: .
+
+  formal:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: "21"
+      # Every spec `make bullseye` checks, plus PathSwitch, which the local
+      # gate omits even though protocol/pathswitch.yaml ships a generated FSM.
+      - name: Model-check the protocol specs
+        run: |
+          for spec in PairingCeremony SessionMachine PathSwitch; do
+            ./tlc "$spec" | tee "/tmp/$spec.log"
+            grep -q "Model checking completed. No error has been found" "/tmp/$spec.log" \
+              || { echo "::error::TLC did not complete cleanly for $spec"; exit 1; }
+          done
+        working-directory: formal
+
   amalgamate:
     runs-on: ubuntu-latest
     steps:
