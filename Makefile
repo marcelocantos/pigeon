@@ -110,8 +110,13 @@ demo:
 
 # --- Code generation ---
 
+# Every protocol/*.yaml that has generated code checked in must be listed here,
+# or `make generate` silently leaves that machine's output stale while CI's
+# git-diff ratchet still passes.
 generate:
 	go run ./cmd/protogen protocol/pairing.yaml
+	go run ./cmd/protogen protocol/session.yaml
+	go run ./cmd/protogen protocol/pathswitch.yaml
 	go run ./cmd/protogen --wireformats protocol/wireformats.yaml
 
 # --- C library ---

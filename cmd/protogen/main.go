@@ -14,7 +14,7 @@
 //	protocol/<name>_gen.go  (skipped when --root-pkg is set)
 //	formal/<Name>.tla
 //	docs/<name>.puml
-//	Sources/Pigeon/<Name>Machine.swift
+//	Sources/PigeonCore/<Name>Machine.swift
 //	android/pigeon/src/main/kotlin/com.marcelocantos.pigeon/crypto/<Name>Machine.kt
 //	web/src/<Name>Machine.ts
 //	<name>_gen.go           (only when --root-pkg is set)
@@ -24,7 +24,7 @@
 //	wire_gen.go             (root package, default "pigeon")
 //	c/include/pigeon/wire_gen.h
 //	c/src/wire_gen.c
-//	Sources/Pigeon/WireGen.swift
+//	Sources/PigeonCore/WireGen.swift
 //	android/pigeon/src/main/kotlin/com/marcelocantos/pigeon/crypto/WireGen.kt
 //	web/src/wireGen.ts
 package main
@@ -127,11 +127,15 @@ func main() {
 				}
 			}(),
 		},
+		// Diagram paths carry the protocol name, like formal/<Name>.tla above.
+		// Fixed names (docs/transport.puml) meant every protocol wrote the same
+		// two files, so whichever ran last silently won and the others' diagrams
+		// never existed.
 		{
-			path: filepath.Join("docs", "transport.puml"),
+			path: filepath.Join("docs", p.Name+"Transport.puml"),
 			gen: func() error {
 				return writeFile(
-					filepath.Join("docs", "transport.puml"),
+					filepath.Join("docs", p.Name+"Transport.puml"),
 					func(f *os.File) error {
 						return p.ExportPlantUMLActors(f, "Transport", []string{"backend", "client"})
 					},
@@ -139,10 +143,10 @@ func main() {
 			},
 		},
 		{
-			path: filepath.Join("docs", "relay.puml"),
+			path: filepath.Join("docs", p.Name+"Relay.puml"),
 			gen: func() error {
 				return writeFile(
-					filepath.Join("docs", "relay.puml"),
+					filepath.Join("docs", p.Name+"Relay.puml"),
 					func(f *os.File) error {
 						return p.ExportPlantUMLActors(f, "Relay", []string{"relay"})
 					},
@@ -150,10 +154,10 @@ func main() {
 			},
 		},
 		{
-			path: filepath.Join("Sources", "Pigeon", p.Name+"Machine.swift"),
+			path: filepath.Join("Sources", "PigeonCore", p.Name+"Machine.swift"),
 			gen: func() error {
 				return writeFile(
-					filepath.Join("Sources", "Pigeon", p.Name+"Machine.swift"),
+					filepath.Join("Sources", "PigeonCore", p.Name+"Machine.swift"),
 					func(f *os.File) error { return p.ExportSwift(f) },
 				)
 			},
@@ -289,7 +293,7 @@ func runWireformats(specPath, rootPkg string) error {
 		{"wire_gen.go", func(f *os.File) error { return set.ExportGo(f, pkg) }},
 		{filepath.Join("c", "include", "pigeon", "wire_gen.h"), func(f *os.File) error { return set.ExportCHeader(f) }},
 		{filepath.Join("c", "src", "wire_gen.c"), func(f *os.File) error { return set.ExportCImpl(f) }},
-		{filepath.Join("Sources", "Pigeon", "WireGen.swift"), func(f *os.File) error { return set.ExportSwift(f) }},
+		{filepath.Join("Sources", "PigeonCore", "WireGen.swift"), func(f *os.File) error { return set.ExportSwift(f) }},
 		{filepath.Join("android", "pigeon", "src", "main", "kotlin",
 			"com", "marcelocantos", "pigeon", "crypto", "WireGen.kt"),
 			func(f *os.File) error { return set.ExportKotlin(f, "com.marcelocantos.pigeon.crypto") }},

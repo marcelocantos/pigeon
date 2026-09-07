@@ -78,11 +78,19 @@ jobs:
           go-version-file: go.mod
       - name: Regenerate and amalgamate
         run: make amalgamate
-      - name: Check for stale dist files
+      # `make amalgamate` depends on `generate`, so this checks every generated
+      # artifact, not just dist/. Ratcheting dist/ alone let protogen's Swift,
+      # Kotlin, TypeScript and diagram outputs drift for as long as nobody
+      # happened to run `make generate` and look at the result.
+      - name: Check for stale generated files
         run: |
-          if ! git diff --exit-code dist/; then
-            echo "::error::dist/ is out of date. Run 'make amalgamate' and commit the result."
-            git diff dist/
+          if ! git diff --exit-code; then
+            echo "::error::Generated files are out of date. Run 'make amalgamate' and commit the result."
+            exit 1
+          fi
+          if [ -n "$(git status --porcelain --untracked-files=all)" ]; then
+            echo "::error::make amalgamate produced untracked files; commit them."
+            git status --porcelain --untracked-files=all
             exit 1
           fi
 

@@ -6,6 +6,7 @@ package protocol
 import (
 	"fmt"
 	"io"
+	"sort"
 	"strings"
 )
 
@@ -176,10 +177,14 @@ func (p *Protocol) ExportPlantUMLActors(w io.Writer, titleSuffix string, actors 
 				to := findRecvState(p, s.To, s.Msg, dstAlias)
 				label := string(s.Msg)
 				if len(s.Fields) > 0 {
-					var fields []string
+					// Sorted: Go randomises map iteration order, so without
+					// this the same protocol yields a different diagram on
+					// every run and no git-diff ratchet can hold it.
+					fields := make([]string, 0, len(s.Fields))
 					for k := range s.Fields {
 						fields = append(fields, k)
 					}
+					sort.Strings(fields)
 					label += "\\n{" + strings.Join(fields, ", ") + "}"
 				}
 				fmt.Fprintf(&b, "%s -[#888,dashed]-> %s : %s\n", from, to, label)
