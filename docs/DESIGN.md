@@ -1,5 +1,11 @@
 # Pigeon — Design
 
+> **Status (verified 2026-09-07):** architecture map of the **shipped**
+> system. Per-topic specs it links to carry their own status banners — read
+> those before treating any section as a feature list. Known aspirational
+> material: the Go half of
+> [`pairing-lifecycle.md`](pairing-lifecycle.md).
+
 This is the top-level architecture document for pigeon. It is intentionally
 short: deep specifications live in the per-topic documents under `docs/`.
 Read this first to get the conceptual map; then follow the links into the
@@ -676,7 +682,7 @@ not lost):
   fronting multiple independently-addressed services over one pairing
   (the ge/ged case; cascading relay is one deployment shape). Design
   agreed in `docs/multiplexing.md`; tracked by 🎯T44 (+ T44.1–.3).
-  Original exploration: `docs/cascading-relay.md`.
+  Original exploration (archived): [`docs/_archived/cascading-relay.md`](_archived/cascading-relay.md).
 - **BLE proximity oracle** — Bluetooth RSSI as additive evidence
   alongside the pairing confirmation code. See
   `docs/investigations/bluetooth-proximity-oracle.md`.

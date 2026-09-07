@@ -1,5 +1,9 @@
 # Convergence Report
 
+> **Archived 2026-09-07.** A point-in-time snapshot from 2026-04-08, kept for
+> history. Superseded by `bullseye.yaml` and `/cv`; do not read as current
+> project state.
+
 Evaluated: 2026-04-08
 
 ## Standing invariants

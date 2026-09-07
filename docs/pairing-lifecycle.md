@@ -1,5 +1,21 @@
 # Pigeon — Pairing Artifact Lifecycle
 
+> **Status (verified 2026-09-07):** **Shipped in Swift and Kotlin; the Go
+> surface is aspirational.**
+> Shipped: `Sources/PigeonCore/PairingArtifact.swift`,
+> `Sources/PigeonCore/CredentialStore.swift`,
+> `android/pigeon/src/main/kotlin/com/marcelocantos/pigeon/crypto/PairingArtifact.kt`,
+> `CredentialStore.kt`.
+> **Not implemented:** every Go symbol named below —
+> `pigeon.NewPairingHost`, `PairingHost`, `pigeon.NewFileCredentialStore`,
+> `pigeon.ParsePairingArtifactText`, `pigeon.ErrNoCredential`,
+> `ConnectWithArtifact`, `ErrPairingExpired`, `DefaultPairingTTL` — and the
+> `pigeon pair` CLI subcommand (`cmd/pigeon/main.go` parses flags only, no
+> subcommands). Go callers persist a `crypto.PairingRecord`
+> (`crypto/crypto.go:303`, `Marshal`/`UnmarshalPairingRecord`) and reconnect
+> with `pigeon.Connect` (`api.go:427`). The Go blocks below are retained as
+> the intended design, not as a usable API.
+
 This guide walks through the full credential lifecycle that pigeon
 exposes for application-level pairing: a server mints a
 `PairingArtifact`, the artifact reaches the client device through one
@@ -88,7 +104,7 @@ ID. The companion server-side `PairingRecord` must be persisted by
 the application before the client tries to reconnect — otherwise the
 auth handshake will be rejected.
 
-#### Go (in-process)
+#### Go (in-process) — **not implemented; design sketch**
 
 ```go
 host := pigeon.NewPairingHost("https://relay.example.com")
@@ -98,7 +114,7 @@ if err != nil { ... }
 // Transport `artifact` to the client via QR or xcrun.
 ```
 
-#### CLI (`pigeon pair`) — for deploy scripts
+#### CLI (`pigeon pair`) — **not implemented; design sketch**
 
 ```bash
 pigeon pair --relay=https://relay.example.com --instance=device-pippa --format=text
@@ -146,7 +162,7 @@ On first launch the app saves the artifact to a `CredentialStore`.
 Subsequent launches load it from the store instead of looking at the
 delivery channel.
 
-#### Go
+#### Go — **not implemented; design sketch**
 
 ```go
 store := pigeon.NewFileCredentialStore("/var/lib/myapp/pigeon-artifact.json")
@@ -205,10 +221,10 @@ route to a re-pair flow uniformly.
 
 #### Go
 
-> **Note:** The `ConnectWithArtifact` helper (and the surrounding
-> `PairingArtifact` / `CredentialStore` / `PairingHost` API) is not yet
-> implemented in Go. Use `pigeon.Connect` with a `*crypto.PairingRecord`
-> loaded from your own store. See the root `api.go` for the current API.
+> **Not implemented in Go.** There is no `ConnectWithArtifact` helper (nor
+> the surrounding `PairingArtifact` / `CredentialStore` / `PairingHost` API).
+> Use `pigeon.Connect` (`api.go:427`) with a `*crypto.PairingRecord` loaded
+> from your own store.
 
 #### Swift
 
@@ -261,7 +277,8 @@ type CredentialStore struct {
     m  map[string]*crypto.PairingRecord
 }
 
-// Loading the stderr capture from `pigeon pair`:
+// Loading a server-side record you persisted yourself (there is no
+// `pigeon pair` CLI; see the status note at the top of this document):
 data, err := os.ReadFile("/tmp/pigeon-server.json")
 rec, err := crypto.UnmarshalPairingRecord(data)
 store.Save(rec)

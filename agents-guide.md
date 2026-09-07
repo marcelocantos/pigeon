@@ -42,12 +42,13 @@ secret, err := crypto.GenerateSecret() // 32 random bytes
 ### protocol/
 
 ```go
-p, err := protocol.LoadYAML("protocol/pairing.yaml")
-m := protocol.NewMachine(actor, p)
-m.RegisterGuard("guard_name", func(ctx context.Context) bool { ... })
-m.RegisterAction("action_name", func(ctx context.Context) error { ... })
-newState, err := m.Handle(ctx, message) // process recv trigger
-newState, err := m.Step(ctx)            // fire internal trigger
+p, err := protocol.LoadYAML("protocol/pairing.yaml")   // or protocol.PairingCeremony()
+m, err := protocol.NewMachine(p, actorName)            // protocol/machine.go:45
+m.RegisterGuard(guardID, func(ctx any) bool { ... })   // machine.go:90
+m.RegisterAction(actionID, func(ctx any) error { ... })// machine.go:95
+newState, err := m.HandleMessage(msg, ctx)             // recv trigger, machine.go:116
+newState, err := m.Step(eventID, ctx)                  // internal trigger, machine.go:133
+state := m.State()                                     // machine.go:100
 ```
 
 ### qr/
@@ -80,7 +81,7 @@ The root package exposes `Register`, `Connect`, `Listener`, `Session`, `Stream`,
 
 **`Datagram`** is an unreliable, unordered channel keyed by pre-agreed varint ID:
 - `Send(payload []byte) error`
-- `Recv(ctx context.Context) ([]byte, error)`
+- `Recv(ctx context.Context) (DatagramPart, error)` — one part per QUIC datagram (`api.go:1088`)
 
 ```go
 // Backend side.
@@ -193,9 +194,11 @@ See [docs/DESIGN.md §2](docs/DESIGN.md) for the broader threat model that motiv
 |-------|-------------|
 | `GET /health` | Liveness probe `{"status":"ok"}` (HTTP/3 and HTTPS) |
 | `GET /status` | Process diagnostic: service, status, version, commit, started_at, uptime_sec |
+| `GET /pigeon` | Single WebTransport entry point; the role (register / listen / connect) is set by the greeting on the primary stream |
+
+Routes are registered in `webtransport.go:202-205`.
 
 **Datagram parts (🎯T59):** `Datagram.Send` may emit multiple QUIC datagrams for one logical message. `Datagram.Recv` returns `DatagramPart{MsgID, Index, Total, Payload}` per QUIC datagram as it arrives — no library reassembly. Whole messages have `Total=1`, `Index=0`.
-| `GET /pigeon` | Single WebTransport entry point; the role (register / listen / connect) is set by the greeting on the primary stream |
 
 Native clients use raw QUIC (ALPN `"pigeon"`) instead of WebTransport; the
 same greeting variant (register / listen / connect) selects the role.
@@ -314,33 +317,39 @@ on all platforms: Go (`crypto.PairingRecord`), Swift (`PairingRecord`),
 Kotlin (`PairingRecord`), TypeScript (`PairingRecord` /
 `createPairingRecord` / `deriveChannelFromRecord`).
 
-## Pairing Artifact Lifecycle (v0.19.0+)
+## Pairing Artifact Lifecycle — **Swift and Kotlin only**
+
+> **Shipped surface:** Swift (`Sources/PigeonCore/PairingArtifact.swift`,
+> `Sources/PigeonCore/CredentialStore.swift`) and Kotlin
+> (`android/pigeon/src/main/kotlin/com/marcelocantos/pigeon/crypto/PairingArtifact.kt`,
+> `CredentialStore.kt`).
+> **Not implemented in Go**: there is no `PairingArtifact`,
+> `CredentialStore`, `FileCredentialStore`, `PairingHost`,
+> `ConnectWithArtifact`, `ErrPairingExpired`, or `pigeon pair` subcommand in
+> the Go module. Go callers persist a `crypto.PairingRecord`
+> (`crypto/crypto.go:303`) themselves and reconnect with `pigeon.Connect`.
+> The design intent for a Go surface is recorded in
+> `docs/pairing-lifecycle.md`; treat that guide's Go samples as aspirational.
 
 For the consumer-app integration path — pairing once, persisting the
 credential across launches, reconnecting via a one-call helper, and
-re-pairing on expiry — pigeon ships a higher-level set of primitives:
+re-pairing on expiry:
 
 - **`PairingArtifact`** wraps a `PairingRecord` with a token, an
   issued-at timestamp, and an expires-at timestamp. Canonical JSON
   encoding (snake_case keys, ISO-8601 timestamps) and a single-line
-  base64url text encoding interoperate across Go, Swift, and Kotlin.
+  base64url text encoding interoperate between Swift and Kotlin.
 - **`CredentialStore`** is a uniform persistence interface with
-  reference implementations: `FileCredentialStore` (Go/Swift/Kotlin)
+  reference implementations: `FileCredentialStore` (Swift/Kotlin)
   and `KeychainCredentialStore` (Swift, iOS/macOS).
-- **`PairingHost`** is the server-side artifact minter. Configurable
-  TTL (default 30 days) and optional bearer-token issuer.
-- **`pigeon pair`** is a CLI subcommand for deploy scripts. Mints an
-  artifact and emits it on stdout (`--out=-`, default); writes the
-  companion server-side `PairingRecord` to stderr.
-- **`ConnectWithArtifact`** (Go), **`PigeonConn.connect(artifact:)`**
-  (Swift), **`connectWithArtifact`** (Kotlin) check expiry up front
-  and route through typed errors (`ErrPairingExpired`,
-  `PairingError.expired`, `PairingExpiredException`).
+- **`PairingArtifact.connect(...)`** (Swift,
+  `Sources/PigeonCore/PairingArtifact.swift:150`) and
+  **`connectWithArtifact`** (Kotlin, `PairingArtifact.kt:98`) check expiry up
+  front and route through typed errors (`PairingError.expired`,
+  `PairingExpiredException`).
 
-Two delivery flows are first-class: QR scan from a paired-screen UX
-(the artifact's text encoding fits in a scannable QR payload) and
-developer-deploy via `xcrun` (mint on the laptop, inject into the
-iOS app's launch environment as `PIGEON_PAIRING_ARTIFACT`).
+The QR-scan delivery flow is first-class: the artifact's text encoding fits in
+a scannable QR payload.
 
 The full step-by-step guide — server-side acceptance pattern,
 side-by-side Go/Swift/Kotlin samples, security notes — lives in
@@ -350,11 +359,15 @@ before integrating pigeon into a new application.
 ## Common Commands
 
 ```bash
-go test ./...                             # all Go tests (relay, crypto, protocol, qr, E2E)
+git submodule update --init --recursive   # one-time: vendored libsodium/quictls/ngtcp2
+make build-vendor-deps                    # one-time: static libs cgo links (cwire/cwire.go:19-21)
+make bullseye                             # every SDK + TLC — the durable green signal
+go test ./...                             # all Go tests (needs the two lines above)
 swift test                                # Swift tests
 go build -o pigeon ./cmd/pigeon               # build relay binary
 go run ./cmd/protogen protocol/pairing.yaml   # regenerate state machine code
-./formal/tlc PairingCeremony              # run TLA+ model checker
+./formal/tlc PairingCeremony              # TLA+ model checker (needs formal/tla2tools.jar,
+                                          # gitignored: download a TLA+ tools release)
 PORT=443 ./pigeon                           # run relay server (self-signed cert)
 ./pigeon --cert cert.pem --key key.pem      # run with real TLS certificate
 ```
@@ -363,7 +376,6 @@ PORT=443 ./pigeon                           # run relay server (self-signed cert
 
 | Flag/Env | Default | Description |
 |----------|---------|-------------|
-| `pair` (subcommand) | — | Mint a `PairingArtifact` for a peer instance ID and emit it. See [docs/pairing-lifecycle.md](docs/pairing-lifecycle.md). |
 | `--port` / `PORT` | `443` | WebTransport listening port (UDP) |
 | `--quic-port` / `QUIC_PORT` | `4433` | Raw QUIC listening port (native clients) |
 | `--domain` | — | Domain for automatic Let's Encrypt TLS |

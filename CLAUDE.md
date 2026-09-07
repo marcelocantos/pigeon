@@ -1,5 +1,8 @@
 # CLAUDE.md
 
+Pigeon is an opaque authenticated WebTransport/QUIC relay library and server
+(Go + Swift + Kotlin + C + TypeScript) for reaching backends behind NAT.
+
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
 ## Project
@@ -15,6 +18,8 @@ relay/pairing/crypto logic themselves.
 ## Build, Test & Run
 
 ```bash
+git submodule update --init --recursive  # vendored libsodium / quictls / ngtcp2
+make build-vendor-deps            # static libs cwire's cgo build links against
 make bullseye                     # one-button validation: every SDK + TLC
 go build -o pigeon ./cmd/pigeon   # build relay server
 go test ./...                     # all Go tests (relay, crypto, protocol, E2E)
@@ -25,10 +30,23 @@ go run ./cmd/protogen protocol/pairing.yaml  # regenerate from YAML spec
 make demo                         # in-process relay + N clients + web UI
 ```
 
+**Prerequisites are not optional.** The root package and `cwire/` are cgo
+packages that `#include` libsodium headers and link
+`c/vendor/build/lib/libsodium.a` (`cwire/cwire.go:19-21`). Without the
+submodule checkout and `make build-vendor-deps`, `go test ./...` fails with
+`fatal error: 'sodium.h' file not found` for the root package, `cwire`,
+`pairing`, `cmd/*` and `examples/*` — only `backchannel`, `crypto`,
+`faultproxy`, `protocol` and `qr` build.
+
+TLC also needs `formal/tla2tools.jar`, which is gitignored and not fetched by
+any make target — download a TLA+ tools release into `formal/` before running
+`./formal/tlc <Module>`.
+
 `make bullseye` is the durable green signal: gofmt, go vet, go build, go test
-(all packages), swift build, swift test, kotlin :pigeon:test, web (tsx
---test), TLC PairingCeremony. If anything goes red across SDKs, this is
-the first thing to run.
+(all packages, `-short`), swift build, swift test, kotlin :pigeon:test, web (tsx
+--test), C tests, and TLC on both `PairingCeremony` and `SessionMachine`
+(Makefile:248-280). If anything goes red across SDKs, this is the first thing
+to run.
 
 ## Package Structure
 
@@ -41,14 +59,16 @@ at startup for development; use --cert/--key for production certificates.
 
 **Endpoints (HTTP/3 + HTTPS):** `GET /health`, `GET /status`, `GET /pigeon`
 
-### Root Package (`pigeon.go`, `conn.go`, `webtransport.go`)
+### Root Package (`api.go`, `pigeon.go`, `session.go`, `webtransport.go`)
 
 Client-side connectivity and server library. Backends call
-`pigeon.Register()` to get an instance ID; clients call
-`pigeon.Connect()` with the ID. Both return a `*Conn` wrapping a
-WebTransport session with `Send`/`Recv` (reliable stream) and
-`SendDatagram`/`RecvDatagram` (unreliable). Supports bearer token
-auth via `pigeon.WithToken()` and custom TLS via `pigeon.WithTLS()`.
+`pigeon.Register(ctx, *RegisterArgs)` (`api.go:171`) to get a `*Listener`
+plus an instance ID; each `Listener.Accept` yields one `*Session`. Clients
+call `pigeon.Connect(ctx, *ConnectArgs)` (`api.go:427`) and get a `*Session`
+directly. A `Session` exposes `Primary()`, `OpenStream`/`AcceptStream`
+(named reliable streams) and `Datagram(name)` (unreliable). Bearer token and
+custom TLS are struct fields (`RegisterArgs.Token`, `RegisterArgs.TLS`), not
+functional options.
 
 The `WebTransportServer` type provides the relay server library used
 by `cmd/pigeon`.
@@ -89,9 +109,11 @@ Run with `./formal/tlc PairingCeremony`.
 
 ### Swift Package (`Package.swift`, `Sources/Pigeon/`)
 
-SPM library (`Pigeon`) containing E2ECrypto.swift, PigeonRelay.swift, and the
-generated PairingCeremonyMachine.swift. iOS apps add the GitHub repo as a
-package dependency.
+Two SPM library products (`Package.swift:65-68`): `PigeonCore`
+(`Sources/PigeonCore/` — E2ECrypto.swift, PigeonRelay.swift, PairingArtifact.swift,
+CredentialStore.swift, and the generated PairingCeremonyMachine.swift) and
+`Pigeon` (`Sources/Pigeon/` — Session/Transport over the `CPigeon` C target).
+iOS apps add the GitHub repo as a package dependency.
 
 ### Android/Kotlin Library (`android/pigeon/`)
 

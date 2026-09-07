@@ -1,5 +1,12 @@
 # Session Protocol
 
+> **Status (verified 2026-09-07):** specification of the **shipped** session
+> state machine. It is generated from
+> [`protocol/session.yaml`](../protocol/session.yaml) into
+> `protocol/session_gen.go`, the Swift/Kotlin/TS/C mirrors, and
+> `formal/SessionMachine.tla`; drift between this document and those outputs
+> is a defect.
+
 Pigeon's session protocol manages the entire lifecycle of a connection
 between two devices: from initial pairing through ongoing transport
 path management. It is defined as a single state machine in

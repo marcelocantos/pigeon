@@ -122,10 +122,11 @@ Add the GitHub repo as an SPM dependency:
 https://github.com/marcelocantos/pigeon
 ```
 
-The package provides the `Pigeon` library (iOS 16+, macOS 13+)
-containing `E2ECrypto.swift` (key exchange and encrypted channel),
-`PigeonRelay.swift` (relay connectivity), and the generated
-`PairingCeremonyMachine.swift`.
+The package provides two library products (iOS 16+, macOS 13+):
+`PigeonCore` (`Sources/PigeonCore/` — `E2ECrypto.swift` key exchange and
+encrypted channel, `PigeonRelay.swift` relay connectivity, `PairingArtifact.swift`,
+`CredentialStore.swift`, and the generated `PairingCeremonyMachine.swift`) and
+`Pigeon` (`Sources/Pigeon/` — `Session`/`Transport` over the `CPigeon` C target).
 
 ```swift
 // Both sides exchange public key bytes through the relay.
@@ -244,11 +245,15 @@ available on all platforms: Go (`crypto.PairingRecord`), Swift
 (`PairingRecord` / `createPairingRecord` / `deriveChannelFromRecord`).
 
 For the consumer-app integration path — pairing once, persisting via a
-`CredentialStore`, reconnecting through `ConnectWithArtifact`-equivalents,
-and re-pairing on expiry — see the **[Pairing Artifact Lifecycle
-guide](docs/pairing-lifecycle.md)**. It walks through both delivery flows
-(QR scan and developer-deploy via `xcrun`) with side-by-side Go, Swift,
-and Kotlin samples.
+`CredentialStore`, reconnecting from the stored artifact, and re-pairing on
+expiry — see the **[Pairing Artifact Lifecycle
+guide](docs/pairing-lifecycle.md)**. `PairingArtifact` and `CredentialStore`
+ship in **Swift** (`Sources/PigeonCore/PairingArtifact.swift`,
+`CredentialStore.swift`) and **Kotlin**
+(`android/pigeon/src/main/kotlin/com/marcelocantos/pigeon/crypto/`); the Go
+side has **no** `PairingArtifact` / `CredentialStore` / `PairingHost` /
+`ConnectWithArtifact` API and no `pigeon pair` subcommand — Go callers persist
+a `crypto.PairingRecord` themselves and use `pigeon.Connect`.
 
 ## Channels
 
@@ -512,12 +517,26 @@ dependencies).
 
 ## Running Tests
 
+One-time prerequisites (the root package and `cwire/` are cgo packages that
+link a vendored static libsodium — see `cwire/cwire.go:19-21`):
+
+```bash
+git submodule update --init --recursive
+make build-vendor-deps
+```
+
+Without these, `go test ./...` fails with `fatal error: 'sodium.h' file not
+found` for the root package, `cwire`, `pairing`, `cmd/*` and `examples/*`.
+
 ```bash
 # Go — relay, crypto, protocol, and E2E integration tests
 go test ./...
 
 # Swift — crypto and state machine tests
 swift test
+
+# Everything (all SDKs + TLC) — the durable green signal
+make bullseye
 ```
 
 ## Protocol Code Generation
@@ -540,10 +559,13 @@ ceremony with an active adversary. Verified security properties include:
 - Authentication requires completed pairing
 - No nonce reuse
 
-Run the model checker:
+Run the model checker (requires `formal/tla2tools.jar`, which is gitignored
+and not fetched by any make target — download a TLA+ tools release into
+`formal/` first):
 
 ```bash
 ./formal/tlc PairingCeremony
+./formal/tlc SessionMachine
 ```
 
 ## Licence

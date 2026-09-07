@@ -6,7 +6,7 @@
 > (Swift/Kotlin/TS) and cascading relay-level routing are follow-on — see
 > §12. Tracked by 🎯T44 (umbrella) and its sub-targets.
 > **Supersedes** the route-substream multiplexing sketch in
-> [`cascading-relay.md`](cascading-relay.md) §4a and resolves its §5/§9
+> [`cascading-relay.md`](_archived/cascading-relay.md) §4a and resolves its §5/§9
 > open questions.
 > **Motivation:** ge/ged — one laptop (`ged`) fronts several game servers;
 > a player pairs *once* with the laptop, discovers the running games, and
@@ -164,7 +164,7 @@ The node writes no wire formats, key separation, or stream demux — only
   node; the node also runs `pigeon.NewQUICServer`/`NewWebTransportServer`
   and registers upstream as a backend. `ged.route` bridges the player
   session to the local service backend. This is the original
-  `cascading-relay.md` framing, retained as an additive extension.
+  [`_archived/cascading-relay.md`](_archived/cascading-relay.md) framing, retained as an additive extension.
 
 Tier-1/tier-2 additions are identical for both; only `route`'s use differs.
 Start in-process; grow into cascading without protocol changes.

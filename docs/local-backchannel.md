@@ -1,5 +1,14 @@
 # Local Back-Channel Protocol
 
+> **Status (verified 2026-09-07):** **Implemented (Go)** — the `backchannel/`
+> package ships the Unix-socket transport described here:
+> `backchannel.Listen` (`backchannel/server.go:44`),
+> `backchannel.SocketPath` (`backchannel/path.go:23`),
+> `backchannel.ServeSession` (`backchannel/dispatch.go:35`), wire types in
+> `backchannel/wire.go`. Check the source for exact signatures; this document
+> is the rationale and protocol design, not a generated API reference. No
+> Swift/Kotlin/C equivalent exists.
+
 ## Problem
 
 The pairing ceremony in `pairing.yaml` defines three actors: **cli**

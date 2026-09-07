@@ -1,6 +1,9 @@
 # Cascading Relay Architecture
 
-> **⚠ Superseded design — read [`multiplexing.md`](multiplexing.md) first.**
+> **Archived 2026-09-07.** Superseded design, retained for history. Current
+> design: [`../multiplexing.md`](../multiplexing.md).
+
+> **⚠ Superseded design — read [`multiplexing.md`](../multiplexing.md) first.**
 > The agreed design makes a service a `Session` (sub-addressed `Connect`),
 > not a route-substream multiplex over one connection. That resolves the
 > "library vs app" and discovery open questions below (§5, §9 Q7) and
