@@ -297,23 +297,29 @@ func TestAcceptLoopReservedDiscoveryNotParked(t *testing.T) {
 	acc := &scriptedAcceptor{next: make(chan io.ReadWriteCloser, 1)}
 	s := testSession(t)
 	s.transport = &transport{acceptor: acc}
-	s.discover = func(string) ([]RouteEntry, error) { return nil, nil }
+	hit := make(chan struct{}, 1)
+	s.discover = func(string) ([]RouteEntry, error) {
+		select {
+		case hit <- struct{}{}:
+		default:
+		}
+		return nil, nil
+	}
 	go s.acceptLoop()
 
-	payload := EncodeStreamHeader(discoveryStreamName)
-	rc := &framedRWC{r: bytes.NewReader(frameMessage(payload))}
-	acc.next <- rc
-	deadline := time.Now().Add(time.Second)
-	for time.Now().Before(deadline) {
-		if s.bufferedStreamCount() == 0 {
-			// Reserved path took it (handleEnumerate Recv is parked on the
-			// stream). If it had been treated as an app name it would be
-			// in bufferedStreams immediately.
-			return
-		}
-		time.Sleep(time.Millisecond)
+	// Header frame for acceptLoop, then an enumerate request so
+	// handleEnumerate Recv succeeds and calls discover. A vacuous
+	// bufferedStreamCount==0 check would pass before acceptLoop runs.
+	payload := append(frameMessage(EncodeStreamHeader(discoveryStreamName)), frameMessage([]byte{0x01})...)
+	acc.next <- &framedRWC{r: bytes.NewReader(payload)}
+	select {
+	case <-hit:
+	case <-time.After(time.Second):
+		t.Fatal("discover hook was not called; reserved path did not take the stream")
 	}
-	t.Fatal("discovery stream was parked as an application name")
+	if s.bufferedStreamCount() != 0 {
+		t.Fatal("discovery stream was parked as an application name")
+	}
 }
 
 func TestAcceptLoopLANControlClosedWhenNotPreferLAN(t *testing.T) {

@@ -138,7 +138,9 @@ func TestE2EStreamAdmissionAllowlist(t *testing.T) {
 	if err != nil {
 		t.Fatalf("open undeclared: %v", err)
 	}
-	rctx, rcancel := context.WithTimeout(ctx, 3*time.Second)
+	// Deadline is below DefaultStreamRendezvous (2s) so a pass cannot
+	// be rendezvous expiry — only an immediate allowlist reset.
+	rctx, rcancel := context.WithTimeout(ctx, 500*time.Millisecond)
 	defer rcancel()
 	if _, err := bad.Recv(rctx); err == nil {
 		t.Fatal("undeclared stream Recv succeeded; want immediate reset")
