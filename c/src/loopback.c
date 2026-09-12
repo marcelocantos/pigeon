@@ -190,6 +190,7 @@ void pigeon_loopback_fill_transport(pigeon_transport *t,
     t->send_on_stream  = lb_send_on_stream;
     t->recv_on_stream  = lb_recv_on_stream;
     t->close_stream    = lb_close_stream;
+    t->reset_stream    = lb_close_stream;
     t->send_datagram   = lb_send_datagram;
     t->recv_datagram   = lb_recv_datagram;
 }

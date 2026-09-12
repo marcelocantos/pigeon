@@ -69,6 +69,15 @@ type RegisterArgs struct {
 	// Both peers must declare the same map. Channel ID 0 is reserved.
 	Datagrams map[string]uint64
 
+	// Streams, if non-empty, is the allowlist of application stream
+	// names this Session will AcceptStream. A peer OpenStream of an
+	// undeclared name is reset immediately (no rendezvous window).
+	// Reserved control names (discovery, LAN, go-away) are always
+	// admitted. Empty means any name may rendezvous, subject to the
+	// per-name buffer cap (DefaultMaxBufferedStreams) and timeout
+	// (DefaultStreamRendezvous). See STABILITY.md.
+	Streams []string
+
 	// LAN, if set, makes each accepted Session advertise a direct-path
 	// offer after activation (🎯T48). Clients that set ConnectArgs.PreferLAN
 	// dial NewLANServer, verify via challenge/response, and the Session
@@ -109,6 +118,9 @@ type ConnectArgs struct {
 
 	// Datagrams declares the named datagram channels (see RegisterArgs.Datagrams).
 	Datagrams map[string]uint64
+
+	// Streams is this side's AcceptStream allowlist (see RegisterArgs.Streams).
+	Streams []string
 
 	// PreferLAN opts into automatic LAN upgrade (🎯T48). When the backend
 	// advertises a LAN address over the encrypted control stream, the
@@ -338,6 +350,7 @@ func (l *Listener) activate(tr *transport) (*Session, error) {
 			return nil, fmt.Errorf("await client: %w", err)
 		}
 		sess := newSession(l.ctx, tr, nil, "", l.args.Datagrams, true)
+		sess.applyStreamPolicy(l.args.Streams)
 		sess.ownsTransport = true
 		sess.bindPrimary(tr.primary)
 		go sess.acceptLoop()
@@ -393,6 +406,7 @@ func (l *Listener) activate(tr *transport) (*Session, error) {
 	}
 
 	sess := newSession(l.ctx, tr, mat, result.DeviceID, l.args.Datagrams, true)
+	sess.applyStreamPolicy(l.args.Streams)
 	sess.route = result.Route
 	sess.discover = l.args.Discover
 	sess.ownsTransport = true
@@ -494,6 +508,7 @@ func Connect(ctx context.Context, args *ConnectArgs) (*Session, error) {
 	}
 
 	sess := newSession(ctx, tr, mat, args.InstanceID, args.Datagrams, false)
+	sess.applyStreamPolicy(args.Streams)
 	sess.route = args.Route
 	sess.ownsTransport = true
 	sess.cwireRef = cwireRef
@@ -570,9 +585,14 @@ type Session struct {
 
 	// Stream rendezvous: pendingOpens map name → waiter; bufferedStreams
 	// holds streams that arrived before a local AcceptStream caller.
-	streamMu        sync.Mutex
-	pendingOpens    map[string][]chan io.ReadWriteCloser
-	bufferedStreams map[string][]io.ReadWriteCloser
+	// Unmatched names expire after rendezvousWindow and are reset (🎯T63.1).
+	streamMu           sync.Mutex
+	pendingOpens       map[string][]*streamWaiter
+	bufferedStreams    map[string][]io.ReadWriteCloser
+	allowedStreams     map[string]struct{} // nil = any application name
+	rendezvousWindow   time.Duration
+	maxBufferedPerName int
+	draining           bool
 
 	// Datagrams are pre-declared by name → channel-id at construction.
 	dgConfig  map[string]uint64
@@ -599,18 +619,20 @@ type Session struct {
 func newSession(ctx context.Context, tr *transport, mat *cwire.SessionMaterial, peerID string, dgConfig map[string]uint64, isBackend bool) *Session {
 	sCtx, cancel := context.WithCancel(ctx)
 	s := &Session{
-		ctx:             sCtx,
-		cancel:          cancel,
-		transport:       tr,
-		material:        mat,
-		streamChans:     make(map[string]*cwire.Channel),
-		peerID:          peerID,
-		isBackend:       isBackend,
-		pendingOpens:    make(map[string][]chan io.ReadWriteCloser),
-		bufferedStreams: make(map[string][]io.ReadWriteCloser),
-		dgConfig:        make(map[string]uint64, len(dgConfig)),
-		datagrams:       make(map[uint64]*Datagram, len(dgConfig)),
-		maxDgPayload:    MaxDatagramPayload,
+		ctx:                sCtx,
+		cancel:             cancel,
+		transport:          tr,
+		material:           mat,
+		streamChans:        make(map[string]*cwire.Channel),
+		peerID:             peerID,
+		isBackend:          isBackend,
+		pendingOpens:       make(map[string][]*streamWaiter),
+		bufferedStreams:    make(map[string][]io.ReadWriteCloser),
+		rendezvousWindow:   DefaultStreamRendezvous,
+		maxBufferedPerName: DefaultMaxBufferedStreams,
+		dgConfig:           make(map[string]uint64, len(dgConfig)),
+		datagrams:          make(map[uint64]*Datagram, len(dgConfig)),
+		maxDgPayload:       MaxDatagramPayload,
 	}
 	if mat != nil {
 		dg, err := mat.DatagramChannel()
@@ -676,6 +698,9 @@ func (s *Session) OpenStream(ctx context.Context, name string) (*Stream, error) 
 	if name == "" {
 		return nil, errors.New("OpenStream: name must be non-empty")
 	}
+	if s.isDraining() && !reservedStreamName(name) {
+		return nil, ErrSessionDraining
+	}
 	tr := s.currentTransport()
 	if tr == nil {
 		return nil, io.ErrClosedPipe
@@ -692,8 +717,11 @@ func (s *Session) OpenStream(ctx context.Context, name string) (*Stream, error) 
 }
 
 // AcceptStream blocks until the peer opens a stream with the given name.
-// Streams that arrive before the local AcceptStream call are buffered
-// and delivered when the matching name is later requested.
+// Streams that arrive before the local AcceptStream call are parked
+// for DefaultStreamRendezvous (or the session's window) and delivered
+// when the matching name is later requested. After the window they are
+// reset. A cancelled AcceptStream closes a stream that races in
+// (Fable F10).
 func (s *Session) AcceptStream(ctx context.Context, name string) (*Stream, error) {
 	if name == "" {
 		return nil, errors.New("AcceptStream: name must be non-empty")
@@ -702,33 +730,50 @@ func (s *Session) AcceptStream(ctx context.Context, name string) (*Stream, error
 	if buf := s.bufferedStreams[name]; len(buf) > 0 {
 		rwc := buf[0]
 		s.bufferedStreams[name] = buf[1:]
+		if len(s.bufferedStreams[name]) == 0 {
+			delete(s.bufferedStreams, name)
+		}
 		s.streamMu.Unlock()
 		return &Stream{name: name, rwc: rwc, channel: s.streamChannel(name)}, nil
 	}
-	ch := make(chan io.ReadWriteCloser, 1)
-	s.pendingOpens[name] = append(s.pendingOpens[name], ch)
+	w := &streamWaiter{ch: make(chan io.ReadWriteCloser, 1)}
+	s.pendingOpens[name] = append(s.pendingOpens[name], w)
 	s.streamMu.Unlock()
 
 	select {
-	case rwc := <-ch:
+	case rwc := <-w.ch:
 		return &Stream{name: name, rwc: rwc, channel: s.streamChannel(name)}, nil
 	case <-ctx.Done():
-		s.removePending(name, ch)
+		s.removePending(name, w)
+		s.abandonWaiter(w)
 		return nil, ctx.Err()
 	case <-s.ctx.Done():
+		s.removePending(name, w)
+		s.abandonWaiter(w)
 		return nil, io.ErrClosedPipe
 	}
 }
 
-func (s *Session) removePending(name string, ch chan io.ReadWriteCloser) {
+func (s *Session) removePending(name string, w *streamWaiter) {
 	s.streamMu.Lock()
 	defer s.streamMu.Unlock()
 	q := s.pendingOpens[name]
 	for i, c := range q {
-		if c == ch {
+		if c == w {
 			s.pendingOpens[name] = append(q[:i], q[i+1:]...)
 			return
 		}
+	}
+}
+
+// abandonWaiter marks the waiter cancelled and resets an rwc that
+// deliverIncomingStream already (or is about to) place on ch.
+func (s *Session) abandonWaiter(w *streamWaiter) {
+	w.done.Store(true)
+	select {
+	case rwc := <-w.ch:
+		_ = resetStream(rwc)
+	default:
 	}
 }
 
@@ -736,15 +781,35 @@ func (s *Session) removePending(name string, ch chan io.ReadWriteCloser) {
 // stream's name handshake has been read.
 func (s *Session) deliverIncomingStream(name string, rwc io.ReadWriteCloser) {
 	s.streamMu.Lock()
+	if (s.draining || (s.allowedStreams != nil && !nameAllowed(s.allowedStreams, name))) && !reservedStreamName(name) {
+		s.streamMu.Unlock()
+		_ = resetStream(rwc)
+		return
+	}
 	if q := s.pendingOpens[name]; len(q) > 0 {
-		ch := q[0]
+		w := q[0]
 		s.pendingOpens[name] = q[1:]
 		s.streamMu.Unlock()
-		ch <- rwc
+		w.ch <- rwc
+		if w.done.Load() {
+			select {
+			case leaked := <-w.ch:
+				_ = resetStream(leaked)
+			default:
+			}
+		}
+		return
+	}
+	if len(s.bufferedStreams[name]) >= s.bufferedCap() {
+		s.streamMu.Unlock()
+		_ = resetStream(rwc)
 		return
 	}
 	s.bufferedStreams[name] = append(s.bufferedStreams[name], rwc)
 	s.streamMu.Unlock()
+	time.AfterFunc(s.rendezvousTimeout(), func() {
+		s.expireBuffered(name, rwc)
+	})
 }
 
 // acceptLoop reads each sub-stream the peer opens on this session's
@@ -794,6 +859,11 @@ func (s *Session) acceptLoop() {
 			} else {
 				_ = rwc.Close()
 			}
+			continue
+		}
+		if name == goAwayStreamName {
+			s.enterDrain()
+			_ = closeWrite(rwc)
 			continue
 		}
 		s.deliverIncomingStream(name, rwc)
@@ -904,6 +974,7 @@ func (s *Session) deliverIncomingDatagram(payload []byte) {
 func (s *Session) Close() error {
 	s.closeOnce.Do(func() {
 		s.cancel()
+		s.rejectParkedStreams()
 		if s.primary != nil {
 			_ = s.primary.Close()
 		}
@@ -991,8 +1062,17 @@ func (s *Stream) Recv(ctx context.Context) ([]byte, error) {
 // Name returns the channel name supplied to OpenStream.
 func (s *Stream) Name() string { return s.name }
 
-// Close closes the underlying QUIC stream.
-func (s *Stream) Close() error { return s.rwc.Close() }
+// CloseWrite half-closes the write side (QUIC STREAM FIN). The peer's
+// Recv returns after queued messages, typically with io.EOF. This is
+// the RPC-shaped "I am done sending" signal.
+func (s *Stream) CloseWrite() error { return closeWrite(s.rwc) }
+
+// Reset aborts the stream (QUIC RESET_STREAM + STOP_SENDING). The
+// peer's Recv returns an error without waiting for a clean FIN.
+func (s *Stream) Reset() error { return resetStream(s.rwc) }
+
+// Close is write-side FIN — the same as CloseWrite. Use Reset to abort.
+func (s *Stream) Close() error { return s.CloseWrite() }
 
 // UnderlyingPairingRWC returns the raw bidirectional byte pipe behind a
 // pairing-mode stream (one where the Session has no AEAD channel yet,

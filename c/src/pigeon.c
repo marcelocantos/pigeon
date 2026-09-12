@@ -552,6 +552,21 @@ int pigeon_stream_recv(pigeon_stream *s,
     return pigeon_channel_decrypt(&s->aead, sess->scratch_a, got, buf, buf_len);
 }
 
+int pigeon_stream_close_write(pigeon_stream *s)
+{
+    return pigeon_stream_close(s);
+}
+
+int pigeon_stream_reset(pigeon_stream *s)
+{
+    if (!s || !s->session || !s->handle) return -1;
+    if (s->session->transport.reset_stream) {
+        return s->session->transport.reset_stream(s->session->transport.userdata, s->handle);
+    }
+    if (!s->session->transport.close_stream) return 0;
+    return s->session->transport.close_stream(s->session->transport.userdata, s->handle);
+}
+
 int pigeon_stream_close(pigeon_stream *s)
 {
     if (!s || !s->session || !s->handle) return -1;

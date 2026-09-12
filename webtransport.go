@@ -53,6 +53,15 @@ func (w *wtStreamWrapper) Close() error {
 	return w.stream.Close()
 }
 
+func (w *wtStreamWrapper) CloseWrite() error { return w.Close() }
+
+func (w *wtStreamWrapper) Reset() error {
+	_ = w.stream.SetReadDeadline(time.Unix(0, 1))
+	w.stream.CancelWrite(0)
+	w.stream.CancelRead(0)
+	return nil
+}
+
 func (s *wtSession) ReadMessage() ([]byte, error) {
 	return readMessage(s.stream)
 }

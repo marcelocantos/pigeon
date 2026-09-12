@@ -594,7 +594,10 @@ candidate strategies for what happens to in-flight L4 streams when L3
 swaps the active pipe:
 
 - **(a) Drain-and-resume** — quiesce open streams, swap, reopen.
-  Simplest; introduces latency at swap.
+  Simplest; introduces latency at swap. Consumes `Session.GoAway()`
+  (🎯T63.4): refuse new streams, reset unmatched incoming, leave
+  in-flight streams up for the application to half-close, then
+  `Session.Close` aborts the carrier. L3 swap itself is still unwired.
 - **(b) Replay window** — track unacked messages per stream, replay on
   the new pipe post-swap. Cleaner UX; more bookkeeping.
 - **(c) Application-visible** — surface the swap to the app, let it

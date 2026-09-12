@@ -103,8 +103,11 @@ typedef struct {
     // Receive the next length-prefixed message on a specific stream.
     int (*recv_on_stream)(void *userdata, pigeon_stream_handle *handle,
                           uint8_t *buf, size_t buf_len, size_t *out_len);
-    // Close a specific stream.
+    // Close a specific stream with a write-side FIN (peer Recv sees EOF).
     int (*close_stream)(void *userdata, pigeon_stream_handle *handle);
+    // Abort a stream with RESET_STREAM (peer Recv errors). Optional;
+    // NULL falls back to close_stream.
+    int (*reset_stream)(void *userdata, pigeon_stream_handle *handle);
 } pigeon_transport;
 
 // --- Client context ---
@@ -519,7 +522,14 @@ int pigeon_stream_send(pigeon_stream *s,
 int pigeon_stream_recv(pigeon_stream *s,
                        uint8_t *buf, size_t buf_len);
 
-// Close the stream's underlying transport handle.
+// Close the write side (STREAM FIN). Same as pigeon_stream_close.
+int pigeon_stream_close_write(pigeon_stream *s);
+
+// Abort the stream (RESET_STREAM). Falls back to close if the
+// transport does not implement reset_stream.
+int pigeon_stream_reset(pigeon_stream *s);
+
+// Close the stream's underlying transport handle (write-side FIN).
 int pigeon_stream_close(pigeon_stream *s);
 
 // Free the heap scratch buffers allocated lazily on first send/recv.

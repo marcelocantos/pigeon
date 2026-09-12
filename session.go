@@ -314,12 +314,19 @@ func (t *streamTracker) closeAll() {
 }
 
 // bridgeStream copies messages from src to dst until an error occurs.
+// A QUIC/WebTransport stream reset is forwarded as Reset so the peer
+// sees RST rather than a clean FIN (🎯T63.3).
 func bridgeStream(src, dst readWriteCloserPair) {
-	defer src.Close()
-	defer dst.Close()
 	for {
 		msg, err := src.ReadMessage()
 		if err != nil {
+			if isStreamReset(err) {
+				resetPair(dst)
+			} else {
+				// Clean EOF / FIN: half-close dst only. Closing src here
+				// would FIN the return path and break RPC-shaped CloseWrite.
+				closeWritePair(dst)
+			}
 			slog.Debug("bridgeStream: read error", "err", err)
 			return
 		}

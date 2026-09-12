@@ -365,6 +365,30 @@ static int write_stream(pigeon_ngtcp2_transport *t,
 
     ngtcp2_path_storage_zero(&ps);
 
+    if (datalen == 0) {
+        if (!fin) return 0;
+        nwrite = ngtcp2_conn_writev_stream((ngtcp2_conn *)t->conn,
+                                            &ps.path, &pi,
+                                            buf, sizeof(buf),
+                                            &wdatalen,
+                                            NGTCP2_WRITE_STREAM_FLAG_FIN,
+                                            stream_id,
+                                            NULL, 0,
+                                            now_ns());
+        if (nwrite < 0) {
+            char msg[128];
+            snprintf(msg, sizeof(msg),
+                     "ngtcp2_conn_writev_stream: %s", ngtcp2_strerror((int)nwrite));
+            set_error(t, msg);
+            return -1;
+        }
+        if (nwrite > 0 && send_packet(t, buf, (size_t)nwrite) != 0) {
+            set_error(t, "send_packet (stream) failed");
+            return -1;
+        }
+        return 0;
+    }
+
     while (nwritten < datalen) {
         datav.base = (uint8_t *)data + nwritten;
         datav.len  = datalen - nwritten;
@@ -865,6 +889,20 @@ static int transport_close_stream(void *userdata, pigeon_stream_handle *h)
     pigeon_ngtcp2_transport *t = userdata;
     pigeon_ngtcp2_stream_slot *s = (pigeon_ngtcp2_stream_slot *)h;
     if (!s || !s->in_use) return -1;
+    // Write-side FIN (🎯T63.3). Reset is transport_reset_stream.
+    if (write_stream(t, s->stream_id, NULL, 0, 1) != 0) {
+        ngtcp2_conn_shutdown_stream((ngtcp2_conn *)t->conn, 0, s->stream_id, 0);
+    }
+    write_quic(t);
+    s->in_use = false;
+    return 0;
+}
+
+static int transport_reset_stream(void *userdata, pigeon_stream_handle *h)
+{
+    pigeon_ngtcp2_transport *t = userdata;
+    pigeon_ngtcp2_stream_slot *s = (pigeon_ngtcp2_stream_slot *)h;
+    if (!s || !s->in_use) return -1;
     ngtcp2_conn_shutdown_stream((ngtcp2_conn *)t->conn, 0, s->stream_id, 0);
     write_quic(t);
     s->in_use = false;
@@ -1261,6 +1299,7 @@ int pigeon_ngtcp2_transport_init(pigeon_ngtcp2_transport *t,
     t->transport.send_on_stream = transport_send_on_stream;
     t->transport.recv_on_stream = transport_recv_on_stream;
     t->transport.close_stream   = transport_close_stream;
+    t->transport.reset_stream   = transport_reset_stream;
 
     // Mark all extra-stream slots as free.
     for (int i = 0; i < PIGEON_NGTCP2_MAX_EXTRA_STREAMS; i++) {

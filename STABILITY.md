@@ -128,6 +128,7 @@ type RegisterArgs struct {
     TLS       *tls.Config
     Token     string
     Datagrams map[string]uint64  // name → pre-agreed channel ID; 0 reserved
+    Streams   []string           // AcceptStream allowlist; empty = any name
 }
 type ConnectArgs struct {
     InstanceID string
@@ -137,6 +138,7 @@ type ConnectArgs struct {
     TLS        *tls.Config
     Token      string
     Datagrams  map[string]uint64
+    Streams    []string
 }
 
 // Listener — backend-side acceptor; yields one Session per paired client
@@ -155,14 +157,21 @@ func (s *Session) PeerID() string
 func (s *Session) OpenStream(ctx context.Context, name string) (*Stream, error)
 func (s *Session) AcceptStream(ctx context.Context, name string) (*Stream, error)
 func (s *Session) Datagram(name string) *Datagram
-func (s *Session) Close() error
+func (s *Session) GoAway() error // drain: refuse new streams; in-flight stay up
+func (s *Session) Close() error  // abort: cancel + tear the QUIC connection
 
 // Stream — reliable, ordered, AEAD-encrypted named channel
+// Close / CloseWrite = QUIC STREAM FIN (write half-close).
+// Reset = QUIC RESET_STREAM + STOP_SENDING (abort).
+// Unmatched incoming names park for DefaultStreamRendezvous (2s),
+// at most DefaultMaxBufferedStreams (1) per name, then reset.
 type Stream struct { /* unexported fields */ }
 func (s *Stream) Name() string
 func (s *Stream) Send(msg []byte) error
 func (s *Stream) Recv(ctx context.Context) ([]byte, error)
-func (s *Stream) Close() error
+func (s *Stream) CloseWrite() error
+func (s *Stream) Reset() error
+func (s *Stream) Close() error // same as CloseWrite (FIN)
 
 // Datagram — unreliable, pre-declared AEAD-encrypted channel
 type Datagram struct { /* unexported fields */ }

@@ -39,6 +39,14 @@ func (w *quicStreamWrapper) WriteMessage(data []byte) error {
 }
 func (w *quicStreamWrapper) Close() error { return w.stream.Close() }
 
+func (w *quicStreamWrapper) CloseWrite() error { return w.stream.Close() }
+
+func (w *quicStreamWrapper) Reset() error {
+	w.stream.CancelWrite(0)
+	w.stream.CancelRead(0)
+	return nil
+}
+
 func (s *quicSession) ReadMessage() ([]byte, error) {
 	return readMessage(s.stream)
 }
