@@ -1407,6 +1407,7 @@ static void loopback_make_transport(pigeon_transport *t, loopback_endpoint *e)
     t->send_on_stream  = loop_send_on_stream;
     t->recv_on_stream  = loop_recv_on_stream;
     t->close_stream    = loop_close_stream;
+    t->reset_stream    = loop_close_stream;
     t->send_datagram   = loop_send_datagram;
     t->recv_datagram   = loop_recv_datagram;
 }
@@ -1474,6 +1475,21 @@ static void test_session_stream_roundtrip(void)
     loopback_endpoint_drain(&ea);
     loopback_endpoint_drain(&eb);
 
+    PASS();
+}
+
+static void test_stream_fin_vs_reset_symbols(void)
+{
+    TEST("stream close_write (FIN) and reset are distinct entry points");
+    if (pigeon_stream_close_write == pigeon_stream_reset) {
+        FAIL("close_write and reset are the same function");
+        return;
+    }
+    if (pigeon_stream_close == NULL || pigeon_stream_close_write == NULL
+        || pigeon_stream_reset == NULL) {
+        FAIL("missing stream close/reset symbols");
+        return;
+    }
     PASS();
 }
 
@@ -2353,6 +2369,7 @@ int main(void)
     test_stream_header();
     test_datagram_framing();
     test_session_stream_roundtrip();
+    test_stream_fin_vs_reset_symbols();
     test_session_datagram_roundtrip();
     test_send_recv_unencrypted();
     test_send_recv_encrypted();

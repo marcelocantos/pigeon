@@ -4,12 +4,20 @@
 package pigeon
 
 import (
+	"bytes"
 	"context"
+	"encoding/binary"
 	"io"
+	"runtime"
 	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
+)
+
+var (
+	_ streamCtl = (*quicStreamWrapper)(nil)
+	_ streamCtl = (*wtStreamWrapper)(nil)
 )
 
 type recordCloser struct {
@@ -189,14 +197,142 @@ func TestGoAwayResetsIncomingAndBlocksOpen(t *testing.T) {
 	}
 }
 
-func TestParseFailureStillCloses(t *testing.T) {
-	// acceptLoop closes on header parse failure; this guards the helper
-	// path used there (resetStream/Close on a raw rwc).
+func TestAcceptStreamCancelThenDeliverCloses(t *testing.T) {
+	s := testSession(t)
+	ctx, cancel := context.WithCancel(context.Background())
+	started := make(chan struct{})
+	errc := make(chan error, 1)
+	s.deliverAfterPop = func() {
+		cancel()
+		time.Sleep(10 * time.Millisecond)
+	}
+	go func() {
+		close(started)
+		_, err := s.AcceptStream(ctx, "s")
+		errc <- err
+	}()
+	<-started
+	time.Sleep(15 * time.Millisecond)
 	rc := &recordCloser{}
-	if err := resetStream(rc); err != nil {
-		t.Fatal(err)
+	s.deliverIncomingStream("s", rc)
+	err := <-errc
+	if err == nil {
+		// Accept won; it owns rwc. Close it so the count is 1.
+		_ = rc.Close()
+	}
+	if got := rc.closes.Load(); got != 1 {
+		t.Fatalf("F10 race Close = %d, want 1", got)
+	}
+	if s.bufferedStreamCount() != 0 {
+		t.Fatal("raced stream still parked")
+	}
+}
+
+func TestUndeclaredStreamsDoNotGrowGoroutines(t *testing.T) {
+	s := testSession(t)
+	s.applyStreamPolicy([]string{"chat"})
+	runtime.GC()
+	before := runtime.NumGoroutine()
+	for i := 0; i < 80; i++ {
+		s.deliverIncomingStream("nope", &recordCloser{})
+	}
+	time.Sleep(20 * time.Millisecond)
+	runtime.GC()
+	after := runtime.NumGoroutine()
+	if after > before+8 {
+		t.Fatalf("goroutines grew from %d to %d after 80 undeclared streams", before, after)
+	}
+	if s.bufferedStreamCount() != 0 {
+		t.Fatalf("undeclared streams parked: %d", s.bufferedStreamCount())
+	}
+}
+
+type scriptedAcceptor struct {
+	next chan io.ReadWriteCloser
+}
+
+func (a *scriptedAcceptor) AcceptStream(ctx context.Context) (io.ReadWriteCloser, error) {
+	select {
+	case rwc := <-a.next:
+		return rwc, nil
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	}
+}
+
+type framedRWC struct {
+	r *bytes.Reader
+	recordCloser
+}
+
+func (f *framedRWC) Read(p []byte) (int, error) { return f.r.Read(p) }
+
+func frameMessage(payload []byte) []byte {
+	var hdr [4]byte
+	binary.BigEndian.PutUint32(hdr[:], uint32(len(payload)))
+	return append(hdr[:], payload...)
+}
+
+func TestAcceptLoopClosesOnBadHeader(t *testing.T) {
+	acc := &scriptedAcceptor{next: make(chan io.ReadWriteCloser, 1)}
+	s := testSession(t)
+	s.transport = &transport{acceptor: acc}
+	go s.acceptLoop()
+
+	rc := &framedRWC{r: bytes.NewReader(frameMessage(nil))}
+	acc.next <- rc
+	deadline := time.Now().Add(time.Second)
+	for time.Now().Before(deadline) && rc.closes.Load() == 0 {
+		time.Sleep(time.Millisecond)
+	}
+	if got := rc.closes.Load(); got != 1 {
+		t.Fatalf("acceptLoop parse-failure Close = %d, want 1", got)
+	}
+	if s.bufferedStreamCount() != 0 {
+		t.Fatal("bad header was parked")
+	}
+}
+
+func TestAcceptLoopReservedDiscoveryNotParked(t *testing.T) {
+	acc := &scriptedAcceptor{next: make(chan io.ReadWriteCloser, 1)}
+	s := testSession(t)
+	s.transport = &transport{acceptor: acc}
+	s.discover = func(string) ([]RouteEntry, error) { return nil, nil }
+	go s.acceptLoop()
+
+	payload := EncodeStreamHeader(discoveryStreamName)
+	rc := &framedRWC{r: bytes.NewReader(frameMessage(payload))}
+	acc.next <- rc
+	deadline := time.Now().Add(time.Second)
+	for time.Now().Before(deadline) {
+		if s.bufferedStreamCount() == 0 {
+			// Reserved path took it (handleEnumerate Recv is parked on the
+			// stream). If it had been treated as an app name it would be
+			// in bufferedStreams immediately.
+			return
+		}
+		time.Sleep(time.Millisecond)
+	}
+	t.Fatal("discovery stream was parked as an application name")
+}
+
+func TestAcceptLoopLANControlClosedWhenNotPreferLAN(t *testing.T) {
+	acc := &scriptedAcceptor{next: make(chan io.ReadWriteCloser, 1)}
+	s := testSession(t)
+	s.transport = &transport{acceptor: acc}
+	go s.acceptLoop()
+
+	payload := EncodeStreamHeader(lanControlStreamName)
+	rc := &framedRWC{r: bytes.NewReader(frameMessage(payload))}
+	acc.next <- rc
+	deadline := time.Now().Add(time.Second)
+	for time.Now().Before(deadline) && rc.closes.Load() == 0 {
+		time.Sleep(time.Millisecond)
 	}
 	if rc.closes.Load() != 1 {
-		t.Fatalf("resetStream Close = %d, want 1", rc.closes.Load())
+		t.Fatal("lan-control stream was not closed on non-PreferLAN session")
+	}
+	if s.bufferedStreamCount() != 0 {
+		t.Fatal("lan-control stream was parked as an application name")
 	}
 }

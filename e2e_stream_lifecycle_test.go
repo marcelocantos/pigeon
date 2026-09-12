@@ -98,15 +98,20 @@ func TestE2EUnmatchedStreamReset(t *testing.T) {
 		t.Fatalf("chat recv: %v", err)
 	}
 
-	bad, err := client.OpenStream(ctx, "nope")
-	if err != nil {
-		t.Fatalf("open unmatched: %v", err)
+	for _, name := range []string{"nope", "nope2", "nope3"} {
+		bad, err := client.OpenStream(ctx, name)
+		if err != nil {
+			t.Fatalf("open unmatched %q: %v", name, err)
+		}
+		rctx, rcancel := context.WithTimeout(ctx, pigeon.DefaultStreamRendezvous+2*time.Second)
+		if _, err := bad.Recv(rctx); err == nil {
+			rcancel()
+			t.Fatalf("unmatched stream %q Recv succeeded; want reset/EOF", name)
+		}
+		rcancel()
 	}
-	// After the rendezvous window the backend resets. Recv must fail.
-	rctx, rcancel := context.WithTimeout(ctx, pigeon.DefaultStreamRendezvous+2*time.Second)
-	defer rcancel()
-	if _, err := bad.Recv(rctx); err == nil {
-		t.Fatal("unmatched stream Recv succeeded; want reset/EOF")
+	if n := backend.BufferedStreamCount(); n != 0 {
+		t.Fatalf("backend parked %d unmatched streams", n)
 	}
 }
 
@@ -137,6 +142,9 @@ func TestE2EStreamAdmissionAllowlist(t *testing.T) {
 	defer rcancel()
 	if _, err := bad.Recv(rctx); err == nil {
 		t.Fatal("undeclared stream Recv succeeded; want immediate reset")
+	}
+	if n := backend.BufferedStreamCount(); n != 0 {
+		t.Fatalf("backend parked undeclared stream (count=%d)", n)
 	}
 }
 
@@ -199,6 +207,10 @@ func TestE2EStreamResetAbortsPeerRecv(t *testing.T) {
 		_, err = st.Recv(ctx)
 		if err == nil {
 			errCh <- errors.New("Recv succeeded after Reset")
+			return
+		}
+		if !pigeon.IsStreamReset(err) {
+			errCh <- fmt.Errorf("Recv error is not a stream reset: %v", err)
 			return
 		}
 		errCh <- nil

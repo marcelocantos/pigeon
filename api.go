@@ -593,6 +593,7 @@ type Session struct {
 	rendezvousWindow   time.Duration
 	maxBufferedPerName int
 	draining           bool
+	deliverAfterPop    func() // test hook: runs after waiter pop, before send
 
 	// Datagrams are pre-declared by name → channel-id at construction.
 	dgConfig  map[string]uint64
@@ -790,6 +791,9 @@ func (s *Session) deliverIncomingStream(name string, rwc io.ReadWriteCloser) {
 		w := q[0]
 		s.pendingOpens[name] = q[1:]
 		s.streamMu.Unlock()
+		if s.deliverAfterPop != nil {
+			s.deliverAfterPop()
+		}
 		w.ch <- rwc
 		if w.done.Load() {
 			select {

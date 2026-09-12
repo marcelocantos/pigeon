@@ -3,9 +3,12 @@
 
 package pigeon
 
-// This file used to expose the Go-side SessionMachine state via
-// MachineState() for the T39.3 executor showcase test. T34c.3d retired
-// the Go-side machine — activation now runs in libpigeon via cwire and
-// the post-activation machine state is no longer tracked on the Go
-// side. The file is kept for any future package-private hooks tests
-// may need.
+// Test hooks for 🎯T63 stream-lifecycle oracles.
+
+// BufferedStreamCount is the number of unmatched incoming streams
+// currently parked for AcceptStream.
+func (s *Session) BufferedStreamCount() int { return s.bufferedStreamCount() }
+
+// IsStreamReset reports whether err is a QUIC/WebTransport stream reset
+// (RESET_STREAM), as opposed to a clean FIN/EOF.
+func IsStreamReset(err error) bool { return isStreamReset(err) }
