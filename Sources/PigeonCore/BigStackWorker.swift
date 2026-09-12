@@ -19,7 +19,7 @@
 
 import Foundation
 
-final class BigStackWorker: @unchecked Sendable {
+public final class BigStackWorker: @unchecked Sendable {
     // 4 MiB. PIGEON_MAX_MSG = 1 MiB, plus AEAD overhead and Swift
     // bridging frames; 4 MiB leaves ample margin.
     private static let stackBytes = 4 * 1024 * 1024
@@ -30,7 +30,7 @@ final class BigStackWorker: @unchecked Sendable {
     private var stopping = false
     private var thread: Thread!
 
-    init() {
+    public init() {
         let t = Thread { [weak self] in
             self?.runLoop()
         }
@@ -69,7 +69,7 @@ final class BigStackWorker: @unchecked Sendable {
     /// Schedule `body` on the worker thread and await its result.
     /// `body` runs synchronously on a thread with a 4 MiB stack; the
     /// continuation is resumed back in the caller's executor.
-    func run<T>(_ body: @escaping () -> T) async -> T {
+    public func run<T>(_ body: @escaping () -> T) async -> T {
         await withCheckedContinuation { (cont: CheckedContinuation<T, Never>) in
             lock.lock()
             queue.append { [body] in

@@ -19,7 +19,7 @@ floors:            # per-dimension held-tier ratchet; below floor => DRIFT
   quality: 0       # gofmt/vet live in `make bullseye` only, not GitHub Actions
   deps: 2          # go.sum + web/package-lock.json committed
   release: 2       # CI-built tarballs + Homebrew + Fly deploy; no CHANGELOG
-  governance: 2    # Apache LICENSE + squash-only + NOTICES
+  governance: 2    # Apache LICENSE + squash-only + NOTICE
   build: 2         # go.mod pin, Makefile, Dockerfile, amalgamate job
   docs: 1          # README/agents-guide/DESIGN/STABILITY; no docs-in-CI
   perf: 0          # make bench exists but there are no Benchmark functions
@@ -410,12 +410,12 @@ items:
 
   - id: governance.notices
     dim: governance
-    desc: Third-party attribution NOTICES for bundled dependencies
+    desc: Third-party attribution NOTICE for bundled dependencies
     state: present
     cadence: per-release
     enforce: warning
     tier: 2
-    evidence: {file: {path: NOTICES, matches: 'Third-Party Software Notices'}}
+    evidence: {file: {path: NOTICE, matches: 'Third-Party Software Notices'}}
 
   - id: governance.security-md
     dim: governance

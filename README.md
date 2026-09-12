@@ -6,6 +6,9 @@ with no ingress. The relay forwards opaque ciphertext over QUIC — it never
 sees plaintext traffic. Applications import pigeon's packages rather than
 implementing relay, pairing, or crypto logic themselves.
 
+If you use an agentic coding tool, include [`agents-guide.md`](agents-guide.md)
+in the project context.
+
 ## Trust Model
 
 All application traffic is end-to-end encrypted:
@@ -122,10 +125,12 @@ Add the GitHub repo as an SPM dependency:
 https://github.com/marcelocantos/pigeon
 ```
 
-The package provides the `Pigeon` library (iOS 16+, macOS 13+)
-containing `E2ECrypto.swift` (key exchange and encrypted channel),
-`PigeonRelay.swift` (relay connectivity), and the generated
-`PairingCeremonyMachine.swift`.
+The package provides two libraries (iOS 16+, macOS 13+):
+
+- **PigeonCore** — pure Swift (pairing artifacts, generated machines).
+  Links on iOS without host-only vendor `.a` files.
+- **Pigeon** — full stack (`PigeonCore` + `CPigeon` + ngtcp2):
+  `E2ECrypto`, `PigeonRelay`, and the generated pairing machine.
 
 ```swift
 // Both sides exchange public key bytes through the relay.
@@ -152,7 +157,7 @@ dependencyResolutionManagement {
 
 // build.gradle.kts
 dependencies {
-    implementation("com.github.marcelocantos.pigeon:pigeon:v0.24.0")
+    implementation("com.github.marcelocantos.pigeon:pigeon:v0.33.0")
 }
 ```
 
@@ -273,6 +278,14 @@ Each named stream is its own QUIC stream on the session's connection (no
 head-of-line blocking between streams). Each datagram carries the AEAD
 ciphertext of `[varint channel-id][payload]` on the session's own
 end-to-end connection, which the relay forwards opaquely.
+
+Stream lifecycle (Go Session, v0.33): `CloseWrite()` is QUIC STREAM FIN
+(write half-close); `Reset()` is RESET_STREAM + STOP_SENDING; `Close()`
+is FIN, not abort. `Session.GoAway()` refuses new streams and leaves
+in-flight ones up; `Session.Close()` still aborts the connection.
+Unmatched incoming names park for 2s (at most one per name) then reset.
+`RegisterArgs.Streams` / `ConnectArgs.Streams`, if non-empty, allowlists
+accepted names — undeclared opens reset immediately. See `STABILITY.md`.
 
 ## Multi-service nodes
 
@@ -417,7 +430,7 @@ WebTransport; the same greeting selects the role.
 | `--lan` | — | Start a LAN QUIC listener at this address (dev convenience). App backends pass `NewLANServer` via `RegisterArgs.LAN` for automatic upgrade (see [LAN Upgrade](#lan-upgrade)). |
 | `PIGEON_TOKEN` | — | Bearer token required for backend registration; open if unset. Wires through the default `BearerTokenAuth` verifier; replace with any custom `pigeon.Auth` for more complex admission policies. |
 | `--version` | — | Print version and exit |
-| `--help-agent` | — | Print usage + agent guide |
+| `--help-agent` | — | Print usage + embedded [`agents-guide.md`](agents-guide.md) |
 
 Build-time version injection:
 
@@ -438,7 +451,7 @@ or git submodules — same pattern as Jevons.
 ### Go
 
 ```bash
-go get github.com/marcelocantos/pigeon@v0.32.0   # or latest tag
+go get github.com/marcelocantos/pigeon@v0.33.0   # or latest tag
 ```
 
 Local development (sibling clone next to your module):

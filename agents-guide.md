@@ -71,16 +71,21 @@ The root package exposes `Register`, `Connect`, `Listener`, `Session`, `Stream`,
 - `AcceptStream(ctx, name) (*Stream, error)` — accept a named stream opened by the peer.
 - `Datagram(name) *Datagram` — retrieve a pre-declared datagram channel by name.
 - `PeerID() string` — InstanceID of the remote peer.
-- `Close() error` — tear down the session.
+- `GoAway() error` — drain: refuse new streams (`ErrSessionDraining`); in-flight streams stay up. Go Session only (v0.33).
+- `Close() error` — abort: cancel and tear the QUIC connection (no drain).
 
 **`Stream`** is a reliable, ordered, AEAD-encrypted message channel:
 - `Send(msg []byte) error`
 - `Recv(ctx context.Context) ([]byte, error)`
-- `Close() error`
+- `CloseWrite() error` — QUIC STREAM FIN (write half-close). The peer can still reply.
+- `Reset() error` — QUIC RESET_STREAM + STOP_SENDING (abort). Peer `Recv` fails; `pigeon.IsStreamReset(err)` is true.
+- `Close() error` — same as `CloseWrite` (FIN), not an abort.
+
+Unmatched incoming names park for `DefaultStreamRendezvous` (2s), at most `DefaultMaxBufferedStreams` (1) per name, then reset. `RegisterArgs.Streams` / `ConnectArgs.Streams`, if non-empty, is an allowlist: undeclared names reset immediately. Reserved control names (`\x00pigeon.enumerate`, `\x00pigeon.lan`, `\x00pigeon.goaway`) are always admitted. This lifecycle is the Go Session surface; Swift/Kotlin/TS follow existing parity targets.
 
 **`Datagram`** is an unreliable, unordered channel keyed by pre-agreed varint ID:
-- `Send(payload []byte) error`
-- `Recv(ctx context.Context) ([]byte, error)`
+- `Send(payload []byte) error` — may emit multiple QUIC datagrams for one logical message.
+- `Recv(ctx context.Context) (DatagramPart, error)` — one QUIC datagram as it arrives; no library reassembly.
 
 ```go
 // Backend side.
@@ -90,6 +95,7 @@ listener, instanceID, err := pigeon.Register(ctx, &pigeon.RegisterArgs{
     Relay:     "https://relay.example.com",
     Token:     bearerToken,       // optional; wires through BearerTokenAuth
     Datagrams: map[string]uint64{"video": 1},
+    Streams:   []string{"chat"}, // optional allowlist; empty = any name
 })
 defer listener.Close()
 // Advertise instanceID (e.g. as QR payload), then loop:
