@@ -18,6 +18,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/marcelocantos/pigeon/internal/httpguard"
 	"github.com/quic-go/quic-go"
 	"github.com/quic-go/quic-go/http3"
 	"github.com/quic-go/webtransport-go"
@@ -151,11 +152,18 @@ func readMessage(stream io.Reader) ([]byte, error) {
 // /register; clients connect via /ws/{id}. Traffic is bridged
 // bidirectionally, including datagrams.
 type WebTransportServer struct {
-	wtServer *webtransport.Server
-	hub      *hub
-	auth     Auth
-	addr     string
-	conn     net.PacketConn
+	wtServer    *webtransport.Server
+	hub         *hub
+	auth        Auth
+	addr        string
+	conn        net.PacketConn
+	relayDomain string
+}
+
+// SetRelayDomain records the --domain name this process is serving so
+// Host checks accept that name (and still reject rebinding names).
+func (s *WebTransportServer) SetRelayDomain(domain string) {
+	s.relayDomain = domain
 }
 
 // NewWebTransportServer creates a WebTransport relay server listening on addr.
@@ -181,10 +189,18 @@ func NewWebTransportServerWithHub(addr string, tlsConfig *tls.Config, auth Auth,
 	serverTLS := tlsConfig.Clone()
 	serverTLS.NextProtos = []string{http3.NextProtoH3}
 
+	boundPort := httpguard.PortFromListenAddr(addr)
+	guarded := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if !httpguard.AllowRequest(r, boundPort, s.relayDomain) {
+			http.Error(w, "forbidden: request was not addressed to this relay", http.StatusForbidden)
+			return
+		}
+		mux.ServeHTTP(w, r)
+	})
 	wtServer := &webtransport.Server{
 		H3: &http3.Server{
 			Addr:            addr,
-			Handler:         mux,
+			Handler:         guarded,
 			TLSConfig:       serverTLS,
 			EnableDatagrams: true,
 			QUICConfig: &quic.Config{
@@ -194,7 +210,9 @@ func NewWebTransportServerWithHub(addr string, tlsConfig *tls.Config, auth Auth,
 				HandshakeIdleTimeout: 30 * time.Second,
 			},
 		},
-		CheckOrigin: func(r *http.Request) bool { return true },
+		CheckOrigin: func(r *http.Request) bool {
+			return httpguard.AllowRequest(r, boundPort, s.relayDomain)
+		},
 	}
 	webtransport.ConfigureHTTP3Server(wtServer.H3)
 	s.wtServer = wtServer

@@ -44,6 +44,7 @@ import (
 	"github.com/caddyserver/certmagic"
 
 	"github.com/marcelocantos/pigeon"
+	"github.com/marcelocantos/pigeon/internal/httpguard"
 )
 
 // version is set at build time via -ldflags "-X main.version=<version>".
@@ -214,6 +215,7 @@ func main() {
 		slog.Error("failed to create WebTransport server", "err", err)
 		os.Exit(1)
 	}
+	srv.SetRelayDomain(*domain)
 
 	// Start the raw QUIC server sharing the same hub.
 	qAddr := ":" + listenQUICPort
@@ -227,9 +229,12 @@ func main() {
 		// diagnostic GETs (/health, /status).
 		withDiagHeaders := func(next http.HandlerFunc) http.HandlerFunc {
 			return func(w http.ResponseWriter, r *http.Request) {
+				if !httpguard.AllowRequest(r, listenPort, *domain) {
+					http.Error(w, "forbidden: request was not addressed to this relay", http.StatusForbidden)
+					return
+				}
 				w.Header().Set("Alt-Svc", `h3=":443"; ma=86400`)
-				w.Header().Set("Access-Control-Allow-Origin", "*")
-				w.Header().Set("Access-Control-Allow-Methods", "GET, OPTIONS")
+				httpguard.WriteDiagCORS(w, r)
 				if r.Method == http.MethodOptions {
 					w.WriteHeader(http.StatusNoContent)
 					return
