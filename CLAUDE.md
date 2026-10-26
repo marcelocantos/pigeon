@@ -114,6 +114,15 @@ Fly.io config in `fly.toml`. Multi-stage Dockerfile (`golang:1.25-alpine`
 -> `alpine:3.21`). WebTransport over QUIC on UDP port 443. Shared-cpu-1x,
 256MB.
 
+## Homebrew
+
+The formula in `marcelocantos/homebrew-tap` is published by
+[tapper](https://github.com/marcelocantos/tapper) from the dev Mac, not by CI.
+After a release's assets have uploaded (`.github/workflows/release.yml`), run
+`make release-tap TAG=vX.Y.Z` (or `tapper push --version vX.Y.Z`). Config lives in `tapper.yaml`;
+the tap token is read from the macOS keychain, so no Actions secret is needed.
+Docker must be running.
+
 ## Delivery
 
 Merged to master.
