@@ -55,9 +55,16 @@ echo "==> Using NDK: $ANDROID_NDK_HOME"
 
 NDK_API="${ANDROID_NDK_API:-33}"
 
+# Fresh git checkouts (including bin/gate -clean) contain only gitlinks.
+# Fetch the repository-pinned sources before attempting cross-compilation.
 if [ ! -f "$LIBSODIUM_SRC/autogen.sh" ] || [ ! -f "$OPENSSL_SRC/Configure" ] || [ ! -f "$NGTCP2_SRC/CMakeLists.txt" ]; then
-    echo "error: vendored libsodium, quictls or ngtcp2 submodule not initialised" >&2
-    echo "  run: git submodule update --init c/vendor/github.com/{jedisct1/libsodium,quictls/openssl,ngtcp2/ngtcp2}" >&2
+    git -C "$VENDOR/../.." submodule update --init \
+        c/vendor/github.com/jedisct1/libsodium \
+        c/vendor/github.com/quictls/openssl \
+        c/vendor/github.com/ngtcp2/ngtcp2
+fi
+if [ ! -f "$LIBSODIUM_SRC/autogen.sh" ] || [ ! -f "$OPENSSL_SRC/Configure" ] || [ ! -f "$NGTCP2_SRC/CMakeLists.txt" ]; then
+    echo "error: vendored libsodium, quictls or ngtcp2 submodule unavailable" >&2
     exit 1
 fi
 

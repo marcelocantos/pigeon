@@ -34,10 +34,25 @@ NGTCP2_SRC="$VENDOR/github.com/ngtcp2/ngtcp2"
 
 JOBS="$(sysctl -n hw.logicalcpu 2>/dev/null || nproc 2>/dev/null || echo 4)"
 
+# bin/gate -clean checks out the superproject without populating submodules.
+# Initialise only the pinned native sources needed by the requested build;
+# otherwise ./autogen.sh appears missing despite a valid superproject HEAD.
+ensure_source() {
+    local marker="$1" path="$2"
+    if [ ! -f "$marker" ]; then
+        git -C "$VENDOR/../.." submodule update --init "$path"
+    fi
+    if [ ! -f "$marker" ]; then
+        echo "error: vendored source missing: $marker" >&2
+        exit 1
+    fi
+}
+
 mkdir -p "$BUILD/lib" "$BUILD/include"
 
 build_libsodium() {
     echo "==> Building libsodium..."
+    ensure_source "$LIBSODIUM_SRC/autogen.sh" c/vendor/github.com/jedisct1/libsodium
     cd "$LIBSODIUM_SRC"
     if [ ! -x ./configure ]; then
         ./autogen.sh -s
@@ -63,6 +78,7 @@ build_libsodium() {
 
 build_openssl() {
     echo "==> Building quictls/openssl..."
+    ensure_source "$OPENSSL_SRC/Configure" c/vendor/github.com/quictls/openssl
     cd "$OPENSSL_SRC"
     # Configure for the current host, static libs only.
     ./Configure \
@@ -79,6 +95,7 @@ build_openssl() {
 
 build_ngtcp2() {
     echo "==> Building ngtcp2..."
+    ensure_source "$NGTCP2_SRC/CMakeLists.txt" c/vendor/github.com/ngtcp2/ngtcp2
     local bdir="$BUILD/ngtcp2-build"
     mkdir -p "$bdir"
     cd "$bdir"
