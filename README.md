@@ -38,6 +38,15 @@ The relay server handles only ciphertext and has no access to session keys.
 
 ## Go Library
 
+The Go peer uses cgo and system **libsodium development headers/library** via
+`pkg-config libsodium` (e.g. `apt install libsodium-dev pkg-config` or
+`brew install libsodium pkg-config`). The module zip contains the C amalgamation,
+not the repository’s native `c/vendor/build` artifacts. `CGO_ENABLED=1` is
+required; a missing libsodium dependency fails the build rather than disabling
+peer encryption. The separately tagged `csdke2e` C/ngtcp2 conformance suite
+requires a source checkout and `make test-c-ngtcp2`; it is not part of the
+external module’s default `go test ./...`.
+
 ```bash
 go get github.com/marcelocantos/pigeon
 ```

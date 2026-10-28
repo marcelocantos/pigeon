@@ -5,16 +5,15 @@
 # This intentionally has no c/vendor/build and does NOT use a replace directive.
 set -euo pipefail
 cd "$(dirname "$0")/.."
-root=$PWD
 full=${1:-}
 if [[ -n "$full" && "$full" != --full ]]; then echo 'usage: go-module-smoke.sh [--full]' >&2; exit 2; fi
 for tool in git python3 pkg-config go; do command -v "$tool" >/dev/null || { echo "missing $tool" >&2; exit 1; }; done
 pkg-config --exists libsodium || { echo 'Install libsodium development headers and pkg-config first' >&2; exit 1; }
 work=$(mktemp -d)
-trap 'rm -rf "$work"' EXIT
+trap 'chmod -R u+w "$work" 2>/dev/null; rm -rf "$work"' EXIT
 # The archive is the tagged-source equivalent: gitlinks/submodule content and
 # untracked native build outputs cannot enter the zip. Go validates the zip.
- git archive HEAD | tar -xf - -C "$work"
+git archive HEAD | tar -xf - -C "$work"
 version=v0.0.0-go-module-smoke
 module=github.com/marcelocantos/pigeon
 proxy="$work/proxy/$module/@v"

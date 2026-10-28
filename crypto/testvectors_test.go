@@ -11,8 +11,8 @@ import (
 	"testing"
 )
 
-// TestGenerateVectors writes deterministic test vectors to c/test/vectors.json
-// for cross-language validation by the C test suite.
+// TestGenerateVectors checks the committed C test vectors against the Go
+// implementation. The module cache is read-only for external consumers.
 func TestGenerateVectors(t *testing.T) {
 	// Fixed private key seeds — deterministic across runs.
 	aliceSeed := make([]byte, 32)
@@ -156,8 +156,11 @@ func TestGenerateVectors(t *testing.T) {
 	}
 
 	outPath := "../c/test/vectors.json"
-	if err := os.WriteFile(outPath, data, 0o644); err != nil {
-		t.Fatalf("WriteFile %s: %v", outPath, err)
+	want, err := os.ReadFile(outPath)
+	if err != nil {
+		t.Fatalf("ReadFile %s: %v", outPath, err)
 	}
-	t.Logf("Wrote test vectors to %s", outPath)
+	if string(want) != string(data) {
+		t.Fatalf("%s is stale; regenerate from Go vectors and commit it", outPath)
+	}
 }
