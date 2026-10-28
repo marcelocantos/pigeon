@@ -2,7 +2,7 @@ FROM golang:1.25-alpine AS build
 WORKDIR /src
 
 # Build deps for libsodium's autotools chain + cgo.
-RUN apk add --no-cache build-base autoconf automake libtool bash
+RUN apk add --no-cache build-base autoconf automake libtool bash pkgconf
 
 # Build the vendored static libsodium that cwire links against.
 # Cached when the submodule SHA and build.sh are unchanged.
