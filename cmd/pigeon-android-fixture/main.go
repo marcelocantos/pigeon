@@ -45,6 +45,7 @@ func (s *state) checkCode(code string) error {
 	if code == "" || code != s.code {
 		return errors.New("SAS mismatch")
 	}
+	log.Printf("DEVICE_ORACLE SAS_MATCH code=%s", code)
 	select {
 	case <-s.matched:
 	default:
@@ -153,7 +154,7 @@ func run(ctx context.Context, relay string, s *state, token chan<- string) error
 	if err := encryptedChat(ctx, chat); err != nil {
 		return err
 	}
-	log.Printf("DEVICE_ORACLE encrypted chat ping -> echo: ping peer=%s", record.PeerInstanceID)
+	log.Printf("DEVICE_ORACLE encrypted chat ping -> echo: echo: ping; ack: ack: echo: ping peer=%s", record.PeerInstanceID)
 	return nil
 }
 
@@ -211,7 +212,7 @@ func main() {
 		}
 		w.WriteHeader(http.StatusNoContent)
 	})
-	ln, err := net.Listen("tcp", *control)
+	ln, err := net.Listen("tcp4", *control)
 	if err != nil {
 		log.Fatal(err)
 	}

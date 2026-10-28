@@ -115,4 +115,5 @@ grep -q '^OK (1 test)' <<< "$result" || { echo 'Device instrumentation did not p
 wait "$fixture_pid" || { cat "$tmp/fixture.log" >&2; exit 1; }
 fixture_pid=
 grep -q '^DEVICE_ORACLE_PASS$' "$tmp/fixture.log" || { cat "$tmp/fixture.log" >&2; exit 1; }
+cat "$tmp/fixture.log"
 echo "Device oracle GREEN on $serial via $host:$quic_port"
