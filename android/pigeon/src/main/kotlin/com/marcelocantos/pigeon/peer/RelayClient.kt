@@ -11,13 +11,6 @@ import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.flowOn
 import kotlinx.coroutines.withContext
 
-/**
- * The handshake/transport seam. A native implementation must perform the
- * post-pairing activation *before* returning a handle; merely opening QUIC
- * and calling pigeon_session_init does not establish an encrypted channel.
- * No blocking recv may be guarded by a connection-wide send mutex: that
- * deadlocks recv-first traffic until the native event-loop pump is available.
- */
 /** TLS is verified by default; disabling verification is only for a local fixture. */
 data class RelayTLS(
     val verifyPeer: Boolean = true,
@@ -40,8 +33,9 @@ internal interface RelayClientDriver {
 /**
  * Owns one relay connection and its streams. Close streams before the native
  * connection: stream pointers borrow the session owned by that connection.
- * Operations are dispatched off the caller thread, but do not promise
- * concurrent send/recv until the native transport pump supports it.
+ * Operations are dispatched off the caller thread; recv does not hold a
+ * session-wide lock against send. Full-duplex safety still requires the
+ * native transport pump and a device recv-first oracle.
  */
 class RelayClientSession internal constructor(
     private val driver: RelayClientDriver,
@@ -213,9 +207,10 @@ internal object NativeRelayClientDriver : RelayClientDriver {
 }
 
 /**
- * Begin a plaintext pairing ceremony over the relay's primary stream.
- * The caller must finish the modern pairing ceremony and persist its
- * PairingRecord before using [connectPaired] on a fresh connection.
+ * Begin a pairing-mode connection. Native initiation binds the plaintext
+ * primary stream and sends the arrival marker; [pairInitiator] performs the
+ * ceremony on a separate named "ceremony" stream. Use [connectPaired] on
+ * a fresh connection after completing the ceremony and persisting its record.
  * CONNECT does not carry a bearer token on the current relay wire; a
  * nonempty [token] is rejected, never silently discarded.
  *
