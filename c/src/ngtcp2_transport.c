@@ -785,8 +785,7 @@ static int raw_open_stream(void *userdata, pigeon_stream_handle **out_handle)
             uint64_t deadline = now_ns() + 5000ULL * 1000000ULL;
             while (rv == NGTCP2_ERR_STREAM_ID_BLOCKED && now_ns() < deadline) {
                 if (write_quic(t) != 0) return -1;
-                wait_io(t, 50);
-                read_quic(t);
+                if (wait_io(t, 50) < 0 || t->closed || read_quic(t) != 0) return -1;
                 rv = ngtcp2_conn_open_bidi_stream((ngtcp2_conn *)t->conn, &sid, NULL);
             }
         }
