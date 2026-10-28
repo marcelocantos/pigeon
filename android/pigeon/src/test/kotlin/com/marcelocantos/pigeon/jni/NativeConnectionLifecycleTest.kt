@@ -55,10 +55,21 @@ class NativeConnectionLifecycleTest {
     }
 
     private fun build(repo: Path, path: Path, pkg: String) {
+        val log = path.resolveSibling("${path.fileName}.build.log")
         val p = ProcessBuilder("go", "build", "-o", path.toString(), pkg)
-            .directory(repo.toFile()).redirectErrorStream(true).start()
-        val output = p.inputStream.bufferedReader().use { it.readText() }
-        check(p.waitFor(120, TimeUnit.SECONDS) && p.exitValue() == 0) { "go build $pkg: $output" }
+            .directory(repo.toFile()).redirectErrorStream(true)
+            .redirectOutput(log.toFile()).start()
+        try {
+            check(p.waitFor(120, TimeUnit.SECONDS)) { "go build $pkg timed out; log: $log" }
+            check(p.exitValue() == 0) { "go build $pkg: ${text(log)}" }
+        } finally {
+            // A timed-out build must not outlive the test process, and reading
+            // stdout before waitFor would itself block forever on a live child.
+            if (p.isAlive) {
+                p.destroyForcibly()
+                check(p.waitFor(5, TimeUnit.SECONDS)) { "go build $pkg did not exit after kill" }
+            }
+        }
     }
 
     private fun start(repo: Path, log: Path, vararg argv: String): Process =
@@ -172,8 +183,8 @@ class NativeConnectionLifecycleTest {
         } finally {
             fixture?.destroyForcibly()
             relay.destroyForcibly()
-            fixture?.waitFor(5, TimeUnit.SECONDS)
-            relay.waitFor(5, TimeUnit.SECONDS)
+            check(fixture?.waitFor(5, TimeUnit.SECONDS) != false) { "fixture survived forced stop" }
+            check(relay.waitFor(5, TimeUnit.SECONDS)) { "relay survived forced stop" }
         }
     }
 }
