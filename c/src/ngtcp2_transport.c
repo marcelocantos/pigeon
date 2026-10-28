@@ -242,7 +242,8 @@ static int stream_close_cb(ngtcp2_conn *conn, uint32_t flags, int64_t stream_id,
     pigeon_ngtcp2_transport *t = user_data;
     int slot = find_extra_slot(t, stream_id);
     if (slot >= 0) {
-        t->extra_streams[slot].in_use = false;
+        t->extra_streams[slot].closing = true;
+        if (!t->extra_streams[slot].readers) t->extra_streams[slot].in_use = false;
     }
     return 0;
 }
@@ -474,6 +475,19 @@ static int read_quic(pigeon_ngtcp2_transport *t)
 
 // Block until data arrives on the UDP socket or timeout_ms elapses.
 // Returns 1 if socket is readable, 0 on timeout, -1 on error.
+static int wait_readable(int fd, int timeout_ms);
+
+// Release the ngtcp2 lock while blocking. A second waiter may consume the
+// packet; poll the shared rings within 10 ms even if our select did not wake.
+static int wait_io(pigeon_ngtcp2_transport *t, int timeout_ms)
+{
+    if (timeout_ms > 10) timeout_ms = 10;
+    pthread_mutex_unlock(&t->io_mu);
+    int r = wait_readable(t->fd, timeout_ms);
+    pthread_mutex_lock(&t->io_mu);
+    return t->closed ? -1 : r;
+}
+
 static int wait_readable(int fd, int timeout_ms)
 {
     fd_set rfds;
@@ -587,7 +601,7 @@ static int wait_stream_open(pigeon_ngtcp2_transport *t, int timeout_ms)
 
 // ---- pigeon_transport vtable functions ----
 
-static int transport_send_stream(void *userdata,
+static int raw_send_stream(void *userdata,
                                   const uint8_t *data, size_t len)
 {
     pigeon_ngtcp2_transport *t = userdata;
@@ -596,7 +610,7 @@ static int transport_send_stream(void *userdata,
 }
 
 // Read exactly `buf_len` bytes from the stream, blocking as needed.
-static int transport_recv_stream(void *userdata,
+static int raw_recv_stream(void *userdata,
                                   uint8_t *buf, size_t buf_len,
                                   size_t *out_len)
 {
@@ -605,6 +619,7 @@ static int transport_recv_stream(void *userdata,
 
     size_t total = 0;
     while (total < buf_len) {
+        if (t->closed) return -1;
         size_t got = ringbuf_pop(&t->recv_buf, buf + total, buf_len - total);
         total += got;
         if (total >= buf_len) break;
@@ -620,7 +635,7 @@ static int transport_recv_stream(void *userdata,
             wait_ms = (int)(diff < 5000 ? diff : 5000);
         }
 
-        int r = wait_readable(t->fd, wait_ms);
+        int r = t->io_active ? wait_io(t, wait_ms) : wait_readable(t->fd, wait_ms);
         if (r < 0) { set_error(t, "select() in recv"); return -1; }
         if (r > 0 && read_quic(t) != 0) return -1;
 
@@ -632,7 +647,7 @@ static int transport_recv_stream(void *userdata,
     return 0;
 }
 
-static int transport_send_datagram(void *userdata,
+static int raw_send_datagram(void *userdata,
                                     const uint8_t *data, size_t len)
 {
     pigeon_ngtcp2_transport *t = userdata;
@@ -670,7 +685,7 @@ static int transport_send_datagram(void *userdata,
     return 0;
 }
 
-static int transport_recv_datagram(void *userdata,
+static int raw_recv_datagram(void *userdata,
                                     uint8_t *buf, size_t buf_len,
                                     size_t *out_len)
 {
@@ -691,6 +706,7 @@ static int transport_recv_datagram(void *userdata,
     // no datagram) must not leak through.
     uint64_t deadline = now_ns() + 5000ULL * 1000000ULL;
     while (t->dgram_count == 0) {
+        if (t->closed) return -1;
         if (write_quic(t) != 0) return -1;
         uint64_t ts = now_ns();
         if (ts >= deadline) {
@@ -706,7 +722,7 @@ static int transport_recv_datagram(void *userdata,
             wait_ms = (int)(diff < left ? diff : left);
             if (wait_ms <= 0) wait_ms = 1;
         }
-        int r = wait_readable(t->fd, wait_ms);
+        int r = wait_io(t, wait_ms);
         if (r < 0) { set_error(t, "select() in recv_datagram"); return -1; }
         if (r > 0 && read_quic(t) != 0) return -1;
         if (ngtcp2_conn_get_expiry2((ngtcp2_conn *)t->conn) <= now_ns()) {
@@ -732,6 +748,7 @@ static int run_io_until(pigeon_ngtcp2_transport *t,
 {
     uint64_t deadline = now_ns() + (uint64_t)(timeout_ms > 0 ? timeout_ms : 5000) * 1000000ULL;
     while (!ready(t)) {
+        if (t->closed) return -1;
         if (write_quic(t) != 0) return -1;
         uint64_t ts = now_ns();
         if (ts >= deadline) { set_error(t, "timeout"); return -1; }
@@ -744,7 +761,7 @@ static int run_io_until(pigeon_ngtcp2_transport *t,
             wait_ms = (int)(diff < left ? diff : left);
             if (wait_ms <= 0) wait_ms = 1;
         }
-        int r = wait_readable(t->fd, wait_ms);
+        int r = wait_io(t, wait_ms);
         if (r < 0) { set_error(t, "select"); return -1; }
         if (r > 0 && read_quic(t) != 0) return -1;
         if (ngtcp2_conn_get_expiry2((ngtcp2_conn *)t->conn) <= now_ns()) {
@@ -756,7 +773,7 @@ static int run_io_until(pigeon_ngtcp2_transport *t,
 
 static bool any_accept_pending(pigeon_ngtcp2_transport *t) { return t->accept_count > 0; }
 
-static int transport_open_stream(void *userdata, pigeon_stream_handle **out_handle)
+static int raw_open_stream(void *userdata, pigeon_stream_handle **out_handle)
 {
     pigeon_ngtcp2_transport *t = userdata;
     if (t->closed) return -1;
@@ -768,7 +785,7 @@ static int transport_open_stream(void *userdata, pigeon_stream_handle **out_hand
             uint64_t deadline = now_ns() + 5000ULL * 1000000ULL;
             while (rv == NGTCP2_ERR_STREAM_ID_BLOCKED && now_ns() < deadline) {
                 if (write_quic(t) != 0) return -1;
-                wait_readable(t->fd, 50);
+                wait_io(t, 50);
                 read_quic(t);
                 rv = ngtcp2_conn_open_bidi_stream((ngtcp2_conn *)t->conn, &sid, NULL);
             }
@@ -781,7 +798,7 @@ static int transport_open_stream(void *userdata, pigeon_stream_handle **out_hand
     return 0;
 }
 
-static int transport_accept_stream(void *userdata, pigeon_stream_handle **out_handle)
+static int raw_accept_stream(void *userdata, pigeon_stream_handle **out_handle)
 {
     pigeon_ngtcp2_transport *t = userdata;
     if (t->closed) return -1;
@@ -803,6 +820,7 @@ static int slot_read_n(pigeon_ngtcp2_transport *t,
 {
     size_t total = 0;
     while (total < want) {
+        if (t->closed || s->closing) return -1;
         size_t got = ringbuf_pop(&s->recv_buf, buf + total, want - total);
         total += got;
         if (total >= want) break;
@@ -814,7 +832,7 @@ static int slot_read_n(pigeon_ngtcp2_transport *t,
             uint64_t diff = (expiry - ts) / 1000000ULL;
             wait_ms = (int)(diff < 5000 ? diff : 5000);
         }
-        int r = wait_readable(t->fd, wait_ms);
+        int r = wait_io(t, wait_ms);
         if (r < 0) { set_error(t, "select on stream"); return -1; }
         if (r > 0 && read_quic(t) != 0) return -1;
         if (ngtcp2_conn_get_expiry2((ngtcp2_conn *)t->conn) <= now_ns()) {
@@ -835,7 +853,7 @@ static int slot_read_n(pigeon_ngtcp2_transport *t,
 // relay's writeMessage/readMessage. The pigeon_session API expects one
 // whole message per call; layering framing here keeps the higher
 // layers identical between loopback and ngtcp2.
-static int transport_send_on_stream(void *userdata, pigeon_stream_handle *h,
+static int raw_send_on_stream(void *userdata, pigeon_stream_handle *h,
                                      const uint8_t *data, size_t len)
 {
     pigeon_ngtcp2_transport *t = userdata;
@@ -859,7 +877,7 @@ static int transport_send_on_stream(void *userdata, pigeon_stream_handle *h,
     return rv;
 }
 
-static int transport_recv_on_stream(void *userdata, pigeon_stream_handle *h,
+static int raw_recv_on_stream(void *userdata, pigeon_stream_handle *h,
                                      uint8_t *buf, size_t buf_len, size_t *out_len)
 {
     pigeon_ngtcp2_transport *t = userdata;
@@ -884,7 +902,7 @@ static int transport_recv_on_stream(void *userdata, pigeon_stream_handle *h,
     return 0;
 }
 
-static int transport_close_stream(void *userdata, pigeon_stream_handle *h)
+static int raw_close_stream(void *userdata, pigeon_stream_handle *h)
 {
     pigeon_ngtcp2_transport *t = userdata;
     pigeon_ngtcp2_stream_slot *s = (pigeon_ngtcp2_stream_slot *)h;
@@ -894,18 +912,20 @@ static int transport_close_stream(void *userdata, pigeon_stream_handle *h)
         ngtcp2_conn_shutdown_stream((ngtcp2_conn *)t->conn, 0, s->stream_id, 0);
     }
     write_quic(t);
-    s->in_use = false;
+    s->closing = true;
+    if (!s->readers) s->in_use = false;
     return 0;
 }
 
-static int transport_reset_stream(void *userdata, pigeon_stream_handle *h)
+static int raw_reset_stream(void *userdata, pigeon_stream_handle *h)
 {
     pigeon_ngtcp2_transport *t = userdata;
     pigeon_ngtcp2_stream_slot *s = (pigeon_ngtcp2_stream_slot *)h;
     if (!s || !s->in_use) return -1;
     ngtcp2_conn_shutdown_stream((ngtcp2_conn *)t->conn, 0, s->stream_id, 0);
     write_quic(t);
-    s->in_use = false;
+    s->closing = true;
+    if (!s->readers) s->in_use = false;
     return 0;
 }
 
@@ -1163,7 +1183,7 @@ static int read_greeting_ack(pigeon_ngtcp2_transport *t)
 {
     uint8_t hdr[4];
     size_t got = 0;
-    if (transport_recv_stream(t, hdr, 4, &got) != 0 || got != 4) {
+    if (raw_recv_stream(t, hdr, 4, &got) != 0 || got != 4) {
         set_error(t, "read greeting ack length");
         return -1;
     }
@@ -1176,7 +1196,7 @@ static int read_greeting_ack(pigeon_ngtcp2_transport *t)
     uint8_t payload[64];
     got = 0;
     if (plen > 0 &&
-        (transport_recv_stream(t, payload, plen, &got) != 0 || got != plen)) {
+        (raw_recv_stream(t, payload, plen, &got) != 0 || got != plen)) {
         set_error(t, "read greeting ack payload");
         return -1;
     }
@@ -1188,6 +1208,116 @@ static int read_greeting_ack(pigeon_ngtcp2_transport *t)
     }
     // LISTEN / CONNECT acks are consumed for their gating effect only.
     return 0;
+}
+
+// Vtable serialization. io_users counts calls even while their lock is released
+// in wait_io; close waits for every active caller before deleting ngtcp2.
+static int io_enter(pigeon_ngtcp2_transport *t)
+{
+    pthread_mutex_lock(&t->io_mu);
+    if (t->closed) { pthread_mutex_unlock(&t->io_mu); return -1; }
+    t->io_users++;
+    return 0;
+}
+static void io_leave(pigeon_ngtcp2_transport *t)
+{
+    if (--t->io_users == 0) pthread_cond_broadcast(&t->io_idle);
+    pthread_mutex_unlock(&t->io_mu);
+}
+
+static int transport_send_stream(void *userdata, const uint8_t *data, size_t len)
+{
+    pigeon_ngtcp2_transport *t = userdata;
+    if (io_enter(t) != 0) return -1;
+    int rv = raw_send_stream(userdata, data, len);
+    io_leave(t);
+    return rv;
+}
+
+static int transport_recv_stream(void *userdata, uint8_t *buf, size_t len, size_t *out)
+{
+    pigeon_ngtcp2_transport *t = userdata;
+    if (io_enter(t) != 0) return -1;
+    int rv = raw_recv_stream(userdata, buf, len, out);
+    io_leave(t);
+    return rv;
+}
+
+static int transport_send_datagram(void *userdata, const uint8_t *data, size_t len)
+{
+    pigeon_ngtcp2_transport *t = userdata;
+    if (io_enter(t) != 0) return -1;
+    int rv = raw_send_datagram(userdata, data, len);
+    io_leave(t);
+    return rv;
+}
+
+static int transport_recv_datagram(void *userdata, uint8_t *buf, size_t len, size_t *out)
+{
+    pigeon_ngtcp2_transport *t = userdata;
+    if (io_enter(t) != 0) return -1;
+    int rv = raw_recv_datagram(userdata, buf, len, out);
+    io_leave(t);
+    return rv;
+}
+
+static int transport_open_stream(void *userdata, pigeon_stream_handle **out)
+{
+    pigeon_ngtcp2_transport *t = userdata;
+    if (io_enter(t) != 0) return -1;
+    int rv = raw_open_stream(userdata, out);
+    io_leave(t);
+    return rv;
+}
+
+static int transport_accept_stream(void *userdata, pigeon_stream_handle **out)
+{
+    pigeon_ngtcp2_transport *t = userdata;
+    if (io_enter(t) != 0) return -1;
+    int rv = raw_accept_stream(userdata, out);
+    io_leave(t);
+    return rv;
+}
+
+static int transport_send_on_stream(void *userdata, pigeon_stream_handle *h, const uint8_t *data, size_t len)
+{
+    pigeon_ngtcp2_transport *t = userdata;
+    if (io_enter(t) != 0) return -1;
+    int rv = raw_send_on_stream(userdata, h, data, len);
+    io_leave(t);
+    return rv;
+}
+
+static int transport_recv_on_stream(void *userdata, pigeon_stream_handle *h, uint8_t *buf, size_t len, size_t *out)
+{
+    pigeon_ngtcp2_transport *t = userdata;
+    if (io_enter(t) != 0) return -1;
+    pigeon_ngtcp2_stream_slot *slot = (pigeon_ngtcp2_stream_slot *)h;
+    if (!slot || slot->readers) { io_leave(t); return -1; }
+    slot->readers++;
+    int rv = raw_recv_on_stream(userdata, h, buf, len, out);
+    slot->readers--;
+    if (slot->closing && !slot->readers) slot->in_use = false;
+    io_leave(t);
+    return rv;
+}
+
+static int transport_close_stream(void *userdata, pigeon_stream_handle *h)
+{
+    pigeon_ngtcp2_transport *t = userdata;
+    if (io_enter(t) != 0) return -1;
+    int rv = raw_close_stream(userdata, h);
+    io_leave(t);
+    return rv;
+}
+
+static int transport_reset_stream(void *userdata, pigeon_stream_handle *h)
+{
+    pigeon_ngtcp2_transport *t = userdata;
+    if (io_enter(t) != 0) return -1;
+    int rv = raw_reset_stream(userdata, h);
+    io_leave(t);
+    return rv;
 }
 
 // ---- Public API ----
@@ -1211,6 +1341,9 @@ int pigeon_ngtcp2_transport_init(pigeon_ngtcp2_transport *t,
     t->fd               = -1;
     t->stream_id        = -1;
     t->primary_slot_idx = -1;
+    pthread_mutex_init(&t->io_mu, NULL);
+    pthread_cond_init(&t->io_idle, NULL);
+    t->io_ready = true;
 
     // Retain config strings.
     snprintf(t->host, sizeof(t->host), "%s", cfg->host);
@@ -1307,13 +1440,22 @@ int pigeon_ngtcp2_transport_init(pigeon_ngtcp2_transport *t,
         t->extra_streams[i].in_use    = false;
     }
 
+    t->io_active = true;
     return 0;
 }
 
 void pigeon_ngtcp2_transport_close(pigeon_ngtcp2_transport *t)
 {
-    if (!t || t->closed) return;
-    t->closed = 1;
+    if (!t) return;
+    if (t->io_ready) {
+        pthread_mutex_lock(&t->io_mu);
+        if (t->closed) { pthread_mutex_unlock(&t->io_mu); return; }
+        t->closed = 1;
+        while (t->io_users) pthread_cond_wait(&t->io_idle, &t->io_mu);
+    } else {
+        if (t->closed) return;
+        t->closed = 1;
+    }
 
     if (t->conn) {
         // Send a CONNECTION_CLOSE packet.
@@ -1353,14 +1495,18 @@ void pigeon_ngtcp2_transport_close(pigeon_ngtcp2_transport *t)
         t->dgram_data[idx] = NULL;
     }
     t->dgram_count = 0;
+    if (t->io_ready) pthread_mutex_unlock(&t->io_mu);
 }
 
 pigeon_stream_handle *
 pigeon_ngtcp2_transport_primary_handle(pigeon_ngtcp2_transport *t)
 {
-    if (!t || t->stream_id < 0) return NULL;
+    if (!t || !t->io_ready) return NULL;
+    pthread_mutex_lock(&t->io_mu);
+    if (t->closed || t->stream_id < 0) { pthread_mutex_unlock(&t->io_mu); return NULL; }
     // Idempotent — return the previously-allocated slot.
     if (t->primary_slot_idx >= 0) {
+        pthread_mutex_unlock(&t->io_mu);
         return (pigeon_stream_handle *)
                &t->extra_streams[t->primary_slot_idx];
     }
@@ -1368,7 +1514,7 @@ pigeon_ngtcp2_transport_primary_handle(pigeon_ngtcp2_transport *t)
     // session API can treat it uniformly with peer-opened sub-streams.
     // peer_opened=false because we (the QUIC client) opened it.
     int slot = alloc_extra_slot(t, t->stream_id, false);
-    if (slot < 0) return NULL;
+    if (slot < 0) { pthread_mutex_unlock(&t->io_mu); return NULL; }
     t->primary_slot_idx = slot;
     // Migrate any bytes already buffered on the legacy primary
     // recv_buf into the new slot — those bytes arrived before the
@@ -1381,5 +1527,6 @@ pigeon_ngtcp2_transport_primary_handle(pigeon_ngtcp2_transport *t)
         size_t got = ringbuf_pop(&t->recv_buf, scratch, want);
         ringbuf_push(&t->extra_streams[slot].recv_buf, scratch, got);
     }
+    pthread_mutex_unlock(&t->io_mu);
     return (pigeon_stream_handle *)&t->extra_streams[slot];
 }

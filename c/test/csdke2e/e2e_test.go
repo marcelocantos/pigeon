@@ -644,3 +644,70 @@ func runBackendTwoClients(t *testing.T, relay *relayFixture, bid crypto.Identity
 	}
 	done <- nil
 }
+
+// A blocked encrypted receive must neither monopolize the ngtcp2 connection
+// nor share its ciphertext buffer with a concurrent encrypted send.
+func TestCSDKFullDuplexRecvFirst(t *testing.T) {
+ for _, distinct := range []bool{false, true} {
+  t.Run(fmt.Sprintf("distinct=%t", distinct), func(t *testing.T) {
+   relay := startRelay(t); defer relay.stop()
+   p := mintBond(t, t.TempDir(), relay.url, "duplex")
+   ready := make(chan struct{}); done := make(chan error, 1); shutdown := make(chan struct{})
+   go func() {
+    l, err := registerBackend(relay.host, relay.port, p.backendID.InstanceID(), nil,
+     func(id string) (*PairingRecord, bool) { return p.backendView, id == p.clientID.InstanceID() })
+    close(ready)
+    if err != nil { done <- err; return }; defer l.Close()
+    sess, err := l.Accept(); if err != nil { done <- err; return }; defer sess.Close()
+    a, err := sess.acceptStream("a"); if err != nil { done <- err; return }
+    if distinct {
+     b, e := sess.acceptStream("b"); if e != nil { done <- e; return }
+     _, err = b.Recv()
+    } else { _, err = a.Recv() }
+    if err == nil { err = a.Send([]byte("reply")) }
+    done <- err
+    <-shutdown
+   }()
+   <-ready
+   conn, err := connectClient(relay.host, relay.port, p.backendID.InstanceID(), p.clientID.InstanceID(), p.clientView, nil)
+   if err != nil { t.Fatal(err) }; defer conn.Close()
+   a, err := conn.Session().openStream("a"); if err != nil { t.Fatal(err) }
+   var b *streamHandle
+   if distinct { b, err = conn.Session().openStream("b"); if err != nil { t.Fatal(err) } } else { b = a }
+   received := make(chan error, 1)
+   go func() { msg, e := a.Recv(); if e == nil && string(msg) != "reply" { e = fmt.Errorf("reply = %q", msg) }; received <- e }()
+   time.Sleep(100 * time.Millisecond) // recv enters C before the send
+   if err := b.Send([]byte("request")); err != nil { t.Fatal(err) }
+   select { case e := <-received: if e != nil { t.Fatal(e) }; case <-time.After(4*time.Second): t.Fatal("recv blocked concurrent send") }
+   select { case e := <-done: if e != nil { t.Fatal(e) }; case <-time.After(4*time.Second): t.Fatal("backend blocked") }
+   close(shutdown)
+  })
+ }
+}
+
+func TestCSDKBlockedRecvResetBounded(t *testing.T) {
+ relay := startRelay(t); defer relay.stop()
+ p := mintBond(t, t.TempDir(), relay.url, "cancel")
+ ready := make(chan struct{}); done := make(chan error, 1)
+ go func() {
+  l, err := registerBackend(relay.host, relay.port, p.backendID.InstanceID(), nil,
+   func(id string) (*PairingRecord, bool) { return p.backendView, id == p.clientID.InstanceID() })
+  close(ready)
+  if err != nil { done <- err; return }; defer l.Close()
+  sess, err := l.Accept(); if err != nil { done <- err; return }; defer sess.Close()
+  st, err := sess.acceptStream("cancel"); if err != nil { done <- err; return }
+  done <- st.Send([]byte("ready"))
+  time.Sleep(500 * time.Millisecond)
+ }()
+ <-ready
+ conn, err := connectClient(relay.host, relay.port, p.backendID.InstanceID(), p.clientID.InstanceID(), p.clientView, nil)
+ if err != nil { t.Fatal(err) }; defer conn.Close()
+ st, err := conn.Session().openStream("cancel"); if err != nil { t.Fatal(err) }
+ if _, err = st.Recv(); err != nil { t.Fatal(err) }
+ blocked := make(chan error, 1)
+ go func() { _, e := st.Recv(); blocked <- e }()
+ time.Sleep(100 * time.Millisecond)
+ if err := st.Reset(); err != nil { t.Fatal(err) }
+ select { case e := <-blocked: if e == nil { t.Fatal("cancelled recv succeeded") }; case <-time.After(time.Second): t.Fatal("reset did not wake recv") }
+ if err := <-done; err != nil { t.Fatal(err) }
+}

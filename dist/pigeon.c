@@ -2373,14 +2373,19 @@ int pigeon_stream_send(pigeon_stream *s,
                                               s->handle, msg, msg_len);
     }
 
-    if (pigeon_session_ensure_scratch(sess) != 0) return -1;
+    // Per-call storage: a blocking receive must not hold session scratch
+    // while a concurrent send encrypts into it (including same-stream reply).
+    size_t cap = PIGEON_MAX_MSG + 64;
+    uint8_t *scratch = (uint8_t *)malloc(cap);
+    if (!scratch) return -1;
 
     // Per-stream ModeStrict AEAD (🎯T53).
     int ctn = pigeon_channel_encrypt(&s->aead, msg, msg_len,
-                                     sess->scratch_a, sess->scratch_size);
-    if (ctn < 0) return -1;
-    return sess->transport.send_on_stream(sess->transport.userdata, s->handle,
-                                          sess->scratch_a, (size_t)ctn);
+                                     scratch, cap);
+    int rv = ctn < 0 ? -1 : sess->transport.send_on_stream(
+        sess->transport.userdata, s->handle, scratch, (size_t)ctn);
+    free(scratch);
+    return rv;
 }
 
 int pigeon_stream_recv(pigeon_stream *s,
@@ -2401,14 +2406,19 @@ int pigeon_stream_recv(pigeon_stream *s,
         return (int)got;
     }
 
-    if (pigeon_session_ensure_scratch(sess) != 0) return -1;
+    size_t cap = PIGEON_MAX_MSG + 64;
+    uint8_t *scratch = (uint8_t *)malloc(cap);
+    if (!scratch) return -1;
 
     size_t got = 0;
     if (sess->transport.recv_on_stream(sess->transport.userdata, s->handle,
-                                       sess->scratch_a, sess->scratch_size, &got) != 0) {
+                                       scratch, cap, &got) != 0) {
+        free(scratch);
         return -1;
     }
-    return pigeon_channel_decrypt(&s->aead, sess->scratch_a, got, buf, buf_len);
+    int rv = pigeon_channel_decrypt(&s->aead, scratch, got, buf, buf_len);
+    free(scratch);
+    return rv;
 }
 
 int pigeon_stream_close_write(pigeon_stream *s)

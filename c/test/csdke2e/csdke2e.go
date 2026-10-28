@@ -260,6 +260,11 @@ func (s *streamHandle) Send(msg []byte) error {
 	return nil
 }
 
+func (s *streamHandle) Reset() error {
+ if C.pigeon_stream_reset(&s.c) != 0 { return errors.New("pigeon_stream_reset failed") }
+ return nil
+}
+
 func (s *streamHandle) Recv() ([]byte, error) {
 	// PIGEON_MAX_MSG is 1MB; allocate the buffer in Go so the cgo
 	// call can stamp directly into it.

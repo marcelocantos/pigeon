@@ -33,7 +33,8 @@
 //
 // Thread safety
 // -------------
-// Not thread-safe.  Use from a single thread or add external locking.
+// Full-duplex: one send and one receive per stream may overlap. Concurrent
+// receives on the same stream and calls after close returns are unsupported.
 //
 // TLS certificate validation
 // --------------------------
@@ -49,6 +50,7 @@
 
 #include <stddef.h>
 #include <stdint.h>
+#include <pthread.h>
 #include <sys/socket.h>
 
 // Opaque pointer to the TLS handle (SSL*).  Avoids exposing OpenSSL types
@@ -126,6 +128,8 @@ typedef struct {
     bool                  in_use;
     bool                  peer_opened;  // remote opened it (we accepted)
     bool                  fin_received;
+    bool                  closing;
+    unsigned              readers;
     pigeon_stream_ringbuf recv_buf;
 } pigeon_ngtcp2_stream_slot;
 
@@ -186,6 +190,13 @@ typedef struct pigeon_ngtcp2_transport {
     int       dgram_head;
     int       dgram_tail;
     int       dgram_count;
+
+    // ---- synchronized steady-state I/O ----
+    pthread_mutex_t io_mu;
+    pthread_cond_t io_idle;
+    unsigned io_users;
+    bool io_ready;
+    bool io_active;
 
     // ---- error/close state ----
     int       closed;
