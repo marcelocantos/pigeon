@@ -167,6 +167,14 @@ class NativeConnectionLifecycleTest {
                             "relay: ${text(tmp.resolve("relay.log"))}", t)
                     }
                     assertArrayEquals("echo: ping".toByteArray(), reply)
+                    // This is an application-level acknowledgment, not a timing
+                    // delay: the backend may report PASS only after the native
+                    // caller has verified the exact encrypted echo bytes.
+                    PigeonNative.streamSend(stream, "ack: echo: ping".toByteArray())
+                    check(fixture.waitFor(10, TimeUnit.SECONDS) && fixture.exitValue() == 0) {
+                        "fixture did not finish after echo ACK: ${text(tmp.resolve("fixture.log"))}"
+                    }
+                    assertTrue(text(tmp.resolve("fixture.log")).contains("DEVICE_ORACLE_PASS"))
                 } finally {
                     pool.shutdownNow()
                     PigeonNative.streamClose(stream)
@@ -176,10 +184,6 @@ class NativeConnectionLifecycleTest {
                 PigeonNative.sessionFree(session)
                 PigeonNative.connectionClose(conn)
             }
-            check(fixture.waitFor(10, TimeUnit.SECONDS) && fixture.exitValue() == 0) {
-                "fixture did not finish: ${text(tmp.resolve("fixture.log"))}"
-            }
-            assertTrue(text(tmp.resolve("fixture.log")).contains("DEVICE_ORACLE_PASS"))
         } finally {
             fixture?.destroyForcibly()
             relay.destroyForcibly()
