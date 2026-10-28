@@ -309,3 +309,10 @@ clean:
 	rm -rf .build/
 	rm -f pigeon pigeon-test-binary pigeon-e2e-server c/test/test_pigeon c/test/test_ngtcp2
 	go clean -testcache
+
+# Publish the formula to the Homebrew tap for an existing release. Run after
+# the release assets exist — tapper reads them to build the formula.
+release-tap:
+	./scripts/release-tap.sh $(TAG)
+
+.PHONY: release-tap
