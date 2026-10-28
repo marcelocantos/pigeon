@@ -393,7 +393,7 @@ read as a *conceptual* join (the PairingRecord hand-off), not an
 operational or model-checking fusion.
 
 Both shapes go through the same pipeline: `protocol/*.yaml` →
-`cmd/protogen` → `protocol/*_gen.go`, `Sources/Pigeon/*Machine.swift`,
+`cmd/protogen` → `protocol/*_gen.go`, `Sources/PigeonCore/*Machine.swift`,
 `android/pigeon/.../*Machine.kt`, `c/src/*_gen.c`, `web/src/*Machine.ts`,
 `formal/*.tla`, `docs/*.puml`.
 
