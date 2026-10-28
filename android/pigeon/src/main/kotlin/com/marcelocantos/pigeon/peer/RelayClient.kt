@@ -71,22 +71,31 @@ class RelayClientSession internal constructor(
 
     internal fun forget(stream: RelayClientStream) = synchronized(lock) { streams.remove(stream) }
 
-    override fun close(): Unit = synchronized(lock) {
-        if (closed) return
-        closed = true
-        try {
-            // Closing all child streams first prevents use-after-free of
-            // their borrowed native session pointer. Keep trying after an
-            // individual close failure, and always close the connection.
-            var failure: Throwable? = null
-            for (stream in streams.toList()) {
-                try { stream.close() } catch (e: Throwable) { if (failure == null) failure = e else failure.addSuppressed(e) }
-            }
-            streams.clear()
-            if (failure != null) throw failure
-        } finally {
-            driver.closeConnection(connection)
+    override fun close() {
+        // Publish closure and snapshot children atomically. Never hold the
+        // session lock while closing a stream: send takes stream.lock first
+        // and then checkOpen takes session.lock. Holding both in the reverse
+        // order here deadlocks concurrent send/close.
+        val children = synchronized(lock) {
+            if (closed) return
+            closed = true
+            streams.toList().also { streams.clear() }
         }
+        var failure: Throwable? = null
+        try {
+            // A native stream borrows the session; release every child
+            // before freeing the session/connection even if one close fails.
+            for (stream in children) {
+                try { stream.close() } catch (e: Throwable) {
+                    if (failure == null) failure = e else failure.addSuppressed(e)
+                }
+            }
+        } finally {
+            try { driver.closeConnection(connection) } catch (e: Throwable) {
+                if (failure == null) failure = e else failure.addSuppressed(e)
+            }
+        }
+        if (failure != null) throw failure
     }
 }
 

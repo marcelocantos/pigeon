@@ -5,6 +5,9 @@ package com.marcelocantos.pigeon.peer
 
 import com.marcelocantos.pigeon.crypto.PairingRecord
 import kotlinx.coroutines.runBlocking
+import java.util.concurrent.CountDownLatch
+import java.util.concurrent.TimeUnit
+import kotlin.test.assertFalse
 import kotlin.test.Test
 import kotlin.test.assertContentEquals
 import kotlin.test.assertEquals
@@ -89,6 +92,43 @@ class RelayClientTest {
         assertEquals(false, d.lastTLS.verifyPeer)
         session.close()
         assertFailsWith<IllegalArgumentException> { RelayTLS(timeoutMs = -1) }
+    }
+
+    @Test fun closeDoesNotHoldSessionLockWhileWaitingForStreamLock() = runBlocking {
+        val d = Driver()
+        val session = connectRelayClient(d, "https://localhost", "peer")
+        val stream = session.openStream("chat")
+        // Arrange the exact historical inversion: send holds stream.lock
+        // while entering checkOpen() (which takes session.lock), and close
+        // tries to close that same stream. Test-only reflection avoids an
+        // artificial hook in the public/native production path.
+        val field = RelayClientStream::class.java.getDeclaredField("lock")
+        field.isAccessible = true
+        val streamLock = requireNotNull(field.get(stream))
+        val holdingStream = CountDownLatch(1)
+        val allowCheck = CountDownLatch(1)
+        val sender = Thread {
+            synchronized(streamLock) {
+                holdingStream.countDown()
+                if (allowCheck.await(5, TimeUnit.SECONDS)) {
+                    try { session.checkOpen() } catch (_: IllegalStateException) { /* close won */ }
+                }
+            }
+        }.apply { isDaemon = true; start() }
+        assertTrue(holdingStream.await(2, TimeUnit.SECONDS))
+        val closer = Thread { session.close() }.apply { isDaemon = true; start() }
+        val deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(2)
+        while (closer.state != Thread.State.BLOCKED && System.nanoTime() < deadline) Thread.yield()
+        val waitingForStream = closer.state == Thread.State.BLOCKED
+        allowCheck.countDown()
+        sender.join(2_000)
+        closer.join(2_000)
+        assertTrue(waitingForStream, "close never reached the held stream lock")
+        assertFalse(sender.isAlive, "sender blocked on session.lock during close")
+        assertFalse(closer.isAlive, "close blocked on stream.lock during send")
+        session.close()
+        assertEquals(listOf("close-stream:8", "close-connection:7"), d.events.takeLast(2))
+        assertEquals(1, d.events.count { it == "close-connection:7" })
     }
 
     @Test fun connectionAlwaysClosesEvenWhenStreamCloseThrows() = runBlocking {
