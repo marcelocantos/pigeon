@@ -13,7 +13,7 @@ import subprocess
 import xml.etree.ElementTree as ET
 import zipfile
 
-BASE = "https://jitpack.io/com/github/marcelocantos/pigeon/pigeon"
+BASE = "https://jitpack.io/com/github/marcelocantos/pigeon"
 MAX_AAR = 100 * 1024 * 1024
 
 
@@ -42,7 +42,7 @@ def check(version):
                 return child.text
         return None
     for key, expected in (
-        ("groupId", "com.github.marcelocantos.pigeon"),
+        ("groupId", "com.github.marcelocantos"),
         ("artifactId", "pigeon"),
         ("version", version),
         ("packaging", "aar"),

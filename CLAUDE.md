@@ -100,7 +100,7 @@ Android Library (AAR, AGP `com.android.library`) containing `E2EKeyPair`,
 `PairingCeremonyMachine.kt`. The packaged AAR includes
 `libpigeon-jni.so` for `arm64-v8a` and `x86_64`, each statically linked
 against a vendored libsodium built per-ABI by `c/vendor/build-android.sh`.
-Consumed via JitPack (`com.github.marcelocantos.pigeon:pigeon:<tag>`).
+Consumed via JitPack (`com.github.marcelocantos:pigeon:<tag>`).
 Requires JDK 17+ / Android API 33+ (for X25519 support) and an
 Android NDK r27+ install on the build host (pinned to
 `29.0.14206865` via `android.ndkVersion` in `android/pigeon/build.gradle.kts`).

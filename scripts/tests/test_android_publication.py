@@ -26,7 +26,7 @@ def zipped(entries):
 
 class PublicationTest(unittest.TestCase):
     def setUp(self):
-        self.pom = (f"<project><groupId>com.github.marcelocantos.pigeon</groupId>"
+        self.pom = (f"<project><groupId>com.github.marcelocantos</groupId>"
                     f"<artifactId>pigeon</artifactId><version>{SHA}</version>"
                     "<packaging>aar</packaging></project>").encode()
         self.jar = zipped({"com/marcelocantos/pigeon/crypto/E2EChannel.class": b"class"})
@@ -54,7 +54,7 @@ class PublicationTest(unittest.TestCase):
 
     def test_wrong_pom_coordinates_fail(self):
         with self.assertRaisesRegex(RuntimeError, "groupId"):
-            self.run_check(pom=self.pom.replace(b"com.github.marcelocantos.pigeon", b"wrong.group"))
+            self.run_check(pom=self.pom.replace(b"com.github.marcelocantos", b"wrong.group"))
 
     def test_real_fetch_requires_successful_tls_checked_curl(self):
         with patch.object(publication.subprocess, "run", return_value=CompletedProcess(

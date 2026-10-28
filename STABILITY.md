@@ -789,7 +789,7 @@ Fluid — new in v0.17.*
 ### Kotlin/JVM `Pigeon` library (`android/pigeon/`)
 
 Kotlin/JVM package consumed via JitPack as
-`com.github.marcelocantos.pigeon:pigeon:<tag>`. Requires JDK 17+ /
+`com.github.marcelocantos:pigeon:<tag>`. Requires JDK 17+ /
 Android API 33+ (for X25519).
 
 Refactored in v0.21.0 (T30) from a native JVM implementation to a JNI wrapper

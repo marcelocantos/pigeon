@@ -12,7 +12,7 @@ plugins {
 // JitPack's Maven virtual repository expects the module under the repository
 // group and the exact requested tag/commit. Keep local builds independent.
 val jitpackVersion = providers.gradleProperty("pigeon.jitpackVersion").orNull
-group = if (jitpackVersion != null) "com.github.marcelocantos.pigeon" else "com.marcelocantos.pigeon"
+group = if (jitpackVersion != null) "com.github.marcelocantos" else "com.marcelocantos.pigeon"
 version = jitpackVersion ?: "0.6.0"
 
 // ---------------------------------------------------------------------------

@@ -171,7 +171,7 @@ dependencyResolutionManagement {
 
 // build.gradle.kts
 dependencies {
-    implementation("com.github.marcelocantos.pigeon:pigeon:<verified-40-character-commit-sha>")
+    implementation("com.github.marcelocantos:pigeon:<verified-40-character-commit-sha>")
 }
 ```
 

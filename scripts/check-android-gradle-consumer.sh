@@ -12,10 +12,10 @@ trap 'rm -rf "$consumer"' EXIT
 printf 'rootProject.name = "pigeon-external-consumer"\n' > "$consumer/settings.gradle.kts"
 cat > "$consumer/build.gradle.kts" <<'GRADLE'
 plugins { base }
-repositories { maven("https://jitpack.io") }
+repositories { mavenCentral(); maven("https://jitpack.io") }
 val pigeon by configurations.creating
 val version = providers.gradleProperty("pigeonVersion").get()
-dependencies { pigeon("com.github.marcelocantos.pigeon:pigeon:$version") }
+dependencies { pigeon("com.github.marcelocantos:pigeon:$version") }
 tasks.register("resolvePigeon") {
     doLast {
         val files = pigeon.resolve()
