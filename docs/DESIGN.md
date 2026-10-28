@@ -123,6 +123,17 @@ between peers — a relay that authenticates a backend impersonator
 still cannot decrypt session data, because the AEAD channel is keyed
 from the `PairingRecord`, not from anything the relay knows.
 
+**Instance-ID admission is a separate gap.** The `Auth` hook decides
+whether a peer may register at all. It does not check that a requested
+instance ID is the base64url SHA-256 prefix of an X25519 key the
+registrant holds. A caller who learns an ID can claim it while the
+owner is offline; the owner then gets "instance ID in use".
+Confidentiality is unaffected. The rule to build — ECDH proof of
+possession for requested IDs, owner eviction of an incumbent, relay-
+assigned pairing IDs left ungated — is
+[`docs/register-proof-of-possession.md`](register-proof-of-possession.md),
+tracked by 🎯T65. Not implemented.
+
 **Out of scope of the threat model.**
 
 - Side-channel attacks against the host device (memory disclosure,
@@ -671,6 +682,11 @@ than running ad-hoc Go code.
    pigeon exposes a `pigeon.Auth` verifier hook with bundled
    `BearerTokenAuth` and `MutualTLSAuth` helpers; mechanism is
    adopter choice. See §2.
+8. **Requested instance IDs are unauthenticated.** Register admits any
+   requested ID first-come (🎯T56 only protects a live connection).
+   Design and the proof-of-possession rule:
+   [`docs/register-proof-of-possession.md`](register-proof-of-possession.md),
+   tracked by 🎯T65.
 
 **Future explorations** (out of scope for v1, captured here so they're
 not lost):
