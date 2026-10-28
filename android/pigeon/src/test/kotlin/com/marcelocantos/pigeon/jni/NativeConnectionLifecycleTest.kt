@@ -151,7 +151,11 @@ class NativeConnectionLifecycleTest {
                     check(entered.await(2, TimeUnit.SECONDS)) { "receive lane never started" }
                     Thread.sleep(100)
                     PigeonNative.streamSend(stream, "ping".toByteArray())
-                    assertArrayEquals("echo: ping".toByteArray(), receiving.get(12, TimeUnit.SECONDS))
+                    val reply = try { receiving.get(12, TimeUnit.SECONDS) } catch (t: Throwable) {
+                        throw AssertionError("native recv failed; fixture: ${text(tmp.resolve("fixture.log"))}; " +
+                            "relay: ${text(tmp.resolve("relay.log"))}", t)
+                    }
+                    assertArrayEquals("echo: ping".toByteArray(), reply)
                 } finally {
                     pool.shutdownNow()
                     PigeonNative.streamClose(stream)
