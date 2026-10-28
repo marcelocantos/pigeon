@@ -26,12 +26,14 @@ import (
 )
 
 type state struct {
-	mu        sync.Mutex
-	code      string
-	codeReady chan struct{}
-	matched   chan struct{}
-	ready     chan struct{}
-	result    chan error
+	mu          sync.Mutex
+	code        string
+	codeReady   chan struct{}
+	matched     chan struct{}
+	ready       chan struct{}
+	acked       chan struct{}
+	ackReported chan struct{}
+	result      chan error
 }
 
 func (s *state) checkCode(code string) error {
@@ -154,6 +156,7 @@ func run(ctx context.Context, relay string, s *state, token chan<- string) error
 	if err := encryptedChat(ctx, chat); err != nil {
 		return err
 	}
+	close(s.acked)
 	log.Printf("DEVICE_ORACLE encrypted chat ping -> echo: echo: ping; ack: ack: echo: ping peer=%s", record.PeerInstanceID)
 	return nil
 }
@@ -168,7 +171,7 @@ func main() {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), *timeout)
 	defer cancel()
-	s := &state{codeReady: make(chan struct{}), matched: make(chan struct{}), ready: make(chan struct{}), result: make(chan error, 1)}
+	s := &state{codeReady: make(chan struct{}), matched: make(chan struct{}), ready: make(chan struct{}), acked: make(chan struct{}), ackReported: make(chan struct{}), result: make(chan error, 1)}
 	tokens := make(chan string, 1)
 	go func() { s.result <- run(ctx, *relay, s, tokens) }()
 	mux := http.NewServeMux()
@@ -194,6 +197,22 @@ func main() {
 			w.WriteHeader(http.StatusNoContent)
 		case <-ctx.Done():
 			http.Error(w, "backend never registered", http.StatusServiceUnavailable)
+		}
+	})
+	mux.HandleFunc("/ack", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet {
+			http.Error(w, "GET required", http.StatusMethodNotAllowed)
+			return
+		}
+		select {
+		case <-s.acked:
+			w.WriteHeader(http.StatusNoContent)
+			if f, ok := w.(http.Flusher); ok {
+				f.Flush()
+			}
+			close(s.ackReported)
+		case <-ctx.Done():
+			http.Error(w, "encrypted chat ACK not received", http.StatusServiceUnavailable)
 		}
 	})
 	mux.HandleFunc("/sas", func(w http.ResponseWriter, r *http.Request) {
@@ -224,6 +243,11 @@ func main() {
 	case err := <-s.result:
 		if err != nil {
 			log.Fatal(err)
+		}
+		select {
+		case <-s.ackReported:
+		case <-ctx.Done():
+			log.Fatal("device did not confirm fixture ACK")
 		}
 		fmt.Println("DEVICE_ORACLE_PASS")
 	case <-ctx.Done():

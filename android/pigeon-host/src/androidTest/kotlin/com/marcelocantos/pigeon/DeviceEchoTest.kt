@@ -59,6 +59,8 @@ class DeviceEchoTest {
                 assertArrayEquals("echo: ping".toByteArray(Charsets.UTF_8), chat.recv())
                 // ACK over the same encrypted stream, only after byte-exact echo.
                 chat.send("ack: echo: ping".toByteArray(Charsets.UTF_8))
+                assertEquals("fixture did not receive byte-exact encrypted ACK", 204,
+                    control("$controlURL/ack", "GET"))
             }
         }
     }
