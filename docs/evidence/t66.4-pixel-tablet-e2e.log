@@ -1,0 +1,158 @@
+date_utc_start=2026-10-28T11:11:27Z
+serial=3419105H80658D
+device_lan_ipv4=192.168.1.194
+host_lan_ipv4=192.168.1.217
+command=ANDROID_SERIAL=3419105H80658D PIGEON_DEVICE_HOST=192.168.1.217 bash scripts/android-device-e2e.sh
+--- stdout+stderr ---
+> Task :pigeon:checkKotlinGradlePluginConfigurationErrors SKIPPED
+> Task :pigeon:preBuild UP-TO-DATE
+> Task :pigeon:preDebugBuild UP-TO-DATE
+> Task :pigeon:generateDebugResValues UP-TO-DATE
+> Task :pigeon:generateDebugResources UP-TO-DATE
+> Task :pigeon:packageDebugResources UP-TO-DATE
+> Task :pigeon:parseDebugLocalResources UP-TO-DATE
+> Task :pigeon:generateDebugRFile UP-TO-DATE
+> Task :pigeon:compileDebugKotlin UP-TO-DATE
+> Task :pigeon:javaPreCompileDebug UP-TO-DATE
+> Task :pigeon:compileDebugJavaWithJavac NO-SOURCE
+> Task :pigeon:bundleLibCompileToJarDebug UP-TO-DATE
+> Task :pigeon-host:checkKotlinGradlePluginConfigurationErrors SKIPPED
+> Task :pigeon:compileDebugLibraryResources UP-TO-DATE
+> Task :pigeon:writeDebugAarMetadata UP-TO-DATE
+> Task :pigeon-host:preBuild UP-TO-DATE
+> Task :pigeon-host:preDebugBuild UP-TO-DATE
+> Task :pigeon-host:checkDebugAarMetadata
+> Task :pigeon-host:generateDebugResValues
+> Task :pigeon-host:mapDebugSourceSetPaths
+> Task :pigeon-host:generateDebugResources
+> Task :pigeon-host:mergeDebugResources
+> Task :pigeon-host:packageDebugResources
+> Task :pigeon-host:createDebugCompatibleScreenManifests
+> Task :pigeon:extractDeepLinksDebug UP-TO-DATE
+> Task :pigeon:processDebugManifest UP-TO-DATE
+> Task :pigeon-host:parseDebugLocalResources
+> Task :pigeon-host:extractDeepLinksDebug
+> Task :pigeon-host:processDebugMainManifest
+> Task :pigeon-host:processDebugManifest
+> Task :pigeon-host:preDebugAndroidTestBuild SKIPPED
+> Task :pigeon-host:javaPreCompileDebug
+> Task :pigeon-host:checkDebugAndroidTestAarMetadata
+> Task :pigeon-host:generateDebugAndroidTestResValues
+> Task :pigeon-host:mapDebugAndroidTestSourceSetPaths
+> Task :pigeon-host:generateDebugAndroidTestResources
+> Task :pigeon-host:mergeDebugAndroidTestResources
+> Task :pigeon-host:processDebugAndroidTestManifest
+> Task :pigeon:mergeDebugShaders UP-TO-DATE
+> Task :pigeon-host:javaPreCompileDebugAndroidTest
+> Task :pigeon:compileDebugShaders NO-SOURCE
+> Task :pigeon:generateDebugAssets UP-TO-DATE
+> Task :pigeon:packageDebugAssets UP-TO-DATE
+> Task :pigeon-host:mergeDebugAndroidTestShaders
+> Task :pigeon-host:compileDebugAndroidTestShaders NO-SOURCE
+> Task :pigeon-host:generateDebugAndroidTestAssets UP-TO-DATE
+> Task :pigeon-host:mergeDebugAndroidTestAssets
+> Task :pigeon-host:compressDebugAndroidTestAssets
+> Task :pigeon:bundleLibRuntimeToJarDebug UP-TO-DATE
+> Task :pigeon-host:desugarDebugAndroidTestFileDependencies
+> Task :pigeon:processDebugJavaRes UP-TO-DATE
+> Task :pigeon:bundleLibRuntimeToDirDebug UP-TO-DATE
+> Task :pigeon:amalgamateNative UP-TO-DATE
+> Task :pigeon:buildAndroidNative-arm64-v8a SKIPPED
+> Task :pigeon-host:checkDebugAndroidTestDuplicateClasses
+> Task :pigeon:buildAndroidNative-x86_64 SKIPPED
+> Task :pigeon:buildAndroidNative UP-TO-DATE
+> Task :pigeon-host:mergeLibDexDebugAndroidTest
+> Task :pigeon:configureCMakeDebug[arm64-v8a]
+> Task :pigeon-host:mergeExtDexDebugAndroidTest
+> Task :pigeon:buildCMakeDebug[arm64-v8a]
+> Task :pigeon:configureCMakeDebug[x86_64]
+> Task :pigeon:buildCMakeDebug[x86_64]
+> Task :pigeon:mergeDebugJniLibFolders UP-TO-DATE
+> Task :pigeon:mergeDebugNativeLibs UP-TO-DATE
+> Task :pigeon:copyDebugJniLibsProjectOnly UP-TO-DATE
+> Task :pigeon-host:mergeDebugAndroidTestJniLibFolders
+> Task :pigeon-host:mergeDebugJniLibFolders
+> Task :pigeon-host:validateSigningDebugAndroidTest
+> Task :pigeon-host:writeDebugAndroidTestSigningConfigVersions
+> Task :pigeon-host:mergeDebugNativeDebugMetadata NO-SOURCE
+> Task :pigeon-host:mergeDebugShaders
+> Task :pigeon-host:compileDebugShaders NO-SOURCE
+> Task :pigeon-host:generateDebugAssets UP-TO-DATE
+> Task :pigeon-host:mergeDebugAssets
+> Task :pigeon-host:compressDebugAssets
+> Task :pigeon-host:desugarDebugFileDependencies
+> Task :pigeon-host:validateSigningDebug
+> Task :pigeon-host:writeDebugAppMetadata
+> Task :pigeon-host:checkDebugDuplicateClasses
+> Task :pigeon-host:writeDebugSigningConfigVersions
+> Task :pigeon-host:processDebugManifestForPackage
+> Task :pigeon-host:mergeLibDexDebug
+> Task :pigeon-host:mergeDebugNativeLibs
+> Task :pigeon-host:mergeDebugAndroidTestNativeLibs NO-SOURCE
+> Task :pigeon-host:stripDebugAndroidTestDebugSymbols NO-SOURCE
+> Task :pigeon-host:stripDebugDebugSymbols
+> Task :pigeon-host:processDebugResources
+> Task :pigeon-host:compileDebugKotlin NO-SOURCE
+> Task :pigeon-host:compileDebugJavaWithJavac NO-SOURCE
+> Task :pigeon-host:bundleDebugClassesToCompileJar
+> Task :pigeon-host:processDebugAndroidTestResources
+> Task :pigeon-host:dexBuilderDebug
+> Task :pigeon-host:processDebugJavaRes NO-SOURCE
+> Task :pigeon-host:mergeDebugGlobalSynthetics
+> Task :pigeon-host:mergeProjectDexDebug
+> Task :pigeon-host:mergeExtDexDebug
+> Task :pigeon-host:mergeDebugJavaResource
+> Task :pigeon-host:packageDebug
+> Task :pigeon-host:createDebugApkListingFileRedirect
+> Task :pigeon-host:assembleDebug
+> Task :pigeon-host:compileDebugAndroidTestKotlin
+> Task :pigeon-host:compileDebugAndroidTestJavaWithJavac NO-SOURCE
+> Task :pigeon-host:dexBuilderDebugAndroidTest
+> Task :pigeon-host:mergeDebugAndroidTestGlobalSynthetics
+> Task :pigeon-host:processDebugAndroidTestJavaRes
+> Task :pigeon-host:mergeProjectDexDebugAndroidTest
+> Task :pigeon-host:mergeDebugAndroidTestJavaResource
+> Task :pigeon-host:packageDebugAndroidTest
+> Task :pigeon-host:createDebugAndroidTestApkListingFileRedirect
+> Task :pigeon-host:assembleDebugAndroidTest
+
+BUILD SUCCESSFUL in 2s
+85 actionable tasks: 64 executed, 21 up-to-date
+APK_BINARY_ORACLE_PASS target+instrumentation nonempty; host INTERNET cleartext targetSdk34; runner/target coherent
+make: `c/vendor/build/lib/libsodium.a' is up to date.
+Performing Streamed Install
+Success
+Performing Streamed Install
+Success
+INSTRUMENTATION_STATUS: class=com.marcelocantos.pigeon.DeviceEchoTest
+INSTRUMENTATION_STATUS: current=1
+INSTRUMENTATION_STATUS: id=AndroidJUnitRunner
+INSTRUMENTATION_STATUS: numtests=1
+INSTRUMENTATION_STATUS: stream=
+com.marcelocantos.pigeon.DeviceEchoTest:
+INSTRUMENTATION_STATUS: test=freshPairingThenEncryptedChat
+INSTRUMENTATION_STATUS_CODE: 1
+INSTRUMENTATION_STATUS: class=com.marcelocantos.pigeon.DeviceEchoTest
+INSTRUMENTATION_STATUS: current=1
+INSTRUMENTATION_STATUS: id=AndroidJUnitRunner
+INSTRUMENTATION_STATUS: numtests=1
+INSTRUMENTATION_STATUS: stream=.
+INSTRUMENTATION_STATUS: test=freshPairingThenEncryptedChat
+INSTRUMENTATION_STATUS_CODE: 0
+INSTRUMENTATION_RESULT: stream=
+
+Time: 0.232
+
+OK (1 test)
+
+
+INSTRUMENTATION_CODE: -1
+CONTROL=0.0.0.0:63279
+2026/10/28 22:11:36 DEVICE_ORACLE SAS_MATCH code=723111
+2026/10/28 22:11:36 DEVICE_ORACLE encrypted chat ping -> echo: ping -> ack: echo: ping peer=MyNuPabLPcC60Q1-MoqRUg
+DEVICE_ORACLE_PASS
+Device oracle GREEN on 3419105H80658D via 192.168.1.217:60563
+
+--- result ---
+exit=0
+date_utc_end=2026-10-28T11:11:36Z
