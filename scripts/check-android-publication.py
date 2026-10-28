@@ -9,8 +9,7 @@ The SHA must exist on GitHub already. This never tests an unpushed worktree.
 import io
 import re
 import sys
-import urllib.error
-import urllib.request
+import subprocess
 import xml.etree.ElementTree as ET
 import zipfile
 
@@ -19,19 +18,17 @@ MAX_AAR = 100 * 1024 * 1024
 
 
 def fetch(url, limit):
-    try:
-        with urllib.request.urlopen(
-            urllib.request.Request(url, headers={"User-Agent": "pigeon-publication-smoke/1"}),
-            timeout=120,
-        ) as response:
-            if response.status != 200:
-                raise RuntimeError(f"HTTP {response.status}: {url}")
-            data = response.read(limit + 1)
-            if not data or len(data) > limit:
-                raise RuntimeError(f"empty/oversized response: {url}")
-            return data
-    except urllib.error.URLError as exc:
-        raise RuntimeError(f"remote artifact unavailable: {url}: {exc}") from exc
+    # curl uses the host OS trust store on macOS, where a framework Python
+    # installation may have no CA bundle configured. Never disable TLS checks.
+    result = subprocess.run(
+        ["curl", "--fail", "--location", "--silent", "--show-error",
+         "--proto", "=https", "--max-time", "120", "--max-filesize", str(limit), url],
+        capture_output=True,
+    )
+    if result.returncode or not result.stdout or len(result.stdout) > limit:
+        raise RuntimeError(f"remote artifact unavailable/oversized: {url}: "
+                           f"curl exit={result.returncode} {result.stderr.decode(errors='replace').strip()}")
+    return result.stdout
 
 
 def check(version):
