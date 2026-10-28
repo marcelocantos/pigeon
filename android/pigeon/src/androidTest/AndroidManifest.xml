@@ -3,4 +3,7 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
     <!-- Test-only internet access; the production library manifest stays empty. -->
     <uses-permission android:name="android.permission.INTERNET" />
+    <!-- Only the instrumentation APK may POST the fixture's SAS over LAN HTTP.
+         Production relay TLS verification remains enabled by default. -->
+    <application android:usesCleartextTraffic="true" />
 </manifest>
