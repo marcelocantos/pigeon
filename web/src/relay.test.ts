@@ -15,6 +15,7 @@
 
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 
 import { E2EChannel } from "./crypto.js";
 import {
@@ -165,4 +166,14 @@ describe("module surface", () => {
     assert.equal(typeof Stream, "function");
     assert.equal(typeof Datagram, "function");
   });
+});
+
+// Keep both contributor entry points on the same unit-test oracle.
+it("npm test matches make test-web and has no stale local E2E script", () => {
+  const scripts = JSON.parse(readFileSync(new URL("../package.json", import.meta.url), "utf8")).scripts;
+  const makefile = readFileSync(new URL("../../Makefile", import.meta.url), "utf8");
+  const recipe = makefile.match(/^test-web:\n\tcd web && (.*)$/m);
+  assert.ok(recipe, "make test-web must have a single explicit web test command");
+  assert.equal(scripts.test, recipe[1]);
+  assert.equal(scripts["test:e2e:local"], undefined);
 });

@@ -583,6 +583,16 @@ No scalar. Change-from-baseline is “n/a — first report under this contract�
   `make test-web`; `npm run test:e2e:local` either exists or is removed.
 - **Ratchet candidate:** `command:` evidence in a future hygiene.yaml.
 
+**Resolution (2026-10-29): closed by 🎯T60.11.** The observed evidence above
+remains the 2026-08-22 snapshot, not a claim about the current tree.
+`web/package.json` now runs all three `make test-web` unit files for
+`npm test`; the stale `test:e2e:local` script was removed rather than
+restoring the deliberately dropped Node-side test (see `docs/audit-log.md`).
+`web/src/relay.test.ts` checks script/Makefile parity and absence of the
+stale script in both entry points. Verification: `npm test` and
+`make test-web` from this change's clean commit (gate evidence in the
+🎯T60.11 landing report).
+
 ### ENT-012: Residue files and pins that amplify confusion
 
 - **Priority:** P3
