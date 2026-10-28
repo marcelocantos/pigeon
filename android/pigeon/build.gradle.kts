@@ -177,16 +177,30 @@ val buildVendoredSodium = tasks.register<Exec>("buildVendoredSodium") {
     onlyIf { !sodiumStaticLib.exists() }
 }
 
+val hostQuicLib = file("$vendorBuildDir/lib/libngtcp2_crypto_quictls.a")
+val buildVendoredQuic = tasks.register<Exec>("buildVendoredQuic") {
+    description = "Build host quictls and ngtcp2 archives for desktop JNI tests."
+    group = "build"
+    workingDir = repoRoot
+    commandLine = listOf("bash", "c/vendor/build.sh", "all")
+    outputs.files(listOf("libsodium.a", "libssl.a", "libcrypto.a", "libngtcp2.a", "libngtcp2_crypto_quictls.a")
+        .map { file("$vendorBuildDir/lib/$it") })
+    onlyIf { !hostQuicLib.exists() }
+}
+
 val compileNativeLibrary = tasks.register<Exec>("compileNativeLibrary") {
     description = "Build libpigeon-jni for the host platform (macOS .dylib / Linux .so)."
     group = "build"
     dependsOn(amalgamateNative)
-    dependsOn(buildVendoredSodium)
+    dependsOn(buildVendoredQuic)
 
     inputs.file("$distDir/pigeon.c")
     inputs.file("$distDir/pigeon.h")
     inputs.file("$jniSrcDir/pigeon_jni.c")
     inputs.file(sodiumStaticLib)
+    inputs.file(hostQuicLib)
+    inputs.file("$repoRoot/c/src/ngtcp2_transport.c")
+    inputs.file("$repoRoot/c/src/listener_ngtcp2.c")
     outputs.file(nativeLibFile)
 
     doFirst {
@@ -208,10 +222,20 @@ val compileNativeLibrary = tasks.register<Exec>("compileNativeLibrary") {
             "-DPIGEON_CRYPTO_LIBSODIUM",
             "-I$distDir",
             "-I$sodiumIncludeDir",
+            "-I${file("$repoRoot/c/include")}",
+            "-I${file("$vendorBuildDir/include")}",
         )
         for (inc in jniInclude) cmd += "-I$inc"
         cmd += "$distDir/pigeon.c"
         cmd += "$jniSrcDir/pigeon_jni.c"
+        cmd += "$repoRoot/c/src/ngtcp2_transport.c"
+        cmd += "$repoRoot/c/src/listener_ngtcp2.c"
+        cmd += listOf(
+            "$vendorBuildDir/lib/libngtcp2_crypto_quictls.a",
+            "$vendorBuildDir/lib/libngtcp2.a",
+            "$vendorBuildDir/lib/libssl.a",
+            "$vendorBuildDir/lib/libcrypto.a",
+        )
         cmd += sodiumStaticLib.absolutePath
         cmd += "-o"
         cmd += nativeLibFile.absolutePath
@@ -235,24 +259,24 @@ val compileNativeLibrary = tasks.register<Exec>("compileNativeLibrary") {
 // parallelise — the script is sequential by design.
 // ---------------------------------------------------------------------------
 
-val buildAndroidSodiumTasks = supportedAbis.map { abi ->
-    tasks.register<Exec>("buildAndroidSodium-$abi") {
-        description = "Cross-compile vendored libsodium for Android ABI $abi."
+val buildAndroidNativeTasks = supportedAbis.map { abi ->
+    tasks.register<Exec>("buildAndroidNative-$abi") {
+        description = "Cross-compile libsodium, quictls and ngtcp2 for Android ABI $abi."
         group = "build"
         workingDir = repoRoot
         commandLine = listOf("bash", "c/vendor/build-android.sh", abi)
-        outputs.file(file("$androidSodiumRoot/$abi/lib/libsodium.a"))
+        outputs.files(listOf("libsodium.a", "libssl.a", "libcrypto.a", "libngtcp2.a", "libngtcp2_crypto_quictls.a").map { file("$androidSodiumRoot/$abi/lib/$it") })
         outputs.dir(file("$androidSodiumRoot/$abi/include"))
         onlyIf {
-            !file("$androidSodiumRoot/$abi/lib/libsodium.a").exists()
+            !listOf("libsodium.a", "libssl.a", "libcrypto.a", "libngtcp2.a", "libngtcp2_crypto_quictls.a").all { file("$androidSodiumRoot/$abi/lib/$it").exists() }
         }
     }
 }
 
-val buildAndroidSodium = tasks.register("buildAndroidSodium") {
-    description = "Cross-compile vendored libsodium for all supported Android ABIs."
+val buildAndroidNative = tasks.register("buildAndroidNative") {
+    description = "Cross-compile vendored native libraries for all supported Android ABIs."
     group = "build"
-    dependsOn(buildAndroidSodiumTasks)
+    dependsOn(buildAndroidNativeTasks)
 }
 
 // AGP generates ABI-specific CMake configure tasks lazily; wire each
@@ -268,7 +292,7 @@ afterEvaluate {
             n.startsWith("buildCMake")  // covers buildCMakeDebug / buildCMakeRelWithDebInfo
     }.configureEach {
         dependsOn(amalgamateNative)
-        dependsOn(buildAndroidSodium)
+        dependsOn(buildAndroidNative)
     }
 
     // Unit tests need the desktop .dylib on java.library.path.

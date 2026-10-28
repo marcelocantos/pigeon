@@ -2,7 +2,7 @@
 # Copyright 2026 Marcelo Cantos
 # SPDX-License-Identifier: Apache-2.0
 #
-# Cross-compile vendored libsodium for Android ABIs.
+# Cross-compile vendored libsodium, quictls and ngtcp2 for Android ABIs.
 #
 # Usage:
 #   ./c/vendor/build-android.sh [arm64-v8a|x86_64|all]
@@ -33,6 +33,8 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 VENDOR="$SCRIPT_DIR"
 LIBSODIUM_SRC="$VENDOR/github.com/jedisct1/libsodium"
 OUT_ROOT="$VENDOR/build-android"
+OPENSSL_SRC="$VENDOR/github.com/quictls/openssl"
+NGTCP2_SRC="$VENDOR/github.com/ngtcp2/ngtcp2"
 
 # --- NDK resolution -------------------------------------------------------
 NDK="${ANDROID_NDK_HOME:-${ANDROID_NDK_ROOT:-}}"
@@ -53,9 +55,9 @@ echo "==> Using NDK: $ANDROID_NDK_HOME"
 
 NDK_API="${ANDROID_NDK_API:-33}"
 
-if [ ! -d "$LIBSODIUM_SRC" ]; then
-    echo "error: libsodium submodule not initialised at $LIBSODIUM_SRC" >&2
-    echo "  run: git submodule update --init $LIBSODIUM_SRC" >&2
+if [ ! -f "$LIBSODIUM_SRC/autogen.sh" ] || [ ! -f "$OPENSSL_SRC/Configure" ] || [ ! -f "$NGTCP2_SRC/CMakeLists.txt" ]; then
+    echo "error: vendored libsodium, quictls or ngtcp2 submodule not initialised" >&2
+    echo "  run: git submodule update --init c/vendor/github.com/{jedisct1/libsodium,quictls/openssl,ngtcp2/ngtcp2}" >&2
     exit 1
 fi
 
@@ -83,9 +85,12 @@ build_abi() {
     echo "==> Building libsodium for Android $abi (API $NDK_API)..."
 
     local out="$OUT_ROOT/$abi"
-    local build_dir="$LIBSODIUM_SRC/build-android-$abi"
+    local build_dir="$OUT_ROOT/build-libsodium-$abi"
     rm -rf "$build_dir" "$out"
     mkdir -p "$build_dir" "$out/lib" "$out/include"
+
+    local nproc
+    nproc="$(sysctl -n hw.logicalcpu 2>/dev/null || getconf _NPROCESSORS_ONLN 2>/dev/null || echo 4)"
 
     # Per-ABI env. CC points at the API-versioned NDK clang wrapper;
     # AR/RANLIB/STRIP at the NDK's llvm-* tools so static archives are
@@ -107,7 +112,7 @@ build_abi() {
             exit 1
         fi
 
-        ../configure \
+        "$LIBSODIUM_SRC/configure" \
             --host="$host_triple" \
             --prefix="$out" \
             --disable-shared \
@@ -116,8 +121,6 @@ build_abi() {
             --disable-soname-versions \
             --with-sysroot="$toolchain_sysroot"
 
-        local nproc
-        nproc="$(sysctl -n hw.logicalcpu 2>/dev/null || getconf _NPROCESSORS_ONLN 2>/dev/null || echo 4)"
         make -j"$nproc"
         make install
     )
@@ -136,6 +139,56 @@ build_abi() {
         exit 1
     fi
     echo "==> libsodium ($abi) installed at $out  ($sz bytes)"
+
+    # OpenSSL Configure requires the NDK compiler on PATH and the target API
+    # exported. Out-of-tree builds avoid modifying the submodule or sharing
+    # generated configuration between ABIs.
+    local openssl_target
+    case "$abi" in
+        arm64-v8a) openssl_target=android-arm64 ;;
+        x86_64) openssl_target=android-x86_64 ;;
+    esac
+    local openssl_build="$OUT_ROOT/build-quictls-$abi"
+    rm -rf "$openssl_build"
+    mkdir -p "$openssl_build"
+    echo "==> Building quictls for $abi..."
+    (
+        cd "$openssl_build"
+        export PATH="$toolchain_bin:$PATH"
+        export ANDROID_NDK_ROOT="$NDK" ANDROID_NDK_HOME="$NDK"
+        export CROSS_COMPILE="$toolchain_bin/llvm-"
+        "$OPENSSL_SRC/Configure" "$openssl_target" \
+            -D__ANDROID_API__="$NDK_API" \
+            --prefix="$out" --openssldir="$out/etc/ssl" \
+            no-shared no-tests enable-quic -fPIC
+        make -j"$nproc" build_libs
+        make install_dev
+    )
+
+    local ngtcp2_build="$OUT_ROOT/build-ngtcp2-$abi"
+    rm -rf "$ngtcp2_build"
+    echo "==> Building ngtcp2 for $abi..."
+    cmake -S "$NGTCP2_SRC" -B "$ngtcp2_build" \
+        -DCMAKE_TOOLCHAIN_FILE="$NDK/build/cmake/android.toolchain.cmake" \
+        -DANDROID_ABI="$abi" -DANDROID_PLATFORM="android-$NDK_API" \
+        -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX="$out" \
+        -DENABLE_SHARED_LIB=OFF -DENABLE_STATIC_LIB=ON \
+        -DENABLE_OPENSSL=ON -DOPENSSL_ROOT_DIR="$out" \
+        -DOPENSSL_INCLUDE_DIR="$out/include" \
+        -DOPENSSL_SSL_LIBRARY="$out/lib/libssl.a" \
+        -DOPENSSL_CRYPTO_LIBRARY="$out/lib/libcrypto.a" \
+        -DENABLE_LIB_ONLY=ON -DENABLE_GNUTLS=OFF \
+        -DENABLE_BORINGSSL=OFF -DENABLE_WOLFSSL=OFF \
+        -DENABLE_PICOTLS=OFF -DBUILD_TESTING=OFF
+    cmake --build "$ngtcp2_build" --parallel "$nproc"
+    cmake --install "$ngtcp2_build"
+    for lib in libssl.a libcrypto.a libngtcp2.a libngtcp2_crypto_quictls.a; do
+        if [ ! -s "$out/lib/$lib" ]; then
+            echo "error: missing Android $abi archive: $out/lib/$lib" >&2
+            exit 1
+        fi
+    done
+    echo "==> Android $abi native archives ready at $out/lib"
 }
 
 TARGETS="${1:-all}"
@@ -162,5 +215,5 @@ case "$TARGETS" in
 esac
 
 echo
-echo "==> Android libsodium artefacts ready under $OUT_ROOT/"
+echo "==> Android native artefacts ready under $OUT_ROOT/"
 ls -1 "$OUT_ROOT"
