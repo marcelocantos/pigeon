@@ -160,7 +160,12 @@ val amalgamateNative = tasks.register<Exec>("amalgamateNative") {
     description = "Run `make amalgamate` so dist/pigeon.{c,h} exist before the JNI build."
     group = "build"
     workingDir = repoRoot
-    commandLine = listOf("make", "amalgamate")
+    // JitPack's Android image need not contain Go 1.25. Generated protocol
+    // headers are committed; amalgamate them directly for this publication.
+    commandLine = if (jitpackVersion != null)
+        listOf("sh", "c/amalgamate.sh", "dist")
+    else
+        listOf("make", "amalgamate")
     // Use narrowly-scoped inputs so we don't accidentally claim
     // ownership of c/vendor/ (which the libsodium build tasks own).
     // Gradle's input snapshotting would otherwise flag a phantom
