@@ -11,14 +11,13 @@
 // pigeon_session_open_stream et al. and the remainder of the Go
 // pigeon package can be reimplemented on top.
 //
-// Build mode: cgo. Pulls in dist/pigeon.c via CFLAGS / LDFLAGS so
-// the Go build is fully self-contained — no need for a separate
-// `make amalgamate` step before `go test ./cwire`.
+// Build mode: cgo. Compiles the shipped dist/pigeon.c and links against
+// system libsodium (pkg-config libsodium). Consumers need the libsodium
+// development package; c/vendor/build is only for source-tree C SDK builds.
 package cwire
 
 // #cgo CFLAGS: -I${SRCDIR}/../dist -DPIGEON_CRYPTO_LIBSODIUM
-// #cgo CFLAGS: -I${SRCDIR}/../c/vendor/build/include
-// #cgo LDFLAGS: ${SRCDIR}/../c/vendor/build/lib/libsodium.a
+// #cgo pkg-config: libsodium
 // #include <stdlib.h>
 // #include <string.h>
 // #include "pigeon.h"

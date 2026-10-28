@@ -44,10 +44,8 @@ jobs:
         with:
           go-version-file: go.mod
 
-      # cwire links the vendored libsodium static lib at the hardcoded path
-      # c/vendor/build/lib/libsodium.a (see cwire/cwire.go #cgo LDFLAGS), so
-      # the release build needs CGO on and that lib built natively for the
-      # target. Mirror ci.yml's submodule + cache pattern, keyed per os/arch.
+      # Source-tree releases use the pinned static libsodium through pkg-config.
+      # Published Go modules instead resolve system libsodium via pkg-config.
       - name: Resolve libsodium pinned SHA
         id: libsodium-sha
         run: echo "sha=$(git ls-tree HEAD c/vendor/github.com/jedisct1/libsodium | awk '{print $3}')" >> "$GITHUB_OUTPUT"
@@ -66,6 +64,9 @@ jobs:
       - name: Build vendored libsodium
         if: steps.cache-libsodium.outputs.cache-hit != 'true'
         run: bash c/vendor/build.sh libsodium
+
+      - name: Select vendored static libsodium
+        run: echo "PKG_CONFIG_PATH=$PWD/c/vendor/build/lib/pkgconfig" >> "$GITHUB_ENV"
 
       - name: Run tests
         if: matrix.os == 'linux' && matrix.arch == 'amd64'

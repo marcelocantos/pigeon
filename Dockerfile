@@ -9,6 +9,7 @@ RUN apk add --no-cache build-base autoconf automake libtool bash
 COPY c/vendor/build.sh c/vendor/build.sh
 COPY c/vendor/github.com/jedisct1/libsodium c/vendor/github.com/jedisct1/libsodium
 RUN bash c/vendor/build.sh libsodium
+ENV PKG_CONFIG_PATH=/src/c/vendor/build/lib/pkgconfig
 
 COPY go.mod go.sum ./
 RUN go mod download
