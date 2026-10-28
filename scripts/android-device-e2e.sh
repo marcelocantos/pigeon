@@ -49,7 +49,7 @@ cleanup() {
 trap cleanup EXIT
 # Compile/install before starting the fixture deadline. Missing SDK/NDK or
 # vendored libraries are hard failures, not skipped device tests.
-(cd android && ./gradlew -Pkotlin.compiler.execution.strategy=in-process :pigeon:assembleDebugAndroidTest :pigeon:assembleDebug)
+(cd android && ./gradlew -Pkotlin.compiler.execution.strategy=in-process :pigeon-host:assembleDebugAndroidTest :pigeon-host:assembleDebug)
 make c/vendor/build/lib/libsodium.a
 go build -o "$tmp/relay" ./cmd/pigeon
 go build -o "$tmp/fixture" ./cmd/pigeon-android-fixture
@@ -71,12 +71,13 @@ done
 token=$(curl -fsS --max-time 40 "http://127.0.0.1:$control/token")
 [[ -n "$token" ]] || { echo 'Fixture returned empty pairing token' >&2; exit 1; }
 kill -0 "$relay_pid" 2>/dev/null || { cat "$tmp/relay.log" >&2; exit 1; }
-# Android library instrumentation APK needs an application target. Native
-# worker supplies the test runner/host packaging; fail explicitly if missing.
-test_apk=$(find android/pigeon/build/outputs/apk/androidTest -name '*.apk' -type f | head -1)
+# The :pigeon library produces only an AAR, never a debug APK; the
+# :pigeon-host application module (🎯T66.6) is the real installable
+# target the instrumentation runs against.
+test_apk=$(find android/pigeon-host/build/outputs/apk/androidTest -name '*.apk' -type f | head -1)
 [[ -n "$test_apk" ]] || { echo 'Missing instrumentation APK' >&2; exit 1; }
-target_apk=$(find android/pigeon/build/outputs/apk/debug -name '*.apk' -type f | head -1)
-[[ -n "$target_apk" ]] || { echo 'Missing Android library test target APK' >&2; exit 1; }
+target_apk=$(find android/pigeon-host/build/outputs/apk/debug -name '*.apk' -type f | head -1)
+[[ -n "$target_apk" ]] || { echo 'Missing pigeon-host target APK' >&2; exit 1; }
 adb -s "$serial" install -r "$target_apk"
 adb -s "$serial" install -r "$test_apk"
 # -e values are passed as arguments rather than interpolated into shell script.
@@ -84,7 +85,7 @@ result=$(adb -s "$serial" shell am instrument -w -r \
   -e class com.marcelocantos.pigeon.DeviceEchoTest \
   -e token "$token" -e relay "https://$host:$quic_port" \
   -e control "http://$host:$control" \
-  com.marcelocantos.pigeon.test/androidx.test.runner.AndroidJUnitRunner) || { echo "$result"; exit 1; }
+  com.marcelocantos.pigeon.host.test/androidx.test.runner.AndroidJUnitRunner) || { echo "$result"; exit 1; }
 echo "$result"
 grep -q '^OK (1 test)' <<< "$result" || { echo 'Device instrumentation did not pass exactly one test' >&2; exit 1; }
 wait "$fixture_pid" || { cat "$tmp/fixture.log" >&2; exit 1; }

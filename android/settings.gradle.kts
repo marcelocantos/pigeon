@@ -19,3 +19,4 @@ dependencyResolutionManagement {
 
 rootProject.name = "pigeon-android"
 include(":pigeon")
+include(":pigeon-host")

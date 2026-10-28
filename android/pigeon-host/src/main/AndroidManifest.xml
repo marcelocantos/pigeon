@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+Copyright 2026 Marcelo Cantos
+SPDX-License-Identifier: Apache-2.0
+
+Minimal installable host application. Its sole purpose is to give the
+:pigeon library's device instrumentation tests (🎯T66.6) a real,
+installable target APK: a com.android.library module alone produces no
+debug APK, only an AAR. No activity, no UI — the instrumentation runner
+drives the library API directly in-process. Production TLS verification
+stays the default everywhere except the explicit test-only override in
+DeviceEchoTest.
+-->
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <application android:label="pigeon-host" />
+</manifest>
