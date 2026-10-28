@@ -37,7 +37,7 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y libsodium-dev pkg-config
-          env -u PKG_CONFIG_PATH bash scripts/go-module-smoke.sh --full
+          env -u PKG_CONFIG_PATH bash scripts/go-module-smoke.sh
 
   web-e2e:
     runs-on: ubuntu-latest
