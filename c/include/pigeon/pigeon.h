@@ -367,16 +367,9 @@ typedef struct {
 
     // Heap-allocated scratch buffers used by the per-call I/O wrappers
     // (pigeon_stream_send/recv, pigeon_datagram_send/recv). Sized at
-    // PIGEON_MAX_MSG + AEAD overhead (max 64 bytes for nonce prefix +
-    // tag). Allocated lazily on first send/recv; freed by
-    // pigeon_session_close.
-    //
-    // Why heap: the previous stack-allocated [PIGEON_MAX_MSG + 64]
-    // arrays (≈ 1 MiB) overflow the default thread-stack size on every
-    // host runtime that wraps libpigeon — Swift's cooperative pool
-    // (~256 KiB), Apple's GCD workers (~64 KiB), JVM threads (~512 KiB
-    // on macOS aarch64). Per-session scratch on the heap keeps the C
-    // ABI usable from any host thread without 4 MiB stack workarounds.
+    // Reserved for ABI compatibility. Encrypted sends/receives now use
+    // per-call buffers so a blocked receive cannot alias a concurrent send;
+    // these pointers remain NULL on new sessions.
     uint8_t      *scratch_a;
     uint8_t      *scratch_b;
     size_t        scratch_size;
@@ -816,6 +809,10 @@ pigeon_session *pigeon_connect_session(pigeon_connection *c);
 
 // Tear down the connection: close the session, close the underlying
 // ngtcp2 transport, free the connection struct. Idempotent on NULL.
+// Before calling, stop initiating session operations and join every active
+// pigeon_stream_* / pigeon_datagram_* call. Closing the underlying transport
+// joins its vtable calls, but cannot keep this high-level session alive while
+// pigeon_connect_close frees the containing connection allocation.
 void pigeon_connect_close(pigeon_connection *c);
 
 #endif // PIGEON_H

@@ -335,10 +335,26 @@ func TestCSDKMultiStreamMultiDatagram(t *testing.T) {
 	if err != nil {
 		t.Fatalf("get ping: %v", err)
 	}
+	// Force encrypted receive to overlap the send on this same session.
+	// A shared scratch buffer corrupts the ciphertext during the blocking
+	// transport receive; the in-process relay fixture must actually reply.
+	type pingReply struct {
+		data []byte
+		err  error
+	}
+	pingResult := make(chan pingReply, 1)
+	go func() { data, e := pingDg.Recv(); pingResult <- pingReply{data, e} }()
+	time.Sleep(100 * time.Millisecond)
 	if err := pingDg.Send([]byte("p1")); err != nil {
 		t.Fatalf("ping Send: %v", err)
 	}
-	gotPing, err := pingDg.Recv()
+	var gotPing []byte
+	select {
+	case reply := <-pingResult:
+		gotPing, err = reply.data, reply.err
+	case <-time.After(4 * time.Second):
+		t.Fatal("ping recv blocked concurrent encrypted send")
+	}
 	if err != nil {
 		t.Fatalf("ping Recv: %v", err)
 	}
@@ -811,5 +827,77 @@ func TestCSDKBlockedRecvResetBounded(t *testing.T) {
 				t.Fatal(err)
 			}
 		})
+	}
+}
+
+// Closing the transport itself must wake an already-blocked vtable receive
+// before ngtcp2 and its socket are freed. No session box is freed until the
+// receiver has joined; application teardown has the same quiescence contract.
+func TestCSDKTransportCloseWakesBlockedRecv(t *testing.T) {
+	relay := startRelay(t)
+	defer relay.stop()
+	p := mintBond(t, t.TempDir(), relay.url, "transport-close")
+	ready := make(chan struct{})
+	done := make(chan error, 1)
+	go func() {
+		l, err := registerBackend(relay.host, relay.port, p.backendID.InstanceID(), nil,
+			func(id string) (*PairingRecord, bool) { return p.backendView, id == p.clientID.InstanceID() })
+		close(ready)
+		if err != nil {
+			done <- err
+			return
+		}
+		defer l.Close()
+		sess, err := l.Accept()
+		if err != nil {
+			done <- err
+			return
+		}
+		defer sess.Close()
+		st, err := sess.acceptStream("close")
+		if err != nil {
+			done <- err
+			return
+		}
+		if err = st.Send([]byte("ready")); err != nil {
+			done <- err
+			return
+		}
+		time.Sleep(500 * time.Millisecond)
+		done <- nil
+	}()
+	<-ready
+	conn, err := connectClient(relay.host, relay.port, p.backendID.InstanceID(), p.clientID.InstanceID(), p.clientView, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer conn.Close()
+	st, err := conn.Session().openStream("close")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = st.Recv(); err != nil {
+		t.Fatal(err)
+	}
+	blocked := make(chan error, 1)
+	go func() { _, e := st.Recv(); blocked <- e }()
+	time.Sleep(100 * time.Millisecond)
+	closed := make(chan struct{})
+	go func() { conn.closeTransportOnly(); close(closed) }()
+	select {
+	case <-closed:
+	case <-time.After(time.Second):
+		t.Fatal("transport close blocked on receive")
+	}
+	select {
+	case e := <-blocked:
+		if e == nil {
+			t.Fatal("closed recv succeeded")
+		}
+	case <-time.After(time.Second):
+		t.Fatal("closed recv did not return")
+	}
+	if err := <-done; err != nil {
+		t.Fatal(err)
 	}
 }

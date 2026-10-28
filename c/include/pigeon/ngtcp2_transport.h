@@ -34,7 +34,10 @@
 // Thread safety
 // -------------
 // Full-duplex: one send and one receive per stream may overlap. Concurrent
-// receives on the same stream and calls after close returns are unsupported.
+// receives on the same stream are unsupported. Stop initiating new calls
+// before close: it joins already-entered transport operations, but callers
+// must keep the enclosing session alive until high-level calls have joined.
+// No call may start after teardown begins.
 //
 // TLS certificate validation
 // --------------------------
@@ -220,8 +223,11 @@ typedef struct pigeon_ngtcp2_transport {
 int pigeon_ngtcp2_transport_init(pigeon_ngtcp2_transport *t,
                                  const pigeon_ngtcp2_config *cfg);
 
-// Close the QUIC connection and free OpenSSL/ngtcp2 objects.
-// After this call, the transport must not be used.
+// Close the QUIC connection and free OpenSSL/ngtcp2 objects. Wakes and joins
+// already-entered transport operations. Caller owns session/connection
+// quiescence and must not free the containing allocation until their
+// high-level pigeon_stream_* calls have returned; no new call may begin
+// once teardown starts.
 void pigeon_ngtcp2_transport_close(pigeon_ngtcp2_transport *t);
 
 // Convenience: return &t->transport for passing to pigeon_init().

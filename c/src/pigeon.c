@@ -292,25 +292,6 @@ int pigeon_pairing_record_deserialize(pigeon_pairing_record *rec,
 
 // --- Multi-channel session API ---
 
-// Lazily allocate the per-session scratch buffers. Idempotent.
-static int pigeon_session_ensure_scratch(pigeon_session *s)
-{
-    if (s->scratch_a && s->scratch_b) return 0;
-    // Sized for the largest single send/recv: AEAD ciphertext expansion
-    // is ~32 bytes (8-byte seq + 16-byte tag + slack). 64 bytes of
-    // slack is comfortable.
-    size_t sz = PIGEON_MAX_MSG + 64;
-    if (!s->scratch_a) s->scratch_a = (uint8_t *)malloc(sz);
-    if (!s->scratch_b) s->scratch_b = (uint8_t *)malloc(sz);
-    if (!s->scratch_a || !s->scratch_b) {
-        free(s->scratch_a); free(s->scratch_b);
-        s->scratch_a = s->scratch_b = NULL;
-        return -1;
-    }
-    s->scratch_size = sz;
-    return 0;
-}
-
 void pigeon_session_close(pigeon_session *s)
 {
     if (!s) return;
@@ -603,9 +584,16 @@ int pigeon_datagram_send(pigeon_datagram *d,
     if (!d || !d->session) return -1;
     pigeon_session *sess = d->session;
     if (!sess->transport.send_datagram) return -1;
-    if (pigeon_session_ensure_scratch(sess) != 0) return -1;
     if (!sess->dg_channel.established) return -1;
     if (payload_len > 0 && !payload) return -1;
+
+    // Per-call frames: concurrent datagram receive and send must not share
+    // scratch, including while recv_datagram blocks in the QUIC pump.
+    size_t cap = PIGEON_MAX_MSG + 64;
+    uint8_t *scratch_a = (uint8_t *)malloc(cap * 2);
+    if (!scratch_a) return -1;
+    uint8_t *scratch_b = scratch_a + cap;
+    int result = -1;
 
     size_t max_p = sess->max_dg_payload ? sess->max_dg_payload
                                         : (size_t)PIGEON_WIRE_MAX_DATAGRAM_PAYLOAD;
@@ -615,21 +603,22 @@ int pigeon_datagram_send(pigeon_datagram *d,
         int wn = pigeon_encode_datagram(&sess->dg_channel,
                                         d->channel_id,
                                         payload, payload_len,
-                                        sess->scratch_a, sess->scratch_size);
-        if (wn < 0) return -1;
-        if ((size_t)wn + 1 > sess->scratch_size) return -1;
+                                        scratch_a, cap);
+        if (wn < 0) goto out;
+        if ((size_t)wn + 1 > cap) goto out;
         // Prefix 0x00 (whole) in scratch_b then send.
-        sess->scratch_b[0] = PIGEON_WIRE_DG_CONN_WHOLE;
-        memcpy(sess->scratch_b + 1, sess->scratch_a, (size_t)wn);
-        return sess->transport.send_datagram(sess->transport.userdata,
-                                             sess->scratch_b, (size_t)wn + 1);
+        scratch_b[0] = PIGEON_WIRE_DG_CONN_WHOLE;
+        memcpy(scratch_b + 1, scratch_a, (size_t)wn);
+        result = sess->transport.send_datagram(sess->transport.userdata,
+                                               scratch_b, (size_t)wn + 1);
+        goto out;
     }
 
     size_t chunk_budget = pigeon_dg_chunk_budget(max_p, 1 + PIGEON_WIRE_FRAG_HEADER_SIZE);
-    if (chunk_budget < 1) return -1;
+    if (chunk_budget < 1) goto out;
     size_t total = (payload_len + chunk_budget - 1) / chunk_budget;
     if (total < 2) total = 2;
-    if (total > 65535) return -1;
+    if (total > 65535) goto out;
 
     uint32_t msg_id = sess->next_dg_msg_id++;
     if (sess->next_dg_msg_id == 0) sess->next_dg_msg_id = 1;
@@ -642,11 +631,11 @@ int pigeon_datagram_send(pigeon_datagram *d,
         int wn = pigeon_encode_datagram(&sess->dg_channel,
                                         d->channel_id,
                                         payload + start, clen,
-                                        sess->scratch_a, sess->scratch_size);
-        if (wn < 0) return -1;
+                                        scratch_a, cap);
+        if (wn < 0) goto out;
         size_t frame_len = 1 + PIGEON_WIRE_FRAG_HEADER_SIZE + (size_t)wn;
-        if (frame_len > sess->scratch_size) return -1;
-        uint8_t *frame = sess->scratch_b;
+        if (frame_len > cap) goto out;
+        uint8_t *frame = scratch_b;
         frame[0] = PIGEON_WIRE_DG_CONN_FRAGMENT;
         frame[1] = (uint8_t)(msg_id >> 24);
         frame[2] = (uint8_t)(msg_id >> 16);
@@ -656,13 +645,16 @@ int pigeon_datagram_send(pigeon_datagram *d,
         frame[6] = (uint8_t)(i);
         frame[7] = (uint8_t)((uint16_t)total >> 8);
         frame[8] = (uint8_t)(total);
-        memcpy(frame + 1 + PIGEON_WIRE_FRAG_HEADER_SIZE, sess->scratch_a, (size_t)wn);
+        memcpy(frame + 1 + PIGEON_WIRE_FRAG_HEADER_SIZE, scratch_a, (size_t)wn);
         if (sess->transport.send_datagram(sess->transport.userdata,
                                           frame, frame_len) != 0) {
-            return -1;
+            goto out;
         }
     }
-    return 0;
+    result = 0;
+out:
+    free(scratch_a);
+    return result;
 }
 
 int pigeon_datagram_recv(pigeon_datagram *d,
@@ -672,36 +664,39 @@ int pigeon_datagram_recv(pigeon_datagram *d,
     if (!d || !d->session || !part) return -1;
     pigeon_session *sess = d->session;
     if (!sess->transport.recv_datagram) return -1;
-    if (pigeon_session_ensure_scratch(sess) != 0) return -1;
     if (!sess->dg_channel.established) return -1;
 
+    size_t cap = PIGEON_MAX_MSG + 64;
+    uint8_t *scratch_a = (uint8_t *)malloc(cap);
+    if (!scratch_a) return -1;
+    int result = -1;
     size_t got = 0;
     if (sess->transport.recv_datagram(sess->transport.userdata,
-                                      sess->scratch_a, sess->scratch_size, &got) != 0) {
-        return -1;
+                                      scratch_a, cap, &got) != 0) {
+        goto out;
     }
-    if (got == 0) return -1;
+    if (got == 0) goto out;
 
     uint32_t msg_id = 0;
     uint16_t index = 0, total = 1;
-    const uint8_t *ct = sess->scratch_a;
+    const uint8_t *ct = scratch_a;
     size_t ct_len = got;
 
-    if (got >= 1 && sess->scratch_a[0] == PIGEON_WIRE_DG_CONN_WHOLE) {
-        ct = sess->scratch_a + 1;
+    if (got >= 1 && scratch_a[0] == PIGEON_WIRE_DG_CONN_WHOLE) {
+        ct = scratch_a + 1;
         ct_len = got - 1;
         index = 0;
         total = 1;
         msg_id = 0;
     } else if (got >= 1 + PIGEON_WIRE_FRAG_HEADER_SIZE &&
-               sess->scratch_a[0] == PIGEON_WIRE_DG_CONN_FRAGMENT) {
-        const uint8_t *h = sess->scratch_a + 1;
+               scratch_a[0] == PIGEON_WIRE_DG_CONN_FRAGMENT) {
+        const uint8_t *h = scratch_a + 1;
         msg_id = ((uint32_t)h[0] << 24) | ((uint32_t)h[1] << 16) |
                  ((uint32_t)h[2] << 8) | (uint32_t)h[3];
         index = (uint16_t)(((uint16_t)h[4] << 8) | h[5]);
         total = (uint16_t)(((uint16_t)h[6] << 8) | h[7]);
-        if (total < 2 || index >= total) return -1;
-        ct = sess->scratch_a + 1 + PIGEON_WIRE_FRAG_HEADER_SIZE;
+        if (total < 2 || index >= total) goto out;
+        ct = scratch_a + 1 + PIGEON_WIRE_FRAG_HEADER_SIZE;
         ct_len = got - 1 - PIGEON_WIRE_FRAG_HEADER_SIZE;
     }
     // else: pre-T59 unframed AEAD — treat as whole.
@@ -710,14 +705,18 @@ int pigeon_datagram_recv(pigeon_datagram *d,
     int pn = pigeon_decode_datagram(&sess->dg_channel,
                                     ct, ct_len, &cid,
                                     buf, buf_len);
-    if (pn < 0) return -1;
+    if (pn < 0) goto out;
     if (cid != d->channel_id) {
-        return -2;
+        result = -2;
+        goto out;
     }
     part->msg_id = msg_id;
     part->index = index;
     part->total = total;
-    return pn;
+    result = pn;
+out:
+    free(scratch_a);
+    return result;
 }
 
 // --- pigeon_session_primary / pigeon_connect (T32.3) ---
