@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Copyright 2026 Marcelo Cantos
+     SPDX-License-Identifier: Apache-2.0
+
+     Instrumentation APK only. DeviceEchoTest contacts a local HTTP fixture
+     on the LAN; do not permit cleartext in src/main/AndroidManifest.xml. -->
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <uses-permission android:name="android.permission.INTERNET" />
+    <application android:usesCleartextTraffic="true" />
+</manifest>
