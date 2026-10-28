@@ -63,15 +63,17 @@ class NativeConnectionLifecycleTest {
         ProcessBuilder(*argv).directory(repo.toFile()).redirectErrorStream(true)
             .redirectOutput(log.toFile()).start()
 
+    private fun text(path: Path): String = String(Files.readAllBytes(path), Charsets.UTF_8)
+
     private fun waitForControl(process: Process, log: Path): Int {
         repeat(160) {
-            check(process.isAlive) { "fixture exited: ${Files.readString(log)}" }
+            check(process.isAlive) { "fixture exited: ${text(log)}" }
             val match = Regex("(?m)^CONTROL=127\\.0\\.0\\.1:(\\d+)$")
-                .find(Files.readString(log))
+                .find(text(log))
             if (match != null) return match.groupValues[1].toInt()
             Thread.sleep(100)
         }
-        error("fixture control port unavailable: ${Files.readString(log)}")
+        error("fixture control port unavailable: ${text(log)}")
     }
 
     @Test fun failedConnectLiveOwnershipAndRecvFirstReply() = runBlocking {
@@ -147,9 +149,9 @@ class NativeConnectionLifecycleTest {
                 PigeonNative.connectionClose(conn)
             }
             check(fixture.waitFor(10, TimeUnit.SECONDS) && fixture.exitValue() == 0) {
-                "fixture did not finish: ${Files.readString(tmp.resolve("fixture.log"))}"
+                "fixture did not finish: ${text(tmp.resolve("fixture.log"))}"
             }
-            assertTrue(Files.readString(tmp.resolve("fixture.log")).contains("DEVICE_ORACLE_PASS"))
+            assertTrue(text(tmp.resolve("fixture.log")).contains("DEVICE_ORACLE_PASS"))
         } finally {
             fixture?.destroyForcibly()
             relay.destroyForcibly()
