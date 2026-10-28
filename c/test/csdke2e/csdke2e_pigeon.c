@@ -1,5 +1,7 @@
 // Copyright 2026 Marcelo Cantos
 // SPDX-License-Identifier: Apache-2.0
+
+//go:build csdke2e
 //
 // Wraps the C library's ngtcp2-only pieces into the cgo build of
 // package csdke2e:
