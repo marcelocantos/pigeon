@@ -2,6 +2,7 @@
 # SPDX-License-Identifier: Apache-2.0
 import importlib.util
 import io
+from subprocess import CompletedProcess
 from pathlib import Path
 import unittest
 from unittest.mock import patch
@@ -54,6 +55,16 @@ class PublicationTest(unittest.TestCase):
     def test_wrong_pom_coordinates_fail(self):
         with self.assertRaisesRegex(RuntimeError, "groupId"):
             self.run_check(pom=self.pom.replace(b"com.github.marcelocantos.pigeon", b"wrong.group"))
+
+    def test_real_fetch_requires_successful_tls_checked_curl(self):
+        with patch.object(publication.subprocess, "run", return_value=CompletedProcess(
+            args=[], returncode=22, stdout=b"", stderr=b"HTTP 404")) as run:
+            with self.assertRaisesRegex(RuntimeError, "curl exit=22"):
+                publication.fetch("https://jitpack.io/unpublished.pom", 100)
+            args = run.call_args.args[0]
+            self.assertIn("--fail", args)
+            self.assertEqual(args[args.index("--proto") + 1], "=https")
+            self.assertNotIn("--insecure", args)
 
     def test_old_tag_rejected(self):
         with self.assertRaisesRegex(ValueError, "full 40-character"):
