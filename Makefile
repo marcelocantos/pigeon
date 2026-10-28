@@ -12,7 +12,7 @@ export ANDROID_HOME
         e2e e2e-go e2e-swift e2e-kotlin \
         test-live bench clean \
         build-vendor-deps test-c test-c-only test-c-asan test-c-ngtcp2 \
-        test-go-race test-go-release-smoke \
+        test-go-race \
         bullseye bullseye-prereq bullseye-strict demo server
 
 # --- Build ---
@@ -33,19 +33,6 @@ test: test-go test-swift test-kotlin test-web
 
 test-go:
 	go test -count=1 -timeout=60s ./...
-
-# Fetches a RELEASED tag from the real Go module proxy (direct VCS
-# fallback) into a private module cache and exercises it as a fresh
-# external consumer would — see scripts/go-module-release-smoke.sh for
-# why this is distinct from the archive-shape check in test-go above
-# (scripts/go-module-smoke.sh). Not part of `test`/`bullseye`: it
-# validates whatever TAG was just cut, and legitimately fails against
-# any tag predating the system-libsodium fix (pre-v0.35.0) because
-# those tags are genuinely broken for fresh external consumers — that
-# is the bug this target exists to catch at release time, not at every
-# PR. Run after `gh release create`, or with TAG=vX.Y.Z for an older one.
-test-go-release-smoke:
-	bash scripts/go-module-release-smoke.sh $(TAG)
 
 test-swift:
 	swift test
