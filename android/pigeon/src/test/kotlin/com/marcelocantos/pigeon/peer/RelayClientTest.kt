@@ -74,6 +74,15 @@ class RelayClientTest {
         assertEquals(listOf("connect:relay.example:443:peer"), d.events)
     }
 
+    @Test fun publicConnectRejectsUnsupportedTokenBeforeNativeDial() = runBlocking {
+        // Public call-site oracle: this must fail before PigeonNative is loaded.
+        // The JVM test deliberately has no native library on java.library.path.
+        val error = assertFailsWith<IllegalArgumentException> {
+            connect("https://relay.example", "peer", token = "secret")
+        }
+        assertTrue(error.message.orEmpty().contains("CONNECT bearer token"))
+    }
+
     @Test fun localTLSOptOutMustBeExplicit() = runBlocking {
         val d = Driver()
         val session = connectRelayClient(d, "https://localhost", "peer", tls = RelayTLS(verifyPeer = false))
