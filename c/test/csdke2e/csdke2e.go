@@ -43,6 +43,7 @@ package csdke2e
 // #include <stdint.h>
 // #include <stddef.h>
 // #include "pigeon.h"
+// #include "pigeon/ngtcp2_transport.h"
 //
 // extern int csdke2eResolveTrampoline(void *userdata, char *device_id, void *out_record);
 import "C"
@@ -176,6 +177,12 @@ type connectionHandle struct {
 	c *C.pigeon_connection
 }
 
+// closeTransportOnly exercises transport-close while a vtable receive is in
+// flight. The session/connection box stays alive until Recv has returned.
+func (c *connectionHandle) closeTransportOnly() {
+	C.pigeon_ngtcp2_transport_close((*C.pigeon_ngtcp2_transport)(C.pigeon_connect_session(c.c).transport.userdata))
+}
+
 func (c *connectionHandle) Close() {
 	if c == nil || c.c == nil {
 		return
@@ -256,6 +263,20 @@ func (s *streamHandle) Send(msg []byte) error {
 	}
 	if rv := C.pigeon_stream_send(&s.c, p, C.size_t(len(msg))); rv != 0 {
 		return errors.New("pigeon_stream_send failed")
+	}
+	return nil
+}
+
+func (s *streamHandle) CloseWrite() error {
+	if C.pigeon_stream_close_write(&s.c) != 0 {
+		return errors.New("pigeon_stream_close_write failed")
+	}
+	return nil
+}
+
+func (s *streamHandle) Reset() error {
+	if C.pigeon_stream_reset(&s.c) != 0 {
+		return errors.New("pigeon_stream_reset failed")
 	}
 	return nil
 }
