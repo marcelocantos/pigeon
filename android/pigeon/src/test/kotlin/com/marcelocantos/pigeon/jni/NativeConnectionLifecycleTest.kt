@@ -39,7 +39,7 @@ class NativeConnectionLifecycleTest {
     private fun port(tcp: Boolean): Int = if (tcp) ServerSocket(0).use { it.localPort }
         else DatagramSocket(0).use { it.localPort }
 
-    private fun http(url: String, body: String? = null): String {
+    private fun http(url: String, body: String? = null, expectedStatus: Int? = null): String {
         val c = URL(url).openConnection() as HttpURLConnection
         try {
             c.connectTimeout = 3_000
@@ -49,7 +49,10 @@ class NativeConnectionLifecycleTest {
                 c.doOutput = true
                 c.outputStream.use { it.write(body.toByteArray(Charsets.UTF_8)) }
             }
-            check(c.responseCode in 200..299) { "$url: HTTP ${c.responseCode}" }
+            val status = c.responseCode
+            check(if (expectedStatus == null) status in 200..299 else status == expectedStatus) {
+                "$url: HTTP $status${expectedStatus?.let { ", expected $it" } ?: ""}"
+            }
             return c.inputStream.bufferedReader().use { it.readText() }
         } finally { c.disconnect() }
     }
@@ -171,6 +174,9 @@ class NativeConnectionLifecycleTest {
                     // delay: the backend may report PASS only after the native
                     // caller has verified the exact encrypted echo bytes.
                     PigeonNative.streamSend(stream, "ack: echo: ping".toByteArray())
+                    // The fixture must observe its encrypted ACK before the
+                    // HTTP control channel can confirm it and release PASS.
+                    http("$control/ack", expectedStatus = HttpURLConnection.HTTP_NO_CONTENT)
                     check(fixture.waitFor(10, TimeUnit.SECONDS) && fixture.exitValue() == 0) {
                         "fixture did not finish after echo ACK: ${text(tmp.resolve("fixture.log"))}"
                     }
