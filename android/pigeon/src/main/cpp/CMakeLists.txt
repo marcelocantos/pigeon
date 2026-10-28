@@ -58,9 +58,22 @@ set_target_properties(sodium_static PROPERTIES
     IMPORTED_LOCATION "${SODIUM_LIB}"
     INTERFACE_INCLUDE_DIRECTORIES "${SODIUM_INCLUDE}")
 
+# Static Android archives from the same ABI and API level. Fail during
+# configuration, rather than silently linking host libraries from PATH.
+foreach(dep ngtcp2_crypto_quictls ngtcp2 ssl crypto)
+    set(archive "${PIGEON_SODIUM_ROOT}/lib/lib${dep}.a")
+    if(NOT EXISTS "${archive}")
+        message(FATAL_ERROR "Missing Android ${ANDROID_ABI} ${dep}: ${archive}\nRun: bash c/vendor/build-android.sh ${ANDROID_ABI}")
+    endif()
+    add_library(${dep}_android STATIC IMPORTED)
+    set_target_properties(${dep}_android PROPERTIES IMPORTED_LOCATION "${archive}")
+endforeach()
+
 add_library(pigeon-jni SHARED
     "${PIGEON_DIST_DIR}/pigeon.c"
     "${PIGEON_JNI_SRC}"
+    "${PIGEON_REPO_ROOT}/c/src/ngtcp2_transport.c"
+    "${PIGEON_REPO_ROOT}/c/src/listener_ngtcp2.c"
 )
 
 target_compile_definitions(pigeon-jni PRIVATE
@@ -69,6 +82,8 @@ target_compile_definitions(pigeon-jni PRIVATE
 
 target_include_directories(pigeon-jni PRIVATE
     "${PIGEON_DIST_DIR}"
+    "${PIGEON_REPO_ROOT}/c/include"
+    "${PIGEON_SODIUM_ROOT}/include"
 )
 
 # Android's NDK ships jni.h in the sysroot — no extra includes needed.
@@ -79,6 +94,10 @@ find_library(ANDROID_LOG_LIB log)
 target_link_libraries(pigeon-jni
     PRIVATE
         sodium_static
+        ngtcp2_crypto_quictls_android
+        ngtcp2_android
+        ssl_android
+        crypto_android
         ${ANDROID_LOG_LIB}
 )
 
