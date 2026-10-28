@@ -18,13 +18,14 @@ class RelayClientTest {
         var lastToken: String? = null
         var failConnect = false
         var failStreamClose = false
-        override fun connect(endpoint: RelayEndpoint, instanceID: String, token: String?, record: ByteArray?): Long {
+        override fun connect(endpoint: RelayEndpoint, instanceID: String, token: String?, record: ByteArray?, deviceID: String?): Long {
             events += "connect:${endpoint.host}:${endpoint.port}:$instanceID"
             lastRecord = record
             lastToken = token
             if (failConnect) throw IllegalStateException("dial rejected")
             return 7
         }
+        override fun primaryStream(connection: Long): Long { events += "primary:$connection"; return 9 }
         override fun openStream(connection: Long, name: String): Long {
             events += "open:$connection:$name"
             return 8
@@ -41,9 +42,10 @@ class RelayClientTest {
     @Test fun pairingHandoffAndOwnedStream() = runBlocking {
         val d = Driver()
         val record = PairingRecord("peer", "https://relay.example", ByteArray(32), ByteArray(32), ByteArray(32))
-        val session = connectRelayClient(d, "https://relay.example:4433", "peer", "auth-token", record)
-        assertEquals("auth-token", d.lastToken)
+        val session = connectRelayClient(d, "https://relay.example:4433", "peer", null, record, "device")
+        assertEquals(null, d.lastToken)
         assertContentEquals(record.toNativeBytes(), d.lastRecord)
+        assertFailsWith<IllegalArgumentException> { connectRelayClient(d, "https://relay.example", "peer", "auth-token") }
         val stream = session.openStream("chat")
         stream.send("ping".toByteArray())
         assertContentEquals("pong".toByteArray(), stream.recv())

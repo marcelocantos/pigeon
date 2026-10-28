@@ -4,6 +4,7 @@
 package com.marcelocantos.pigeon.peer
 
 import com.marcelocantos.pigeon.crypto.PairingRecord
+import com.marcelocantos.pigeon.jni.PigeonNative
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.flow
@@ -18,7 +19,8 @@ import kotlinx.coroutines.withContext
  * deadlocks recv-first traffic until the native event-loop pump is available.
  */
 internal interface RelayClientDriver {
-    fun connect(endpoint: RelayEndpoint, instanceID: String, token: String?, record: ByteArray?): Long
+    fun connect(endpoint: RelayEndpoint, instanceID: String, token: String?, record: ByteArray?, deviceID: String?): Long
+    fun primaryStream(connection: Long): Long
     fun openStream(connection: Long, name: String): Long
     fun send(stream: Long, data: ByteArray)
     fun recv(stream: Long): ByteArray
@@ -39,6 +41,16 @@ class RelayClientSession internal constructor(
     private val lock = Any()
     private val streams = mutableSetOf<RelayClientStream>()
     private var closed = false
+
+    /** Plaintext ceremony stream; only available on a pairing-mode connection. */
+    suspend fun primaryStream(): RelayClientStream = withContext(Dispatchers.IO) {
+        synchronized(lock) {
+            check(!closed) { "session closed" }
+            val handle = driver.primaryStream(connection)
+            check(handle != 0L) { "native primary stream unavailable" }
+            RelayClientStream(driver, handle, "", this@RelayClientSession).also { streams.add(it) }
+        }
+    }
 
     suspend fun openStream(name: String): RelayClientStream = withContext(Dispatchers.IO) {
         require(name.isNotEmpty() && name.toByteArray(Charsets.UTF_8).size < 64) {
@@ -113,7 +125,7 @@ class RelayClientStream internal constructor(
 
 /**
  * Internal staging seam; the public connect(relayURL, instanceID, token?)
- * entry point is bound only once the JNI activation + pump contract exists.
+ * entry point awaits the native event-loop pump and device recv-first oracle.
  */
 internal suspend fun connectRelayClient(
     driver: RelayClientDriver,
@@ -121,6 +133,7 @@ internal suspend fun connectRelayClient(
     instanceID: String,
     token: String? = null,
     pairing: PairingRecord? = null,
+    deviceID: String? = null,
 ): RelayClientSession {
     require(instanceID.isNotBlank() && instanceID.toByteArray(Charsets.UTF_8).size < 64) {
         "instance ID must be 1..63 UTF-8 bytes"
@@ -128,10 +141,86 @@ internal suspend fun connectRelayClient(
     require(pairing == null || pairing.peerInstanceID == instanceID) {
         "pairing record belongs to another instance"
     }
+    require(token.isNullOrEmpty()) { "CONNECT bearer token is not supported by the relay greeting" }
+    require((pairing == null) == (deviceID == null)) { "activation requires both a pairing record and device ID" }
+    require(deviceID == null || deviceID.isNotBlank()) { "device ID must not be blank" }
     val endpoint = RelayEndpoint.parse(relayURL)
     return withContext(Dispatchers.IO) {
-        val connection = driver.connect(endpoint, instanceID, token, pairing?.toNativeBytes())
+        val connection = driver.connect(endpoint, instanceID, token, pairing?.toNativeBytes(), deviceID)
         check(connection != 0L) { "native relay connect failed" }
         RelayClientSession(driver, connection)
     }
 }
+
+/** Native JNI owner: stream → session → connection; no native handle escapes. */
+internal object NativeRelayClientDriver : RelayClientDriver {
+    private data class Owned(val session: Long, val channel: Long)
+    private val owned = mutableMapOf<Long, Owned>()
+
+    override fun connect(endpoint: RelayEndpoint, instanceID: String, token: String?, record: ByteArray?, deviceID: String?): Long {
+        // The CONNECT greeting cannot carry a bearer token; never discard it.
+        require(token.isNullOrEmpty()) { "CONNECT bearer token is not supported" }
+        val connection = PigeonNative.connectionOpen(endpoint.host, endpoint.port, instanceID,
+            0, null, true, null, 0)
+        check(connection != 0L) { "native relay connection failed" }
+        var channel = 0L
+        try {
+            val session = if (record == null) {
+                channel = PigeonNative.channelInitPairing()
+                PigeonNative.connectionSessionInit(connection, channel, null, null)
+            } else {
+                PigeonNative.connectionActivate(connection, requireNotNull(deviceID), record, null, null)
+            }
+            check(session != 0L) { "native relay session failed" }
+            synchronized(owned) { owned[connection] = Owned(session, channel) }
+            return connection
+        } catch (e: Throwable) {
+            try { if (channel != 0L) PigeonNative.channelFree(channel) } finally {
+                PigeonNative.connectionClose(connection)
+            }
+            throw e
+        }
+    }
+
+    private fun session(connection: Long): Long = synchronized(owned) {
+        owned[connection]?.session ?: error("connection closed")
+    }
+    override fun primaryStream(connection: Long): Long = PigeonNative.sessionPrimary(session(connection))
+    override fun openStream(connection: Long, name: String): Long = PigeonNative.sessionOpenStream(session(connection), name)
+    override fun send(stream: Long, data: ByteArray) = PigeonNative.streamSend(stream, data)
+    override fun recv(stream: Long): ByteArray = PigeonNative.streamRecv(stream)
+    override fun closeStream(stream: Long) {
+        try { PigeonNative.streamClose(stream) } finally { PigeonNative.streamFree(stream) }
+    }
+    override fun closeConnection(connection: Long) {
+        val owner = synchronized(owned) { owned.remove(connection) } ?: return
+        try { PigeonNative.sessionFree(owner.session) } finally {
+            try { if (owner.channel != 0L) PigeonNative.channelFree(owner.channel) } finally {
+                PigeonNative.connectionClose(connection)
+            }
+        }
+    }
+}
+
+/**
+ * Begin a plaintext pairing ceremony over the relay's primary stream.
+ * The caller must finish the modern pairing ceremony and persist its
+ * PairingRecord before using [connectPaired] on a fresh connection.
+ * CONNECT does not carry a bearer token on the current relay wire; a
+ * nonempty [token] is rejected, never silently discarded.
+ *
+ * Native transport pump (T66.5) and recv-first device verification are
+ * prerequisites before this entry point can be considered runtime-ready.
+ */
+suspend fun connect(relayURL: String, instanceID: String, token: String? = null): RelayClientSession =
+    connectRelayClient(NativeRelayClientDriver, relayURL, instanceID, token)
+
+/** Establish an encrypted session from a completed pairing record. */
+suspend fun connectPaired(
+    relayURL: String,
+    instanceID: String,
+    deviceID: String,
+    pairing: PairingRecord,
+): RelayClientSession = connectRelayClient(
+    NativeRelayClientDriver, relayURL, instanceID, pairing = pairing, deviceID = deviceID,
+)
