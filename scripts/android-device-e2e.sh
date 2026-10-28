@@ -14,7 +14,7 @@ mkdir -p "$GRADLE_USER_HOME" "$ANDROID_USER_HOME"
 verify_apks() {
   local aapt2="${ANDROID_HOME}/build-tools/34.0.0/aapt2"
   [[ -x "$aapt2" ]] || { echo "Missing aapt2: $aapt2" >&2; return 1; }
-  local test_apk target_apk host_xml test_xml host_badge test_badge
+  local host_xml test_xml host_badge test_badge
   test_apk=$(find android/pigeon-host/build/outputs/apk/androidTest -name '*.apk' -type f | head -1)
   target_apk=$(find android/pigeon-host/build/outputs/apk/debug -name '*.apk' -type f | head -1)
   [[ -n "$test_apk" && -s "$test_apk" && -n "$target_apk" && -s "$target_apk" ]] || {
@@ -39,6 +39,8 @@ verify_apks() {
 # vendored libraries are hard failures, not skipped device tests.
 (cd android && ./gradlew -Pkotlin.compiler.execution.strategy=in-process :pigeon-host:assembleDebugAndroidTest :pigeon-host:assembleDebug)
 verify_apks
+# Ensure the verified APK paths survive the function for the subsequent ADB install.
+: "${target_apk:?verified target APK path lost}" "${test_apk:?verified instrumentation APK path lost}"
 [[ "${1:-}" != --verify-apks ]] || exit 0
 
 serial=${ANDROID_SERIAL:-}
