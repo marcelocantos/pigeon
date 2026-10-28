@@ -1,3 +1,4 @@
 submodules: true
 script: c/vendor/build.sh
 args: [libsodium]
+test_tags: [csdke2e]
