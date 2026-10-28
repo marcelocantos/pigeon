@@ -260,9 +260,18 @@ func (s *streamHandle) Send(msg []byte) error {
 	return nil
 }
 
+func (s *streamHandle) CloseWrite() error {
+	if C.pigeon_stream_close_write(&s.c) != 0 {
+		return errors.New("pigeon_stream_close_write failed")
+	}
+	return nil
+}
+
 func (s *streamHandle) Reset() error {
- if C.pigeon_stream_reset(&s.c) != 0 { return errors.New("pigeon_stream_reset failed") }
- return nil
+	if C.pigeon_stream_reset(&s.c) != 0 {
+		return errors.New("pigeon_stream_reset failed")
+	}
+	return nil
 }
 
 func (s *streamHandle) Recv() ([]byte, error) {
