@@ -72,6 +72,15 @@ jobs:
         if: matrix.os == 'linux' && matrix.arch == 'amd64'
         run: go test ./...
 
+      - name: Smoke-test the published tag as a fresh external Go consumer
+        if: matrix.os == 'linux' && matrix.arch == 'amd64'
+        env:
+          VERSION: ${{ github.event.release.tag_name }}
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libsodium-dev pkg-config
+          env -u PKG_CONFIG_PATH bash scripts/go-module-release-smoke.sh "${VERSION}"
+
       - name: Build binary
         env:
           CGO_ENABLED: "1"
