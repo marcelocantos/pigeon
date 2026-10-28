@@ -131,7 +131,8 @@ typedef struct {
     bool                  in_use;
     bool                  peer_opened;  // remote opened it (we accepted)
     bool                  fin_received;
-    bool                  closing;
+    bool                  closing;      // local reset or peer reset cancels reads
+    bool                  write_closed; // local FIN; read half remains usable
     unsigned              readers;
     pigeon_stream_ringbuf recv_buf;
 } pigeon_ngtcp2_stream_slot;
