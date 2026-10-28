@@ -43,6 +43,7 @@
 #include <string.h>
 
 #include "pigeon.h"
+#include "pigeon/ngtcp2_transport.h"
 
 // ----------------------------------------------------------------------------
 // JavaVM* cache (T36).
@@ -415,6 +416,18 @@ Java_com_marcelocantos_pigeon_jni_PigeonNative_channelInit(
     return (jlong)(intptr_t)ch;
 }
 
+// Unestablished channel for pairing mode. Normal channelInit always sets
+// established=true and therefore cannot be used for the arrival-marker seam.
+JNIEXPORT jlong JNICALL
+Java_com_marcelocantos_pigeon_jni_PigeonNative_channelInitPairing(
+    JNIEnv *env, jclass cls)
+{
+    (void)cls;
+    pigeon_channel *ch = calloc(1, sizeof(*ch));
+    if (!ch) { throw_runtime(env, "alloc failed"); return 0; }
+    return (jlong)(intptr_t)ch;
+}
+
 JNIEXPORT void JNICALL
 Java_com_marcelocantos_pigeon_jni_PigeonNative_channelFree(
     JNIEnv *env, jclass cls, jlong handle)
@@ -503,6 +516,11 @@ typedef struct loopback_pair {
 typedef struct jni_transport_udata jni_transport_udata;
 static void jni_transport_udata_free(jni_transport_udata *u);
 
+typedef struct native_connection {
+    pigeon_ngtcp2_transport transport;
+    unsigned int sessions; // connectionClose refuses while a session borrows the transport
+} native_connection;
+
 typedef struct session_holder {
     pigeon_session  session;  // owned
     // For loopback-pair sessions: shared loopback transport.
@@ -512,6 +530,7 @@ typedef struct session_holder {
     // transport object. NULL for loopback sessions. Owned by this
     // holder — released by sessionFree.
     jni_transport_udata *jni_transport;
+    native_connection *connection; // borrowed; Session does not close the transport
 } session_holder;
 
 static loopback_pair *new_loopback_pair(void)
@@ -611,6 +630,8 @@ Java_com_marcelocantos_pigeon_jni_PigeonNative_sessionFree(
     (void)env; (void)cls;
     session_holder *h = (session_holder *)(intptr_t)handle;
     if (!h) return;
+    pigeon_session_close(&h->session);
+    if (h->connection) h->connection->sessions--;
     if (h->pair && --h->pair->ref_count == 0) {
         free(h->pair);
     }
@@ -1261,4 +1282,296 @@ Java_com_marcelocantos_pigeon_jni_PigeonNative_sessionAcceptStreamGeneric(
     }
 
     return (jlong)(intptr_t)ps;
+}
+
+// ----------------------------------------------------------------------------
+// Native ngtcp2 connection (T66.2). A connection owns the QUIC socket/TLS;
+// a Session owns its own pigeon_session and borrows the connection. Close
+// streams/datagrams, then Session, then Connection. Neither sessionFree nor
+// pigeon_session_close destroys this transport. Calls are single-threaded.
+// ----------------------------------------------------------------------------
+
+static void throw_argument(JNIEnv *env, const char *msg)
+{
+    jclass cls = (*env)->FindClass(env, "java/lang/IllegalArgumentException");
+    if (cls) (*env)->ThrowNew(env, cls, msg);
+}
+
+static void throw_state(JNIEnv *env, const char *msg)
+{
+    jclass cls = (*env)->FindClass(env, "java/lang/IllegalStateException");
+    if (cls) (*env)->ThrowNew(env, cls, msg);
+}
+
+// Kotlin: connectionOpen(String host, String port, String instanceId,
+//     int role, String? token, boolean verifyPeer, String? caCertFile,
+//     int timeoutMs): Long. Production callers pass verifyPeer=true;
+// disabling verification is an explicit test/development decision.
+JNIEXPORT jlong JNICALL
+Java_com_marcelocantos_pigeon_jni_PigeonNative_connectionOpen(
+    JNIEnv *env, jclass cls, jstring host, jstring port, jstring instanceId,
+    jint role, jstring token, jboolean verifyPeer, jstring caCertFile,
+    jint timeoutMs)
+{
+    (void)cls;
+    if (!host || !port || !instanceId || role < PIGEON_ROLE_CONNECT ||
+        role > PIGEON_ROLE_LISTEN || timeoutMs < 0) {
+        throw_argument(env, "invalid connection configuration");
+        return 0;
+    }
+    const char *h = (*env)->GetStringUTFChars(env, host, NULL);
+    const char *p = (*env)->GetStringUTFChars(env, port, NULL);
+    const char *id = (*env)->GetStringUTFChars(env, instanceId, NULL);
+    const char *tok = token ? (*env)->GetStringUTFChars(env, token, NULL) : NULL;
+    const char *ca = caCertFile ? (*env)->GetStringUTFChars(env, caCertFile, NULL) : NULL;
+    jlong result = 0;
+    if ((*env)->ExceptionCheck(env)) goto done;
+    if (!*h || !*p || ((role == PIGEON_ROLE_CONNECT || role == PIGEON_ROLE_LISTEN) && !*id)) {
+        throw_argument(env, "host, port and CONNECT/LISTEN instanceId must not be empty");
+        goto done;
+    }
+    // CONNECT's wire format is connect:<instanceId>, with no token slot.
+    // Never pretend that the relay authenticated a token it never received.
+    if (role == PIGEON_ROLE_CONNECT && tok && *tok) {
+        throw_argument(env, "CONNECT bearer token is not supported by the relay greeting");
+        goto done;
+    }
+    native_connection *c = calloc(1, sizeof(*c));
+    if (!c) { throw_runtime(env, "alloc failed"); goto done; }
+    pigeon_ngtcp2_config cfg = {
+        .host = h, .port = p, .instance_id = id,
+        .role = (pigeon_role)role, .token = tok,
+        .verify_peer = verifyPeer == JNI_TRUE, .ca_cert_file = ca,
+        .timeout_ms = timeoutMs,
+    };
+    if (pigeon_ngtcp2_transport_init(&c->transport, &cfg) != 0) {
+        // init cleans up its own partial state on error.
+        throw_runtime(env, c->transport.last_error[0] ? c->transport.last_error : "ngtcp2 connection failed");
+        free(c);
+        goto done;
+    }
+    result = (jlong)(intptr_t)c;
+done:
+    if (ca) (*env)->ReleaseStringUTFChars(env, caCertFile, ca);
+    if (tok) (*env)->ReleaseStringUTFChars(env, token, tok);
+    if (id) (*env)->ReleaseStringUTFChars(env, instanceId, id);
+    if (p) (*env)->ReleaseStringUTFChars(env, port, p);
+    if (h) (*env)->ReleaseStringUTFChars(env, host, h);
+    return result;
+}
+
+static int native_datagrams(JNIEnv *env, jobjectArray dgnames, jlongArray dgids,
+    pigeon_dgchannel_def chans[PIGEON_MAX_DATAGRAM_CHANNELS], size_t *out_n)
+{
+    if ((dgnames == NULL) != (dgids == NULL)) {
+        throw_argument(env, "datagram names and ids must both be null or both supplied");
+        return -1;
+    }
+    if (dgnames) {
+        jsize count = (*env)->GetArrayLength(env, dgnames);
+        if (count > PIGEON_MAX_DATAGRAM_CHANNELS ||
+            (*env)->GetArrayLength(env, dgids) != count) {
+            throw_argument(env, "invalid datagram channel count");
+            return -1;
+        }
+        jlong *ids = (*env)->GetLongArrayElements(env, dgids, NULL);
+        if (!ids) return -1; // OOME pending
+        for (jsize i = 0; i < count; i++) {
+            jstring name = (jstring)(*env)->GetObjectArrayElement(env, dgnames, i);
+            if (!name) {
+                (*env)->ReleaseLongArrayElements(env, dgids, ids, JNI_ABORT);
+                if (!(*env)->ExceptionCheck(env)) throw_argument(env, "null datagram name");
+                return -1;
+            }
+            const char *str = (*env)->GetStringUTFChars(env, name, NULL);
+            if (!str) {
+                (*env)->DeleteLocalRef(env, name);
+                (*env)->ReleaseLongArrayElements(env, dgids, ids, JNI_ABORT);
+                return -1;
+            }
+            size_t len = strlen(str);
+            if (len == 0 || len >= PIGEON_MAX_NAME_LEN || ids[i] <= 0) {
+                (*env)->ReleaseStringUTFChars(env, name, str);
+                (*env)->DeleteLocalRef(env, name);
+                (*env)->ReleaseLongArrayElements(env, dgids, ids, JNI_ABORT);
+                throw_argument(env, "invalid datagram name or id");
+                return -1;
+            }
+            memcpy(chans[i].name, str, len);
+            chans[i].channel_id = (uint64_t)ids[i];
+            (*env)->ReleaseStringUTFChars(env, name, str);
+            (*env)->DeleteLocalRef(env, name);
+        }
+        (*env)->ReleaseLongArrayElements(env, dgids, ids, JNI_ABORT);
+        *out_n = (size_t)count;
+    }
+    return 0;
+}
+
+// Kotlin: connectionSessionInit(Long connection, Long channel,
+//     Array<String>? dgNames, LongArray? dgIds): Long.
+// channel is a previously initialized channelInit handle. The session
+// copies its keys; caller retains and later closes the channel. CONNECT
+// pairing mode sends the empty arrival marker and exposes primary() for
+// ceremony traffic. Activation/PairingRecord derivation is NOT performed.
+JNIEXPORT jlong JNICALL
+Java_com_marcelocantos_pigeon_jni_PigeonNative_connectionSessionInit(
+    JNIEnv *env, jclass cls, jlong connHandle, jlong channelHandle,
+    jobjectArray dgnames, jlongArray dgids)
+{
+    (void)cls;
+    native_connection *c = (native_connection *)(intptr_t)connHandle;
+    pigeon_channel *channel = (pigeon_channel *)(intptr_t)channelHandle;
+    if (!c || !channel) {
+        throw_argument(env, "connection and initialized channel are required");
+        return 0;
+    }
+    pigeon_dgchannel_def chans[PIGEON_MAX_DATAGRAM_CHANNELS] = {0};
+    size_t n = 0;
+    if (native_datagrams(env, dgnames, dgids, chans, &n) != 0) return 0;
+    if (c->sessions) {
+        throw_state(env, "connection already has a session");
+        return 0;
+    }
+    session_holder *s = calloc(1, sizeof(*s));
+    if (!s) { throw_runtime(env, "alloc failed"); return 0; }
+    pigeon_stream_handle *primary = pigeon_ngtcp2_transport_primary_handle(&c->transport);
+    if (!primary) {
+        free(s);
+        throw_runtime(env, "ngtcp2 primary stream unavailable");
+        return 0;
+    }
+    if (c->transport.role == PIGEON_ROLE_CONNECT) {
+        // The pairing arrival marker must precede any primary ceremony bytes.
+        // For an established channel, activation is a separate explicit seam;
+        // never send the pairing marker as though activation had run.
+        if (channel->established) {
+            free(s);
+            throw_argument(env, "CONNECT session requires pairing-mode channel (use connectionActivate for activation)");
+            return 0;
+        }
+        if (pigeon_connect_on_transport(pigeon_ngtcp2_as_transport(&c->transport),
+                primary, c->transport.instance_id, NULL, NULL,
+                n ? chans : NULL, n, &s->session) != 0) {
+            free(s);
+            throw_runtime(env, "pairing arrival marker or session initialization failed");
+            return 0;
+        }
+    } else {
+        if (pigeon_session_init(&s->session, pigeon_ngtcp2_as_transport(&c->transport),
+                channel, n ? chans : NULL, n) != 0) {
+            free(s);
+            throw_argument(env, "invalid datagram channel definitions");
+            return 0;
+        }
+        s->session.primary = primary;
+    }
+    s->connection = c;
+    c->sessions++;
+    return (jlong)(intptr_t)s;
+}
+
+// Kotlin: sessionPrimary(Long session): Long. Returns an owned stream wrapper
+// over the borrowed QUIC primary handle; free it before sessionFree.
+JNIEXPORT jlong JNICALL
+Java_com_marcelocantos_pigeon_jni_PigeonNative_sessionPrimary(
+    JNIEnv *env, jclass cls, jlong sessionHandle)
+{
+    (void)cls;
+    session_holder *s = (session_holder *)(intptr_t)sessionHandle;
+    if (!s) { throw_argument(env, "null session"); return 0; }
+    pigeon_stream *stream = calloc(1, sizeof(*stream));
+    if (!stream) { throw_runtime(env, "alloc failed"); return 0; }
+    if (pigeon_session_primary(&s->session, stream) != 0) {
+        free(stream);
+        throw_state(env, "session has no primary stream");
+        return 0;
+    }
+    return (jlong)(intptr_t)stream;
+}
+
+// Kotlin: connectionClose(Long connection): Unit. Refuses while a Session
+// borrows the connection so a Kotlin close-order bug cannot dangle it.
+JNIEXPORT void JNICALL
+Java_com_marcelocantos_pigeon_jni_PigeonNative_connectionClose(
+    JNIEnv *env, jclass cls, jlong connHandle)
+{
+    (void)cls;
+    native_connection *c = (native_connection *)(intptr_t)connHandle;
+    if (!c) return;
+    if (c->sessions) {
+        throw_state(env, "close Session before Connection");
+        return;
+    }
+    pigeon_ngtcp2_transport_close(&c->transport);
+    free(c);
+}
+
+// Kotlin: connectionActivate(Long connection, String deviceId,
+//     ByteArray pairingRecord, Array<String>? dgNames, LongArray? dgIds): Long.
+// C PairingRecord wire format is exactly 420 bytes: P,G,R,version=1,
+// ID[64], relayURL[256], localPrivate[32], localPublic[32], peerPublic[32].
+// This runs auth_request/auth_ok and derives per-stream keys in C; no
+// plaintext arrival marker is sent. Caller must not initialize a pairing
+// session on the same connection first.
+JNIEXPORT jlong JNICALL
+Java_com_marcelocantos_pigeon_jni_PigeonNative_connectionActivate(
+    JNIEnv *env, jclass cls, jlong connHandle, jstring deviceId,
+    jbyteArray pairingRecord, jobjectArray dgnames, jlongArray dgids)
+{
+    (void)cls;
+    native_connection *c = (native_connection *)(intptr_t)connHandle;
+    if (!c || c->transport.role != PIGEON_ROLE_CONNECT || c->sessions ||
+        !deviceId || !pairingRecord ||
+        (*env)->GetArrayLength(env, pairingRecord) != PIGEON_PAIRING_RECORD_SIZE) {
+        throw_argument(env, "activation requires unused CONNECT, deviceId and 420-byte record");
+        return 0;
+    }
+    const char *id = (*env)->GetStringUTFChars(env, deviceId, NULL);
+    if (!id) return 0;
+    if (!*id) {
+        (*env)->ReleaseStringUTFChars(env, deviceId, id);
+        throw_argument(env, "empty deviceId");
+        return 0;
+    }
+    pigeon_pairing_record rec = {0};
+    jbyte bytes[PIGEON_PAIRING_RECORD_SIZE];
+    (*env)->GetByteArrayRegion(env, pairingRecord, 0, sizeof(bytes), bytes);
+    if ((*env)->ExceptionCheck(env)) {
+        (*env)->ReleaseStringUTFChars(env, deviceId, id);
+        return 0;
+    }
+    if (pigeon_pairing_record_deserialize(&rec, (const uint8_t *)bytes, sizeof(bytes)) < 0 ||
+        !memchr(rec.peer_instance_id, 0, sizeof(rec.peer_instance_id)) ||
+        strcmp(rec.peer_instance_id, c->transport.instance_id) != 0) {
+        (*env)->ReleaseStringUTFChars(env, deviceId, id);
+        throw_argument(env, "invalid record or record peer ID differs from connection instance ID");
+        return 0;
+    }
+    pigeon_dgchannel_def chans[PIGEON_MAX_DATAGRAM_CHANNELS] = {0};
+    size_t n = 0;
+    if (native_datagrams(env, dgnames, dgids, chans, &n) != 0) {
+        (*env)->ReleaseStringUTFChars(env, deviceId, id);
+        return 0;
+    }
+    session_holder *s = calloc(1, sizeof(*s));
+    if (!s) {
+        (*env)->ReleaseStringUTFChars(env, deviceId, id);
+        throw_runtime(env, "alloc failed");
+        return 0;
+    }
+    pigeon_stream_handle *primary = pigeon_ngtcp2_transport_primary_handle(&c->transport);
+    if (!primary || pigeon_connect_on_transport(pigeon_ngtcp2_as_transport(&c->transport),
+            primary, c->transport.instance_id, id, &rec,
+            n ? chans : NULL, n, &s->session) != 0) {
+        pigeon_session_close(&s->session);
+        free(s);
+        (*env)->ReleaseStringUTFChars(env, deviceId, id);
+        throw_runtime(env, "client activation or session initialization failed");
+        return 0;
+    }
+    (*env)->ReleaseStringUTFChars(env, deviceId, id);
+    s->connection = c;
+    c->sessions++;
+    return (jlong)(intptr_t)s;
 }

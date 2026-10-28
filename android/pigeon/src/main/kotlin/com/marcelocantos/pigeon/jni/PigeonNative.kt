@@ -86,6 +86,9 @@ object PigeonNative {
         mode: Int,
     ): Long
 
+    /** Unestablished channel handle for native CONNECT pairing mode. */
+    @JvmStatic external fun channelInitPairing(): Long
+
     @JvmStatic external fun channelFree(handle: Long)
 
     @JvmStatic external fun channelEncrypt(handle: Long, plaintext: ByteArray): ByteArray
@@ -213,4 +216,39 @@ object PigeonNative {
         sessionHandle: Long,
         nameOut: Array<String?>,
     ): Long
+
+    // --- Native ngtcp2 connection (T66.2) ---
+    // All methods are blocking and one connection must be used on one thread
+    // at a time. NativeBridge must close streams/datagrams, Session, Connection
+    // in that order. Session owns its own native session, not the Connection.
+    // CONNECT greeting has NO token field: nonempty CONNECT token throws
+    // IllegalArgumentException, rather than being silently ignored.
+    // REGISTER/LISTEN may send a token. Production passes verifyPeer=true;
+    // an insecure connection requires an explicit device-test opt-out.
+    @JvmStatic external fun connectionOpen(
+        host: String, port: String, instanceId: String, role: Int,
+        token: String?, verifyPeer: Boolean, caCertFile: String?, timeoutMs: Int,
+    ): Long
+
+    /** channel must be a live channelInit handle; pairing CONNECT requires an
+     * unestablished channel. No PairingRecord activation is inferred here. */
+    @JvmStatic external fun connectionSessionInit(
+        connection: Long, channel: Long,
+        dgNames: Array<String>?, dgIds: LongArray?,
+    ): Long
+
+    /** Activated CONNECT over the C 420-byte PGR v1 PairingRecord wire format.
+     * Runs C auth_request/auth_ok before returning; unlike pairing mode this
+     * does not send the plaintext arrival marker. Requires nonempty deviceId. */
+    @JvmStatic external fun connectionActivate(
+        connection: Long, deviceId: String, pairingRecord: ByteArray,
+        dgNames: Array<String>?, dgIds: LongArray?,
+    ): Long
+
+    /** Primary pairing ceremony stream; caller owns/free stream wrapper. */
+    @JvmStatic external fun sessionPrimary(session: Long): Long
+
+    /** Throws IllegalStateException if a session still borrows the transport. */
+    @JvmStatic external fun connectionClose(connection: Long)
+
 }
