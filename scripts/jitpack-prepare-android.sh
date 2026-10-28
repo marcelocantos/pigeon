@@ -146,14 +146,54 @@ if ((${#missing[@]})); then
 fi
 sdk="${ANDROID_HOME:-${ANDROID_SDK_ROOT:-$HOME/android-sdk}}"
 mkdir -p "$sdk"
+
+# JitPack's build image may carry an ancient cmdline-tools / sdkmanager
+# (pre Android SDK Tools 26.x) already unpacked under $sdk or first on
+# PATH. That generation of sdkmanager depends on javax.xml.bind, removed
+# from the JDK in 9+ and absent on JDK17 ("java.lang.NoClassDefFoundError:
+# javax/xml/bind/annotation/XmlSchema" — the actual public JitPack failure
+# for 56a1818). Never trust whichever sdkmanager happens to already exist:
+# fetch a pinned, checksum-verified, JDK17-compatible cmdline-tools build
+# into a fixed location of our own and use that one — unless the caller
+# deliberately overrides via ANDROID_SDK_MANAGER, which is respected as-is
+# (an operator's explicit choice, not something the base image gets to
+# make for us by merely being first on PATH).
+CMDLINE_TOOLS_BUILD=11076708
+CMDLINE_TOOLS_SHA256=2d2d50857e4eb553af5a6dc3ad507a17adf43d115264b1afc116f95c92e5e258
+CMDLINE_TOOLS_DIR="$sdk/cmdline-tools/pigeon-pinned-$CMDLINE_TOOLS_BUILD"
+
 manager="${ANDROID_SDK_MANAGER:-}"
 if [ -z "$manager" ]; then
-    for path in "$sdk/cmdline-tools/latest/bin/sdkmanager" "$sdk/tools/bin/sdkmanager"; do
-        if [ -x "$path" ]; then manager="$path"; break; fi
-    done
+    if [ ! -x "$CMDLINE_TOOLS_DIR/bin/sdkmanager" ]; then
+        command -v curl >/dev/null || { echo "error: curl unavailable, cannot fetch pinned Android cmdline-tools" >&2; exit 1; }
+        command -v unzip >/dev/null || { echo "error: unzip unavailable, cannot install pinned Android cmdline-tools" >&2; exit 1; }
+        cmdline_zip="$(mktemp)"
+        if ! curl --fail --location --silent --show-error --proto '=https' --max-time 300                 -o "$cmdline_zip"                 "https://dl.google.com/android/repository/commandlinetools-linux-${CMDLINE_TOOLS_BUILD}_latest.zip"; then
+            rm -f "$cmdline_zip"
+            echo "error: could not download Android cmdline-tools $CMDLINE_TOOLS_BUILD" >&2
+            exit 1
+        fi
+        got_sha="$(sha256_of "$cmdline_zip")"
+        if [ "$got_sha" != "$CMDLINE_TOOLS_SHA256" ]; then
+            rm -f "$cmdline_zip"
+            echo "error: cmdline-tools zip sha256 mismatch: want $CMDLINE_TOOLS_SHA256 got $got_sha" >&2
+            exit 1
+        fi
+        cmdline_extract="$(mktemp -d)"
+        unzip -q "$cmdline_zip" -d "$cmdline_extract"
+        rm -f "$cmdline_zip"
+        rm -rf "$CMDLINE_TOOLS_DIR"
+        mkdir -p "$CMDLINE_TOOLS_DIR"
+        # The zip's sole top-level entry is "cmdline-tools/"; sdkmanager
+        # expects to live under <root>/<some-name>/bin, so move its
+        # contents straight into our pinned directory rather than nesting
+        # another "cmdline-tools" level inside it.
+        mv "$cmdline_extract/cmdline-tools"/* "$CMDLINE_TOOLS_DIR/"
+        rm -rf "$cmdline_extract"
+    fi
+    manager="$CMDLINE_TOOLS_DIR/bin/sdkmanager"
 fi
-if [ -z "$manager" ]; then manager="$(command -v sdkmanager || true)"; fi
-if [ -z "$manager" ]; then echo "Android sdkmanager unavailable under $sdk" >&2; exit 1; fi
+if [ -z "$manager" ] || [ ! -x "$manager" ]; then echo "Android sdkmanager unavailable (resolved to '$manager')" >&2; exit 1; fi
 # Licenses and NDK are provisioned in JitPack's ephemeral build container.
 # Do not pipe yes into sdkmanager: pipefail would turn a successful install
 # into SIGPIPE when sdkmanager exits before consuming all input.
