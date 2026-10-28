@@ -4,7 +4,7 @@
 #if canImport(Network)
 
 import XCTest
-@testable import Pigeon
+@testable import PigeonCore
 
 final class PigeonRelayTests: XCTestCase {
 
