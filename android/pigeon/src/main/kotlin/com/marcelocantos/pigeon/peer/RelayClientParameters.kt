@@ -21,7 +21,8 @@ internal data class RelayEndpoint(val host: String, val port: String) {
                 "relay URL must contain only a host and optional port"
             }
             require(uri.port == -1 || uri.port in 1..65535) { "invalid relay port" }
-            return RelayEndpoint(uri.host, (if (uri.port == -1) 443 else uri.port).toString())
+            return RelayEndpoint(uri.host.removePrefix("[").removeSuffix("]"),
+                (if (uri.port == -1) 443 else uri.port).toString())
         }
     }
 }
