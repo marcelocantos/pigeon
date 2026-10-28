@@ -9,8 +9,11 @@ plugins {
     `maven-publish`
 }
 
-group = "com.marcelocantos.pigeon"
-version = "0.6.0"
+// JitPack's Maven virtual repository expects the module under the repository
+// group and the exact requested tag/commit. Keep local builds independent.
+val jitpackVersion = providers.gradleProperty("pigeon.jitpackVersion").orNull
+group = if (jitpackVersion != null) "com.github.marcelocantos.pigeon" else "com.marcelocantos.pigeon"
+version = jitpackVersion ?: "0.6.0"
 
 // ---------------------------------------------------------------------------
 // Layout: where pigeon's C sources, amalgamated dist, and vendored libsodium
@@ -157,7 +160,12 @@ val amalgamateNative = tasks.register<Exec>("amalgamateNative") {
     description = "Run `make amalgamate` so dist/pigeon.{c,h} exist before the JNI build."
     group = "build"
     workingDir = repoRoot
-    commandLine = listOf("make", "amalgamate")
+    // JitPack's Android image need not contain Go 1.25. Generated protocol
+    // headers are committed; amalgamate them directly for this publication.
+    commandLine = if (jitpackVersion != null)
+        listOf("sh", "c/amalgamate.sh", "dist")
+    else
+        listOf("make", "amalgamate")
     // Use narrowly-scoped inputs so we don't accidentally claim
     // ownership of c/vendor/ (which the libsodium build tasks own).
     // Gradle's input snapshotting would otherwise flag a phantom
@@ -318,7 +326,7 @@ publishing {
             afterEvaluate {
                 from(components["release"])
             }
-            groupId = "com.marcelocantos.pigeon"
+            groupId = project.group.toString()
             artifactId = "pigeon"
         }
     }
