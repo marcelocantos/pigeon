@@ -6,6 +6,7 @@ import com.marcelocantos.pigeon.crypto.E2EKeyPair
 import com.marcelocantos.pigeon.peer.RelayTLS
 import com.marcelocantos.pigeon.peer.pairInitiator
 import com.marcelocantos.pigeon.peer.toNativeBytes
+import java.io.File
 import java.net.DatagramSocket
 import java.net.HttpURLConnection
 import java.net.ServerSocket
@@ -14,6 +15,7 @@ import java.nio.file.Files
 import java.nio.file.Path
 import java.security.MessageDigest
 import java.util.Base64
+import java.util.concurrent.CountDownLatch
 import java.util.concurrent.Executors
 import java.util.concurrent.TimeUnit
 import kotlinx.coroutines.runBlocking
@@ -110,12 +112,18 @@ class NativeConnectionLifecycleTest {
             // Native QUIC failure must return no handle and leave a subsequent
             // legitimate connection possible. The unused port is local/private.
             val unused = port(false)
-            repeat(2) {
+            val beforeFailedDials = File("/dev/fd").list()?.size
+                ?: error("/dev/fd unavailable for native failed-connect leak oracle")
+            repeat(8) {
                 assertThrows(RuntimeException::class.java) {
                     PigeonNative.connectionOpen("127.0.0.1", unused.toString(),
                         record.peerInstanceID, 0, null, false, null, 250)
                 }
             }
+            val afterFailedDials = File("/dev/fd").list()?.size
+                ?: error("/dev/fd disappeared during failed-connect leak oracle")
+            assertTrue(afterFailedDials <= beforeFailedDials + 3,
+                "failed native connects leaked descriptors: $beforeFailedDials -> $afterFailedDials")
             val conn = PigeonNative.connectionOpen("127.0.0.1", udp.toString(),
                 record.peerInstanceID, 0, null, false, null, 5_000)
             assertTrue(conn != 0L)
@@ -135,7 +143,12 @@ class NativeConnectionLifecycleTest {
                     // Receive is already waiting before the second JVM lane
                     // enters native send. A connection-wide blocking mutex
                     // would time out here instead of delivering the echo.
-                    val receiving = pool.submit<ByteArray> { PigeonNative.streamRecv(stream) }
+                    val entered = CountDownLatch(1)
+                    val receiving = pool.submit<ByteArray> {
+                        entered.countDown()
+                        PigeonNative.streamRecv(stream)
+                    }
+                    check(entered.await(2, TimeUnit.SECONDS)) { "receive lane never started" }
                     Thread.sleep(100)
                     PigeonNative.streamSend(stream, "ping".toByteArray())
                     assertArrayEquals("echo: ping".toByteArray(), receiving.get(12, TimeUnit.SECONDS))
