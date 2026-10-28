@@ -3,7 +3,6 @@
 jdk:
   - openjdk17
 before_install:
-  - git config --global --add safe.directory /build
-  - bash scripts/jitpack-prepare-android.sh
+  - git config --global --add safe.directory /build && git config --global --add safe.directory "$(pwd -P)"
 install:
   - bash scripts/jitpack-install-android.sh
