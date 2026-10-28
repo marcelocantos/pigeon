@@ -1,0 +1,3 @@
+submodules: true
+script: c/vendor/build.sh
+args: [libsodium]
