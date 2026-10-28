@@ -240,7 +240,7 @@ private fun base64UrlDecode(s: String): ByteArray =
 // Minimal recursive-descent JSON parser. Handles the subset emitted by
 // the Go/Swift SDKs: objects, strings, with no need for arrays or
 // numbers.
-private class JsonParser(private val src: String) {
+internal class JsonParser(private val src: String) {
     private var i = 0
 
     fun parseObject(): Map<String, Any?> {
