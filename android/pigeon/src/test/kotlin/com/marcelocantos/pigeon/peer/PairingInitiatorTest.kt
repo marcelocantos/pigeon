@@ -26,7 +26,7 @@ class PairingInitiatorTest {
         val inbound = ArrayDeque(listOf(welcome.toByteArray(), """{"kind":"confirm"}""".toByteArray()))
         var selectedStream = ""
         var dialedInstance = ""
-        override fun connect(endpoint: RelayEndpoint, instanceID: String, token: String?, record: ByteArray?, deviceID: String?): Long {
+        override fun connect(endpoint: RelayEndpoint, instanceID: String, token: String?, record: ByteArray?, deviceID: String?, tls: RelayTLS): Long {
             dialedInstance = instanceID; return 7
         }
         override fun primaryStream(connection: Long): Long = error("ceremony must use named stream")

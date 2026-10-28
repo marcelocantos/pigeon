@@ -73,9 +73,10 @@ suspend fun pairInitiator(
     identityInstanceID: String,
     identityPublicKey: ByteArray,
     confirm: suspend (String) -> Boolean,
+    tls: RelayTLS = RelayTLS(),
 ): PairingRecord = pairInitiatorWithConnector(
     rendezvousToken, identityInstanceID, identityPublicKey, confirm,
-    { url, id -> connect(url, id) },
+    { url, id -> connect(url, id, tls = tls) },
 )
 
 internal suspend fun pairInitiatorWithConnector(

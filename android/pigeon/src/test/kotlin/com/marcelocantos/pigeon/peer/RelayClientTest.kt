@@ -16,12 +16,14 @@ class RelayClientTest {
         val events = mutableListOf<String>()
         var lastRecord: ByteArray? = null
         var lastToken: String? = null
+        var lastTLS = RelayTLS()
         var failConnect = false
         var failStreamClose = false
-        override fun connect(endpoint: RelayEndpoint, instanceID: String, token: String?, record: ByteArray?, deviceID: String?): Long {
+        override fun connect(endpoint: RelayEndpoint, instanceID: String, token: String?, record: ByteArray?, deviceID: String?, tls: RelayTLS): Long {
             events += "connect:${endpoint.host}:${endpoint.port}:$instanceID"
             lastRecord = record
             lastToken = token
+            lastTLS = tls
             if (failConnect) throw IllegalStateException("dial rejected")
             return 7
         }
@@ -44,6 +46,7 @@ class RelayClientTest {
         val record = PairingRecord("peer", "https://relay.example", ByteArray(32), ByteArray(32), ByteArray(32))
         val session = connectRelayClient(d, "https://relay.example:4433", "peer", null, record, "device")
         assertEquals(null, d.lastToken)
+        assertEquals(RelayTLS(), d.lastTLS)
         assertContentEquals(record.toNativeBytes(), d.lastRecord)
         assertFailsWith<IllegalArgumentException> { connectRelayClient(d, "https://relay.example", "peer", "auth-token") }
         val stream = session.openStream("chat")
@@ -69,6 +72,14 @@ class RelayClientTest {
         d.failConnect = true
         assertFailsWith<IllegalStateException> { connectRelayClient(d, "https://relay.example", "peer") }
         assertEquals(listOf("connect:relay.example:443:peer"), d.events)
+    }
+
+    @Test fun localTLSOptOutMustBeExplicit() = runBlocking {
+        val d = Driver()
+        val session = connectRelayClient(d, "https://localhost", "peer", tls = RelayTLS(verifyPeer = false))
+        assertEquals(false, d.lastTLS.verifyPeer)
+        session.close()
+        assertFailsWith<IllegalArgumentException> { RelayTLS(timeoutMs = -1) }
     }
 
     @Test fun connectionAlwaysClosesEvenWhenStreamCloseThrows() = runBlocking {
