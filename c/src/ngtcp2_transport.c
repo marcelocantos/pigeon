@@ -238,12 +238,21 @@ static int stream_close_cb(ngtcp2_conn *conn, uint32_t flags, int64_t stream_id,
                            uint64_t app_error_code, void *user_data,
                            void *stream_user_data)
 {
-    (void)conn; (void)flags; (void)app_error_code; (void)stream_user_data;
+    (void)conn; (void)app_error_code; (void)stream_user_data;
     pigeon_ngtcp2_transport *t = user_data;
     int slot = find_extra_slot(t, stream_id);
     if (slot >= 0) {
-        t->extra_streams[slot].closing = true;
-        if (!t->extra_streams[slot].readers) t->extra_streams[slot].in_use = false;
+        pigeon_ngtcp2_stream_slot *s = &t->extra_streams[slot];
+        // ngtcp2 closes the stream after both halves complete. The receive
+        // callback may have queued a framed reply in the SAME packet as FIN;
+        // closing the application handle here would discard that reply.
+        // RESET_STREAM, unlike FIN, invalidates even previously queued bytes.
+        if ((flags & NGTCP2_STREAM_CLOSE_FLAG_APP_ERROR_CODE_SET) || !s->fin_received) {
+            s->closing = true;
+            s->recv_buf.used = 0;
+        } else {
+            s->write_closed = true;
+        }
     }
     return 0;
 }
@@ -823,6 +832,9 @@ static int slot_read_n(pigeon_ngtcp2_transport *t,
         size_t got = ringbuf_pop(&s->recv_buf, buf + total, want - total);
         total += got;
         if (total >= want) break;
+        // Never wait for more QUIC data once the receive half ended. This
+        // also rejects a truncated length prefix or truncated payload.
+        if (s->fin_received) return -1;
         if (write_quic(t) != 0) return -1;
         uint64_t expiry = ngtcp2_conn_get_expiry2((ngtcp2_conn *)t->conn);
         uint64_t ts = now_ns();
@@ -857,7 +869,7 @@ static int raw_send_on_stream(void *userdata, pigeon_stream_handle *h,
 {
     pigeon_ngtcp2_transport *t = userdata;
     pigeon_ngtcp2_stream_slot *s = (pigeon_ngtcp2_stream_slot *)h;
-    if (!s || !s->in_use || t->closed) return -1;
+    if (!s || !s->in_use || s->write_closed || s->closing || t->closed) return -1;
     if (len > PIGEON_MAX_MSG) return -1;
 
     // 4-byte BE length header + payload as one contiguous write —
@@ -907,20 +919,17 @@ static int raw_close_stream(void *userdata, pigeon_stream_handle *h)
     pigeon_ngtcp2_stream_slot *s = (pigeon_ngtcp2_stream_slot *)h;
     if (!s || !s->in_use) return -1;
     // Write-side FIN (🎯T63.3). Reset is transport_reset_stream.
-    if (write_stream(t, s->stream_id, NULL, 0, 1) != 0) {
-        ngtcp2_conn_shutdown_stream((ngtcp2_conn *)t->conn, 0, s->stream_id, 0);
-    }
-    write_quic(t);
-    s->closing = true;
-    if (!s->readers) s->in_use = false;
-    return 0;
+    if (s->write_closed || t->closed || s->closing) return -1;
+    if (write_stream(t, s->stream_id, NULL, 0, 1) != 0) return -1;
+    s->write_closed = true;
+    return write_quic(t);
 }
 
 static int raw_reset_stream(void *userdata, pigeon_stream_handle *h)
 {
     pigeon_ngtcp2_transport *t = userdata;
     pigeon_ngtcp2_stream_slot *s = (pigeon_ngtcp2_stream_slot *)h;
-    if (!s || !s->in_use) return -1;
+    if (!s || !s->in_use || t->closed) return -1;
     ngtcp2_conn_shutdown_stream((ngtcp2_conn *)t->conn, 0, s->stream_id, 0);
     write_quic(t);
     s->closing = true;
@@ -1296,7 +1305,12 @@ static int transport_recv_on_stream(void *userdata, pigeon_stream_handle *h, uin
     slot->readers++;
     int rv = raw_recv_on_stream(userdata, h, buf, len, out);
     slot->readers--;
-    if (slot->closing && !slot->readers) slot->in_use = false;
+    // Keep the application handle through all buffered frames. Recycle only
+    // after the caller observes EOF (or an incomplete final frame), once
+    // both QUIC halves are finished. A reset cancels immediately.
+    if (!slot->readers && (slot->closing ||
+        (rv != 0 && slot->fin_received && slot->write_closed &&
+         slot->recv_buf.used == 0))) slot->in_use = false;
     io_leave(t);
     return rv;
 }

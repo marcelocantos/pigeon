@@ -12,5 +12,7 @@ stays the default everywhere except the explicit test-only override in
 DeviceEchoTest.
 -->
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
-    <application android:label="pigeon-host" />
+    <!-- Test-only host UID needs LAN access; :pigeon production manifest is unchanged. -->
+    <uses-permission android:name="android.permission.INTERNET" />
+    <application android:label="pigeon-host" android:usesCleartextTraffic="true" />
 </manifest>

@@ -53,6 +53,34 @@ func (s *state) checkCode(code string) error {
 	return nil
 }
 
+// encryptedChat waits for the device's acknowledgement before the deferred stream
+// and session closes. Recv is bounded by the fixture's hard deadline.
+type chatExchange interface {
+	Send([]byte) error
+	Recv(context.Context) ([]byte, error)
+}
+
+func encryptedChat(ctx context.Context, chat chatExchange) error {
+	msg, err := chat.Recv(ctx)
+	if err != nil {
+		return fmt.Errorf("chat recv: %w", err)
+	}
+	if string(msg) != "ping" {
+		return fmt.Errorf("chat payload = %q, want ping", msg)
+	}
+	if err := chat.Send([]byte("echo: ping")); err != nil {
+		return fmt.Errorf("chat send: %w", err)
+	}
+	ack, err := chat.Recv(ctx)
+	if err != nil {
+		return fmt.Errorf("chat ack recv: %w", err)
+	}
+	if string(ack) != "ack: echo: ping" {
+		return fmt.Errorf("chat ack = %q, want ack: echo: ping", ack)
+	}
+	return nil
+}
+
 func run(ctx context.Context, relay string, s *state, token chan<- string) error {
 	identityPath, err := os.CreateTemp("", "pigeon-device-identity-*.json")
 	if err != nil {
@@ -122,15 +150,8 @@ func run(ctx context.Context, relay string, s *state, token chan<- string) error
 		return fmt.Errorf("chat accept: %w", err)
 	}
 	defer chat.Close()
-	msg, err := chat.Recv(ctx)
-	if err != nil {
-		return fmt.Errorf("chat recv: %w", err)
-	}
-	if string(msg) != "ping" {
-		return fmt.Errorf("chat payload = %q, want ping", msg)
-	}
-	if err := chat.Send([]byte("echo: ping")); err != nil {
-		return fmt.Errorf("chat send: %w", err)
+	if err := encryptedChat(ctx, chat); err != nil {
+		return err
 	}
 	log.Printf("DEVICE_ORACLE encrypted chat ping -> echo: ping peer=%s", record.PeerInstanceID)
 	return nil

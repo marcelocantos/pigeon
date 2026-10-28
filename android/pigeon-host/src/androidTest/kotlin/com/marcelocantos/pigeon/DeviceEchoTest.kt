@@ -13,6 +13,7 @@ import java.net.URL
 import java.security.MessageDigest
 import java.util.Base64
 import kotlinx.coroutines.runBlocking
+import org.junit.Assert.assertArrayEquals
 import org.junit.Assert.assertEquals
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -55,7 +56,9 @@ class DeviceEchoTest {
         connectPaired(relay, pairing.peerInstanceID, deviceID, pairing, tls = localTLS).use { session ->
             session.openStream("chat").use { chat ->
                 chat.send("ping".toByteArray(Charsets.UTF_8))
-                assertEquals("echo: ping", String(chat.recv(), Charsets.UTF_8))
+                assertArrayEquals("echo: ping".toByteArray(Charsets.UTF_8), chat.recv())
+                // ACK over the same encrypted stream, only after byte-exact echo.
+                chat.send("ack: echo: ping".toByteArray(Charsets.UTF_8))
             }
         }
     }

@@ -9,6 +9,40 @@ export ANDROID_HOME="${ANDROID_HOME:-$HOME/Library/Android/sdk}"
 export GRADLE_USER_HOME="${GRADLE_USER_HOME:-$PWD/android/build/.gradle-user-home}"
 export ANDROID_USER_HOME="${ANDROID_USER_HOME:-$PWD/android/build/.android-user-home}"
 mkdir -p "$GRADLE_USER_HOME" "$ANDROID_USER_HOME"
+# Binary APK gate: never trust source manifests or merely successful Gradle tasks.
+# --verify-apks runs this preflight without probing/using ADB.
+verify_apks() {
+  local aapt2="${ANDROID_HOME}/build-tools/34.0.0/aapt2"
+  [[ -x "$aapt2" ]] || { echo "Missing aapt2: $aapt2" >&2; return 1; }
+  local host_xml test_xml host_badge test_badge
+  test_apk=$(find android/pigeon-host/build/outputs/apk/androidTest -name '*.apk' -type f | head -1)
+  target_apk=$(find android/pigeon-host/build/outputs/apk/debug -name '*.apk' -type f | head -1)
+  [[ -n "$test_apk" && -s "$test_apk" && -n "$target_apk" && -s "$target_apk" ]] || {
+    echo 'Missing or empty target/instrumentation APK' >&2; return 1;
+  }
+  host_xml=$("$aapt2" dump xmltree --file AndroidManifest.xml "$target_apk") || return 1
+  test_xml=$("$aapt2" dump xmltree --file AndroidManifest.xml "$test_apk") || return 1
+  host_badge=$("$aapt2" dump badging "$target_apk") || return 1
+  test_badge=$("$aapt2" dump badging "$test_apk") || return 1
+  grep -Fq "package: name='com.marcelocantos.pigeon.host'" <<< "$host_badge" || return 1
+  grep -Fq "package: name='com.marcelocantos.pigeon.host.test'" <<< "$test_badge" || return 1
+  grep -Fq "targetSdkVersion:'34'" <<< "$host_badge" || return 1
+  grep -Fq '="android.permission.INTERNET"' <<< "$host_xml" || return 1
+  grep -Fq ':usesCleartextTraffic(0x010104ec)=true' <<< "$host_xml" || return 1
+  grep -Fq 'E: instrumentation' <<< "$test_xml" || return 1
+  grep -Fq ':name(0x01010003)="androidx.test.runner.AndroidJUnitRunner"' <<< "$test_xml" || return 1
+  grep -Fq ':targetPackage(0x01010021)="com.marcelocantos.pigeon.host"' <<< "$test_xml" || return 1
+  echo 'APK_BINARY_ORACLE_PASS target+instrumentation nonempty; host INTERNET cleartext targetSdk34; runner/target coherent'
+}
+
+# Compile/install before starting the fixture deadline. Missing SDK/NDK or
+# vendored libraries are hard failures, not skipped device tests.
+(cd android && ./gradlew -Pkotlin.compiler.execution.strategy=in-process :pigeon-host:assembleDebugAndroidTest :pigeon-host:assembleDebug)
+verify_apks
+# Ensure the verified APK paths survive the function for the subsequent ADB install.
+: "${target_apk:?verified target APK path lost}" "${test_apk:?verified instrumentation APK path lost}"
+[[ "${1:-}" != --verify-apks ]] || exit 0
+
 serial=${ANDROID_SERIAL:-}
 if [[ -z "$serial" ]]; then
   for candidate in 66211FDDJ000ZX 3419105H80658D; do
@@ -47,9 +81,6 @@ cleanup() {
   rm -rf "$tmp"
 }
 trap cleanup EXIT
-# Compile/install before starting the fixture deadline. Missing SDK/NDK or
-# vendored libraries are hard failures, not skipped device tests.
-(cd android && ./gradlew -Pkotlin.compiler.execution.strategy=in-process :pigeon-host:assembleDebugAndroidTest :pigeon-host:assembleDebug)
 make c/vendor/build/lib/libsodium.a
 go build -o "$tmp/relay" ./cmd/pigeon
 go build -o "$tmp/fixture" ./cmd/pigeon-android-fixture
@@ -71,13 +102,6 @@ done
 token=$(curl -fsS --max-time 40 "http://127.0.0.1:$control/token")
 [[ -n "$token" ]] || { echo 'Fixture returned empty pairing token' >&2; exit 1; }
 kill -0 "$relay_pid" 2>/dev/null || { cat "$tmp/relay.log" >&2; exit 1; }
-# The :pigeon library produces only an AAR, never a debug APK; the
-# :pigeon-host application module (🎯T66.6) is the real installable
-# target the instrumentation runs against.
-test_apk=$(find android/pigeon-host/build/outputs/apk/androidTest -name '*.apk' -type f | head -1)
-[[ -n "$test_apk" ]] || { echo 'Missing instrumentation APK' >&2; exit 1; }
-target_apk=$(find android/pigeon-host/build/outputs/apk/debug -name '*.apk' -type f | head -1)
-[[ -n "$target_apk" ]] || { echo 'Missing pigeon-host target APK' >&2; exit 1; }
 adb -s "$serial" install -r "$target_apk"
 adb -s "$serial" install -r "$test_apk"
 # -e values are passed as arguments rather than interpolated into shell script.
