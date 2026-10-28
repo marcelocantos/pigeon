@@ -18,8 +18,17 @@ import kotlinx.coroutines.withContext
  * No blocking recv may be guarded by a connection-wide send mutex: that
  * deadlocks recv-first traffic until the native event-loop pump is available.
  */
+/** TLS is verified by default; disabling verification is only for a local fixture. */
+data class RelayTLS(
+    val verifyPeer: Boolean = true,
+    val caCertFile: String? = null,
+    val timeoutMs: Int = 0,
+) {
+    init { require(timeoutMs >= 0) { "timeout must be nonnegative" } }
+}
+
 internal interface RelayClientDriver {
-    fun connect(endpoint: RelayEndpoint, instanceID: String, token: String?, record: ByteArray?, deviceID: String?): Long
+    fun connect(endpoint: RelayEndpoint, instanceID: String, token: String?, record: ByteArray?, deviceID: String?, tls: RelayTLS): Long
     fun primaryStream(connection: Long): Long
     fun openStream(connection: Long, name: String): Long
     fun send(stream: Long, data: ByteArray)
@@ -134,6 +143,7 @@ internal suspend fun connectRelayClient(
     token: String? = null,
     pairing: PairingRecord? = null,
     deviceID: String? = null,
+    tls: RelayTLS = RelayTLS(),
 ): RelayClientSession {
     require(instanceID.isNotBlank() && instanceID.toByteArray(Charsets.UTF_8).size < 64) {
         "instance ID must be 1..63 UTF-8 bytes"
@@ -146,7 +156,7 @@ internal suspend fun connectRelayClient(
     require(deviceID == null || deviceID.isNotBlank()) { "device ID must not be blank" }
     val endpoint = RelayEndpoint.parse(relayURL)
     return withContext(Dispatchers.IO) {
-        val connection = driver.connect(endpoint, instanceID, token, pairing?.toNativeBytes(), deviceID)
+        val connection = driver.connect(endpoint, instanceID, token, pairing?.toNativeBytes(), deviceID, tls)
         check(connection != 0L) { "native relay connect failed" }
         RelayClientSession(driver, connection)
     }
@@ -157,11 +167,11 @@ internal object NativeRelayClientDriver : RelayClientDriver {
     private data class Owned(val session: Long, val channel: Long)
     private val owned = mutableMapOf<Long, Owned>()
 
-    override fun connect(endpoint: RelayEndpoint, instanceID: String, token: String?, record: ByteArray?, deviceID: String?): Long {
+    override fun connect(endpoint: RelayEndpoint, instanceID: String, token: String?, record: ByteArray?, deviceID: String?, tls: RelayTLS): Long {
         // The CONNECT greeting cannot carry a bearer token; never discard it.
         require(token.isNullOrEmpty()) { "CONNECT bearer token is not supported" }
         val connection = PigeonNative.connectionOpen(endpoint.host, endpoint.port, instanceID,
-            0, null, true, null, 0)
+            0, null, tls.verifyPeer, tls.caCertFile, tls.timeoutMs)
         check(connection != 0L) { "native relay connection failed" }
         var channel = 0L
         try {
@@ -212,8 +222,9 @@ internal object NativeRelayClientDriver : RelayClientDriver {
  * Native transport pump (T66.5) and recv-first device verification are
  * prerequisites before this entry point can be considered runtime-ready.
  */
-suspend fun connect(relayURL: String, instanceID: String, token: String? = null): RelayClientSession =
-    connectRelayClient(NativeRelayClientDriver, relayURL, instanceID, token)
+suspend fun connect(
+    relayURL: String, instanceID: String, token: String? = null, tls: RelayTLS = RelayTLS(),
+): RelayClientSession = connectRelayClient(NativeRelayClientDriver, relayURL, instanceID, token, tls = tls)
 
 /** Establish an encrypted session from a completed pairing record. */
 suspend fun connectPaired(
@@ -221,6 +232,7 @@ suspend fun connectPaired(
     instanceID: String,
     deviceID: String,
     pairing: PairingRecord,
+    tls: RelayTLS = RelayTLS(),
 ): RelayClientSession = connectRelayClient(
-    NativeRelayClientDriver, relayURL, instanceID, pairing = pairing, deviceID = deviceID,
+    NativeRelayClientDriver, relayURL, instanceID, pairing = pairing, deviceID = deviceID, tls = tls,
 )
