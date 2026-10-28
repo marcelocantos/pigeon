@@ -145,7 +145,12 @@ let plaintext  = try channel.decrypt(ciphertext)
 
 ## Android/Kotlin Library
 
-Add via [JitPack](https://jitpack.io) (Gradle):
+Publish the Android AAR via [JitPack](https://jitpack.io) from a **pushed,
+verified commit SHA** containing `jitpack.yml`. The existing v0.34.0 tag
+predates this configuration and does **not** resolve as an Android AAR; do
+not use it or v0.33.0 for this dependency. After publication, verify the
+immutable SHA with `python3 scripts/check-android-publication.py <full-sha>`;
+only then use that SHA in a consumer (Gradle):
 
 ```kotlin
 // settings.gradle.kts
@@ -157,7 +162,7 @@ dependencyResolutionManagement {
 
 // build.gradle.kts
 dependencies {
-    implementation("com.github.marcelocantos.pigeon:pigeon:v0.33.0")
+    implementation("com.github.marcelocantos.pigeon:pigeon:<verified-40-character-commit-sha>")
 }
 ```
 

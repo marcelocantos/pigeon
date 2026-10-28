@@ -1,0 +1,9 @@
+# JitPack checks out at /build, while Gradle and the native sources live in android/.
+# The requested VERSION is supplied by JitPack (tag or commit), never by a release guess.
+jdk:
+  - openjdk17
+before_install:
+  - git config --global --add safe.directory /build
+  - bash scripts/jitpack-prepare-android.sh
+install:
+  - bash scripts/jitpack-install-android.sh

@@ -9,8 +9,11 @@ plugins {
     `maven-publish`
 }
 
-group = "com.marcelocantos.pigeon"
-version = "0.6.0"
+// JitPack's Maven virtual repository expects the module under the repository
+// group and the exact requested tag/commit. Keep local builds independent.
+val jitpackVersion = providers.gradleProperty("pigeon.jitpackVersion").orNull
+group = if (jitpackVersion != null) "com.github.marcelocantos.pigeon" else "com.marcelocantos.pigeon"
+version = jitpackVersion ?: "0.6.0"
 
 // ---------------------------------------------------------------------------
 // Layout: where pigeon's C sources, amalgamated dist, and vendored libsodium
@@ -318,7 +321,7 @@ publishing {
             afterEvaluate {
                 from(components["release"])
             }
-            groupId = "com.marcelocantos.pigeon"
+            groupId = project.group.toString()
             artifactId = "pigeon"
         }
     }
