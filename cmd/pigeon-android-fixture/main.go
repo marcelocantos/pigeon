@@ -157,7 +157,7 @@ func run(ctx context.Context, relay string, s *state, token chan<- string) error
 		return err
 	}
 	close(s.acked)
-	log.Printf("DEVICE_ORACLE encrypted chat ping -> echo: echo: ping; ack: ack: echo: ping peer=%s", record.PeerInstanceID)
+	log.Printf("DEVICE_ORACLE encrypted chat ping -> echo: ping -> ack: echo: ping peer=%s", record.PeerInstanceID)
 	return nil
 }
 
