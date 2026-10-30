@@ -31,10 +31,12 @@ build-swift:
 
 test: test-go test-swift test-kotlin test-web
 
-test-go:
+# Pairing Go tests invoke SwiftPM; both suites compile CPigeon against vendored
+# ngtcp2/quictls, which gate-clean checkouts do not pre-populate.
+test-go: build-vendor-deps
 	go test -count=1 -timeout=60s ./...
 
-test-swift:
+test-swift: build-vendor-deps
 	swift test
 
 test-kotlin:
